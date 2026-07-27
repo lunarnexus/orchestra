@@ -1,0 +1,36 @@
+# Secrets & config
+.env
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build outputs
+build/
+dist/
+out/
+logs/
+*.egg-info/
+
+# Caches
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.py[cod]
+node_modules/
+*.tsbuildinfo
+
+# CodeGraph (regenerate, don't track)
+.codegraph/
+
+# Data (track if your project needs it — customize this rule)
+data/
