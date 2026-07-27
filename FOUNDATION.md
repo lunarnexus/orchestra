@@ -2,23 +2,329 @@
 
 Core concepts and architectural decisions for orchestra.
 
+## Vision
+
+Orchestra is an agent-agnostic orchestration control plane. It lets a parent
+agent, CLI, MCP client, or host-specific extension dispatch focused work to
+specialized child agents without bloating the parent agent's context.
+
+The goal is practical multi-agent coordination: decompose work, route slices to
+the right harness, track enough runtime state to supervise progress, return
+compact results, and keep humans or parent agents in control of meaningful
+decisions.
+
+## Reference Projects
+
+- **pi-subagents** — slash-command UX, focused child agents, foreground and
+  background runs, parallel review, chains, review loops, role definitions, and
+  model/tool overrides.
+- **dev-orchestra** — orchestration discipline: the parent plans, routes,
+  gates, and judges; workers handle narrow research, planning, implementation,
+  review, verification, and security slices.
+- **CelloS** — useful lessons from deterministic scheduling, subprocess worker
+  isolation, SQLite-backed state, connector abstractions, approval gates, and
+  auditability. Orchestra is a separate project and should not inherit CelloS
+  complexity by default.
+- **Hermes, Pi, OpenCode, ACP-compatible agents** — first target ecosystems for
+  orchestrator adapters and worker harnesses.
+
+## Non-Negotiable Principles
+
+1. **Agent agnostic** — no single agent shell, model provider, or harness owns
+   the design.
+2. **Thin host adapters** — Hermes plugins, Pi extensions, CLI commands, and MCP
+   tools should call the same core logic instead of reimplementing orchestration.
+   Native plugins/extensions are required where reliable slash-command UX,
+   trusted session ownership, or automatic returns are needed; MCP-only is not
+   enough for the full behavior.
+3. **Narrow worker slices** — child agents receive focused prompts with explicit
+   scope, stop conditions, and return format.
+4. **Lean state** — store only operational state needed for supervision,
+   recovery, and status. JSONL operational logs keep compact lifecycle records;
+   full prompts, transcripts, and raw streams belong only in debug artifacts when
+   enabled.
+5. **Deterministic coordination** — code controls run state, queueing,
+   concurrency, cancellation, and routing policy. Agents reason inside assigned
+   boundaries.
+6. **Human and parent-agent control** — approvals and risky decisions stay with
+   the orchestrator session or the active host harness whenever possible.
+7. **Simple first** — one-shot subprocess harnesses come before interactive RPC
+   and approval-bridge features.
+
 ## Domain Model
 
-TBD.
+- **Orchestrator** — parent agent, CLI, or host session that invokes Orchestra
+  and receives compact progress/results.
+- **Harness** — adapter that knows how to run a specific agent runtime such as
+  Pi, Hermes, OpenCode, ACP, or another shell agent.
+- **Worker agent** — specialized child agent launched through a harness for one
+  scoped task.
+- **`orchestrator_session_id`** — the trusted, exact host/calling session id that
+  invoked Orchestra. Worker ownership, control calls, approval routing, and
+  auto-return are keyed by this identifier, not by best guesses, batches, humans,
+  projects, host windows, or any id supplied by the LLM.
+- **Role** — tentative reusable worker purpose such as `worker`, `reviewer`,
+  `critic`, `researcher`, `appsec`, or possibly `planner`. Roles are a routing
+  convenience, not a fixed taxonomy.
+- **Run** — one worker execution requested by an orchestrator session.
+- **Batch** — optional UI/API grouping for workers requested together. Batches do
+  not define return semantics; returns are grouped by orchestrator session.
+- **Step** — one child-agent execution inside a run.
+- **Status** — lightweight runtime state: queued, running, waiting, done,
+  failed, cancelled.
+- **Artifact** — optional debug or handoff file produced by a run and referenced
+  from JSONL operational logs.
+- **Approval request** — future interactive event where a child harness asks the
+  orchestrator or human for a decision.
 
 ## Architecture Decisions
 
 | Decision | Rationale | Date |
 |----------|-----------|------|
 | Template scaffold | Initial bootstrap copied from template for project setup. | 2026-07-27 |
+| Core plus adapters | Put orchestration logic in a reusable core, then expose it through MCP, CLI, Hermes plugin, Pi extension, and future host adapters. | 2026-07-27 |
+| MCP-capable, not MCP-only | MCP is a good universal tool surface, but host-native plugins/extensions are required for reliable slash UX and trusted session ownership/auto-return; generic MCP alone cannot provide the full behavior. | 2026-07-27 |
+| Python core | Python fits local subprocess orchestration, SQLite, CLI packaging, and existing CelloS lessons. TypeScript should be used only where host extensions require it. | 2026-07-27 |
+| One-shot first | Start with simple subprocess calls such as Pi/Hermes/OpenCode one-shots; add RPC, ACP streaming, and approval passthrough later. | 2026-07-27 |
+| SQLite for lean runtime state | Track useful supervision state by default while writing JSONL operational logs and artifact references for inspection. Debug mode may retain full prompts, transcripts, raw harness messages, stdout/stderr, and timing. | 2026-07-27 |
+| `config.yaml` as primary config | Project and user configuration should use YAML, including concurrency limits, defaults, logging, timeouts, and harness discovery. | 2026-07-27 |
+| Separate agent catalog | Agent/model/role combinations, context limits, and harness-specific defaults should live outside core config once schema settles. | 2026-07-27 |
+| Minimal scheduler | Use a small run supervisor for concurrency, process tracking, status, and cancellation; avoid CelloS-style project-management weight. | 2026-07-27 |
+| Session-scoped returns | Worker returns are grouped by orchestrator session, not by batch. Send one consolidated return only when that session has no active workers remaining. | 2026-07-27 |
+| Exact session ownership | Multi-orchestrator support is mandatory: workers must be tracked and controlled by trusted `orchestrator_session_id`. Do not infer ownership. | 2026-07-27 |
+| Trusted adapter identity | Core requires a trusted `orchestrator_session_id` for worker ownership, control, and auto-return. Host plugins/extensions/adapters must hard-code retrieval from trusted runtime context and pass it to core; the LLM must never provide or remember this id. | 2026-07-27 |
+| MVP limit handling | Enforce global and per-session concurrency limits. If a `/orch do` request exceeds either limit, return an error for MVP instead of queueing. | 2026-07-27 |
 
 ## Technology Stack
 
-- **Language:** TBD
-- **Runtime:** TBD
-- **Database:** TBD
-- **Key Libraries:** TBD
+- **Core language:** Python
+- **Packaging:** installable Python package with a CLI entrypoint; support `pipx`
+  for users and editable virtualenv installs for development.
+- **Host extensions:** thin wrappers in the host ecosystem when needed, for
+  example TypeScript for a Pi extension.
+- **Runtime:** local subprocess orchestration first; MCP server and host-native
+  adapters expose the same core operations.
+- **Database:** SQLite for lightweight runtime state.
+- **Configuration:** `config.yaml` plus `agent-catalog.yaml` for role and harness
+  command definitions.
+- **Initial harnesses:** Pi workers first, then Hermes, then OpenCode. Hermes is
+  the likely first orchestrator host, followed by Pi and OpenCode.
+- **Future harness modes:** Pi RPC, ACP, and other streaming or interactive
+  protocols.
+
+## Runtime State
+
+Default state should include only:
+
+- run id
+- trusted `orchestrator_session_id`, provided by the host adapter from a
+  hard-coded reliable runtime-context retrieval method
+- optional batch id when a host command or API request submits grouped workers
+- worker harness
+- worker role
+- status
+- start and end timestamps
+- local process handle when available
+- short task label
+- compact final result or summary
+- error or blocker
+- JSONL log path and optional artifact path
+- optional worker session handle or transcript path when the harness exposes one
+- approval-needed flag for future interactive modes
+
+Default state should not store full prompts, full transcripts, raw token streams,
+or every tool call. JSONL operational logs should record lifecycle events,
+status changes, result summaries, and artifact references. Debug mode may record
+raw details to logs or artifact bundles for troubleshooting and failed-run
+inspection.
+
+Future harnesses may opportunistically report a native session id or transcript
+file path for debugging or resume. This is not MVP and must remain optional: Pi
+may run with `--no-session`, while Hermes one-shots/profile runs usually persist
+sessions. Orchestra should store such handles as metadata or log references, not
+as required state.
 
 ## Data Flow
 
-TBD.
+1. Orchestrator invokes Orchestra through CLI, MCP, or host-native adapter.
+2. Orchestra parses the requested operation, role, task, and options.
+3. The host adapter retrieves trusted `orchestrator_session_id` from runtime
+   context and passes it to core. The LLM must not provide, remember, or infer
+   this id.
+4. Core resolves defaults from `config.yaml` and the agent catalog.
+5. Harness discovery selects an available worker runtime.
+6. The run supervisor verifies the trusted `orchestrator_session_id` and enforces
+   global and per-session concurrency limits.
+7. `/orch do` starts one worker for the current orchestrator session. The
+   orchestrator may call `/orch do` repeatedly and asynchronously until a
+   concurrency limit is reached.
+8. Each harness launches a focused child agent with scoped context.
+9. Orchestra tracks lean status while JSONL logs and optional artifacts capture
+   operational details.
+10. When any worker finishes, Orchestra updates state and checks
+   `count_active_workers(orchestrator_session_id)`.
+11. If that count is below 1, Orchestra creates one minimal consolidated return
+   prompt/report for that orchestrator session. It must not send per-worker
+   prompts.
+12. When supported and enabled, Orchestra prods the owning orchestrator by
+   re-entering as one new host/orchestrator turn with the consolidated session
+   report.
+13. Future interactive modes may route approval requests or clarification events
+   back to the orchestrator session.
+
+## Initial Feature Target
+
+- Call Orchestra from a host agent or CLI.
+- Dispatch Pi workers with focused role prompts.
+- Support the MVP `/orch` host-facing command set: `/orch do`, `/orch status`,
+  `/orch stop`, `/orch doctor`, and `/orch history`.
+- Return compact worker results without stuffing full worker context into the
+  orchestrator session.
+- Consolidate worker completions by orchestrator session, not by batch: when the
+  final active worker for that session finishes, return one minimal session
+  report.
+- Support multiple orchestrator sessions concurrently without allowing one
+  session to receive, stop, or control another session's workers.
+- Store lean run status in SQLite plus JSONL operational logs and artifact
+  references.
+- Keep verbose details available only through JSONL logs or optional
+  artifacts.
+
+## Current Design Decisions
+
+### Command Namespace
+
+Use `/orch` as the host-facing command namespace:
+
+- `/orch do`
+- `/orch status`
+- `/orch stop`
+- `/orch doctor`
+- `/orch history`
+
+`/orch goal` is a future feature, not MVP. It should build on session-scoped
+worker returns, likely adding a standing objective and completion contract later.
+
+`/orch status` reports active agents/runs plus tiny service health. `/orch history`
+reads compact DB summaries and JSONL operational logs/artifacts for previous
+inputs and outputs.
+
+### Context and Results
+
+Raw subagent streams must not flow into orchestrator context. Workers return
+compact status/finding reports using a slim result template. Orchestra is a task
+dispatch and supervision layer: it cares that the worker run happened, status,
+errors/blockers, and a compact report. The orchestrator can understand prose;
+structured deterministic data is useful for operational status but is not
+mandatory for worker findings. Do not require workers to return JSON, and do not
+make core design depend on parsing worker content before handoff.
+
+Worker completions are grouped by exact orchestrator session, not by batch. A
+batch may be stored as optional metadata, but it must not decide return routing or
+completion grouping. `/orch do` adds one worker to the current orchestrator
+session; the orchestrator may call `/orch do` repeatedly and asynchronously until
+a concurrency limit is reached.
+
+When any worker finishes, Orchestra updates state and checks
+`count_active_workers(orchestrator_session_id)`. If the count is below 1,
+Orchestra sends one minimal consolidated return prompt/report for that
+orchestrator session with per-worker status, compact results or blockers, and
+JSONL log/artifact references. Do not send per-worker prompts, and do not return
+one report per batch.
+
+### Scheduling and Workflows
+
+Parallelism is scheduler-driven under configured concurrency limits, not a
+separate command. Enforce both a global concurrency limit and a per-orchestrator
+session concurrency limit. MVP defaults are `global=4` and `per_session=3`.
+If a `/orch do` request would exceed either limit, return an error for MVP.
+Queued worker requests are a wishlist/future feature, not required for the first
+implementation. Workflow features come later and may include review loops and
+watchdogs.
+
+Worker completions should prod only the owning orchestrator session by
+re-entering as one new host/orchestrator turn with the consolidated session
+report when the host supports it. Auto-prodding/`auto_return` is enabled by
+default, with a simple config toggle to disable it for hosts or users that prefer
+explicit `/orch status` or `/orch history` checks. MVP loop controls should stay
+small: global and per-session concurrency limits, default 600s worker timeout,
+`/orch stop`, and session-scoped consolidated returns. Do not add max-turn,
+max-run, max-time, or compatibility-flag machinery until there is a demonstrated
+need.
+
+### Multi-Orchestrator Ownership
+
+Multi-orchestrator support is mandatory. Every worker must be associated with
+the trusted `orchestrator_session_id` that created it, and commands such as
+`/orch status`, `/orch stop`, return prods, and future approval routing must use
+that exact id to prevent separate orchestrators from receiving or controlling
+one another's workers.
+
+Do not allow best-guess ownership based on user, working directory, project,
+process tree, wall-clock recency, host window title, worker content, or LLM
+memory. Core must reject session-scoped operations when the trusted
+`orchestrator_session_id` is missing, untrusted, or mismatched; status-only
+operations may be allowed only when explicitly safe and not capable of exposing
+or controlling another session's workers.
+
+### Adapter Identity Decisions
+
+Host plugins/extensions/adapters must hard-code `orchestrator_session_id`
+retrieval from trusted runtime context and pass the normalized value to core. The
+LLM must never provide, remember, echo, or infer this id.
+
+- **Hermes native plugin/tool:** use the runtime `session_id` kwarg and normalize
+  it as `hermes:<session_id>`.
+- **Pi extension:** use `ctx.sessionManager.getSessionId()` and normalize it as
+  `pi:<session_id>`.
+- **OpenCode plugin/tool:** use `context.sessionID` as the trusted adapter session
+  id source.
+- **ACP adapter:** use the protocol `sessionId` as the trusted adapter session id
+  source.
+- **Generic MCP:** MCP's session id is a transport identity, not an orchestrator
+  conversation identity. Generic MCP alone is therefore not safe for auto-return
+  or session ownership. MCP needs a trusted host wrapper/injected
+  `orchestrator_session_id` or isolated per-orchestrator session; otherwise core
+  should reject control and auto-return calls and expose only safe/status-only
+  behavior.
+
+### Harness Ownership
+
+Worker sessions and memory are owned by underlying harnesses, not Orchestra.
+Orchestra tracks lean operational state and result summaries.
+
+### Configuration Defaults
+
+Default worker timeout is 600s. Default concurrency limits are global `4` and
+per-session `3`. `auto_return` is enabled by default. These must be configurable
+through `config.yaml` and runtime options.
+
+### Agent Catalog
+
+Role definitions live in `agent-catalog.yaml`. A role entry should stay small:
+short prompt addition, optional model when the harness supports model selection,
+optional profile when the harness supports profiles, and an invocation command
+template. For example, Hermes can use a profile one-shot such as
+`hermes --profile <profile> -z "<prompt>"`; Pi can use a one-shot such as
+`PI_CODING_AGENT_DIR=/home/james/.pi/agent pi --no-session -p "<prompt>"`.
+For MVP, assume each configured one-shot harness can run and record results;
+avoid compatibility flags or broad capability negotiation until the catalog
+schema and harness gaps are proven by implementation. Unsupported catalog fields
+should be harmless no-ops rather than validation blockers during early iteration.
+
+### Roles and Core Boundaries
+
+Roles remain tentative and may be overreach. Likely roles include `worker`,
+`reviewer`, `critic`, `researcher`, and `appsec`; an optional `planner` role is
+undecided. Do not define a separate `verifier` role unless it proves distinct
+from reviewer. Role prompts should stay minimal: tell harness agents which
+skill/profile to load, then pass a normal delegation prompt. Avoid hard-coding
+planning, coding, reviewing, or other work methods into core. Planner and
+orchestrator separation is still undecided.
+
+### Dispatch Prompt Shape
+
+Dispatch prompts should stay slim, in the style of `dev-orchestra`: one goal,
+approved scope/context, explicit out-of-scope boundaries, acceptance target,
+focused instructions, and a concise return with status, results, blockers, and
+risks.
