@@ -337,12 +337,13 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
       const rawReport = stdout.trim();
       if (code === 0 && rawReport) {
+        let runIds: string[] = [];
         try {
           const payload = JSON.parse(rawReport) as { runIds?: string[]; report?: string };
+          runIds = payload.runIds ?? [];
           const message = payload.report?.trim() ?? "";
           if (!message) return;
           pi.sendUserMessage(message, { deliverAs: "followUp", triggerTurn: true });
-          const runIds = payload.runIds ?? [];
           if (runIds.length > 0) {
             void runOrchestra([
               "_mark-session-report-delivered",
@@ -352,6 +353,14 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
             ]);
           }
         } catch (error) {
+          if (runIds.length > 0) {
+            void runOrchestra([
+              "_release-session-report",
+              "--session-id",
+              sessionId,
+              ...runIds.flatMap((id) => ["--run-id", id]),
+            ]);
+          }
           const err = error as { message?: string };
           process.stderr.write(`orchestra auto-return reinjection failed: ${err.message ?? String(error)}\n`);
         }

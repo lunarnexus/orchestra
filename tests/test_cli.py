@@ -45,6 +45,7 @@ def test_public_help_hides_internal_subcommands() -> None:
         "_await-session-report",
         "_await-run",
         "_mark-session-report-delivered",
+        "_release-session-report",
         "_dispatch-ack",
         "_progress-message",
         "_command-echo",

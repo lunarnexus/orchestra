@@ -422,7 +422,7 @@ def pending_session_report(context: AppContext, session_id: str) -> SessionRepor
     _require_session_id(session_id)
     if not context.config.auto_return:
         return None
-    runs = context.store.list_pending_report_runs(session_id)
+    runs = context.store.claim_pending_report_runs(session_id)
     if not runs:
         return None
     return SessionReport(
@@ -438,6 +438,11 @@ def mark_session_report_delivered(
 ) -> None:
     _require_session_id(session_id)
     context.store.mark_report_runs_delivered(session_id, run_ids)
+
+
+def release_session_report(context: AppContext, session_id: str, run_ids: list[str]) -> None:
+    _require_session_id(session_id)
+    context.store.release_report_runs(session_id, run_ids)
 
 
 def consume_pending_session_report(context: AppContext, session_id: str) -> str | None:

@@ -52,6 +52,7 @@ class RunRecord:
     worker_session_id: str | None = None
     transcript_path: Path | None = None
     approval_needed: bool = False
+    report_claimed_at: str | None = None
     reported_at: str | None = None
 
 
@@ -101,11 +102,13 @@ class StateStore:
                     worker_session_id TEXT,
                     transcript_path TEXT,
                     approval_needed INTEGER NOT NULL DEFAULT 0,
+                    report_claimed_at TEXT,
                     reported_at TEXT
                 )
                 """
             )
             self._ensure_column(connection, "runs", "process_group_id", "INTEGER")
+            self._ensure_column(connection, "runs", "report_claimed_at", "TEXT")
             self._ensure_column(connection, "runs", "reported_at", "TEXT")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_session_status "
@@ -115,7 +118,7 @@ class StateStore:
                 "CREATE INDEX IF NOT EXISTS idx_runs_session_reported "
                 "ON runs(orchestrator_session_id, reported_at)"
             )
-            connection.execute("PRAGMA user_version = 3")
+            connection.execute("PRAGMA user_version = 4")
             connection.commit()
 
     def reserve_run(
@@ -182,8 +185,9 @@ class StateStore:
                     worker_session_id,
                     transcript_path,
                     approval_needed,
+                    report_claimed_at,
                     reported_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._serialize_record(record),
             )
@@ -308,12 +312,85 @@ class StateStore:
                 FROM runs
                 WHERE orchestrator_session_id = ?
                   AND status IN (?, ?, ?)
+                  AND report_claimed_at IS NULL
                   AND reported_at IS NULL
                 ORDER BY created_at, run_id
                 """,
                 (orchestrator_session_id, STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED),
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
+
+    def claim_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            active = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM runs
+                    WHERE orchestrator_session_id = ?
+                      AND status IN (?, ?)
+                    """,
+                    (orchestrator_session_id, STATUS_QUEUED, STATUS_RUNNING),
+                ).fetchone()[0]
+            )
+            if active > 0:
+                connection.rollback()
+                return []
+
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM runs
+                WHERE orchestrator_session_id = ?
+                  AND status IN (?, ?, ?)
+                  AND report_claimed_at IS NULL
+                  AND reported_at IS NULL
+                ORDER BY created_at, run_id
+                """,
+                (orchestrator_session_id, STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED),
+            ).fetchall()
+            if not rows:
+                connection.rollback()
+                return []
+
+            claimed_at = utc_now()
+            run_ids = [str(row["run_id"]) for row in rows]
+            placeholders = ", ".join("?" for _ in run_ids)
+            connection.execute(
+                f"""
+                UPDATE runs
+                SET report_claimed_at = ?
+                WHERE orchestrator_session_id = ?
+                  AND run_id IN ({placeholders})
+                  AND report_claimed_at IS NULL
+                  AND reported_at IS NULL
+                """,
+                (claimed_at, orchestrator_session_id, *run_ids),
+            )
+            connection.commit()
+        return [replace(self._row_to_record(row), report_claimed_at=claimed_at) for row in rows]
+
+    def release_report_runs(
+        self,
+        orchestrator_session_id: str,
+        run_ids: list[str],
+    ) -> None:
+        if not run_ids:
+            return
+        placeholders = ", ".join("?" for _ in run_ids)
+        with self._connect() as connection:
+            connection.execute(
+                f"""
+                UPDATE runs
+                SET report_claimed_at = NULL
+                WHERE orchestrator_session_id = ?
+                  AND run_id IN ({placeholders})
+                  AND reported_at IS NULL
+                """,
+                (orchestrator_session_id, *run_ids),
+            )
+            connection.commit()
 
     def mark_report_runs_delivered(
         self,
@@ -329,7 +406,8 @@ class StateStore:
             connection.execute(
                 f"""
                 UPDATE runs
-                SET reported_at = ?
+                SET report_claimed_at = NULL,
+                    reported_at = ?
                 WHERE orchestrator_session_id = ?
                   AND run_id IN ({placeholders})
                   AND reported_at IS NULL
@@ -344,7 +422,7 @@ class StateStore:
         return [self._row_to_record(row) for row in rows]
 
     def consume_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
-        runs = self.list_pending_report_runs(orchestrator_session_id)
+        runs = self.claim_pending_report_runs(orchestrator_session_id)
         return self.mark_report_runs_delivered(
             orchestrator_session_id,
             [run.run_id for run in runs],
@@ -393,6 +471,7 @@ class StateStore:
                 if update.approval_needed is not None
                 else current.approval_needed
             ),
+            report_claimed_at=current.report_claimed_at,
             reported_at=(
                 update.reported_at if update.reported_at is not None else current.reported_at
             ),
@@ -425,6 +504,7 @@ class StateStore:
                 worker_session_id = ?,
                 transcript_path = ?,
                 approval_needed = ?,
+                report_claimed_at = ?,
                 reported_at = ?
             WHERE run_id = ?
               AND status = ?
@@ -441,6 +521,7 @@ class StateStore:
                 record.worker_session_id,
                 str(record.transcript_path) if record.transcript_path else None,
                 int(record.approval_needed),
+                record.report_claimed_at,
                 record.reported_at,
                 record.run_id,
                 expected_status,
@@ -469,6 +550,7 @@ class StateStore:
             record.worker_session_id,
             str(record.transcript_path) if record.transcript_path else None,
             int(record.approval_needed),
+            record.report_claimed_at,
             record.reported_at,
         )
 
@@ -497,6 +579,7 @@ class StateStore:
                 Path(str(row["transcript_path"])) if row["transcript_path"] is not None else None
             ),
             approval_needed=bool(row["approval_needed"]),
+            report_claimed_at=_optional_text(row["report_claimed_at"]),
             reported_at=_optional_text(row["reported_at"]),
         )
 

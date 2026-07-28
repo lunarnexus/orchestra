@@ -50,7 +50,7 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == 3
+    assert row[0] == 4
 
 
 def test_reserve_and_get_run_round_trip(state_store: StateStore, tmp_path: Path) -> None:
@@ -201,15 +201,23 @@ def test_pending_report_runs_are_not_marked_until_delivered(
     state_store.update_run("run-pending", RunUpdate(status=STATUS_RUNNING, process_id=1))
     state_store.update_run("run-pending", RunUpdate(status=STATUS_DONE, result_summary="ok"))
 
-    pending = state_store.list_pending_report_runs("pi:session-r")
+    pending = state_store.claim_pending_report_runs("pi:session-r")
 
     assert [record.run_id for record in pending] == ["run-pending"]
     assert pending[0].reported_at is None
+    assert pending[0].report_claimed_at is not None
     assert state_store.get_run("run-pending").reported_at is None
+    assert state_store.claim_pending_report_runs("pi:session-r") == []
+
+    state_store.release_report_runs("pi:session-r", ["run-pending"])
+    assert [record.run_id for record in state_store.claim_pending_report_runs("pi:session-r")] == [
+        "run-pending"
+    ]
 
     delivered = state_store.mark_report_runs_delivered("pi:session-r", ["run-pending"])
 
     assert delivered[0].reported_at is not None
+    assert delivered[0].report_claimed_at is None
     assert state_store.list_pending_report_runs("pi:session-r") == []
 
 

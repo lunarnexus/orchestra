@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from orchestra.app import (
-    await_session_report,
     await_session_report_payload,
     consume_pending_session_report,
     load_context,
@@ -87,10 +86,7 @@ def test_await_session_report_returns_once_final_run_completes(
 
     store = StateStore(db_path)
     assert store.get_run(run_id).status == STATUS_DONE
-    assert (
-        await_session_report(context, "manual:await", run_id=run_id, timeout_seconds=1)
-        is not None
-    )
+    assert consume_pending_session_report(context, "manual:await") is None
 
     mark_session_report_delivered(context, "manual:await", report.run_ids)
     assert consume_pending_session_report(context, "manual:await") is None
