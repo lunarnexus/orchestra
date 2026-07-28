@@ -8,8 +8,6 @@ import re
 import subprocess
 from typing import Any
 
-from orchestra.adapters.hermes import normalize_hermes_session_id
-
 _IDENTITY_ARG_NAMES = frozenset({"session_id", "identity", "orchestrator_session_id"})
 _RUN_ID_RE = re.compile(r"^run_id:\s*(?P<run_id>\S+)\s*$")
 _SUBPROCESS_TIMEOUT_SECONDS = 300
@@ -23,6 +21,16 @@ _FALLBACK_TOOL_INFO = {
     "timeoutDescription": "Optional timeout in seconds.",
     "taskLabelDescription": "Optional short request label.",
 }
+
+
+def normalize_hermes_session_id(raw_session_id: str) -> str:
+    """Normalize a trusted Hermes runtime session id for Orchestra ownership."""
+    normalized = raw_session_id.strip()
+    if not normalized:
+        raise ValueError("hermes session id is required")
+    if normalized.startswith("hermes:"):
+        return normalized
+    return f"hermes:{normalized}"
 
 
 def _orchestra_base_args() -> list[str]:
@@ -133,12 +141,13 @@ def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
     if timeout is not None and (type(timeout) is not int or timeout <= 0):
         return _error("timeout must be a positive integer")
 
+    role = str(args.get("role") or "worker").strip() or "worker"
     command = [
         "do",
         "--session-id",
         trusted_session_id,
         "--role",
-        str(args.get("role") or "worker").strip() or "worker",
+        role,
         "--goal",
         goal,
     ]
@@ -156,7 +165,7 @@ def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
     if not run_id:
         return _error("orchestra dispatch did not return a run_id")
 
-    ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id])
+    ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", role])
     if ack.returncode != 0:
         return _error((ack.stdout or ack.stderr).strip() or "orchestra dispatch ack failed")
     return json.dumps({"runId": run_id, "ack": ack.stdout.strip()})

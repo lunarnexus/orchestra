@@ -14,7 +14,6 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from shlex import split as shell_split
 
 from orchestra.config import (
     AgentCatalog,
@@ -389,8 +388,9 @@ def format_started_run(started: StartedRun) -> str:
     return "\n".join(lines)
 
 
-def format_dispatch_ack(run_id: str) -> str:
-    return f"orchestra dispatched: {run_id}"
+def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
+    role_text = f" {role}" if role else ""
+    return f"orchestra dispatched:{role_text} {run_id}"
 
 
 def format_progress_notification(
@@ -399,8 +399,10 @@ def format_progress_notification(
     total_count: int,
     run_id: str,
     status: str,
+    role: str | None = None,
 ) -> str:
-    return f"orchestra: {run_id} returned {status} ({completed_count}/{total_count})"
+    role_text = f" {role}" if role else ""
+    return f"orchestra:{role_text} {run_id} returned {status} ({completed_count}/{total_count})"
 
 
 def clean_result_summary(summary: str | None) -> str:
@@ -595,25 +597,7 @@ def format_command_echo(raw_command: str) -> str:
     raw = raw_command.strip()
     if not raw:
         return "/orch"
-    try:
-        parts = shell_split(raw)
-    except ValueError:
-        parts = raw.split()
-    if not parts:
-        return "/orch"
-    if parts[0] != "do":
-        return f"/orch {raw}"
-
-    request_parts: list[str] = []
-    index = 1
-    while index < len(parts):
-        token = parts[index]
-        if token in {"--role", "--timeout", "--task-label"} and index + 1 < len(parts):
-            index += 2
-            continue
-        request_parts.append(token)
-        index += 1
-    return " ".join(request_parts).strip() or f"/orch {raw}"
+    return f"/orch {raw}"
 
 
 def tool_info(context: AppContext) -> ToolInfo:

@@ -20,6 +20,9 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert "_dispatch-ack" in extension_source
     assert "_progress-message" in extension_source
     assert "_command-echo" in extension_source
+    assert "const roleMatch = /^role:" in extension_source
+    assert '["_dispatch-ack", "--run-id", runId, "--role", role]' in extension_source
+    assert 'command.push("--role", role)' in extension_source
     assert "help-host" in extension_source
     assert "compactReturnMessage" not in extension_source
     assert "format_orchestrator_return" in core_source

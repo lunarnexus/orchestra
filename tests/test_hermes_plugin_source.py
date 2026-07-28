@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import builtins
 import importlib.util
 import json
 import subprocess
@@ -42,6 +44,39 @@ def completed(
     code: int = 0,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(args=args, returncode=code, stdout=stdout, stderr=stderr)
+
+
+def test_hermes_plugin_source_does_not_import_orchestra_package() -> None:
+    tree = ast.parse(PLUGIN_PATH.read_text(encoding="utf-8"))
+
+    imported_roots = {
+        alias.name.split(".", 1)[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    imported_from_roots = {
+        node.module.split(".", 1)[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+
+    assert "orchestra" not in imported_roots | imported_from_roots
+
+
+def test_hermes_plugin_import_does_not_import_orchestra_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import = builtins.__import__
+
+    def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "orchestra" or name.startswith("orchestra."):
+            raise AssertionError(f"plugin imported Orchestra package: {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    load_plugin()
 
 
 def test_hermes_plugin_registers_dispatch_tool_without_session_id_schema(
@@ -147,7 +182,7 @@ def test_orch_dispatch_builds_cli_args_from_trusted_kwargs_and_returns_ack(
         if args[0] == "do":
             return completed(args, "run_id: abc123\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
-            return completed(args, "orchestra dispatched: abc123\n")
+            return completed(args, "orchestra dispatched: reviewer abc123\n")
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -178,9 +213,9 @@ def test_orch_dispatch_builds_cli_args_from_trusted_kwargs_and_returns_ack(
             "--task-label",
             "review-task",
         ],
-        ["_dispatch-ack", "--run-id", "abc123"],
+        ["_dispatch-ack", "--run-id", "abc123", "--role", "reviewer"],
     ]
-    assert payload == {"runId": "abc123", "ack": "orchestra dispatched: abc123"}
+    assert payload == {"runId": "abc123", "ack": "orchestra dispatched: reviewer abc123"}
 
 
 def test_orch_dispatch_requires_run_id_before_ack(monkeypatch: pytest.MonkeyPatch) -> None:

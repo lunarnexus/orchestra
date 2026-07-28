@@ -194,6 +194,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
 
         dispatch_ack_parser = subparsers.add_parser("_dispatch-ack", help=argparse.SUPPRESS)
         dispatch_ack_parser.add_argument("--run-id", required=True)
+        dispatch_ack_parser.add_argument("--role", default=None)
         dispatch_ack_parser.set_defaults(handler=_handle_dispatch_ack)
 
         progress_parser = subparsers.add_parser("_progress-message", help=argparse.SUPPRESS)
@@ -201,6 +202,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         progress_parser.add_argument("--total", type=int, required=True)
         progress_parser.add_argument("--run-id", required=True)
         progress_parser.add_argument("--status", required=True)
+        progress_parser.add_argument("--role", default=None)
         progress_parser.set_defaults(handler=_handle_progress_message)
 
         echo_parser = subparsers.add_parser("_command-echo", help=argparse.SUPPRESS)
@@ -314,7 +316,7 @@ def _handle_init_hermes(args: argparse.Namespace) -> int:
 
 
 def _handle_dispatch_ack(args: argparse.Namespace) -> int:
-    print(format_dispatch_ack(args.run_id))
+    print(format_dispatch_ack(args.run_id, role=args.role))
     return 0
 
 
@@ -349,6 +351,7 @@ def _handle_progress_message(args: argparse.Namespace) -> int:
             total_count=args.total,
             run_id=args.run_id,
             status=args.status,
+            role=args.role,
         )
     )
     return 0
@@ -414,5 +417,6 @@ def _handle_await_run(args: argparse.Namespace) -> int:
     )
     print(f"run_id: {record.run_id}")
     print(f"status: {record.status}")
+    print(f"role: {record.role}")
     print(f"active_runs_remaining: {active_remaining}")
     return 0

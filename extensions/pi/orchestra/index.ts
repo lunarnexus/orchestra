@@ -173,17 +173,20 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
   }
 
-  function parseAwaitRunOutput(output: string): { status: string | null; activeRemaining: number | null } {
+  function parseAwaitRunOutput(output: string): { status: string | null; role: string | null; activeRemaining: number | null } {
     let status: string | null = null;
+    let role: string | null = null;
     let activeRemaining: number | null = null;
     for (const line of output.split(/\r?\n/)) {
       const trimmed = line.trim();
       const statusMatch = /^status:\s+(.+)$/.exec(trimmed);
       if (statusMatch) status = statusMatch[1].trim();
+      const roleMatch = /^role:\s+(.+)$/.exec(trimmed);
+      if (roleMatch) role = roleMatch[1].trim();
       const activeMatch = /^active_runs_remaining:\s+(\d+)$/.exec(trimmed);
       if (activeMatch) activeRemaining = Number(activeMatch[1]);
     }
-    return { status, activeRemaining };
+    return { status, role, activeRemaining };
   }
 
   function progressNotifier(ctx: { hasUI: boolean; ui: { notify: (msg: string, level: "info" | "warning" | "error") => void } }): ProgressNotifier {
@@ -241,9 +244,9 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       const completed = sessionCompletedRuns.get(sessionId) ?? new Set<string>();
       completed.add(runId);
       sessionCompletedRuns.set(sessionId, completed);
-      const { status, activeRemaining } = parseAwaitRunOutput(stdout);
+      const { status, role, activeRemaining } = parseAwaitRunOutput(stdout);
       const total = sessionRuns.get(sessionId)?.size ?? completed.size + (activeRemaining ?? 0);
-      void runOrchestra([
+      const command = [
         "_progress-message",
         "--completed",
         String(completed.size),
@@ -253,8 +256,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         runId,
         "--status",
         status ?? "done",
-      ]).then((result) => {
-        notifier.notify(result.stdout || `orchestra: ${runId} returned ${status ?? "done"} (${completed.size}/${total})`);
+      ];
+      if (role) command.push("--role", role);
+      void runOrchestra(command).then((result) => {
+        const roleText = role ? ` ${role}` : "";
+        notifier.notify(result.stdout || `orchestra:${roleText} ${runId} returned ${status ?? "done"} (${completed.size}/${total})`);
         if (activeRemaining === 0) {
           sessionRuns.delete(sessionId);
           sessionCompletedRuns.delete(sessionId);
@@ -293,8 +299,9 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       trackRun(sessionId, runId);
       watchRunProgress(sessionId, runId, notifier);
       watchSessionReport(sessionId, runId);
-      const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId]);
-      return { code: 0, runId, output: ack.stdout || `orchestra dispatched: ${runId}` };
+      const role = params.role?.trim() || "worker";
+      const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId, "--role", role]);
+      return { code: 0, runId, output: ack.stdout || `orchestra dispatched: ${role} ${runId}` };
     }
     return { code: result.code, runId: null, output: result.stdout || result.stderr };
   }

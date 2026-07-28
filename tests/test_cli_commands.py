@@ -213,3 +213,106 @@ def test_doctor_command_checks_local_setup(
     assert "agent_catalog: ok" in captured.out
     assert "database: ok" in captured.out
     assert "harness:worker: ok" in captured.out
+
+
+def test_internal_command_echo_preserves_full_orch_command(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from orchestra.cli import main
+
+    exit_code = main(["_command-echo", "do --role critic tell me a haiku"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.strip() == "/orch do --role critic tell me a haiku"
+
+
+def test_internal_dispatch_ack_includes_role(capsys: pytest.CaptureFixture[str]) -> None:
+    from orchestra.cli import main
+
+    exit_code = main(["_dispatch-ack", "--run-id", "abc123", "--role", "critic"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.strip() == "orchestra dispatched: critic abc123"
+
+
+def test_internal_progress_message_includes_role(capsys: pytest.CaptureFixture[str]) -> None:
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "_progress-message",
+            "--completed",
+            "1",
+            "--total",
+            "2",
+            "--run-id",
+            "abc123",
+            "--status",
+            "done",
+            "--role",
+            "critic",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output.strip() == "orchestra: critic abc123 returned done (1/2)"
+
+
+def test_internal_await_run_outputs_role(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "worker done"],
+    )
+
+    from orchestra.cli import main
+
+    dispatch_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "do",
+            "--session-id",
+            "manual:test-session",
+            "--role",
+            "worker",
+            "--goal",
+            "Finish a worker.",
+        ]
+    )
+    dispatch_output = capsys.readouterr().out
+    run_id = extract_run_id(dispatch_output)
+    assert dispatch_exit == 0
+    assert wait_for_condition(
+        lambda: StateStore(db_path).get_run(run_id).status == STATUS_DONE,
+        timeout=5,
+    )
+
+    wait_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "_await-run",
+            "--session-id",
+            "manual:test-session",
+            "--run-id",
+            run_id,
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert wait_exit == 0
+    assert "status: done" in output
+    assert "role: worker" in output
