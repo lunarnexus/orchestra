@@ -49,7 +49,6 @@ class RunRecord:
     result_summary: str | None = None
     error_text: str | None = None
     blocker_text: str | None = None
-    artifact_path: Path | None = None
     worker_session_id: str | None = None
     transcript_path: Path | None = None
     approval_needed: bool = False
@@ -66,7 +65,6 @@ class RunUpdate:
     result_summary: str | None = None
     error_text: str | None = None
     blocker_text: str | None = None
-    artifact_path: Path | None = None
     worker_session_id: str | None = None
     transcript_path: Path | None = None
     approval_needed: bool | None = None
@@ -100,7 +98,6 @@ class StateStore:
                     error_text TEXT,
                     blocker_text TEXT,
                     log_path TEXT NOT NULL,
-                    artifact_path TEXT,
                     worker_session_id TEXT,
                     transcript_path TEXT,
                     approval_needed INTEGER NOT NULL DEFAULT 0,
@@ -118,7 +115,7 @@ class StateStore:
                 "CREATE INDEX IF NOT EXISTS idx_runs_session_reported "
                 "ON runs(orchestrator_session_id, reported_at)"
             )
-            connection.execute("PRAGMA user_version = 2")
+            connection.execute("PRAGMA user_version = 3")
             connection.commit()
 
     def reserve_run(
@@ -182,12 +179,11 @@ class StateStore:
                     error_text,
                     blocker_text,
                     log_path,
-                    artifact_path,
                     worker_session_id,
                     transcript_path,
                     approval_needed,
                     reported_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._serialize_record(record),
             )
@@ -216,12 +212,25 @@ class StateStore:
 
     def update_run(self, run_id: str, update: RunUpdate) -> RunRecord:
         _validate_status(update.status)
-        current = self.get_run(run_id)
-        if current.status in TERMINAL_STATUSES:
-            return current
-        _validate_transition(current.status, update.status)
-        next_record = self._merge_record(current, update)
-        self._write_record(next_record)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+            if row is None:
+                connection.rollback()
+                raise StateError(f"run not found: {run_id}")
+
+            current = self._row_to_record(row)
+            if current.status in TERMINAL_STATUSES:
+                connection.rollback()
+                return current
+            _validate_transition(current.status, update.status)
+            next_record = self._merge_record(current, update)
+            changed = self._write_record(connection, next_record, expected_status=current.status)
+            if not changed:
+                connection.rollback()
+                return self.get_run(run_id)
+            connection.commit()
+
         self._log_event(
             next_record,
             event="run.updated",
@@ -277,9 +286,8 @@ class StateStore:
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
-    def consume_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
+    def list_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
             active = int(
                 connection.execute(
                     """
@@ -292,7 +300,6 @@ class StateStore:
                 ).fetchone()[0]
             )
             if active > 0:
-                connection.rollback()
                 return []
 
             rows = connection.execute(
@@ -306,20 +313,42 @@ class StateStore:
                 """,
                 (orchestrator_session_id, STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED),
             ).fetchall()
-            if not rows:
-                connection.rollback()
-                return []
+        return [self._row_to_record(row) for row in rows]
 
-            reported_at = utc_now()
-            run_ids = [str(row["run_id"]) for row in rows]
-            placeholders = ", ".join("?" for _ in run_ids)
+    def mark_report_runs_delivered(
+        self,
+        orchestrator_session_id: str,
+        run_ids: list[str],
+    ) -> list[RunRecord]:
+        if not run_ids:
+            return []
+        delivered_at = utc_now()
+        placeholders = ", ".join("?" for _ in run_ids)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             connection.execute(
-                f"UPDATE runs SET reported_at = ? WHERE run_id IN ({placeholders})",
-                (reported_at, *run_ids),
+                f"""
+                UPDATE runs
+                SET reported_at = ?
+                WHERE orchestrator_session_id = ?
+                  AND run_id IN ({placeholders})
+                  AND reported_at IS NULL
+                """,
+                (delivered_at, orchestrator_session_id, *run_ids),
             )
+            rows = connection.execute(
+                f"SELECT * FROM runs WHERE run_id IN ({placeholders}) ORDER BY created_at, run_id",
+                (*run_ids,),
+            ).fetchall()
             connection.commit()
+        return [self._row_to_record(row) for row in rows]
 
-        return [replace(self._row_to_record(row), reported_at=reported_at) for row in rows]
+    def consume_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
+        runs = self.list_pending_report_runs(orchestrator_session_id)
+        return self.mark_report_runs_delivered(
+            orchestrator_session_id,
+            [run.run_id for run in runs],
+        )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=30.0)
@@ -349,11 +378,6 @@ class StateStore:
             blocker_text=(
                 update.blocker_text if update.blocker_text is not None else current.blocker_text
             ),
-            artifact_path=(
-                update.artifact_path
-                if update.artifact_path is not None
-                else current.artifact_path
-            ),
             worker_session_id=(
                 update.worker_session_id
                 if update.worker_session_id is not None
@@ -380,44 +404,49 @@ class StateStore:
             next_record = replace(next_record, ended_at=utc_now())
         return next_record
 
-    def _write_record(self, record: RunRecord) -> None:
-        with self._connect() as connection:
-            connection.execute(
-                """
-                UPDATE runs
-                SET status = ?,
-                    started_at = ?,
-                    ended_at = ?,
-                    process_id = ?,
-                    process_group_id = ?,
-                    result_summary = ?,
-                    error_text = ?,
-                    blocker_text = ?,
-                    artifact_path = ?,
-                    worker_session_id = ?,
-                    transcript_path = ?,
-                    approval_needed = ?,
-                    reported_at = ?
-                WHERE run_id = ?
-                """,
-                (
-                    record.status,
-                    record.started_at,
-                    record.ended_at,
-                    record.process_id,
-                    record.process_group_id,
-                    record.result_summary,
-                    record.error_text,
-                    record.blocker_text,
-                    str(record.artifact_path) if record.artifact_path else None,
-                    record.worker_session_id,
-                    str(record.transcript_path) if record.transcript_path else None,
-                    int(record.approval_needed),
-                    record.reported_at,
-                    record.run_id,
-                ),
-            )
-            connection.commit()
+    def _write_record(
+        self,
+        connection: sqlite3.Connection,
+        record: RunRecord,
+        *,
+        expected_status: str,
+    ) -> bool:
+        cursor = connection.execute(
+            """
+            UPDATE runs
+            SET status = ?,
+                started_at = ?,
+                ended_at = ?,
+                process_id = ?,
+                process_group_id = ?,
+                result_summary = ?,
+                error_text = ?,
+                blocker_text = ?,
+                worker_session_id = ?,
+                transcript_path = ?,
+                approval_needed = ?,
+                reported_at = ?
+            WHERE run_id = ?
+              AND status = ?
+            """,
+            (
+                record.status,
+                record.started_at,
+                record.ended_at,
+                record.process_id,
+                record.process_group_id,
+                record.result_summary,
+                record.error_text,
+                record.blocker_text,
+                record.worker_session_id,
+                str(record.transcript_path) if record.transcript_path else None,
+                int(record.approval_needed),
+                record.reported_at,
+                record.run_id,
+                expected_status,
+            ),
+        )
+        return cursor.rowcount == 1
 
     def _serialize_record(self, record: RunRecord) -> tuple[object, ...]:
         return (
@@ -437,7 +466,6 @@ class StateStore:
             record.error_text,
             record.blocker_text,
             str(record.log_path),
-            str(record.artifact_path) if record.artifact_path else None,
             record.worker_session_id,
             str(record.transcript_path) if record.transcript_path else None,
             int(record.approval_needed),
@@ -464,9 +492,6 @@ class StateStore:
             error_text=_optional_text(row["error_text"]),
             blocker_text=_optional_text(row["blocker_text"]),
             log_path=Path(str(row["log_path"])),
-            artifact_path=(
-                Path(str(row["artifact_path"])) if row["artifact_path"] is not None else None
-            ),
             worker_session_id=_optional_text(row["worker_session_id"]),
             transcript_path=(
                 Path(str(row["transcript_path"])) if row["transcript_path"] is not None else None

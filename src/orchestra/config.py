@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,57 @@ DEFAULT_TIMEOUT = 600
 DEFAULT_GLOBAL_CONCURRENCY = 4
 DEFAULT_PER_SESSION_CONCURRENCY = 3
 DEFAULT_AUTO_RETURN = True
+DEFAULT_RETURN_FORMAT = (
+    "Return a concise response with success/fail, files changed/inspected, "
+    "if fail: exact commands run, results, if blockers: blockers, if risks: risks"
+)
+DEFAULT_WORKER_ROLE_LABEL = "Role"
+DEFAULT_WORKER_GOAL_LABEL = "Goal"
+DEFAULT_WORKER_ROLE_INSTRUCTIONS_LABEL = "Role instructions"
+DEFAULT_WORKER_APPROVED_CONTEXT_LABEL = "Approved context"
+DEFAULT_WORKER_BOUNDARIES_LABEL = "Out of scope"
+DEFAULT_WORKER_ACCEPTANCE_TARGET_LABEL = "Acceptance target"
+DEFAULT_WORKER_RETURN_FORMAT_LABEL = "Return format"
+DEFAULT_TOOL_DESCRIPTION = " ".join(
+    [
+        "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
+        "Use when the user asks to delegate, dispatch, ask a worker, ask another agent, "
+        "run a subagent/sub-agent, or parallelize a narrow task.",
+        "Do not use for tasks you can answer directly without a worker.",
+        "Use only an exact configured role listed below. Omit role to use the default "
+        "worker role.",
+        "{roles}",
+    ]
+)
+DEFAULT_TOOL_PROMPT_SNIPPET = "Dispatch focused work to Orchestra workers/subagents. {roles}"
+DEFAULT_TOOL_PROMPT_GUIDELINES = (
+    "Use orch_dispatch when the user asks to delegate, dispatch, use a subagent, use a "
+    "sub-agent, ask a worker, ask another agent, or parallelize a focused task.",
+    "Keep orch_dispatch requests narrow and explicit.",
+    "Use only an exact configured role from the available roles list. Omit role to use "
+    "the default worker role.",
+)
+DEFAULT_TOOL_GOAL_DESCRIPTION = "Focused worker request/task to delegate."
+DEFAULT_TOOL_ROLE_DESCRIPTION = (
+    "Optional exact configured role. Omit for default worker role. {roles}"
+)
+DEFAULT_TOOL_TIMEOUT_DESCRIPTION = "Optional timeout in seconds."
+DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
+DEFAULT_HOST_HELP = """Orchestra commands:
+  /orch help                         Show this help
+  /orch doctor                       Check Orchestra setup
+  /orch do <request>                 Start a worker for this Pi session
+  /orch do --role ROLE <request>     Start a worker with a role
+  /orch do --timeout SEC <request>   Start a worker with a timeout
+  /orch status                       Show active workers for this session
+  /orch stop <run-id>                Stop an owned active worker
+  /orch history [limit]              Show recent results for this session
+
+Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, ask a worker,
+or ask another agent.
+auto_return: prompt orchestrator upon return of workers
+
+{roles}"""
 
 
 class ConfigError(ValueError):
@@ -33,12 +84,33 @@ class ConcurrencyConfig:
 
 
 @dataclass(frozen=True)
+class PromptConfig:
+    default_return_format: str = DEFAULT_RETURN_FORMAT
+    worker_role_label: str = DEFAULT_WORKER_ROLE_LABEL
+    worker_goal_label: str = DEFAULT_WORKER_GOAL_LABEL
+    worker_role_instructions_label: str = DEFAULT_WORKER_ROLE_INSTRUCTIONS_LABEL
+    worker_approved_context_label: str = DEFAULT_WORKER_APPROVED_CONTEXT_LABEL
+    worker_boundaries_label: str = DEFAULT_WORKER_BOUNDARIES_LABEL
+    worker_acceptance_target_label: str = DEFAULT_WORKER_ACCEPTANCE_TARGET_LABEL
+    worker_return_format_label: str = DEFAULT_WORKER_RETURN_FORMAT_LABEL
+    tool_description: str = DEFAULT_TOOL_DESCRIPTION
+    tool_prompt_snippet: str = DEFAULT_TOOL_PROMPT_SNIPPET
+    tool_prompt_guidelines: tuple[str, ...] = DEFAULT_TOOL_PROMPT_GUIDELINES
+    tool_goal_description: str = DEFAULT_TOOL_GOAL_DESCRIPTION
+    tool_role_description: str = DEFAULT_TOOL_ROLE_DESCRIPTION
+    tool_timeout_description: str = DEFAULT_TOOL_TIMEOUT_DESCRIPTION
+    tool_task_label_description: str = DEFAULT_TOOL_TASK_LABEL_DESCRIPTION
+    host_help: str = DEFAULT_HOST_HELP
+
+
+@dataclass(frozen=True)
 class AppConfig:
     state_dir: Path = DEFAULT_STATE_DIR
     log_dir: Path = DEFAULT_LOG_DIR
     default_timeout: int = DEFAULT_TIMEOUT
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
     auto_return: bool = DEFAULT_AUTO_RETURN
+    prompts: PromptConfig = field(default_factory=PromptConfig)
 
 
 @dataclass(frozen=True)
@@ -103,12 +175,62 @@ def load_app_config(path: str | Path) -> AppConfig:
         ),
     )
 
+    prompts_raw = raw.get("prompts", {})
+    if not isinstance(prompts_raw, dict):
+        raise ConfigError("'prompts' must be a mapping")
+    prompts = PromptConfig(
+        default_return_format=_get_optional_string(
+            prompts_raw, "default_return_format"
+        ) or DEFAULT_RETURN_FORMAT,
+        worker_role_label=_get_optional_string(prompts_raw, "worker_role_label")
+        or DEFAULT_WORKER_ROLE_LABEL,
+        worker_goal_label=_get_optional_string(prompts_raw, "worker_goal_label")
+        or DEFAULT_WORKER_GOAL_LABEL,
+        worker_role_instructions_label=_get_optional_string(
+            prompts_raw, "worker_role_instructions_label"
+        ) or DEFAULT_WORKER_ROLE_INSTRUCTIONS_LABEL,
+        worker_approved_context_label=_get_optional_string(
+            prompts_raw, "worker_approved_context_label"
+        ) or DEFAULT_WORKER_APPROVED_CONTEXT_LABEL,
+        worker_boundaries_label=_get_optional_string(prompts_raw, "worker_boundaries_label")
+        or DEFAULT_WORKER_BOUNDARIES_LABEL,
+        worker_acceptance_target_label=_get_optional_string(
+            prompts_raw, "worker_acceptance_target_label"
+        ) or DEFAULT_WORKER_ACCEPTANCE_TARGET_LABEL,
+        worker_return_format_label=_get_optional_string(
+            prompts_raw, "worker_return_format_label"
+        ) or DEFAULT_WORKER_RETURN_FORMAT_LABEL,
+        tool_description=_get_optional_string(prompts_raw, "tool_description")
+        or DEFAULT_TOOL_DESCRIPTION,
+        tool_prompt_snippet=_get_optional_string(prompts_raw, "tool_prompt_snippet")
+        or DEFAULT_TOOL_PROMPT_SNIPPET,
+        tool_prompt_guidelines=tuple(
+            _get_optional_string_list(
+                prompts_raw,
+                "tool_prompt_guidelines",
+                context="prompts",
+            )
+            or DEFAULT_TOOL_PROMPT_GUIDELINES
+        ),
+        tool_goal_description=_get_optional_string(prompts_raw, "tool_goal_description")
+        or DEFAULT_TOOL_GOAL_DESCRIPTION,
+        tool_role_description=_get_optional_string(prompts_raw, "tool_role_description")
+        or DEFAULT_TOOL_ROLE_DESCRIPTION,
+        tool_timeout_description=_get_optional_string(prompts_raw, "tool_timeout_description")
+        or DEFAULT_TOOL_TIMEOUT_DESCRIPTION,
+        tool_task_label_description=_get_optional_string(
+            prompts_raw, "tool_task_label_description"
+        ) or DEFAULT_TOOL_TASK_LABEL_DESCRIPTION,
+        host_help=_get_optional_string(prompts_raw, "host_help") or DEFAULT_HOST_HELP,
+    )
+
     return AppConfig(
         state_dir=state_dir,
         log_dir=log_dir,
         default_timeout=default_timeout,
         concurrency=concurrency,
         auto_return=auto_return,
+        prompts=prompts,
     )
 
 

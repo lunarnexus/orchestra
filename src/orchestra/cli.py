@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
 
 from orchestra.app import (
     AppError,
     await_run_terminal_status,
     await_session_report,
+    await_session_report_payload,
     consume_pending_session_report,
     format_command_echo,
     format_dispatch_ack,
@@ -23,6 +25,7 @@ from orchestra.app import (
     format_status,
     init_pi,
     load_context,
+    mark_session_report_delivered,
     run_doctor,
     run_supervisor,
     start_run,
@@ -32,33 +35,49 @@ from orchestra.app import (
 from orchestra.config import ConfigError
 from orchestra.state import StateError
 
+INTERNAL_COMMANDS = frozenset(
+    {
+        "help-host",
+        "_run-supervisor",
+        "_pending-report",
+        "_await-session-report",
+        "_await-run",
+        "_mark-session-report-delivered",
+        "_dispatch-ack",
+        "_progress-message",
+        "_command-echo",
+        "_tool-info",
+    }
+)
 
-def build_parser() -> argparse.ArgumentParser:
+
+def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="orchestra",
-        description=(
-            "Agent-agnostic orchestration control plane for focused worker agents."
+        description="Focused worker-agent orchestration.",
+        epilog=(
+            "Examples:\n"
+            "  orchestra doctor\n"
+            "  orchestra roles\n"
+            "  orchestra do --session-id manual:demo --goal \"smoke test\"\n"
+            "  orchestra history --session-id manual:demo"
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--config",
+        metavar="PATH",
         default=None,
-        help=(
-            "path to config.yaml; defaults to ORCHESTRA_CONFIG, then "
-            "${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/config.yaml, then ./config.yaml"
-        ),
+        help="config file path",
     )
     parser.add_argument(
         "--agent-catalog",
+        metavar="PATH",
         default=None,
-        help=(
-            "path to agent-catalog.yaml; defaults to ORCHESTRA_AGENT_CATALOG, then "
-            "${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/agent-catalog.yaml, "
-            "then ./agent-catalog.yaml"
-        ),
+        help="agent catalog file path",
     )
 
-    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+    subparsers = parser.add_subparsers(dest="command", metavar="<command>", title="commands")
 
     do_parser = subparsers.add_parser("do", help="dispatch a worker run")
     do_parser.add_argument(
@@ -103,8 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
     roles_parser = subparsers.add_parser("roles", help="list configured worker roles")
     roles_parser.set_defaults(handler=_handle_roles)
 
-    help_parser = subparsers.add_parser("help-host", help="show host command help")
-    help_parser.set_defaults(handler=_handle_help_host)
+    if include_internal:
+        help_parser = subparsers.add_parser("help-host", help=argparse.SUPPRESS)
+        help_parser.set_defaults(handler=_handle_help_host)
 
     history_parser = subparsers.add_parser("history", help="show prior run summaries")
     history_parser.add_argument(
@@ -121,51 +141,62 @@ def build_parser() -> argparse.ArgumentParser:
     init_pi_parser.add_argument("--force", action="store_true", help="overwrite existing files")
     init_pi_parser.set_defaults(handler=_handle_init_pi)
 
-    supervisor_parser = subparsers.add_parser("_run-supervisor", help=argparse.SUPPRESS)
-    supervisor_parser.add_argument("--run-id", required=True)
-    supervisor_parser.add_argument("--request-file", required=True)
-    supervisor_parser.set_defaults(handler=_handle_run_supervisor)
+    if include_internal:
+        supervisor_parser = subparsers.add_parser("_run-supervisor", help=argparse.SUPPRESS)
+        supervisor_parser.add_argument("--run-id", required=True)
+        supervisor_parser.add_argument("--request-file", required=True)
+        supervisor_parser.set_defaults(handler=_handle_run_supervisor)
 
-    pending_parser = subparsers.add_parser("_pending-report", help=argparse.SUPPRESS)
-    pending_parser.add_argument("--session-id", required=True)
-    pending_parser.set_defaults(handler=_handle_pending_report)
+        pending_parser = subparsers.add_parser("_pending-report", help=argparse.SUPPRESS)
+        pending_parser.add_argument("--session-id", required=True)
+        pending_parser.set_defaults(handler=_handle_pending_report)
 
-    wait_parser = subparsers.add_parser("_await-session-report", help=argparse.SUPPRESS)
-    wait_parser.add_argument("--session-id", required=True)
-    wait_parser.add_argument("--run-id", required=True)
-    wait_parser.add_argument("--timeout", type=float, default=None)
-    wait_parser.set_defaults(handler=_handle_await_session_report)
+        wait_parser = subparsers.add_parser("_await-session-report", help=argparse.SUPPRESS)
+        wait_parser.add_argument("--session-id", required=True)
+        wait_parser.add_argument("--run-id", required=True)
+        wait_parser.add_argument("--timeout", type=float, default=None)
+        wait_parser.add_argument("--json", action="store_true")
+        wait_parser.set_defaults(handler=_handle_await_session_report)
 
-    wait_run_parser = subparsers.add_parser("_await-run", help=argparse.SUPPRESS)
-    wait_run_parser.add_argument("--session-id", required=True)
-    wait_run_parser.add_argument("--run-id", required=True)
-    wait_run_parser.add_argument("--timeout", type=float, default=None)
-    wait_run_parser.set_defaults(handler=_handle_await_run)
+        mark_report_parser = subparsers.add_parser(
+            "_mark-session-report-delivered",
+            help=argparse.SUPPRESS,
+        )
+        mark_report_parser.add_argument("--session-id", required=True)
+        mark_report_parser.add_argument("--run-id", action="append", required=True)
+        mark_report_parser.set_defaults(handler=_handle_mark_session_report_delivered)
 
-    dispatch_ack_parser = subparsers.add_parser("_dispatch-ack", help=argparse.SUPPRESS)
-    dispatch_ack_parser.add_argument("--run-id", required=True)
-    dispatch_ack_parser.set_defaults(handler=_handle_dispatch_ack)
+        wait_run_parser = subparsers.add_parser("_await-run", help=argparse.SUPPRESS)
+        wait_run_parser.add_argument("--session-id", required=True)
+        wait_run_parser.add_argument("--run-id", required=True)
+        wait_run_parser.add_argument("--timeout", type=float, default=None)
+        wait_run_parser.set_defaults(handler=_handle_await_run)
 
-    progress_parser = subparsers.add_parser("_progress-message", help=argparse.SUPPRESS)
-    progress_parser.add_argument("--completed", type=int, required=True)
-    progress_parser.add_argument("--total", type=int, required=True)
-    progress_parser.add_argument("--run-id", required=True)
-    progress_parser.add_argument("--status", required=True)
-    progress_parser.set_defaults(handler=_handle_progress_message)
+        dispatch_ack_parser = subparsers.add_parser("_dispatch-ack", help=argparse.SUPPRESS)
+        dispatch_ack_parser.add_argument("--run-id", required=True)
+        dispatch_ack_parser.set_defaults(handler=_handle_dispatch_ack)
 
-    echo_parser = subparsers.add_parser("_command-echo", help=argparse.SUPPRESS)
-    echo_parser.add_argument("raw_command")
-    echo_parser.set_defaults(handler=_handle_command_echo)
+        progress_parser = subparsers.add_parser("_progress-message", help=argparse.SUPPRESS)
+        progress_parser.add_argument("--completed", type=int, required=True)
+        progress_parser.add_argument("--total", type=int, required=True)
+        progress_parser.add_argument("--run-id", required=True)
+        progress_parser.add_argument("--status", required=True)
+        progress_parser.set_defaults(handler=_handle_progress_message)
 
-    tool_info_parser = subparsers.add_parser("_tool-info", help=argparse.SUPPRESS)
-    tool_info_parser.set_defaults(handler=_handle_tool_info)
+        echo_parser = subparsers.add_parser("_command-echo", help=argparse.SUPPRESS)
+        echo_parser.add_argument("raw_command")
+        echo_parser.set_defaults(handler=_handle_command_echo)
+
+        tool_info_parser = subparsers.add_parser("_tool-info", help=argparse.SUPPRESS)
+        tool_info_parser.set_defaults(handler=_handle_tool_info)
 
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    effective_argv = list(sys.argv[1:] if argv is None else argv)
+    parser = build_parser(include_internal=_uses_internal_command(effective_argv))
+    args = parser.parse_args(effective_argv)
     handler = getattr(args, "handler", None)
     if handler is None:
         parser.print_help()
@@ -175,6 +206,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (AppError, ConfigError, StateError, KeyError) as exc:
         print(f"error: {exc}")
         return 1
+
+
+def _uses_internal_command(argv: Sequence[str]) -> bool:
+    return any(token in INTERNAL_COMMANDS for token in argv)
 
 
 def _handle_do(args: argparse.Namespace) -> int:
@@ -300,14 +335,31 @@ def _handle_pending_report(args: argparse.Namespace) -> int:
 
 def _handle_await_session_report(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
-    report = await_session_report(
+    if args.json:
+        report = await_session_report_payload(
+            context,
+            args.session_id,
+            run_id=args.run_id,
+            timeout_seconds=args.timeout,
+        )
+        if report:
+            print(json.dumps({"runIds": report.run_ids, "report": report.text}))
+        return 0
+
+    report_text = await_session_report(
         context,
         args.session_id,
         run_id=args.run_id,
         timeout_seconds=args.timeout,
     )
-    if report:
-        print(report)
+    if report_text:
+        print(report_text)
+    return 0
+
+
+def _handle_mark_session_report_delivered(args: argparse.Namespace) -> int:
+    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    mark_session_report_delivered(context, args.session_id, list(args.run_id))
     return 0
 
 

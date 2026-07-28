@@ -115,6 +115,12 @@ class PendingRunRequest:
 
 
 @dataclass(frozen=True)
+class SessionReport:
+    run_ids: list[str]
+    text: str
+
+
+@dataclass(frozen=True)
 class StartedRun:
     record: RunRecord
     request_file: Path
@@ -241,6 +247,7 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         timeout_seconds=pending_request.timeout_seconds,
         task_label=pending_request.task_label,
         log_path=record.log_path,
+        prompts=context.config.prompts,
     )
 
     worker = harness.start(request, role)
@@ -329,8 +336,6 @@ def format_run_report(record: RunRecord) -> str:
         lines.append(f"error: {record.error_text}")
     if record.blocker_text:
         lines.append(f"blocker: {record.blocker_text}")
-    if record.artifact_path:
-        lines.append(f"artifact_path: {record.artifact_path}")
     if record.transcript_path:
         lines.append(f"transcript_path: {record.transcript_path}")
     return "\n".join(lines)
@@ -404,15 +409,35 @@ def build_session_report(session_id: str, runs: list[RunRecord], *, active_remai
     lines.append("runs:")
     for run in runs:
         summary = clean_result_summary(run.blocker_text or run.error_text or run.result_summary)
-        artifact = str(run.artifact_path) if run.artifact_path else "-"
         lines.append(
             f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label} :: {summary}"
         )
         lines.append(f"  log: {run.log_path}")
-        lines.append(f"  artifact: {artifact}")
     if active_remaining == 0:
         lines.append("session_report: all active workers for this session are complete")
     return "\n".join(lines)
+
+
+def pending_session_report(context: AppContext, session_id: str) -> SessionReport | None:
+    _require_session_id(session_id)
+    if not context.config.auto_return:
+        return None
+    runs = context.store.list_pending_report_runs(session_id)
+    if not runs:
+        return None
+    return SessionReport(
+        run_ids=[run.run_id for run in runs],
+        text=format_orchestrator_return(runs),
+    )
+
+
+def mark_session_report_delivered(
+    context: AppContext,
+    session_id: str,
+    run_ids: list[str],
+) -> None:
+    _require_session_id(session_id)
+    context.store.mark_report_runs_delivered(session_id, run_ids)
 
 
 def consume_pending_session_report(context: AppContext, session_id: str) -> str | None:
@@ -447,14 +472,14 @@ def await_run_terminal_status(
         time.sleep(poll_interval)
 
 
-def await_session_report(
+def await_session_report_payload(
     context: AppContext,
     session_id: str,
     *,
     run_id: str,
     poll_interval: float = 0.1,
     timeout_seconds: float | None = None,
-) -> str | None:
+) -> SessionReport | None:
     _require_session_id(session_id)
     deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
 
@@ -465,11 +490,29 @@ def await_session_report(
 
         if record.status not in ACTIVE_STATUSES:
             if context.store.count_active_runs(session_id) == 0:
-                return consume_pending_session_report(context, session_id)
+                return pending_session_report(context, session_id)
 
         if deadline is not None and time.monotonic() >= deadline:
             raise AppError("timed out waiting for session report")
         time.sleep(poll_interval)
+
+
+def await_session_report(
+    context: AppContext,
+    session_id: str,
+    *,
+    run_id: str,
+    poll_interval: float = 0.1,
+    timeout_seconds: float | None = None,
+) -> str | None:
+    report = await_session_report_payload(
+        context,
+        session_id,
+        run_id=run_id,
+        poll_interval=poll_interval,
+        timeout_seconds=timeout_seconds,
+    )
+    return report.text if report else None
 
 
 def format_status(context: AppContext, session_id: str) -> str:
@@ -501,25 +544,7 @@ def format_roles(context: AppContext) -> str:
 
 
 def format_host_help(context: AppContext) -> str:
-    return "\n".join(
-        [
-            "Orchestra commands:",
-            "  /orch help                         Show this help",
-            "  /orch doctor                       Check Orchestra setup",
-            "  /orch do <request>                 Start a worker for this Pi session",
-            "  /orch do --role ROLE <request>     Start a worker with a role",
-            "  /orch do --timeout SEC <request>   Start a worker with a timeout",
-            "  /orch status                       Show active workers for this session",
-            "  /orch stop <run-id>                Stop an owned active worker",
-            "  /orch history [limit]              Show recent results for this session",
-            "",
-            "Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, "
-            "ask a worker, or ask another agent.",
-            "auto_return: prompt orchestrator upon return of workers",
-            "",
-            format_roles(context),
-        ]
-    )
+    return context.config.prompts.host_help.format(roles=format_roles(context))
 
 
 def format_command_echo(raw_command: str) -> str:
@@ -549,30 +574,15 @@ def format_command_echo(raw_command: str) -> str:
 
 def tool_info(context: AppContext) -> ToolInfo:
     roles = format_roles(context)
+    prompts = context.config.prompts
     return ToolInfo(
-        description=" ".join(
-            [
-                "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
-                "Use when the user asks to delegate, dispatch, ask a worker, ask another "
-                "agent, run a subagent/sub-agent, or parallelize a narrow task.",
-                "Do not use for tasks you can answer directly without a worker.",
-                "Use only an exact configured role listed below. Omit role to use the "
-                "default worker role.",
-                roles,
-            ]
-        ),
-        prompt_snippet=f"Dispatch focused work to Orchestra workers/subagents. {roles}",
-        prompt_guidelines=[
-            "Use orch_dispatch when the user asks to delegate, dispatch, use a subagent, "
-            "use a sub-agent, ask a worker, ask another agent, or parallelize a focused task.",
-            "Keep orch_dispatch requests narrow and explicit.",
-            "Use only an exact configured role from the available roles list. Omit role to "
-            "use the default worker role.",
-        ],
-        goal_description="Focused worker request/task to delegate.",
-        role_description=f"Optional exact configured role. Omit for default worker role. {roles}",
-        timeout_description="Optional timeout in seconds.",
-        task_label_description="Optional short request label.",
+        description=prompts.tool_description.format(roles=roles),
+        prompt_snippet=prompts.tool_prompt_snippet.format(roles=roles),
+        prompt_guidelines=list(prompts.tool_prompt_guidelines),
+        goal_description=prompts.tool_goal_description,
+        role_description=prompts.tool_role_description.format(roles=roles),
+        timeout_description=prompts.tool_timeout_description,
+        task_label_description=prompts.tool_task_label_description,
     )
 
 
@@ -587,12 +597,10 @@ def format_history(context: AppContext, session_id: str, limit: int) -> str:
     lines.append("runs:")
     for run in runs:
         summary = clean_result_summary(run.blocker_text or run.error_text or run.result_summary)
-        artifact = str(run.artifact_path) if run.artifact_path else "-"
         lines.append(
             f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label} :: {summary}"
         )
         lines.append(f"  log: {run.log_path}")
-        lines.append(f"  artifact: {artifact}")
     return "\n".join(lines)
 
 

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestra.config import RoleConfig
+from orchestra.config import PromptConfig, RoleConfig
 from orchestra.harnesses import HarnessRegistry, PiHarness, WorkerRequest
 
 
@@ -82,6 +82,26 @@ def test_pi_harness_builds_scoped_prompt(worker_request: WorkerRequest) -> None:
     assert "Out of scope: Do not edit files." in prompt
     assert "Acceptance target: Return a short status report." in prompt
     assert "Return format:" in prompt
+
+
+def test_pi_harness_uses_configured_prompt_text(worker_request: WorkerRequest) -> None:
+    harness = PiHarness()
+    role = RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])
+    request = WorkerRequest(
+        role_name=worker_request.role_name,
+        goal=worker_request.goal,
+        timeout_seconds=worker_request.timeout_seconds,
+        prompts=PromptConfig(
+            default_return_format="Configured return.",
+            worker_goal_label="Objective",
+            worker_return_format_label="Respond with",
+        ),
+    )
+
+    prompt = harness.build_prompt(request, role)
+
+    assert "Objective: Investigate the current implementation." in prompt
+    assert "Respond with: Configured return." in prompt
 
 
 def test_pi_harness_start_returns_process_wrapper(

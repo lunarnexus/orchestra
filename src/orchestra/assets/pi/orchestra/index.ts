@@ -300,6 +300,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   }
 
   function watchSessionReport(sessionId: string, runId: string): void {
+    if (reportWatchers.has(sessionId)) return;
+
     const child = spawn(
       "orchestra",
       [
@@ -309,6 +311,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         sessionId,
         "--run-id",
         runId,
+        "--json",
       ],
       {
         stdio: ["ignore", "pipe", "pipe"],
@@ -332,11 +335,22 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       watchers.delete(child);
       if (watchers.size === 0) reportWatchers.delete(sessionId);
 
-      const report = stdout.trim();
-      if (code === 0 && report) {
-        const message = report;
+      const rawReport = stdout.trim();
+      if (code === 0 && rawReport) {
         try {
+          const payload = JSON.parse(rawReport) as { runIds?: string[]; report?: string };
+          const message = payload.report?.trim() ?? "";
+          if (!message) return;
           pi.sendUserMessage(message, { deliverAs: "followUp", triggerTurn: true });
+          const runIds = payload.runIds ?? [];
+          if (runIds.length > 0) {
+            void runOrchestra([
+              "_mark-session-report-delivered",
+              "--session-id",
+              sessionId,
+              ...runIds.flatMap((id) => ["--run-id", id]),
+            ]);
+          }
         } catch (error) {
           const err = error as { message?: string };
           process.stderr.write(`orchestra auto-return reinjection failed: ${err.message ?? String(error)}\n`);

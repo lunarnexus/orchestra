@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from orchestra.config import RoleConfig
+from orchestra.config import PromptConfig, RoleConfig
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,7 @@ class WorkerRequest:
     timeout_seconds: int = 600
     task_label: str = ""
     log_path: Path | None = None
+    prompts: PromptConfig = PromptConfig()
 
 
 @dataclass

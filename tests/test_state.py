@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -49,7 +50,7 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == 2
+    assert row[0] == 3
 
 
 def test_reserve_and_get_run_round_trip(state_store: StateStore, tmp_path: Path) -> None:
@@ -83,7 +84,6 @@ def test_update_run_tracks_state_transitions_and_metadata(
         RunUpdate(
             status=STATUS_DONE,
             result_summary="Completed successfully",
-            artifact_path=tmp_path / "artifacts" / "run-2.txt",
         ),
     )
 
@@ -94,7 +94,6 @@ def test_update_run_tracks_state_transitions_and_metadata(
     assert running.transcript_path == tmp_path / "transcripts" / "run-2.md"
     assert done.ended_at is not None
     assert done.result_summary == "Completed successfully"
-    assert done.artifact_path == tmp_path / "artifacts" / "run-2.txt"
 
 
 def test_late_terminal_update_is_ignored(state_store: StateStore, tmp_path: Path) -> None:
@@ -113,6 +112,37 @@ def test_late_terminal_update_is_ignored(state_store: StateStore, tmp_path: Path
     assert cancelled.status == STATUS_CANCELLED
     assert stale.status == STATUS_CANCELLED
     assert stale.result_summary is None
+
+
+def test_concurrent_terminal_updates_leave_one_terminal_winner(
+    state_store: StateStore,
+    tmp_path: Path,
+) -> None:
+    record = make_run(tmp_path, run_id="run-race", session_id="pi:session-a")
+    state_store.create_run(record)
+    state_store.update_run("run-race", RunUpdate(status=STATUS_RUNNING, process_id=7))
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(
+            executor.map(
+                lambda update: state_store.update_run("run-race", update),
+                [
+                    RunUpdate(status=STATUS_CANCELLED, blocker_text="stopped"),
+                    RunUpdate(status=STATUS_DONE, result_summary="too late"),
+                ],
+            )
+        )
+
+    final = state_store.get_run("run-race")
+
+    assert final.status in {STATUS_CANCELLED, STATUS_DONE}
+    assert all(result.status == final.status for result in results)
+    if final.status == STATUS_CANCELLED:
+        assert final.blocker_text == "stopped"
+        assert final.result_summary is None
+    else:
+        assert final.result_summary == "too late"
+        assert final.blocker_text is None
 
 
 def test_invalid_status_transition_raises(state_store: StateStore, tmp_path: Path) -> None:
@@ -160,6 +190,27 @@ def test_reserve_run_enforces_limits_atomically(state_store: StateStore, tmp_pat
             global_limit=1,
             per_session_limit=1,
         )
+
+
+def test_pending_report_runs_are_not_marked_until_delivered(
+    state_store: StateStore,
+    tmp_path: Path,
+) -> None:
+    run = make_run(tmp_path, "run-pending", "pi:session-r")
+    state_store.create_run(run)
+    state_store.update_run("run-pending", RunUpdate(status=STATUS_RUNNING, process_id=1))
+    state_store.update_run("run-pending", RunUpdate(status=STATUS_DONE, result_summary="ok"))
+
+    pending = state_store.list_pending_report_runs("pi:session-r")
+
+    assert [record.run_id for record in pending] == ["run-pending"]
+    assert pending[0].reported_at is None
+    assert state_store.get_run("run-pending").reported_at is None
+
+    delivered = state_store.mark_report_runs_delivered("pi:session-r", ["run-pending"])
+
+    assert delivered[0].reported_at is not None
+    assert state_store.list_pending_report_runs("pi:session-r") == []
 
 
 def test_consume_pending_report_runs_marks_rows_reported(

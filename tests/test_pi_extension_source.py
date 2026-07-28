@@ -5,12 +5,12 @@ from pathlib import Path
 
 def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
-    core_source = Path("src/orchestra/app.py").read_text(encoding="utf-8")
+    config_source = Path("src/orchestra/assets/config.yaml").read_text(encoding="utf-8")
 
     assert 'name: "orch_dispatch"' in extension_source
     assert "_tool-info" in extension_source
     for keyword in ("delegate", "dispatch", "subagent", "sub-agent", "worker"):
-        assert keyword in core_source
+        assert keyword in config_source
 
 
 def test_clean_return_templates_live_in_core_not_extension() -> None:

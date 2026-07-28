@@ -5,3 +5,50 @@ concurrency:
   global: 4
   per_session: 3
 auto_return: true
+prompts:
+  default_return_format: >-
+    Return a concise response with success/fail, files changed/inspected, if fail:
+    exact commands run, results, if blockers: blockers, if risks: risks
+  worker_role_label: Role
+  worker_goal_label: Goal
+  worker_role_instructions_label: Role instructions
+  worker_approved_context_label: Approved context
+  worker_boundaries_label: Out of scope
+  worker_acceptance_target_label: Acceptance target
+  worker_return_format_label: Return format
+  tool_description: >-
+    Delegate or dispatch a focused task to an Orchestra worker/subagent. Use when
+    the user asks to delegate, dispatch, ask a worker, ask another agent, run a
+    subagent/sub-agent, or parallelize a narrow task. Do not use for tasks you can
+    answer directly without a worker. Use only an exact configured role listed
+    below. Omit role to use the default worker role. {roles}
+  tool_prompt_snippet: Dispatch focused work to Orchestra workers/subagents. {roles}
+  tool_prompt_guidelines:
+    - >-
+      Use orch_dispatch when the user asks to delegate, dispatch, use a subagent,
+      use a sub-agent, ask a worker, ask another agent, or parallelize a focused
+      task.
+    - Keep orch_dispatch requests narrow and explicit.
+    - >-
+      Use only an exact configured role from the available roles list. Omit role
+      to use the default worker role.
+  tool_goal_description: Focused worker request/task to delegate.
+  tool_role_description: Optional exact configured role. Omit for default worker role. {roles}
+  tool_timeout_description: Optional timeout in seconds.
+  tool_task_label_description: Optional short request label.
+  host_help: |-
+    Orchestra commands:
+      /orch help                         Show this help
+      /orch doctor                       Check Orchestra setup
+      /orch do <request>                 Start a worker for this Pi session
+      /orch do --role ROLE <request>     Start a worker with a role
+      /orch do --timeout SEC <request>   Start a worker with a timeout
+      /orch status                       Show active workers for this session
+      /orch stop <run-id>                Stop an owned active worker
+      /orch history [limit]              Show recent results for this session
+
+    Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, ask a worker,
+    or ask another agent.
+    auto_return: prompt orchestrator upon return of workers
+
+    {roles}

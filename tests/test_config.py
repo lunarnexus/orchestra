@@ -128,6 +128,28 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
     assert worker.command == ["pi", "--no-session", "--model", "{model}", "-p", "{prompt}"]
 
 
+def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        """
+prompts:
+  default_return_format: Custom return.
+  worker_goal_label: Objective
+  tool_prompt_guidelines:
+    - Custom guideline.
+  host_help: Custom help {roles}
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = load_app_config(path)
+
+    assert config.prompts.default_return_format == "Custom return."
+    assert config.prompts.worker_goal_label == "Objective"
+    assert config.prompts.tool_prompt_guidelines == ("Custom guideline.",)
+    assert config.prompts.host_help == "Custom help {roles}"
+
+
 def test_load_agent_catalog_supports_optional_fields(tmp_path: Path) -> None:
     path = tmp_path / "agent-catalog.yaml"
     path.write_text(
