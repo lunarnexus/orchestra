@@ -1,0 +1,13 @@
+# Baseline agent catalog fixture for future harness and role tests.
+roles:
+  worker:
+    harness: pi
+    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    prompt_addition: Focus on the assigned task and return a compact result.
+    command:
+      - pi
+      - --no-session
+      - --model
+      - "{model}"
+      - -p
+      - "{prompt}"

@@ -1,40 +1,213 @@
 # orchestra
 
-Project scaffold bootstrapped from the template.
+Orchestra is an agent-agnostic orchestration control plane for dispatching focused worker agents from a trusted parent session.
 
-## Getting Started
+## MVP Status
 
-1. Copy this template to a new directory:
-   ```bash
-   cp -r . /path/to/new-project && cd /path/to/new-project
-   ```
-2. Replace all `[PLACEHOLDER]` values in every file. Search for `PLACEHOLDER` across the project.
-3. Initialize Git and commit the baseline:
-   ```bash
-   git init && git add -A && git commit -m "Initial commit"
-   ```
-4. Establish baseline tests before writing feature code (see AGENTS.md).
-5. Run CodeGraph initialization **inside your copied project**, not inside this template:
-   ```bash
-   hermes codegraph init
-   ```
+Implemented now:
 
-## Structure
+- Python core package with `orchestra` CLI
+- Pi one-shot worker harness (`harness: pi`)
+- SQLite runtime state and JSONL operational logs
+- atomic global and per-session concurrency limits
+- supervised worker start/stop/timeout handling
+- session-scoped consolidated reports
+- first trusted host path: global Pi host extension
+- host command surface: `/orch help`, `/orch do`, `/orch status`, `/orch stop`, `/orch doctor`, `/orch history`
 
+Still later / not implemented:
+
+- Hermes adapter
+- OpenCode adapter
+- MCP trusted wrapper path
+- ACP / RPC worker harnesses
+- workflow loops, watchdogs, approval routing
+
+## Install
+
+Use Python 3.11+.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
 ```
+
+## Global Pi Host Extension
+
+`/orch ...` is a general Pi host command, not repo-specific. Install/copy the host extension to Pi's global extension directory:
+
+```text
+~/.pi/agent/extensions/orchestra/index.ts
+```
+
+The repo source copy lives at:
+
+```text
+extensions/pi/orchestra/index.ts
+```
+
+Install/update it with:
+
+```bash
+orchestra init pi
+```
+
+Use `--force` to overwrite existing extension/config files:
+
+```bash
+orchestra init pi --force
+```
+
+Because this is a global extension, normal use should not require `pi --approve`. Project-local trust is only needed for `.pi/...` files, which are not the normal Orchestra host-extension install path.
+
+## Configuration
+
+Global Pi-aligned defaults live under Pi's user config directory:
+
+```text
+${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/config.yaml
+${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/agent-catalog.yaml
+```
+
+Resolution order:
+
+1. CLI flags: `--config`, `--agent-catalog`
+2. env vars: `ORCHESTRA_CONFIG`, `ORCHESTRA_AGENT_CATALOG`
+3. Pi-user defaults above
+4. cwd fallback for dev/manual mode: `./config.yaml`, `./agent-catalog.yaml`
+
+Current default config:
+
+```yaml
+state_dir: /Users/james/workspace/orchestra/state
+log_dir: /Users/james/workspace/orchestra/logs
+default_timeout: 600
+concurrency:
+  global: 4
+  per_session: 3
+auto_return: true
+```
+
+Current default agent catalog:
+
+```yaml
+roles:
+  worker:
+    harness: pi
+    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    prompt_addition: Focus on the assigned task and return a compact result.
+    command:
+      - pi
+      - --no-session
+      - --model
+      - "{model}"
+      - -p
+      - "{prompt}"
+```
+
+Notes:
+
+- `harness` is the worker runtime plugin key.
+- `command` is a tokenized argv template, not a shell string.
+- If `model` is omitted, the Pi harness skips `--model` and Pi uses its default.
+- `state_dir` and `log_dir` are absolute in the installed Pi config so logs/state do not drift into whatever cwd Pi was started from.
+
+## CLI Mode
+
+The CLI is useful for local/manual orchestration.
+
+`--session-id` in CLI mode is caller-supplied and is **not** the trusted host identity boundary described in `FOUNDATION.md`.
+
+```bash
+orchestra doctor
+orchestra do --session-id manual:demo --goal "Summarize the repository status"
+orchestra status --session-id manual:demo
+orchestra stop --session-id manual:demo --run-id <run-id>
+orchestra history --session-id manual:demo --limit 10
+```
+
+## Pi Host Commands
+
+Inside any Pi session with the global extension installed (`/orch help` lists available roles and natural-language dispatch hints):
+
+```text
+/orch help
+/orch do <goal>
+/orch status
+/orch stop <run-id>
+/orch doctor
+/orch history [limit]
+```
+
+Trusted session identity comes from Pi runtime context via `ctx.sessionManager.getSessionId()`, normalized as `pi:<session_id>`.
+
+Slash commands are echoed in the Pi display as the exact `/orch ...` line typed.
+
+The extension also registers the LLM-callable `orch_dispatch` tool, so plain text requests can dispatch workers when you use words like delegate, dispatch, subagent/sub-agent, worker, or ask another agent.
+
+Auto-return means the extension reinjects one consolidated completion report into the live owning Pi session after all active workers for that session are terminal. It is not `/orch history` polling.
+
+Print-mode smoke examples:
+
+```bash
+pi --no-approve --session-id orch-demo -p "/orch help"
+pi --no-approve --session-id orch-demo -p "/orch doctor"
+pi --no-approve --session-id orch-demo -p "/orch do summarize the repo"
+pi --no-approve --session-id orch-demo -p "/orch history 10"
+```
+
+A final real E2E must use a persistent Pi session, not only `-p`, so the injected auto-return turn is visible.
+
+## Logs and State
+
+Default runtime files for this checkout:
+
+```text
+/Users/james/workspace/orchestra/state/orchestra.db
+/Users/james/workspace/orchestra/logs/<run-id>.jsonl
+```
+
+State stays lean:
+
+- run/session metadata
+- process ids / process group ids when available
+- status transitions
+- compact result / error / blocker text
+- optional artifact / transcript refs
+- report watermarking for consolidated returns
+
+## Verification
+
+```bash
+python -m pytest
+python -m ruff check .
+python -m mypy src tests
+python -m build
+orchestra --help
+orchestra doctor
+pi --no-approve --session-id orch-demo -p "/orch doctor"
+```
+
+## Repository Layout
+
+```text
 .
-├── .env.example      # Required environment variables
-├── .gitignore        # Ignored files (customize for your project)
-├── .editorconfig     # Editor settings
-├── AGENTS.md         # AI coding agent rules and conventions
-├── CHANGELOG.md      # Version history
-├── FOUNDATION.md     # Core concepts, architecture decisions, domain model
-├── PLAN.md           # Current implementation plan
-├── README.md         # This file
-└── docs/             # Project documentation
+├── AGENTS.md                    # Project rules for AI coding agents
+├── FOUNDATION.md                # Architecture decisions and domain model
+├── PLAN.md                      # Current implementation plan
+├── README.md                    # Project overview and usage
+├── agent-catalog.yaml           # Dev/manual fallback role definitions
+├── config.yaml                  # Dev/manual fallback runtime configuration
+├── docs/                        # Supporting documentation
+├── extensions/pi/orchestra/     # Source copy of global Pi host extension
+├── src/orchestra/               # Python core
+└── tests/                       # Verification coverage
 ```
 
 ## Notes
 
-- `.gitignore` excludes `data/`. If your project tracks data files, remove or narrow that rule.
-- Every project should customize `.gitignore`, `.env.example`, and language-specific tooling before first commit.
+- Keep secrets out of the repository.
+- `FOUNDATION.md` and `PLAN.md` are planning records.
+- Default behavior keeps logs lean; raw prompts/transcripts stay optional.

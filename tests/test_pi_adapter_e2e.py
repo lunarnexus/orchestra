@@ -1,0 +1,103 @@
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from tests.helpers import wait_for_condition
+from tests.types import RuntimeFilesFactory
+
+
+@pytest.mark.skipif(shutil.which("pi") is None, reason="pi executable not found")
+def test_pi_extension_host_command_path(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "adapter ok"],
+    )
+    env = {
+        **os.environ,
+        "ORCHESTRA_CONFIG": str(config_path),
+        "ORCHESTRA_AGENT_CATALOG": str(catalog_path),
+    }
+
+    help_result = subprocess.run(
+        [
+            "pi",
+            "--no-approve",
+            "--session-id",
+            "orch-host-e2e",
+            "-p",
+            "/orch help",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert help_result.returncode == 0
+    help_output = help_result.stdout + help_result.stderr
+    assert "Orchestra commands:" in help_output
+    assert "roles:" in help_output
+    assert "- worker harness=pi" in help_output
+
+    doctor = subprocess.run(
+        [
+            "pi",
+            "--no-approve",
+            "--session-id",
+            "orch-host-e2e",
+            "-p",
+            "/orch doctor",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert doctor.returncode == 0
+    assert "config: ok" in doctor.stdout or "config: ok" in doctor.stderr
+
+    dispatch = subprocess.run(
+        [
+            "pi",
+            "--no-approve",
+            "--session-id",
+            "orch-host-e2e",
+            "-p",
+            "/orch do adapter e2e worker",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert dispatch.returncode == 0
+    assert "Dispatched:" in dispatch.stdout or "Dispatched:" in dispatch.stderr
+
+    def history_contains_result() -> bool:
+        result = subprocess.run(
+            [
+                "pi",
+                "--no-approve",
+                "--session-id",
+                "orch-host-e2e",
+                "-p",
+                "/orch history 10",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        return "adapter ok" in result.stdout or "adapter ok" in result.stderr
+
+    history_ready = wait_for_condition(history_contains_result, timeout=8)
+    assert history_ready

@@ -13,11 +13,18 @@ desktop.ini
 *.swo
 *~
 
+# Local Python environments
+.venv/
+venv/
+
 # Build outputs
 build/
 dist/
 out/
 logs/
+state/
+orchestra-state/
+.orchestra/
 *.egg-info/
 
 # Caches
@@ -25,6 +32,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 *.py[cod]
 node_modules/
 *.tsbuildinfo

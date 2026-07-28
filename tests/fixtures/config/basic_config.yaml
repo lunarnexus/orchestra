@@ -1,0 +1,8 @@
+# Baseline config fixture for future config-loading tests.
+state_dir: state
+log_dir: logs
+default_timeout: 600
+concurrency:
+  global: 4
+  per_session: 3
+auto_return: true

@@ -1,0 +1,253 @@
+from __future__ import annotations
+
+import json
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from orchestra.logs import append_jsonl_event
+from orchestra.state import (
+    STATUS_CANCELLED,
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_QUEUED,
+    STATUS_RUNNING,
+    ConcurrencyLimitError,
+    RunRecord,
+    RunUpdate,
+    StateError,
+    StateStore,
+)
+
+
+@pytest.fixture
+def state_store(tmp_path: Path) -> StateStore:
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    store.initialize()
+    return store
+
+
+def make_run(tmp_path: Path, run_id: str, session_id: str) -> RunRecord:
+    return RunRecord(
+        run_id=run_id,
+        orchestrator_session_id=session_id,
+        batch_id="batch-1",
+        harness="pi",
+        role="worker",
+        status=STATUS_QUEUED,
+        created_at="2026-07-27T00:00:00Z",
+        task_label="Investigate tests",
+        log_path=tmp_path / "logs" / f"{run_id}.jsonl",
+    )
+
+
+def test_initialize_creates_database_and_schema(state_store: StateStore) -> None:
+    assert state_store.database_path.exists()
+
+    with sqlite3.connect(state_store.database_path) as connection:
+        row = connection.execute("PRAGMA user_version").fetchone()
+
+    assert row is not None
+    assert row[0] == 2
+
+
+def test_reserve_and_get_run_round_trip(state_store: StateStore, tmp_path: Path) -> None:
+    record = make_run(tmp_path, run_id="run-1", session_id="pi:session-a")
+
+    state_store.reserve_run(record, global_limit=4, per_session_limit=3)
+    loaded = state_store.get_run("run-1")
+
+    assert loaded == record
+
+
+def test_update_run_tracks_state_transitions_and_metadata(
+    state_store: StateStore,
+    tmp_path: Path,
+) -> None:
+    record = make_run(tmp_path, run_id="run-2", session_id="pi:session-a")
+    state_store.create_run(record)
+
+    running = state_store.update_run(
+        "run-2",
+        RunUpdate(
+            status=STATUS_RUNNING,
+            process_id=1234,
+            process_group_id=1234,
+            worker_session_id="worker-session-1",
+            transcript_path=tmp_path / "transcripts" / "run-2.md",
+        ),
+    )
+    done = state_store.update_run(
+        "run-2",
+        RunUpdate(
+            status=STATUS_DONE,
+            result_summary="Completed successfully",
+            artifact_path=tmp_path / "artifacts" / "run-2.txt",
+        ),
+    )
+
+    assert running.started_at is not None
+    assert running.process_id == 1234
+    assert running.process_group_id == 1234
+    assert running.worker_session_id == "worker-session-1"
+    assert running.transcript_path == tmp_path / "transcripts" / "run-2.md"
+    assert done.ended_at is not None
+    assert done.result_summary == "Completed successfully"
+    assert done.artifact_path == tmp_path / "artifacts" / "run-2.txt"
+
+
+def test_late_terminal_update_is_ignored(state_store: StateStore, tmp_path: Path) -> None:
+    record = make_run(tmp_path, run_id="run-3", session_id="pi:session-a")
+    state_store.create_run(record)
+    state_store.update_run("run-3", RunUpdate(status=STATUS_RUNNING, process_id=7))
+    cancelled = state_store.update_run(
+        "run-3",
+        RunUpdate(status=STATUS_CANCELLED, blocker_text="stopped"),
+    )
+    stale = state_store.update_run(
+        "run-3",
+        RunUpdate(status=STATUS_DONE, result_summary="too late"),
+    )
+
+    assert cancelled.status == STATUS_CANCELLED
+    assert stale.status == STATUS_CANCELLED
+    assert stale.result_summary is None
+
+
+def test_invalid_status_transition_raises(state_store: StateStore, tmp_path: Path) -> None:
+    record = make_run(tmp_path, run_id="run-4", session_id="pi:session-a")
+    state_store.create_run(record)
+
+    with pytest.raises(StateError, match="invalid status transition: queued -> done"):
+        state_store.update_run("run-4", RunUpdate(status=STATUS_DONE))
+
+
+def test_count_and_list_active_runs_are_session_scoped(
+    state_store: StateStore,
+    tmp_path: Path,
+) -> None:
+    run_a = make_run(tmp_path, run_id="run-a", session_id="pi:session-a")
+    run_b = make_run(tmp_path, run_id="run-b", session_id="pi:session-a")
+    run_c = make_run(tmp_path, run_id="run-c", session_id="pi:session-b")
+
+    state_store.create_run(run_a)
+    state_store.create_run(run_b)
+    state_store.create_run(run_c)
+    state_store.update_run("run-b", RunUpdate(status=STATUS_RUNNING, process_id=77))
+    state_store.update_run("run-c", RunUpdate(status=STATUS_RUNNING, process_id=88))
+    state_store.update_run("run-c", RunUpdate(status=STATUS_FAILED, error_text="boom"))
+
+    active_a = state_store.list_active_runs("pi:session-a")
+    active_all = state_store.list_active_runs()
+
+    assert [run.run_id for run in active_a] == ["run-a", "run-b"]
+    assert [run.run_id for run in active_all] == ["run-a", "run-b"]
+    assert state_store.count_active_runs("pi:session-a") == 2
+    assert state_store.count_active_runs("pi:session-b") == 0
+
+
+def test_reserve_run_enforces_limits_atomically(state_store: StateStore, tmp_path: Path) -> None:
+    state_store.reserve_run(
+        make_run(tmp_path, "run-5", "pi:session-a"),
+        global_limit=1,
+        per_session_limit=1,
+    )
+
+    with pytest.raises(ConcurrencyLimitError, match="global concurrency limit exceeded"):
+        state_store.reserve_run(
+            make_run(tmp_path, "run-6", "pi:session-b"),
+            global_limit=1,
+            per_session_limit=1,
+        )
+
+
+def test_consume_pending_report_runs_marks_rows_reported(
+    state_store: StateStore,
+    tmp_path: Path,
+) -> None:
+    first = make_run(tmp_path, "run-7", "pi:session-r")
+    second = make_run(tmp_path, "run-8", "pi:session-r")
+    state_store.create_run(first)
+    state_store.create_run(second)
+    state_store.update_run("run-7", RunUpdate(status=STATUS_RUNNING, process_id=1))
+    state_store.update_run("run-7", RunUpdate(status=STATUS_DONE, result_summary="ok"))
+    state_store.update_run("run-8", RunUpdate(status=STATUS_RUNNING, process_id=2))
+    state_store.update_run("run-8", RunUpdate(status=STATUS_FAILED, error_text="bad"))
+
+    consumed = state_store.consume_pending_report_runs("pi:session-r")
+
+    assert [run.run_id for run in consumed] == ["run-7", "run-8"]
+    assert all(run.reported_at is not None for run in consumed)
+    assert state_store.consume_pending_report_runs("pi:session-r") == []
+
+
+def test_state_store_writes_jsonl_lifecycle_logs(state_store: StateStore, tmp_path: Path) -> None:
+    record = make_run(tmp_path, run_id="run-9", session_id="pi:session-a")
+
+    state_store.create_run(record)
+    state_store.update_run("run-9", RunUpdate(status=STATUS_RUNNING, process_id=100))
+    state_store.update_run(
+        "run-9",
+        RunUpdate(
+            status=STATUS_CANCELLED,
+            blocker_text="User requested stop",
+        ),
+    )
+
+    lines = record.log_path.read_text(encoding="utf-8").splitlines()
+    events = [json.loads(line) for line in lines]
+
+    assert [event["event"] for event in events] == [
+        "run.created",
+        "run.updated",
+        "run.updated",
+    ]
+    assert events[0]["status"] == STATUS_QUEUED
+    assert events[1]["status"] == STATUS_RUNNING
+    assert events[2]["status"] == STATUS_CANCELLED
+    assert events[2]["blocker_text"] == "User requested stop"
+
+
+def test_append_jsonl_event_omits_empty_noise_fields(tmp_path: Path) -> None:
+    log_path = tmp_path / "logs" / "compact.jsonl"
+
+    append_jsonl_event(
+        log_path,
+        {
+            "event": "run.updated",
+            "status": STATUS_DONE,
+            "result_summary": "ok",
+            "error_text": "",
+            "blocker_text": None,
+            "approval_needed": False,
+            "nested": {"empty": "", "useful": "yes"},
+            "items": ["kept", "", None, False],
+            "exit_code": 0,
+        },
+    )
+
+    event = json.loads(log_path.read_text(encoding="utf-8"))
+
+    assert event["result_summary"] == "ok"
+    assert event["nested"] == {"useful": "yes"}
+    assert event["items"] == ["kept"]
+    assert event["exit_code"] == 0
+    assert "error_text" not in event
+    assert "blocker_text" not in event
+    assert "approval_needed" not in event
+
+
+def test_append_jsonl_event_appends_independent_records(tmp_path: Path) -> None:
+    log_path = tmp_path / "logs" / "events.jsonl"
+
+    append_jsonl_event(log_path, {"event": "custom.one", "status": STATUS_QUEUED})
+    append_jsonl_event(log_path, {"event": "custom.two", "status": STATUS_RUNNING})
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    events = [json.loads(line) for line in lines]
+
+    assert len(events) == 2
+    assert events[0]["event"] == "custom.one"
+    assert events[1]["event"] == "custom.two"
+    assert all("timestamp" in event for event in events)

@@ -328,3 +328,16 @@ Dispatch prompts should stay slim, in the style of `dev-orchestra`: one goal,
 approved scope/context, explicit out-of-scope boundaries, acceptance target,
 focused instructions, and a concise return with status, results, blockers, and
 risks.
+
+### Pi Host Extension Installation
+
+The Pi host-side `/orch ...` command surface is not repo-specific. Once
+installed, it should be available to any Pi session in any project. Therefore,
+the Pi host extension belongs in the global Pi extension directory
+`~/.pi/agent/extensions/`, not a project-local `.pi/extensions/` directory.
+
+Project-local Pi extensions require project trust/approval such as
+`pi --approve`, which is the wrong default for Orchestra's general host command
+surface. Installing the Orchestra Pi host extension globally avoids that trust
+gate for normal use. Repo-local Pi files may still exist for repo-specific
+behavior, but the shared Orchestra host extension should be global.

@@ -1,9 +1,17 @@
 # Documentation
 
-Project documentation lives here. Add new docs as the project grows.
+Supporting docs for orchestra live here.
 
 ## Index
 
-- [FOUNDATION.md](../FOUNDATION.md) — Core concepts and architecture decisions (project root)
-- [PLAN.md](../PLAN.md) — Current implementation plan (project root)
-- [AGENTS.md](../AGENTS.md) — AI agent rules and conventions (project root)
+- [README.md](../README.md) — project overview, configuration, CLI usage, Pi adapter usage
+- [FOUNDATION.md](../FOUNDATION.md) — architecture decisions and domain model
+- [PLAN.md](../PLAN.md) — current implementation plan
+- [AGENTS.md](../AGENTS.md) — AI agent workflow and verification rules
+
+## Current Focus
+
+The repository now has a finished MVP baseline around the Python core and the global Pi
+host extension. Use the root `README.md` for installation, global Pi-aligned configuration,
+verification, and command examples. Use `FOUNDATION.md` and `PLAN.md` as the
+project’s architecture and planning record.

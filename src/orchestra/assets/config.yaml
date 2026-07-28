@@ -1,0 +1,7 @@
+state_dir: /Users/james/workspace/orchestra/state
+log_dir: /Users/james/workspace/orchestra/logs
+default_timeout: 600
+concurrency:
+  global: 4
+  per_session: 3
+auto_return: true
