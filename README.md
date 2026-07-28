@@ -14,6 +14,8 @@ Implemented now:
 - session-scoped consolidated reports
 - first trusted host path: global Pi host extension
 - host command surface: `/orch help`, `/orch do`, `/orch status`, `/orch stop`, `/orch doctor`, `/orch history`
+- natural-language dispatch through the Pi `orch_dispatch` tool
+- watcher-based Pi auto-return into the owning live session; manual persistent Pi E2E has passed
 
 Still later / not implemented:
 
@@ -22,6 +24,8 @@ Still later / not implemented:
 - MCP trusted wrapper path
 - ACP / RPC worker harnesses
 - workflow loops, watchdogs, approval routing
+- durable retry/recovery if live host reinjection fails
+- fully atomic terminal-state race hardening beyond sequential stale-update protection
 
 ## Install
 
@@ -145,9 +149,25 @@ Trusted session identity comes from Pi runtime context via `ctx.sessionManager.g
 
 Slash commands are echoed in the Pi display as the exact `/orch ...` line typed.
 
-The extension also registers the LLM-callable `orch_dispatch` tool, so plain text requests can dispatch workers when you use words like delegate, dispatch, subagent/sub-agent, worker, or ask another agent.
+The extension also registers the LLM-callable `orch_dispatch` tool, so plain text requests can dispatch workers when you use words like delegate, dispatch, subagent/sub-agent, worker, ask another agent, or parallelize a narrow task.
 
-Auto-return means the extension reinjects one consolidated completion report into the live owning Pi session after all active workers for that session are terminal. It is not `/orch history` polling.
+If the request omits a role, Orchestra uses the `worker` role. Available roles are surfaced in `/orch help` and in the dispatch tool metadata.
+
+Auto-return means the extension reinjects one consolidated completion report into the live owning Pi session after all active workers for that session are terminal. The current Pi adapter implements this with watcher subprocesses that wait on Orchestra state and then call Pi `sendUserMessage`; it is not `/orch history` polling.
+
+Common user-visible messages:
+
+```text
+orchestra dispatched: <run-id>
+orchestra: <run-id> returned <status> (<done>/<total>)
+
+[orchestra: Worker <run-id> success|fail]
+Request: <original request>
+Result: <summary>
+Log: <absolute-or-configured log path>
+```
+
+Failures use `Summary: <summary>` instead of `Result: <summary>`.
 
 Print-mode smoke examples:
 
@@ -158,7 +178,7 @@ pi --no-approve --session-id orch-demo -p "/orch do summarize the repo"
 pi --no-approve --session-id orch-demo -p "/orch history 10"
 ```
 
-A final real E2E must use a persistent Pi session, not only `-p`, so the injected auto-return turn is visible.
+Full auto-return verification should use a persistent Pi session, not only `-p`, so the injected auto-return turn is visible.
 
 ## Logs and State
 
@@ -175,8 +195,10 @@ State stays lean:
 - process ids / process group ids when available
 - status transitions
 - compact result / error / blocker text
-- optional artifact / transcript refs
+- optional transcript refs
 - report watermarking for consolidated returns
+
+Logs are sparse by default and omit empty/noise fields. Reports may include log paths for debugging, but normal orchestrator reasoning should not read logs unless needed.
 
 ## Verification
 

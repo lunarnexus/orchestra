@@ -23,8 +23,6 @@ dist/
 out/
 logs/
 state/
-orchestra-state/
-.orchestra/
 *.egg-info/
 
 # Caches

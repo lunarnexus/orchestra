@@ -72,8 +72,6 @@ decisions.
 - **Step** — one child-agent execution inside a run.
 - **Status** — lightweight runtime state: queued, running, waiting, done,
   failed, cancelled.
-- **Artifact** — optional debug or handoff file produced by a run and referenced
-  from JSONL operational logs.
 - **Approval request** — future interactive event where a child harness asks the
   orchestrator or human for a decision.
 
@@ -86,7 +84,7 @@ decisions.
 | MCP-capable, not MCP-only | MCP is a good universal tool surface, but host-native plugins/extensions are required for reliable slash UX and trusted session ownership/auto-return; generic MCP alone cannot provide the full behavior. | 2026-07-27 |
 | Python core | Python fits local subprocess orchestration, SQLite, CLI packaging, and existing CelloS lessons. TypeScript should be used only where host extensions require it. | 2026-07-27 |
 | One-shot first | Start with simple subprocess calls such as Pi/Hermes/OpenCode one-shots; add RPC, ACP streaming, and approval passthrough later. | 2026-07-27 |
-| SQLite for lean runtime state | Track useful supervision state by default while writing JSONL operational logs and artifact references for inspection. Debug mode may retain full prompts, transcripts, raw harness messages, stdout/stderr, and timing. | 2026-07-27 |
+| SQLite for lean runtime state | Track useful supervision state by default while writing JSONL operational logs for inspection. Debug mode may retain full prompts, transcripts, raw harness messages, stdout/stderr, and timing outside core run state. | 2026-07-27 |
 | `config.yaml` as primary config | Project and user configuration should use YAML, including concurrency limits, defaults, logging, timeouts, and harness discovery. | 2026-07-27 |
 | Separate agent catalog | Agent/model/role combinations, context limits, and harness-specific defaults should live outside core config once schema settles. | 2026-07-27 |
 | Minimal scheduler | Use a small run supervisor for concurrency, process tracking, status, and cancellation; avoid CelloS-style project-management weight. | 2026-07-27 |
@@ -128,15 +126,14 @@ Default state should include only:
 - short task label
 - compact final result or summary
 - error or blocker
-- JSONL log path and optional artifact path
+- JSONL log path
 - optional worker session handle or transcript path when the harness exposes one
 - approval-needed flag for future interactive modes
 
 Default state should not store full prompts, full transcripts, raw token streams,
 or every tool call. JSONL operational logs should record lifecycle events,
-status changes, result summaries, and artifact references. Debug mode may record
-raw details to logs or artifact bundles for troubleshooting and failed-run
-inspection.
+status changes and result summaries. Debug mode may record raw details to logs
+for troubleshooting and failed-run inspection.
 
 Future harnesses may opportunistically report a native session id or transcript
 file path for debugging or resume. This is not MVP and must remain optional: Pi
@@ -159,8 +156,7 @@ as required state.
    orchestrator may call `/orch do` repeatedly and asynchronously until a
    concurrency limit is reached.
 8. Each harness launches a focused child agent with scoped context.
-9. Orchestra tracks lean status while JSONL logs and optional artifacts capture
-   operational details.
+9. Orchestra tracks lean status while JSONL logs capture operational details.
 10. When any worker finishes, Orchestra updates state and checks
    `count_active_workers(orchestrator_session_id)`.
 11. If that count is below 1, Orchestra creates one minimal consolidated return
@@ -185,10 +181,8 @@ as required state.
   report.
 - Support multiple orchestrator sessions concurrently without allowing one
   session to receive, stop, or control another session's workers.
-- Store lean run status in SQLite plus JSONL operational logs and artifact
-  references.
-- Keep verbose details available only through JSONL logs or optional
-  artifacts.
+- Store lean run status in SQLite plus JSONL operational logs.
+- Keep verbose details available only through JSONL logs or optional debug paths.
 
 ## Current Design Decisions
 
@@ -206,8 +200,8 @@ Use `/orch` as the host-facing command namespace:
 worker returns, likely adding a standing objective and completion contract later.
 
 `/orch status` reports active agents/runs plus tiny service health. `/orch history`
-reads compact DB summaries and JSONL operational logs/artifacts for previous
-inputs and outputs.
+reads compact DB summaries and JSONL operational logs for previous inputs and
+outputs.
 
 ### Context and Results
 
@@ -229,7 +223,7 @@ When any worker finishes, Orchestra updates state and checks
 `count_active_workers(orchestrator_session_id)`. If the count is below 1,
 Orchestra sends one minimal consolidated return prompt/report for that
 orchestrator session with per-worker status, compact results or blockers, and
-JSONL log/artifact references. Do not send per-worker prompts, and do not return
+JSONL log references. Do not send per-worker prompts, and do not return
 one report per batch.
 
 ### Scheduling and Workflows
@@ -341,3 +335,149 @@ Project-local Pi extensions require project trust/approval such as
 surface. Installing the Orchestra Pi host extension globally avoids that trust
 gate for normal use. Repo-local Pi files may still exist for repo-specific
 behavior, but the shared Orchestra host extension should be global.
+
+## Integrated MVP Decisions
+
+These decisions were accepted during MVP finishing and are appended here as the
+durable architecture record. `HANDOFF.md` may keep session context, but this
+section is the source of truth.
+
+### Core and Host Adapter Boundary
+
+Orchestra remains a Python core with thin host integrations. Host adapters and
+extensions retrieve trusted host identity and relay core operations; they must
+not own orchestration policy.
+
+Generic user-facing behavior should live in core or core configuration where
+possible:
+
+- command and tool metadata
+- command echo policy
+- worker prompt labels and default return format
+- dispatch acknowledgement text
+- progress notification text
+- result and report formatting
+- summary cleanup
+
+Host-specific mechanics stay in host adapters/extensions. For Pi, this includes
+TUI entries, notifications, colors/themes, `sendUserMessage`, and trusted
+session id retrieval.
+
+Future Hermes, OpenCode, ACP, and MCP wrappers should call the same core
+operations and reuse core formatting. Adapter-specific code should handle only
+trusted identity, host UI/rendering, and host-specific message injection. Generic
+MCP alone is not trusted for ownership or auto-return unless wrapped by a trusted
+host adapter.
+
+### Host Commands and Natural Dispatch
+
+The MVP host command surface is:
+
+- `/orch help`
+- `/orch do`
+- `/orch status`
+- `/orch stop`
+- `/orch doctor`
+- `/orch history`
+
+`/orch do` is the manual dispatch path. Natural-language delegation is supported
+through a host tool named `orch_dispatch`. Dispatch trigger language includes
+delegate, dispatch, subagent/sub-agent, worker, ask another agent, and
+parallelize a narrow task. If a role is omitted, the default role is `worker`.
+The dispatch tool should include available configured roles in its metadata, and
+that metadata should come from core so future host adapters stay consistent.
+
+### Trusted Session Identity
+
+Worker ownership is keyed by trusted `orchestrator_session_id`. CLI
+`--session-id` remains local/manual mode only and is not a trusted host identity
+boundary. Pi trusted identity is `ctx.sessionManager.getSessionId()` normalized
+as `pi:<session_id>`. The LLM or user prompt must not provide, remember, infer,
+or override trusted session ids.
+
+### Returns and Auto-Return
+
+Auto-return means prompting the owning orchestrator session when workers return.
+Every worker terminal event may produce a one-line notification, but only the
+all-workers-returned condition should inject a prompt into the orchestrator
+session.
+
+Core-formatted dispatch acknowledgement:
+
+```text
+orchestra dispatched: <run-id>
+```
+
+Core-formatted progress notification:
+
+```text
+orchestra: <run-id> returned <status> (<done>/<total>)
+```
+
+Core-formatted final orchestrator return:
+
+```text
+[orchestra: Worker <run-id> success|fail]
+Request: <original request>
+Result: <summary>
+Log: <absolute-or-configured log path>
+```
+
+Failures use `Summary: <summary>` instead of `Result: <summary>`.
+
+The default worker return format is:
+
+```text
+Return a concise response with success/fail, files changed/inspected, if fail: exact commands run, results, if blockers: blockers, if risks: risks
+```
+
+Workers should mention blockers and risks only when present. Core summary cleanup
+strips explicit “none/no blockers/no risks” text while preserving real blockers
+or risks, and strips emoji/non-ASCII from final summaries to keep orchestrator
+context clean.
+
+### Logging and State
+
+Logs are useful for debugging but should not be bait for normal orchestrator
+reasoning. The orchestrator return may include a log path, but prompts should not
+tell the orchestrator to read logs unless needed.
+
+Logs should be sparse: omit `None`, empty strings, empty lists/dicts, and false
+optional flags. Successful logs should stay compact.
+
+Runtime state and log directories for this checkout are visible directories under
+the project:
+
+- `state/`
+- `logs/`
+
+Avoid hidden `.orchestra` directories for this project’s default install.
+
+### Configuration and Install
+
+Global Pi-facing config lives under
+`${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`.
+
+Config and catalog resolution order is:
+
+1. CLI flags
+2. `ORCHESTRA_CONFIG` / `ORCHESTRA_AGENT_CATALOG`
+3. Pi user defaults under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`
+4. cwd fallback for local/manual development
+
+`orchestra init pi [--force]` installs or copies:
+
+- global Pi extension
+- global Pi config
+- global Pi agent catalog
+
+`--force` overwrites existing installed files. Without it, existing files are
+preserved.
+
+### Process Supervision and Scheduling
+
+Worker process supervision is part of core. Stop and timeout must terminate the
+owned process or process group where supported. Terminal run updates must be
+idempotent: late worker exits must not overwrite terminal states. Global and
+per-session concurrency limits are enforced atomically. MVP over-limit behavior
+is fail-fast, not queueing.

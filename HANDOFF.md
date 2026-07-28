@@ -29,6 +29,7 @@ This file records app-level decisions made during the MVP finishing session. It 
 - Auto-return means prompting the orchestrator session when workers return.
 - Every worker terminal event should produce a one-line notification.
 - Only the all-workers-returned condition should inject a prompt into the orchestrator session.
+- Current Pi auto-return is watcher-based: the extension starts wait helper subprocesses that watch Orchestra state, then reinject the final report with Pi `sendUserMessage`.
 - Progress notifications are core-formatted as:
   - `orchestra: <run-id> returned <status> (<done>/<total>)`
 - Dispatch acknowledgement is core-formatted as:
