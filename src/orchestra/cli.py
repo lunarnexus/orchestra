@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Sequence
 
 from orchestra.app import (
@@ -10,9 +11,11 @@ from orchestra.app import (
     await_run_terminal_status,
     await_session_report,
     consume_pending_session_report,
+    format_command_echo,
     format_dispatch_ack,
     format_doctor_checks,
     format_history,
+    format_host_help,
     format_progress_notification,
     format_roles,
     format_run_report,
@@ -24,6 +27,7 @@ from orchestra.app import (
     run_supervisor,
     start_run,
     stop_run,
+    tool_info,
 )
 from orchestra.config import ConfigError
 from orchestra.state import StateError
@@ -99,6 +103,9 @@ def build_parser() -> argparse.ArgumentParser:
     roles_parser = subparsers.add_parser("roles", help="list configured worker roles")
     roles_parser.set_defaults(handler=_handle_roles)
 
+    help_parser = subparsers.add_parser("help-host", help="show host command help")
+    help_parser.set_defaults(handler=_handle_help_host)
+
     history_parser = subparsers.add_parser("history", help="show prior run summaries")
     history_parser.add_argument(
         "--session-id",
@@ -145,6 +152,13 @@ def build_parser() -> argparse.ArgumentParser:
     progress_parser.add_argument("--run-id", required=True)
     progress_parser.add_argument("--status", required=True)
     progress_parser.set_defaults(handler=_handle_progress_message)
+
+    echo_parser = subparsers.add_parser("_command-echo", help=argparse.SUPPRESS)
+    echo_parser.add_argument("raw_command")
+    echo_parser.set_defaults(handler=_handle_command_echo)
+
+    tool_info_parser = subparsers.add_parser("_tool-info", help=argparse.SUPPRESS)
+    tool_info_parser.set_defaults(handler=_handle_tool_info)
 
     return parser
 
@@ -207,6 +221,12 @@ def _handle_roles(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_help_host(args: argparse.Namespace) -> int:
+    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    print(format_host_help(context))
+    return 0
+
+
 def _handle_history(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
     if args.limit < 1:
@@ -225,6 +245,30 @@ def _handle_init_pi(args: argparse.Namespace) -> int:
 
 def _handle_dispatch_ack(args: argparse.Namespace) -> int:
     print(format_dispatch_ack(args.run_id))
+    return 0
+
+
+def _handle_command_echo(args: argparse.Namespace) -> int:
+    print(format_command_echo(args.raw_command))
+    return 0
+
+
+def _handle_tool_info(args: argparse.Namespace) -> int:
+    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    info = tool_info(context)
+    print(
+        json.dumps(
+            {
+                "description": info.description,
+                "promptSnippet": info.prompt_snippet,
+                "promptGuidelines": info.prompt_guidelines,
+                "goalDescription": info.goal_description,
+                "roleDescription": info.role_description,
+                "timeoutDescription": info.timeout_description,
+                "taskLabelDescription": info.task_label_description,
+            }
+        )
+    )
     return 0
 
 

@@ -113,30 +113,40 @@ interface ProgressNotifier {
   notify(message: string): void;
 }
 
-function helpText(roles: string | null = null): string {
-  const lines = [
-    "Orchestra commands:",
-    "  /orch help                         Show this help",
-    "  /orch doctor                       Check Orchestra setup",
-    "  /orch do <goal>                    Start a worker for this Pi session",
-    "  /orch do --role ROLE <goal>        Start a worker with a role",
-    "  /orch do --timeout SEC <goal>      Start a worker with a timeout",
-    "  /orch status                       Show active workers for this session",
-    "  /orch stop <run-id>                Stop an owned active worker",
-    "  /orch history [limit]              Show recent results for this session",
-    "",
-    "Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, ask a worker, or ask another agent.",
-    "Auto-return: one brief consolidated return when all workers finish.",
-  ];
-  if (roles?.trim()) {
-    lines.push("", roles.trim());
-  }
-  return lines.join("\n");
+interface ToolInfoPayload {
+  description: string;
+  promptSnippet: string;
+  promptGuidelines: string[];
+  goalDescription: string;
+  roleDescription: string;
+  timeoutDescription: string;
+  taskLabelDescription: string;
 }
 
-async function helpWithRoles(): Promise<string> {
-  const result = await runOrchestra(["roles"]);
-  return helpText(result.code === 0 ? result.stdout : null);
+async function hostHelp(): Promise<string> {
+  const result = await runOrchestra(["help-host"]);
+  return result.stdout || result.stderr;
+}
+
+async function commandEchoText(trimmed: string): Promise<string> {
+  const result = await runOrchestra(["_command-echo", trimmed]);
+  return result.stdout || (trimmed ? `/orch ${trimmed}` : "/orch");
+}
+
+async function loadToolInfo(): Promise<ToolInfoPayload> {
+  const result = await runOrchestra(["_tool-info"]);
+  if (result.code === 0 && result.stdout.trim()) {
+    return JSON.parse(result.stdout) as ToolInfoPayload;
+  }
+  return {
+    description: "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
+    promptSnippet: "Dispatch focused work to Orchestra workers/subagents.",
+    promptGuidelines: ["Use orch_dispatch for narrow delegated worker tasks."],
+    goalDescription: "Focused worker request/task to delegate.",
+    roleDescription: "Optional exact configured role. Omit for default worker role.",
+    timeoutDescription: "Optional timeout in seconds.",
+    taskLabelDescription: "Optional short request label.",
+  };
 }
 
 export default async function orchestraExtension(pi: ExtensionAPI) {
@@ -182,15 +192,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
     const notify = ctx.ui.notify.bind(ctx.ui);
     return { notify: (message: string) => notify(message, "info") };
-  }
-
-  function commandEchoText(trimmed: string): string {
-    const [subcommand, ...rest] = trimmed.split(/\s+/);
-    if (subcommand === "do") {
-      const parsed = parseDoArgs(rest.join(" "));
-      return parsed.goal || `/orch ${trimmed}`;
-    }
-    return trimmed ? `/orch ${trimmed}` : "/orch";
   }
 
   function trackRun(sessionId: string, runId: string): void {
@@ -293,7 +294,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       watchRunProgress(sessionId, runId, notifier);
       watchSessionReport(sessionId, runId);
       const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId]);
-      return { code: 0, runId, output: ack.stdout || `Dispatched: ${runId}` };
+      return { code: 0, runId, output: ack.stdout || `orchestra dispatched: ${runId}` };
     }
     return { code: result.code, runId: null, output: result.stdout || result.stderr };
   }
@@ -359,30 +360,19 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     currentSessionId = null;
   });
 
-  const rolesResult = await runOrchestra(["roles"]);
-  const availableRoles = rolesResult.code === 0 ? rolesResult.stdout : "roles: unknown";
+  const toolInfo = await loadToolInfo();
 
   pi.registerTool({
     name: "orch_dispatch",
     label: "Orchestra Dispatch",
-    description: [
-      "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
-      "Use when the user asks to delegate, dispatch, ask a worker, ask another agent, run a subagent/sub-agent, or parallelize a narrow task.",
-      "Do not use for tasks you can answer directly without a worker.",
-      "Use only an exact configured role listed below. Omit role to use the default worker role.",
-      availableRoles,
-    ].join(" "),
-    promptSnippet: `Dispatch focused work to Orchestra workers/subagents. ${availableRoles}`,
-    promptGuidelines: [
-      "Use orch_dispatch when the user asks to delegate, dispatch, use a subagent, use a sub-agent, ask a worker, ask another agent, or parallelize a focused task.",
-      "Keep orch_dispatch goals narrow and explicit.",
-      "Use only an exact configured role from the available roles list. Omit role to use the default worker role.",
-    ],
+    description: toolInfo.description,
+    promptSnippet: toolInfo.promptSnippet,
+    promptGuidelines: toolInfo.promptGuidelines,
     parameters: Type.Object({
-      goal: Type.String({ description: "Focused worker request/task to delegate." }),
-      role: Type.Optional(Type.String({ description: `Optional exact configured role. Omit for default worker role. ${availableRoles}` })),
-      timeout: Type.Optional(Type.Number({ description: "Optional timeout in seconds." })),
-      taskLabel: Type.Optional(Type.String({ description: "Optional short request label." })),
+      goal: Type.String({ description: toolInfo.goalDescription }),
+      role: Type.Optional(Type.String({ description: toolInfo.roleDescription })),
+      timeout: Type.Optional(Type.Number({ description: toolInfo.timeoutDescription })),
+      taskLabel: Type.Optional(Type.String({ description: toolInfo.taskLabelDescription })),
     }),
     async execute(_toolCallId, params: DispatchParams, _signal, _onUpdate, ctx) {
       const trustedSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
@@ -399,10 +389,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       const trimmed = args.trim();
       pi.appendEntry<OrchestraCommandEntry>("orchestra-command", {
-        text: commandEchoText(trimmed),
+        text: await commandEchoText(trimmed),
       });
       if (!trimmed) {
-        emitEntryOutput(ctx, await helpWithRoles());
+        emitEntryOutput(ctx, await hostHelp());
         return;
       }
 
@@ -410,7 +400,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       const trustedSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
 
       if (subcommand === "help") {
-        emitEntryOutput(ctx, await helpWithRoles());
+        emitEntryOutput(ctx, await hostHelp());
         return;
       }
 
@@ -476,7 +466,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         return;
       }
 
-      emitOutput(ctx, `Unknown /orch subcommand: ${subcommand}\n\n${await helpWithRoles()}`, "warning");
+      emitOutput(ctx, `Unknown /orch subcommand: ${subcommand}\n\n${await hostHelp()}`, "warning");
     },
   });
 }

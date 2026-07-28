@@ -80,7 +80,7 @@ def test_pi_extension_host_command_path(
         env=env,
     )
     assert dispatch.returncode == 0
-    assert "Dispatched:" in dispatch.stdout or "Dispatched:" in dispatch.stderr
+    assert "orchestra dispatched:" in dispatch.stdout or "orchestra dispatched:" in dispatch.stderr
 
     def history_contains_result() -> bool:
         result = subprocess.run(

@@ -13,6 +13,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from shlex import split as shell_split
 
 from orchestra.config import (
     AgentCatalog,
@@ -86,6 +87,17 @@ class InitFileResult:
 class InitPiResult:
     files: list[InitFileResult]
     verification_command: str
+
+
+@dataclass(frozen=True)
+class ToolInfo:
+    description: str
+    prompt_snippet: str
+    prompt_guidelines: list[str]
+    goal_description: str
+    role_description: str
+    timeout_description: str
+    task_label_description: str
 
 
 @dataclass(frozen=True)
@@ -334,7 +346,7 @@ def format_started_run(started: StartedRun) -> str:
 
 
 def format_dispatch_ack(run_id: str) -> str:
-    return f"Dispatched: {run_id}"
+    return f"orchestra dispatched: {run_id}"
 
 
 def format_progress_notification(
@@ -486,6 +498,82 @@ def format_roles(context: AppContext) -> str:
         profile = f" profile={role.profile}" if role.profile else ""
         lines.append(f"- {role_name} harness={role.harness}{model}{profile}")
     return "\n".join(lines)
+
+
+def format_host_help(context: AppContext) -> str:
+    return "\n".join(
+        [
+            "Orchestra commands:",
+            "  /orch help                         Show this help",
+            "  /orch doctor                       Check Orchestra setup",
+            "  /orch do <request>                 Start a worker for this Pi session",
+            "  /orch do --role ROLE <request>     Start a worker with a role",
+            "  /orch do --timeout SEC <request>   Start a worker with a timeout",
+            "  /orch status                       Show active workers for this session",
+            "  /orch stop <run-id>                Stop an owned active worker",
+            "  /orch history [limit]              Show recent results for this session",
+            "",
+            "Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, "
+            "ask a worker, or ask another agent.",
+            "auto_return: prompt orchestrator upon return of workers",
+            "",
+            format_roles(context),
+        ]
+    )
+
+
+def format_command_echo(raw_command: str) -> str:
+    raw = raw_command.strip()
+    if not raw:
+        return "/orch"
+    try:
+        parts = shell_split(raw)
+    except ValueError:
+        parts = raw.split()
+    if not parts:
+        return "/orch"
+    if parts[0] != "do":
+        return f"/orch {raw}"
+
+    request_parts: list[str] = []
+    index = 1
+    while index < len(parts):
+        token = parts[index]
+        if token in {"--role", "--timeout", "--task-label"} and index + 1 < len(parts):
+            index += 2
+            continue
+        request_parts.append(token)
+        index += 1
+    return " ".join(request_parts).strip() or f"/orch {raw}"
+
+
+def tool_info(context: AppContext) -> ToolInfo:
+    roles = format_roles(context)
+    return ToolInfo(
+        description=" ".join(
+            [
+                "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
+                "Use when the user asks to delegate, dispatch, ask a worker, ask another "
+                "agent, run a subagent/sub-agent, or parallelize a narrow task.",
+                "Do not use for tasks you can answer directly without a worker.",
+                "Use only an exact configured role listed below. Omit role to use the "
+                "default worker role.",
+                roles,
+            ]
+        ),
+        prompt_snippet=f"Dispatch focused work to Orchestra workers/subagents. {roles}",
+        prompt_guidelines=[
+            "Use orch_dispatch when the user asks to delegate, dispatch, use a subagent, "
+            "use a sub-agent, ask a worker, ask another agent, or parallelize a focused task.",
+            "Keep orch_dispatch requests narrow and explicit.",
+            "Use only an exact configured role from the available roles list. Omit role to "
+            "use the default worker role.",
+        ],
+        goal_description="Focused worker request/task to delegate.",
+        role_description=f"Optional exact configured role. Omit for default worker role. {roles}",
+        timeout_description="Optional timeout in seconds.",
+        task_label_description="Optional short request label.",
+    )
 
 
 def format_history(context: AppContext, session_id: str, limit: int) -> str:
