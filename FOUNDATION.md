@@ -85,13 +85,17 @@ decisions.
 | Python core | Python fits local subprocess orchestration, SQLite, CLI packaging, and existing CelloS lessons. TypeScript should be used only where host extensions require it. | 2026-07-27 |
 | One-shot first | Start with simple subprocess calls such as Pi/Hermes/OpenCode one-shots; add RPC, ACP streaming, and approval passthrough later. | 2026-07-27 |
 | SQLite for lean runtime state | Track useful supervision state by default while writing JSONL operational logs for inspection. Debug mode may retain full prompts, transcripts, raw harness messages, stdout/stderr, and timing outside core run state. | 2026-07-27 |
-| `config.yaml` as primary config | Project and user configuration should use YAML, including concurrency limits, defaults, logging, timeouts, and harness discovery. | 2026-07-27 |
+| `config.yaml` as primary config | Project and user configuration should use YAML, including concurrency limits, defaults, logging, timeouts, and explicit harness selection/fallback policy. | 2026-07-27 |
 | Separate agent catalog | Agent/model/role combinations, context limits, and harness-specific defaults should live outside core config once schema settles. | 2026-07-27 |
 | Minimal scheduler | Use a small run supervisor for concurrency, process tracking, status, and cancellation; avoid CelloS-style project-management weight. | 2026-07-27 |
 | Session-scoped returns | Worker returns are grouped by orchestrator session, not by batch. Send one consolidated return only when that session has no active workers remaining. | 2026-07-27 |
 | Exact session ownership | Multi-orchestrator support is mandatory: workers must be tracked and controlled by trusted `orchestrator_session_id`. Do not infer ownership. | 2026-07-27 |
 | Trusted adapter identity | Core requires a trusted `orchestrator_session_id` for worker ownership, control, and auto-return. Host plugins/extensions/adapters must hard-code retrieval from trusted runtime context and pass it to core; the LLM must never provide or remember this id. | 2026-07-27 |
 | MVP limit handling | Enforce global and per-session concurrency limits. If a `/orch do` request exceeds either limit, return an error for MVP instead of queueing. | 2026-07-27 |
+| Config-driven harness selection | Harness selection should come from explicit config/catalog entries, not from startup-time plugin discovery or environment scanning. | 2026-07-28 |
+| Lazy harness loading | Harness implementations/plugins should load only when a configured role actually requests them, keeping startup overhead low. | 2026-07-28 |
+| Agent-agnostic core, harness-specific connectors | Core orchestration should remain runtime-neutral; prompt shaping, argv construction, launch details, and runtime-specific behavior belong in harness connectors. | 2026-07-28 |
+| Explicit harness fallback | If a configured harness is unavailable or broken, any fallback to a default harness must be explicitly configured and observable, never silent. | 2026-07-28 |
 
 ## Technology Stack
 
@@ -103,12 +107,16 @@ decisions.
 - **Runtime:** local subprocess orchestration first; MCP server and host-native
   adapters expose the same core operations.
 - **Database:** SQLite for lightweight runtime state.
-- **Configuration:** `config.yaml` plus `agent-catalog.yaml` for role and harness
-  command definitions.
+- **Configuration:** `config.yaml` plus `agent-catalog.yaml` for role definitions,
+  harness command definitions, and explicit harness selection/fallback behavior.
 - **Initial harnesses:** Pi workers first, then Hermes, then OpenCode. Hermes is
   the likely first orchestrator host, followed by Pi and OpenCode.
 - **Future harness modes:** Pi RPC, ACP, and other streaming or interactive
   protocols.
+
+Harness implementations should be loaded lazily only when referenced by the
+selected config/catalog path; Orchestra should not pay startup cost to scan for
+unused harness plugins.
 
 ## Runtime State
 

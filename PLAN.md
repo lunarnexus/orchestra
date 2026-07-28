@@ -2,67 +2,103 @@
 
 ## Goal
 
-Close out the Orchestra MVP by verifying the implemented Python core, Pi harness, and global Pi host extension, then fix only the remaining correctness gaps that still block a clean baseline.
+Make Orchestra's core agent-agnostic, add config-driven harness connectors, and add a minimal Hermes integration without claiming unproven end-to-end Hermes behavior.
+
+## Completed Progress
+
+### Harness/core refactor
+
+- [x] Added lazy, config-driven harness loading.
+- [x] Avoided startup-time harness discovery/scanning.
+- [x] Added lazy built-in registration for Pi.
+- [x] Added lazy built-in registration for Hermes.
+- [x] Preserved missing/broken harness failures as clear failed runs instead of stuck queued runs.
+- [x] Extracted shared prompt rendering into neutral harness helpers.
+- [x] Extracted shared command-template expansion into neutral harness helpers.
+- [x] Extracted shared compact summary logic into neutral harness helpers.
+- [x] Extracted process-group helpers into neutral subprocess helpers.
+- [x] Slimmed `PiHarness` so Pi-specific code owns only Pi launch behavior.
+- [x] Removed Pi-owned helper imports from core supervision.
+- [x] Replaced Pi-specific core worker timeout/failure wording with generic worker wording.
+
+### Hermes worker harness
+
+- [x] Added minimal `HermesHarness` as a one-shot subprocess harness.
+- [x] Reused shared prompt, command-template, and process-group helpers.
+- [x] Registered the Hermes harness lazily and config-driven.
+- [x] Kept Hermes out of default active catalog roles, so `orchestra doctor` does not require Hermes unless configured.
+
+### Hermes host plugin MVP
+
+- [x] Added Hermes adapter identity normalization: `hermes:<trusted-session-id>`.
+- [x] Added Hermes plugin source under `extensions/hermes/orchestra/`.
+- [x] Added `orch_dispatch` tool registration.
+- [x] Enforced trusted identity only from Hermes tool-call `kwargs["session_id"]`.
+- [x] Rejected model/user-supplied identity fields: `session_id`, `identity`, `orchestrator_session_id`.
+- [x] Kept tool schema free of any session-id parameter.
+- [x] Made `/orch` slash command fail closed because Hermes public slash-command API does not provide trusted session id.
+- [x] Added integer timeout schema and runtime timeout validation.
+- [x] Added bounded subprocess calls in the plugin.
+- [x] Avoided profile/plugin installation and any writes to Hermes profile directories.
+
+## Verified
+
+Last full verification passed:
+
+- [x] `python3 -m pytest` — `99 passed in 24.13s`
+- [x] `python3 -m ruff check .`
+- [x] `python3 -m mypy src tests`
+- [x] `python3 -m build`
+- [x] `python3 -m orchestra --help`
+- [x] `python3 -m orchestra doctor`
+
+Focused checks also passed for:
+
+- [x] harness registry behavior
+- [x] Pi harness behavior after helper extraction
+- [x] process supervision failure handling
+- [x] Hermes worker harness behavior
+- [x] Hermes adapter identity behavior
+- [x] Hermes plugin trusted-identity and timeout behavior
+
+## Not Yet Proven End-to-End
+
+These are not done and should not be described as working:
+
+- [ ] Real Hermes worker run using an actual Hermes profile and model.
+- [ ] Installing the Hermes plugin into a real Hermes profile.
+- [ ] Enabling the Hermes plugin with `hermes -p <profile> plugins enable orchestra`.
+- [ ] Invoking `orch_dispatch` from a real Hermes model/tool call and confirming `kwargs["session_id"]` is populated in that surface.
+- [ ] Returning worker completion reports into a live Hermes session.
+- [ ] Functional `/orch` slash commands in Hermes. Current implementation intentionally fails closed because trusted session id is unavailable to public slash-command handlers.
+- [x] `orchestra init hermes --profile <profile> [--force]` wrapper around official `hermes plugins install` command.
 
 ## Current State
 
-Implemented baseline:
+- Active slice: None.
+- Current implementation is unit/integration verified inside Orchestra, but real Hermes E2E remains unproven.
+- `orchestra init hermes --profile tori --force` was run and reached the official Hermes installer, but live install failed because `extensions/hermes/orchestra` is not present in the GitHub repository yet.
+- Next honest slice: commit and push the plugin source to GitHub, then rerun `orchestra init hermes --profile tori --force` and a real `orch_dispatch` tool-call smoke.
 
-- Python core package with `orchestra` CLI.
-- Pi one-shot worker harness.
-- SQLite runtime state and sparse JSONL operational logs.
-- Atomic global and per-session run reservation.
-- Supervised worker start, stop, and timeout handling.
-- Session-scoped status, history, and consolidated reports.
-- Global Pi host extension installed by `orchestra init pi [--force]`.
-- Trusted Pi session identity from `ctx.sessionManager.getSessionId()`, normalized as `pi:<session_id>`.
-- `/orch help`, `/orch do`, `/orch status`, `/orch stop`, `/orch doctor`, and `/orch history`.
-- Natural-language dispatch through `orch_dispatch` with default role `worker`.
-- Core-owned prompt labels, command/tool metadata, progress text, dispatch acknowledgement, and return formatting.
-- Watcher-based Pi auto-return into the owning live session.
-- Manual persistent Pi E2E has passed.
+## Decisions / Scope Notes
 
-Known remaining gaps:
+- No fake-command E2E should be treated as proof that real Hermes integration works.
+- Config/catalog remains the source of truth for harness selection.
+- Harness loading stays lazy and explicit.
+- Core stays agent-agnostic; harnesses/plugins own runtime-specific behavior.
+- Hermes slash command stays fail-closed until Hermes exposes trusted session identity to plugin command handlers through a public API.
+- Hermes plugin installation must be explicit and profile-safe; never silently write to a Hermes profile.
 
-- Failed live reinjection can consume a pending report before delivery is confirmed.
-- Terminal-state race hardening is sequential/idempotent but not fully atomic under concurrent terminal writers.
-- Final verification sweep still needs to be run against the current working tree.
+## Open Questions
 
-## Decisions
+- Which real Hermes profile should be used for the first live worker-harness smoke?
+- Which model/provider should that profile use for a harmless smoke prompt?
+- Should `orchestra init hermes` target `--profile NAME`, explicit `--hermes-home PATH`, or both?
+- Should the Hermes plugin remain tool-only until Hermes adds public command session context?
 
-- `FOUNDATION.md` is the durable architecture record.
-- `HANDOFF.md` remains for session context until the user approves archiving or deletion.
-- CLI `--session-id` is local/manual mode only, not trusted host identity.
-- Pi auto-return is currently watcher-based. Do not describe it as direct callback-driven unless the implementation changes.
-- Generic wording, prompt labels, output formatting, and tool metadata belong in core/config, not host adapter copies.
-- Future Hermes/OpenCode/ACP/MCP adapters should reuse the same core operations and formatting.
+## Risks
 
-## Remaining Work
-
-### Phase 1: Preserve report delivery on reinjection failure
-
-- [ ] Add a failing test proving a failed host reinjection does not lose the consolidated report.
-- [ ] Split pending/claimed/delivered report state, or otherwise mark delivery only after host send succeeds.
-- [ ] Verify `/orch history` and pending report behavior remain session-scoped.
-
-### Phase 2: Make terminal transitions race-atomic
-
-- [ ] Add a concurrent cancellation/timeout/completion race test.
-- [ ] Change terminal updates to conditional SQLite transitions so stale terminal writers become no-ops.
-- [ ] Verify late worker completion cannot overwrite `cancelled`, `failed`, or `done`.
-
-### Phase 3: Final verification
-
-- [ ] `python -m pytest`
-- [ ] `python -m ruff check .`
-- [ ] `python -m mypy src tests`
-- [ ] `python -m build`
-- [ ] `orchestra --help`
-- [ ] `orchestra doctor`
-- [ ] `orchestra init pi --force`
-- [ ] `pi --no-approve --session-id orch-demo -p "/orch help"`
-- [ ] `pi --no-approve --session-id orch-demo -p "/orch doctor"`
-
-## Done Definition
-
-The MVP closeout is done when report delivery is recoverable, terminal transitions are race-atomic, the verification sweep passes, and docs accurately describe the implemented watcher-based Pi host path plus later adapters as future work.
+- Real Hermes behavior may differ from source-level expectations until tested in a live profile.
+- Plugin PATH lookup for `orchestra` assumes the target Hermes runtime can find the intended Orchestra executable.
+- Plugin error text currently returns bounded command output; future hardening may need redaction/truncation if live surfaces expose sensitive local paths.
+- Live plugin testing has side effects in a Hermes profile and must be explicitly targeted.

@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from shlex import split as shell_split
@@ -27,13 +28,15 @@ from orchestra.config import (
     resolve_config_path,
 )
 from orchestra.harnesses import (
+    HarnessLoadError,
     HarnessRegistry,
-    PiHarness,
     WorkerProcess,
     WorkerRequest,
     WorkerResult,
+    register_builtin_harnesses,
 )
-from orchestra.harnesses.pi import compact_summary, process_group_id
+from orchestra.harnesses.common import compact_summary
+from orchestra.harnesses.processes import process_group_id
 from orchestra.logs import utc_now
 from orchestra.state import (
     ACTIVE_STATUSES,
@@ -90,6 +93,14 @@ class InitPiResult:
 
 
 @dataclass(frozen=True)
+class InitHermesResult:
+    command: list[str]
+    stdout: str
+    stderr: str
+    verification_command: str
+
+
+@dataclass(frozen=True)
 class ToolInfo:
     description: str
     prompt_snippet: str
@@ -127,9 +138,7 @@ class StartedRun:
 
 
 def create_default_registry() -> HarnessRegistry:
-    registry = HarnessRegistry()
-    registry.register(PiHarness())
-    return registry
+    return register_builtin_harnesses(HarnessRegistry())
 
 
 def load_context(
@@ -236,7 +245,27 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
 
     pending_request = _load_pending_request(run_id, Path(request_file))
     role = _get_role(context.catalog, record.role)
-    harness = context.registry.get(role.harness)
+    try:
+        harness = context.registry.get(role.harness)
+    except HarnessLoadError as exc:
+        _safe_unlink(pending_request.request_file)
+        detail = exc.args[0] if exc.args else str(exc)
+        return _finalize_supervisor_setup_failure(
+            context,
+            run_id,
+            error_text=detail,
+            blocker_text="Worker harness could not be loaded",
+        )
+    except KeyError as exc:
+        _safe_unlink(pending_request.request_file)
+        detail = exc.args[0] if exc.args else str(exc)
+        return _finalize_supervisor_setup_failure(
+            context,
+            run_id,
+            error_text=detail,
+            blocker_text="Worker harness is not configured",
+        )
+
     request = WorkerRequest(
         role_name=pending_request.role_name,
         goal=pending_request.goal,
@@ -250,7 +279,17 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         prompts=context.config.prompts,
     )
 
-    worker = harness.start(request, role)
+    try:
+        worker = harness.start(request, role)
+    except Exception as exc:
+        _safe_unlink(pending_request.request_file)
+        return _finalize_supervisor_setup_failure(
+            context,
+            run_id,
+            error_text=f"failed to start harness: {role.harness}: {exc}",
+            blocker_text="Worker harness could not start",
+        )
+
     pgid = process_group_id(worker.process.pid)
     updated = context.store.update_run(
         run_id,
@@ -280,7 +319,7 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
             stdout=stdout,
             stderr=stderr,
             result_summary=compact_summary(stdout),
-            error_text="Pi worker timed out",
+            error_text="Worker timed out",
             blocker_text="Worker exceeded timeout",
             timed_out=True,
             worker_session_id=worker.worker_session_id,
@@ -636,6 +675,56 @@ def init_pi(*, force: bool = False, source_root: str | Path | None = None) -> In
     )
 
 
+def init_hermes(
+    *,
+    profile: str,
+    force: bool = False,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> InitHermesResult:
+    hermes_profile = profile.strip()
+    if not hermes_profile:
+        raise AppError("Hermes profile is required")
+
+    plugin_source = "lunarnexus/orchestra/extensions/hermes/orchestra"
+    command = [
+        "hermes",
+        "-p",
+        hermes_profile,
+        "plugins",
+        "install",
+        plugin_source,
+        "--enable",
+    ]
+    if force:
+        command.append("--force")
+
+    try:
+        result = runner(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except FileNotFoundError as exc:
+        raise AppError("hermes command not found") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise AppError("hermes plugin install timed out") from exc
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    if result.returncode != 0:
+        detail = stderr or stdout or f"hermes exited with status {result.returncode}"
+        raise AppError(f"Hermes plugin install failed: {detail}")
+
+    return InitHermesResult(
+        command=command,
+        stdout=stdout,
+        stderr=stderr,
+        verification_command=f"hermes -p {hermes_profile} plugins list",
+    )
+
+
 def run_doctor(
     *,
     config_path: str | Path | None = None,
@@ -662,6 +751,15 @@ def run_doctor(
     for role_name, role in sorted(context.catalog.roles.items()):
         try:
             harness = context.registry.get(role.harness)
+        except HarnessLoadError as exc:
+            checks.append(
+                DoctorCheck(
+                    f"harness:{role_name}",
+                    False,
+                    exc.args[0],
+                )
+            )
+            continue
         except KeyError:
             checks.append(
                 DoctorCheck(
@@ -780,6 +878,24 @@ def _load_pending_request(run_id: str, request_file: Path) -> PendingRunRequest:
     )
 
 
+def _finalize_supervisor_setup_failure(
+    context: AppContext,
+    run_id: str,
+    *,
+    error_text: str,
+    blocker_text: str,
+) -> RunRecord:
+    return context.store.update_run(
+        run_id,
+        RunUpdate(
+            status=STATUS_FAILED,
+            result_summary=clean_result_summary(error_text),
+            error_text=error_text,
+            blocker_text=blocker_text,
+        ),
+    )
+
+
 def _result_from_completed_worker(
     worker: WorkerProcess,
     stdout: str,
@@ -811,7 +927,7 @@ def _result_from_completed_worker(
         stdout=normalized_stdout,
         stderr=normalized_stderr,
         result_summary=result_summary,
-        error_text=compact_summary(normalized_stderr) or "Pi worker failed",
+        error_text=compact_summary(normalized_stderr) or "Worker failed",
         blocker_text=None,
         worker_session_id=worker.worker_session_id,
         transcript_path=worker.transcript_path,

@@ -23,6 +23,7 @@ from orchestra.app import (
     format_run_report,
     format_started_run,
     format_status,
+    init_hermes,
     init_pi,
     load_context,
     mark_session_report_delivered,
@@ -143,6 +144,15 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     init_pi_parser.add_argument("--force", action="store_true", help="overwrite existing files")
     init_pi_parser.set_defaults(handler=_handle_init_pi)
 
+    init_hermes_parser = init_subparsers.add_parser("hermes", help="install Hermes plugin")
+    init_hermes_parser.add_argument(
+        "--profile",
+        required=True,
+        help="Hermes profile to install into",
+    )
+    init_hermes_parser.add_argument("--force", action="store_true", help="force reinstall")
+    init_hermes_parser.set_defaults(handler=_handle_init_hermes)
+
     if include_internal:
         supervisor_parser = subparsers.add_parser("_run-supervisor", help=argparse.SUPPRESS)
         supervisor_parser.add_argument("--run-id", required=True)
@@ -213,8 +223,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     try:
         return int(handler(args))
-    except (AppError, ConfigError, StateError, KeyError) as exc:
+    except (AppError, ConfigError, StateError) as exc:
         print(f"error: {exc}")
+        return 1
+    except KeyError as exc:
+        detail = exc.args[0] if exc.args else str(exc)
+        print(f"error: {detail}")
         return 1
 
 
@@ -284,6 +298,17 @@ def _handle_init_pi(args: argparse.Namespace) -> int:
     result = init_pi(force=bool(args.force))
     for file_result in result.files:
         print(f"{file_result.action}: {file_result.target}")
+    print(f"verify: {result.verification_command}")
+    return 0
+
+
+def _handle_init_hermes(args: argparse.Namespace) -> int:
+    result = init_hermes(profile=args.profile, force=bool(args.force))
+    print(f"installed: {' '.join(result.command)}")
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
     print(f"verify: {result.verification_command}")
     return 0
 

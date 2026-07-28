@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -61,15 +62,38 @@ class Harness(Protocol):
     def start(self, request: WorkerRequest, role: RoleConfig) -> WorkerProcess: ...
 
 
+class HarnessLoadError(KeyError):
+    """Raised when a configured harness cannot be loaded."""
+
+
 class HarnessRegistry:
     def __init__(self) -> None:
         self._harnesses: dict[str, Harness] = {}
+        self._loaders: dict[str, Callable[[], Harness]] = {}
 
     def register(self, harness: Harness) -> None:
         self._harnesses[harness.name] = harness
+        self._loaders.pop(harness.name, None)
+
+    def register_loader(self, name: str, loader: Callable[[], Harness]) -> None:
+        self._loaders[name] = loader
 
     def get(self, name: str) -> Harness:
+        if name not in self._harnesses and name in self._loaders:
+            self._harnesses[name] = self._load(name)
         try:
             return self._harnesses[name]
         except KeyError as exc:
             raise KeyError(f"unknown harness: {name}") from exc
+
+    def _load(self, name: str) -> Harness:
+        loader = self._loaders[name]
+        try:
+            harness = loader()
+        except Exception as exc:
+            raise HarnessLoadError(f"failed to load harness: {name}: {exc}") from exc
+        if harness.name != name:
+            raise HarnessLoadError(
+                f"loaded harness name mismatch: expected {name!r}, got {harness.name!r}"
+            )
+        return harness

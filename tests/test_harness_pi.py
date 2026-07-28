@@ -6,6 +6,11 @@ import pytest
 
 from orchestra.config import PromptConfig, RoleConfig
 from orchestra.harnesses import HarnessRegistry, PiHarness, WorkerRequest
+from orchestra.harnesses.common import (
+    compact_summary,
+    expand_command_template,
+    render_worker_prompt,
+)
 
 
 @pytest.fixture
@@ -102,6 +107,28 @@ def test_pi_harness_uses_configured_prompt_text(worker_request: WorkerRequest) -
 
     assert "Objective: Investigate the current implementation." in prompt
     assert "Respond with: Configured return." in prompt
+
+
+def test_pi_harness_uses_shared_prompt_and_command_helpers(worker_request: WorkerRequest) -> None:
+    harness = PiHarness()
+    role = RoleConfig(
+        harness="pi",
+        model="test-model",
+        profile="test-profile",
+        prompt_addition="Focus on the assigned task.",
+        command=["pi", "--model", "{model}", "--profile", "{profile}", "-p", "{prompt}"],
+    )
+
+    prompt = harness.build_prompt(worker_request, role)
+    command = harness.build_command(role, prompt)
+
+    assert prompt == render_worker_prompt(worker_request, role)
+    assert command == expand_command_template(role, prompt)
+
+
+def test_compact_summary_normalizes_and_truncates_output() -> None:
+    assert compact_summary("line one\nline two") == "line one line two"
+    assert compact_summary("x" * 12, limit=10) == "xxxxxxx..."
 
 
 def test_pi_harness_start_returns_process_wrapper(

@@ -1,4 +1,4 @@
-"""Pi one-shot harness implementation."""
+"""Hermes one-shot harness implementation."""
 
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ class Starter(Protocol):
 
 
 @dataclass
-class PiHarness:
+class HermesHarness:
     starter: Starter = subprocess.Popen
-    name: str = "pi"
+    name: str = "hermes"
 
     def build_prompt(self, request: WorkerRequest, role: RoleConfig) -> str:
         return render_worker_prompt(request, role)

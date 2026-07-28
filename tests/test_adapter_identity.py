@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestra.adapters import normalize_pi_session_id
+from orchestra.adapters import normalize_hermes_session_id, normalize_pi_session_id
 from tests.helpers import run_cli
 from tests.types import RuntimeFilesFactory
 
@@ -13,10 +13,21 @@ def test_normalize_pi_session_id() -> None:
     assert normalize_pi_session_id("abc123") == "pi:abc123"
 
 
+def test_normalize_hermes_session_id() -> None:
+    assert normalize_hermes_session_id("abc123") == "hermes:abc123"
+    assert normalize_hermes_session_id(" hermes:abc123 ") == "hermes:abc123"
+
+
 @pytest.mark.parametrize("value", ["", "   "])
 def test_normalize_pi_session_id_rejects_missing(value: str) -> None:
     with pytest.raises(ValueError, match="pi session id is required"):
         normalize_pi_session_id(value)
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_normalize_hermes_session_id_rejects_missing(value: str) -> None:
+    with pytest.raises(ValueError, match="hermes session id is required"):
+        normalize_hermes_session_id(value)
 
 
 def test_session_scoped_status_and_history_do_not_cross_sessions(
