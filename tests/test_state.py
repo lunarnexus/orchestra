@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -76,6 +77,29 @@ def test_connect_retries_transient_sqlite_open_failure(
 
     assert attempts == 2
     assert store.database_path.exists()
+
+
+def test_connect_uses_expanded_retry_backoff_and_includes_database_path_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    delays: list[float] = []
+    attempts = 0
+
+    def always_fail(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        nonlocal attempts
+        attempts += 1
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(sqlite3, "connect", always_fail)
+    monkeypatch.setattr("orchestra.state.time.sleep", delays.append)
+
+    with pytest.raises(sqlite3.OperationalError, match=r"database_path=.*orchestra\.db"):
+        store.initialize()
+
+    assert attempts == 8
+    assert delays == [0.25, 0.5, 1.0, 2.0, 3.0, 3.0, 3.0]
 
 
 def test_reserve_and_get_run_round_trip(state_store: StateStore, tmp_path: Path) -> None:
@@ -264,6 +288,27 @@ def test_consume_pending_report_runs_marks_rows_reported(
     assert [run.run_id for run in consumed] == ["run-7", "run-8"]
     assert all(run.reported_at is not None for run in consumed)
     assert state_store.consume_pending_report_runs("pi:session-r") == []
+
+
+def test_begin_immediate_logs_slow_transactions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    store.initialize()
+
+    perf_counter_values = iter([10.0, 10.15])
+    monkeypatch.setattr("orchestra.state.time.perf_counter", lambda: next(perf_counter_values))
+    caplog.set_level(logging.WARNING)
+
+    with store._connect() as connection:
+        store._begin_immediate(connection, operation="test_operation")
+        connection.rollback()
+
+    assert "StateStore BEGIN IMMEDIATE slow" in caplog.text
+    assert "test_operation" in caplog.text
+    assert str(store.database_path) in caplog.text
 
 
 def test_state_store_writes_jsonl_lifecycle_logs(state_store: StateStore, tmp_path: Path) -> None:

@@ -550,6 +550,21 @@ def test_progress_without_notification_api_skips_inject_fallback_but_final_repor
     ] in calls
 
 
+def test_session_report_watcher_uses_expanded_retry_budget_and_backoff() -> None:
+    plugin = load_plugin()
+
+    assert plugin._REPORT_WATCHER_ATTEMPTS == 8
+    assert [plugin._report_watcher_retry_delay_seconds(attempt) for attempt in range(7)] == [
+        0.25,
+        0.5,
+        1.0,
+        2.0,
+        3.0,
+        3.0,
+        3.0,
+    ]
+
+
 def test_session_report_watcher_retries_after_transient_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -634,7 +649,9 @@ def test_progress_completion_restarts_session_report_watcher_after_early_exit(
 
     assert ctx.notifications == ["orchestra:worker abc123 returned done (1/1)"]
     assert ctx.injected == [("worker done", "user")]
-    assert [call[0] for call in calls].count("_await-session-report") == 4
+    assert [call[0] for call in calls].count("_await-session-report") == (
+        plugin._REPORT_WATCHER_ATTEMPTS + 1
+    )
 
 
 def test_session_report_injection_failure_releases_without_marking(

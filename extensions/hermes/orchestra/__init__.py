@@ -14,8 +14,9 @@ from typing import Any
 _IDENTITY_ARG_NAMES = frozenset({"session_id", "identity", "orchestrator_session_id"})
 _RUN_ID_RE = re.compile(r"^run_id:\s*(?P<run_id>\S+)\s*$")
 _SUBPROCESS_TIMEOUT_SECONDS = 300
-_REPORT_WATCHER_ATTEMPTS = 3
-_REPORT_WATCHER_RETRY_DELAY_SECONDS = 0.25
+_REPORT_WATCHER_ATTEMPTS = 8
+_REPORT_WATCHER_RETRY_BASE_DELAY_SECONDS = 0.25
+_REPORT_WATCHER_RETRY_MAX_DELAY_SECONDS = 3.0
 _REPORT_WATCHERS: set[str] = set()
 _REPORT_WATCHER_FAILED_SESSIONS: set[str] = set()
 _REPORT_WATCHERS_LOCK = threading.Lock()
@@ -343,7 +344,7 @@ def _watch_session_report(ctx: Any, runtime_session_id: str, run_id: str) -> Non
                 with _REPORT_WATCHERS_LOCK:
                     _REPORT_WATCHER_FAILED_SESSIONS.add(runtime_session_id)
                 return
-            time.sleep(_REPORT_WATCHER_RETRY_DELAY_SECONDS * (attempt + 1))
+            time.sleep(_report_watcher_retry_delay_seconds(attempt))
     except Exception as exc:  # plugin watcher thread must survive unexpected command failures
         _log_watcher_error(str(exc))
         with _REPORT_WATCHERS_LOCK:
@@ -351,6 +352,13 @@ def _watch_session_report(ctx: Any, runtime_session_id: str, run_id: str) -> Non
     finally:
         with _REPORT_WATCHERS_LOCK:
             _REPORT_WATCHERS.discard(runtime_session_id)
+
+
+def _report_watcher_retry_delay_seconds(attempt: int) -> float:
+    return min(
+        _REPORT_WATCHER_RETRY_BASE_DELAY_SECONDS * (2**attempt),
+        _REPORT_WATCHER_RETRY_MAX_DELAY_SECONDS,
+    )
 
 
 def _start_session_report_watcher(ctx: Any | None, runtime_session_id: str, run_id: str) -> None:

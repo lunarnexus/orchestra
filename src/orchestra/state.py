@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from dataclasses import dataclass, replace
@@ -18,8 +19,10 @@ STATUS_CANCELLED = "cancelled"
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
-_CONNECT_ATTEMPTS = 3
-_CONNECT_RETRY_DELAY_SECONDS = 0.05
+_CONNECT_ATTEMPTS = 8
+_CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
+_CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
+_BEGIN_IMMEDIATE_SLOW_LOG_SECONDS = 0.1
 ALLOWED_TRANSITIONS = {
     STATUS_QUEUED: frozenset({STATUS_RUNNING, STATUS_FAILED, STATUS_CANCELLED}),
     STATUS_RUNNING: frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED}),
@@ -73,6 +76,9 @@ class RunUpdate:
     transcript_path: Path | None = None
     approval_needed: bool | None = None
     reported_at: str | None = None
+
+
+_LOG = logging.getLogger(__name__)
 
 
 class StateStore:
@@ -140,7 +146,7 @@ class StateStore:
             raise StateError("orchestrator_session_id must be a non-empty string")
 
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self._begin_immediate(connection, operation="reserve_run")
             global_active = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM runs WHERE status IN (?, ?)",
@@ -220,7 +226,7 @@ class StateStore:
     def update_run(self, run_id: str, update: RunUpdate) -> RunRecord:
         _validate_status(update.status)
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self._begin_immediate(connection, operation="update_run")
             row = connection.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
             if row is None:
                 connection.rollback()
@@ -325,7 +331,7 @@ class StateStore:
 
     def claim_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self._begin_immediate(connection, operation="claim_pending_report_runs")
             active = int(
                 connection.execute(
                     """
@@ -405,7 +411,7 @@ class StateStore:
         delivered_at = utc_now()
         placeholders = ", ".join("?" for _ in run_ids)
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            self._begin_immediate(connection, operation="mark_report_runs_delivered")
             connection.execute(
                 f"""
                 UPDATE runs
@@ -442,9 +448,29 @@ class StateStore:
                 last_error = exc
                 if attempt == _CONNECT_ATTEMPTS - 1:
                     break
-                time.sleep(_CONNECT_RETRY_DELAY_SECONDS * (attempt + 1))
+                time.sleep(self._connect_retry_delay_seconds(attempt))
         assert last_error is not None
-        raise last_error
+        raise sqlite3.OperationalError(
+            f"{last_error} (database_path={self.database_path})"
+        ) from last_error
+
+    def _begin_immediate(self, connection: sqlite3.Connection, *, operation: str) -> None:
+        started = time.perf_counter()
+        connection.execute("BEGIN IMMEDIATE")
+        elapsed = time.perf_counter() - started
+        if elapsed > _BEGIN_IMMEDIATE_SLOW_LOG_SECONDS:
+            _LOG.warning(
+                "StateStore BEGIN IMMEDIATE slow: operation=%s elapsed_ms=%.1f database_path=%s",
+                operation,
+                elapsed * 1000,
+                self.database_path,
+            )
+
+    def _connect_retry_delay_seconds(self, attempt: int) -> float:
+        return min(
+            _CONNECT_RETRY_BASE_DELAY_SECONDS * (2**attempt),
+            _CONNECT_RETRY_MAX_DELAY_SECONDS,
+        )
 
     def _merge_record(self, current: RunRecord, update: RunUpdate) -> RunRecord:
         next_record = replace(
