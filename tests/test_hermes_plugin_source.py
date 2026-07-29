@@ -31,7 +31,9 @@ class FakeHermesPluginContext:
     def __init__(self) -> None:
         self.tools: list[dict[str, Any]] = []
         self.commands: list[dict[str, Any]] = []
+        self.hooks: list[tuple[str, Any]] = []
         self.injected: list[tuple[str, str]] = []
+        self.notifications: list[str] = []
         self.inject_success = True
 
     def register_tool(self, **kwargs: Any) -> None:
@@ -40,9 +42,24 @@ class FakeHermesPluginContext:
     def register_command(self, name: str, **kwargs: Any) -> None:
         self.commands.append({"name": name, **kwargs})
 
+    def register_hook(self, name: str, handler: Any) -> None:
+        self.hooks.append((name, handler))
+
     def inject_message(self, content: str, role: str = "user") -> bool:
         self.injected.append((content, role))
         return self.inject_success
+
+    def notify(self, message: str) -> None:
+        self.notifications.append(message)
+
+
+class InjectOnlyContext:
+    def __init__(self) -> None:
+        self.injected: list[tuple[str, str]] = []
+
+    def inject_message(self, content: str, role: str = "user") -> bool:
+        self.injected.append((content, role))
+        return True
 
 
 def completed(
@@ -103,7 +120,8 @@ def test_hermes_plugin_registers_dispatch_tool_without_session_id_schema(
     assert schema["parameters"]["properties"]["timeout"]["minimum"] == 1
     assert "session_id" not in json.dumps(schema)
     assert ctx.commands[0]["name"] == "orch"
-    assert "disabled for safety" in ctx.commands[0]["handler"]("")
+    assert ctx.commands[0]["handler"]("") == ""
+    assert ctx.hooks == []
 
 
 def test_hermes_plugin_manifest_declares_tool_and_fail_closed_command() -> None:
@@ -132,6 +150,77 @@ def test_hermes_plugin_uses_dynamic_tool_metadata(monkeypatch: pytest.MonkeyPatc
     assert schema["description"] == "dynamic description"
     assert schema["parameters"]["properties"]["goal"]["description"] == "dynamic goal"
     assert schema["parameters"]["properties"]["taskLabel"]["description"] == "dynamic label"
+
+
+def test_orch_slash_session_scoped_commands_fail_closed_without_trusted_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext()
+    plugin.register(ctx)
+    calls.clear()
+
+    for raw_args in [
+        "do --role reviewer session_id attacker ship it",
+        "status session_id attacker",
+        "history 7 session_id attacker",
+        "stop run-1 session_id attacker",
+    ]:
+        output = ctx.commands[0]["handler"](raw_args)
+        assert "trusted runtime session context" in output
+
+    assert calls == []
+
+
+def test_orch_slash_doctor_help_are_sessionless_safe_wrappers_and_scoped_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return completed(args, "ok\n")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+
+    assert plugin._orch_command("help") == "ok\n"
+    assert plugin._orch_command("doctor") == "ok\n"
+    assert "trusted runtime session context" in plugin._orch_command("status")
+    assert "trusted runtime session context" in plugin._orch_command("history 7")
+    assert "trusted runtime session context" in plugin._orch_command("stop run-1")
+
+    assert calls == [
+        ["help-host"],
+        ["doctor"],
+    ]
+
+
+def test_orch_slash_fails_closed_without_hook_session_context() -> None:
+    plugin = load_plugin()
+
+    output = plugin._orch_command("status")
+
+    assert "trusted runtime session context" in output
+
+
+def test_hermes_plugin_source_does_not_trust_global_or_private_slash_session() -> None:
+    source = PLUGIN_PATH.read_text(encoding="utf-8")
+
+    assert "_CURRENT_SESSION_ID" not in source
+    assert "on_session_start" not in source
+    assert "on_session_reset" not in source
+    assert "on_session_finalize" not in source
+    assert "_cli_ref" not in source
 
 
 @pytest.mark.parametrize(
@@ -195,16 +284,14 @@ def test_orch_dispatch_builds_cli_args_from_trusted_kwargs_and_returns_ack(
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
 
-    payload = json.loads(
-        plugin.orch_dispatch(
-            {
-                "goal": "ship focused task",
-                "role": "reviewer",
-                "timeout": 42,
-                "taskLabel": "review-task",
-            },
-            session_id="trusted-session",
-        )
+    output = plugin.orch_dispatch(
+        {
+            "goal": "ship focused task",
+            "role": "reviewer",
+            "timeout": 42,
+            "taskLabel": "review-task",
+        },
+        session_id="trusted-session",
     )
 
     assert calls == [
@@ -223,7 +310,7 @@ def test_orch_dispatch_builds_cli_args_from_trusted_kwargs_and_returns_ack(
         ],
         ["_dispatch-ack", "--run-id", "abc123", "--role", "reviewer"],
     ]
-    assert payload == {"runId": "abc123", "ack": "orchestra dispatched: reviewer abc123"}
+    assert output == "orchestra dispatched: reviewer abc123"
 
 
 def test_orch_dispatch_requires_run_id_before_ack(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -258,6 +345,10 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
             return completed(args, "run_id: abc123\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: worker abc123\n")
+        if args[0] == "_await-run":
+            return completed(args, "status: done\nrole: worker\nactive_runs_remaining: 0\n")
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra:worker abc123 returned done (1/1)\n")
         if args[0] == "_await-session-report":
             return completed(
                 args,
@@ -271,9 +362,12 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
     ctx = FakeHermesPluginContext()
     plugin.register(ctx)
 
-    payload = json.loads(ctx.tools[0]["handler"]({"goal": "do work"}, session_id="trusted"))
+    output = ctx.tools[0]["handler"]({"goal": "do work"}, session_id="trusted")
 
-    assert payload == {"runId": "abc123", "ack": "orchestra dispatched: worker abc123"}
+    assert output == "orchestra dispatched: worker abc123"
+    assert wait_for_condition(
+        lambda: ctx.notifications == ["orchestra:worker abc123 returned done (1/1)"]
+    )
     assert wait_for_condition(lambda: ctx.injected == [("worker done", "user")])
     assert [
         "_await-session-report",
@@ -284,11 +378,75 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
         "--json",
     ] in calls
     assert [
+        "_await-run",
+        "--session-id",
+        "hermes:trusted",
+        "--run-id",
+        "abc123",
+    ] in calls
+    assert [
+        "_progress-message",
+        "--completed",
+        "1",
+        "--total",
+        "1",
+        "--run-id",
+        "abc123",
+        "--status",
+        "done",
+        "--role",
+        "worker",
+    ] in calls
+    assert [
         "_mark-session-report-delivered",
         "--session-id",
         "hermes:trusted",
         "--run-id",
         "abc123",
+    ] in calls
+
+
+def test_progress_without_notification_api_skips_inject_fallback_but_final_report_injects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "do":
+            return completed(args, "run_id: abc123\nstatus: queued\n")
+        if args[0] == "_dispatch-ack":
+            return completed(args, "orchestra dispatched: worker abc123\n")
+        if args[0] == "_await-session-report":
+            return completed(
+                args,
+                json.dumps({"runIds": ["abc123"], "report": "worker done"}),
+            )
+        if args[0] == "_mark-session-report-delivered":
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = InjectOnlyContext()
+
+    output = plugin._dispatch_orchestra_run(
+        {"goal": "do work"},
+        "hermes:trusted",
+        ctx=ctx,
+    )
+
+    assert output == "orchestra dispatched: worker abc123"
+    assert wait_for_condition(lambda: ctx.injected == [("worker done", "user")])
+    assert not any(args[0] == "_await-run" for args in calls)
+    assert not any(args[0] == "_progress-message" for args in calls)
+    assert [
+        "_await-session-report",
+        "--session-id",
+        "hermes:trusted",
+        "--run-id",
+        "abc123",
+        "--json",
     ] in calls
 
 
@@ -326,6 +484,51 @@ def test_session_report_injection_failure_releases_without_marking(
             "--run-id",
             "abc123",
         ]
+    ]
+
+
+def test_session_report_mark_failure_releases_for_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_mark-session-report-delivered":
+            return completed(args, stderr="mark failed", code=1)
+        if args[0] == "_release-session-report":
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext()
+
+    plugin._handle_session_report_result(
+        ctx,
+        "hermes:trusted",
+        completed(
+            ["_await-session-report"],
+            json.dumps({"runIds": ["abc123"], "report": "worker done"}),
+        ),
+    )
+
+    assert ctx.injected == [("worker done", "user")]
+    assert calls == [
+        [
+            "_mark-session-report-delivered",
+            "--session-id",
+            "hermes:trusted",
+            "--run-id",
+            "abc123",
+        ],
+        [
+            "_release-session-report",
+            "--session-id",
+            "hermes:trusted",
+            "--run-id",
+            "abc123",
+        ],
     ]
 
 

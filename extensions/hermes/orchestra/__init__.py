@@ -15,6 +15,9 @@ _RUN_ID_RE = re.compile(r"^run_id:\s*(?P<run_id>\S+)\s*$")
 _SUBPROCESS_TIMEOUT_SECONDS = 300
 _REPORT_WATCHERS: set[str] = set()
 _REPORT_WATCHERS_LOCK = threading.Lock()
+_SESSION_LOCK = threading.Lock()
+_SESSION_RUNS: dict[str, set[str]] = {}
+_SESSION_COMPLETED_RUNS: dict[str, set[str]] = {}
 
 _FALLBACK_TOOL_INFO = {
     "description": "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
@@ -117,12 +120,105 @@ def _extract_run_id(output: str) -> str | None:
     return None
 
 
+def _parse_do_args(raw_args: str) -> dict[str, Any]:
+    parts = raw_args.strip().split()
+    payload: dict[str, Any] = {"role": "worker"}
+    goal_parts: list[str] = []
+    index = 0
+    while index < len(parts):
+        token = parts[index]
+        if token == "--role" and index + 1 < len(parts):
+            payload["role"] = parts[index + 1]
+            index += 2
+            continue
+        if token == "--timeout" and index + 1 < len(parts):
+            try:
+                payload["timeout"] = int(parts[index + 1])
+            except ValueError:
+                payload["timeout"] = parts[index + 1]
+            index += 2
+            continue
+        if token == "--task-label" and index + 1 < len(parts):
+            payload["taskLabel"] = parts[index + 1]
+            index += 2
+            continue
+        goal_parts.append(token)
+        index += 1
+    payload["goal"] = " ".join(goal_parts).strip()
+    return payload
+
+
+def _extract_field(output: str, field: str) -> str | None:
+    prefix = f"{field}:"
+    for line in output.splitlines():
+        trimmed = line.strip()
+        if trimmed.startswith(prefix):
+            value = trimmed[len(prefix) :].strip()
+            if value:
+                return value
+    return None
+
+
 def _error(message: str) -> str:
     return json.dumps({"error": message})
 
 
 def _log_watcher_error(message: str) -> None:
     sys.stderr.write(f"orchestra auto-return watcher failed: {message}\n")
+
+
+def _log_progress_error(message: str) -> None:
+    sys.stderr.write(f"orchestra progress watcher failed: {message}\n")
+
+
+def _trusted_slash_session_id() -> str | None:
+    # Hermes slash handlers currently receive only raw user text. Do not read session
+    # id from that text, process globals, or private Hermes internals. Until Hermes
+    # exposes a public trusted per-command session id, fail closed.
+    return None
+
+
+def _track_run(trusted_session_id: str, run_id: str) -> None:
+    with _SESSION_LOCK:
+        runs = _SESSION_RUNS.setdefault(trusted_session_id, set())
+        runs.add(run_id)
+        _SESSION_COMPLETED_RUNS.setdefault(trusted_session_id, set())
+
+
+def _record_completed_run(
+    trusted_session_id: str,
+    run_id: str,
+    active_remaining: int | None,
+) -> tuple[int, int]:
+    with _SESSION_LOCK:
+        completed = _SESSION_COMPLETED_RUNS.setdefault(trusted_session_id, set())
+        completed.add(run_id)
+        tracked_total = len(_SESSION_RUNS.get(trusted_session_id, set()))
+        total = max(tracked_total, len(completed) + (active_remaining or 0))
+        if active_remaining == 0:
+            _SESSION_RUNS.pop(trusted_session_id, None)
+            _SESSION_COMPLETED_RUNS.pop(trusted_session_id, None)
+        return len(completed), total
+
+
+def _emit_progress(ctx: Any, message: str) -> bool:
+    notify = getattr(ctx, "notify", None)
+    if callable(notify):
+        notify(message)
+        return True
+    ui = getattr(ctx, "ui", None)
+    ui_notify = getattr(ui, "notify", None)
+    if callable(ui_notify):
+        ui_notify(message, "info")
+        return True
+    return False
+
+
+def _has_progress_notifier(ctx: Any) -> bool:
+    if callable(getattr(ctx, "notify", None)):
+        return True
+    ui = getattr(ctx, "ui", None)
+    return callable(getattr(ui, "notify", None))
 
 
 def _report_run_id_args(run_ids: list[str]) -> list[str]:
@@ -147,9 +243,9 @@ def _release_session_report(trusted_session_id: str, run_ids: list[str]) -> None
         _log_watcher_error((result.stdout or result.stderr).strip() or "report release failed")
 
 
-def _mark_session_report_delivered(trusted_session_id: str, run_ids: list[str]) -> None:
+def _mark_session_report_delivered(trusted_session_id: str, run_ids: list[str]) -> bool:
     if not run_ids:
-        return
+        return True
     result = _run_orchestra(
         [
             "_mark-session-report-delivered",
@@ -162,6 +258,8 @@ def _mark_session_report_delivered(trusted_session_id: str, run_ids: list[str]) 
         _log_watcher_error(
             (result.stdout or result.stderr).strip() or "report delivery mark failed"
         )
+        return False
+    return True
 
 
 def _inject_report(ctx: Any, message: str) -> bool:
@@ -202,7 +300,8 @@ def _handle_session_report_result(
         if not _inject_report(ctx, message.strip()):
             _release_session_report(trusted_session_id, run_ids)
             return
-        _mark_session_report_delivered(trusted_session_id, run_ids)
+        if not _mark_session_report_delivered(trusted_session_id, run_ids):
+            _release_session_report(trusted_session_id, run_ids)
     except Exception as exc:  # noqa: BLE001 - plugin must not crash watcher thread
         _release_session_report(trusted_session_id, run_ids)
         _log_watcher_error(str(exc))
@@ -238,6 +337,61 @@ def _start_session_report_watcher(ctx: Any | None, trusted_session_id: str, run_
         args=(ctx, trusted_session_id, run_id),
         daemon=True,
         name=f"orchestra-report-{run_id}",
+    )
+    thread.start()
+
+
+def _watch_run_progress(ctx: Any, trusted_session_id: str, run_id: str) -> None:
+    result = _run_orchestra(
+        [
+            "_await-run",
+            "--session-id",
+            trusted_session_id,
+            "--run-id",
+            run_id,
+        ]
+    )
+    if result.returncode != 0:
+        error_text = (result.stdout or result.stderr).strip()
+        if error_text:
+            _log_progress_error(error_text)
+        return
+    status = _extract_field(result.stdout, "status") or "done"
+    role = _extract_field(result.stdout, "role")
+    raw_active_remaining = _extract_field(result.stdout, "active_runs_remaining")
+    active_remaining = int(raw_active_remaining) if raw_active_remaining is not None else None
+    completed, total = _record_completed_run(trusted_session_id, run_id, active_remaining)
+    command = [
+        "_progress-message",
+        "--completed",
+        str(completed),
+        "--total",
+        str(total),
+        "--run-id",
+        run_id,
+        "--status",
+        status,
+    ]
+    if role:
+        command.extend(["--role", role])
+    message_result = _run_orchestra(command)
+    role_text = f" {role}" if role else ""
+    message = (
+        message_result.stdout.strip()
+        if message_result.returncode == 0 and message_result.stdout.strip()
+        else f"orchestra:{role_text} {run_id} returned {status} ({completed}/{total})"
+    )
+    _emit_progress(ctx, message)
+
+
+def _start_run_progress_watcher(ctx: Any | None, trusted_session_id: str, run_id: str) -> None:
+    if ctx is None or not _has_progress_notifier(ctx):
+        return
+    thread = threading.Thread(
+        target=_watch_run_progress,
+        args=(ctx, trusted_session_id, run_id),
+        daemon=True,
+        name=f"orchestra-progress-{run_id}",
     )
     thread.start()
 
@@ -279,12 +433,14 @@ def _dispatch_orchestra_run(
     if not run_id:
         return _error("orchestra dispatch did not return a run_id")
 
+    _track_run(trusted_session_id, run_id)
+    _start_run_progress_watcher(ctx, trusted_session_id, run_id)
     _start_session_report_watcher(ctx, trusted_session_id, run_id)
 
     ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", role])
     if ack.returncode != 0:
         return _error((ack.stdout or ack.stderr).strip() or "orchestra dispatch ack failed")
-    return json.dumps({"runId": run_id, "ack": ack.stdout.strip()})
+    return ack.stdout.strip() or f"orchestra dispatched: {role} {run_id}"
 
 
 def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
@@ -306,21 +462,67 @@ def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
     return _dispatch_orchestra_run(args, trusted_session_id, ctx=kwargs.get("_ctx"))
 
 
-def _orch_command(_raw_args: str) -> str:
-    return (
-        "Hermes /orch is disabled for safety: slash command handlers do not expose "
-        "trusted session_id. Ask Hermes to delegate naturally so it can use the "
-        "orch_dispatch tool."
-    )
+def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
+    trimmed = raw_args.strip()
+    if not trimmed or trimmed == "help":
+        result = _run_orchestra(["help-host"])
+        return result.stdout or result.stderr
+
+    parts = trimmed.split(maxsplit=1)
+    subcommand = parts[0]
+    rest = parts[1] if len(parts) > 1 else ""
+
+    if subcommand == "doctor":
+        result = _run_orchestra(["doctor"])
+        return result.stdout or result.stderr
+
+    trusted_session_id = _trusted_slash_session_id()
+    if trusted_session_id is None:
+        return (
+            "Hermes /orch requires trusted runtime session context. "
+            "Start a new Hermes session or use the orch_dispatch tool."
+        )
+
+    if subcommand == "status":
+        result = _run_orchestra(["status", "--session-id", trusted_session_id])
+        return result.stdout or result.stderr
+
+    if subcommand == "history":
+        limit = rest.strip() or "10"
+        result = _run_orchestra(
+            ["history", "--session-id", trusted_session_id, "--limit", limit]
+        )
+        return result.stdout or result.stderr
+
+    if subcommand == "stop":
+        run_id = rest.strip().split(maxsplit=1)[0] if rest.strip() else ""
+        if not run_id:
+            return "Usage: /orch stop <run-id>"
+        result = _run_orchestra(
+            ["stop", "--session-id", trusted_session_id, "--run-id", run_id]
+        )
+        return result.stdout or result.stderr
+
+    if subcommand == "do":
+        payload = _parse_do_args(rest)
+        if not str(payload.get("goal", "")).strip():
+            return "Usage: /orch do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal>"
+        return _dispatch_orchestra_run(payload, trusted_session_id, ctx=ctx)
+
+    result = _run_orchestra(["help-host"])
+    return f"Unknown /orch subcommand: {subcommand}\n\n{result.stdout or result.stderr}"
 
 
 def register(ctx: Any) -> None:
-    """Register Hermes tool and fail-closed slash command."""
+    """Register Hermes tool, slash command, and report watcher."""
     tool_info = _load_tool_info()
 
     def dispatch_handler(args: dict[str, Any], **kwargs: Any) -> str:
         kwargs["_ctx"] = ctx
         return orch_dispatch(args, **kwargs)
+
+    def command_handler(raw_args: str) -> str:
+        return _orch_command(raw_args, ctx=ctx)
 
     ctx.register_tool(
         name="orch_dispatch",
@@ -330,6 +532,6 @@ def register(ctx: Any) -> None:
     )
     ctx.register_command(
         "orch",
-        handler=_orch_command,
-        description="Orchestra help (fails closed; use orch_dispatch)",
+        handler=command_handler,
+        description="Orchestra host adapter: /orch help|do|status|stop|doctor|history",
     )
