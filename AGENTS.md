@@ -73,8 +73,8 @@ Source copy for the global Pi host extension lives at `extensions/pi/orchestra/i
 - Run `python -m build` before claiming packaging changes are complete.
 - Keep logs, prompts, and transcripts lean by default; verbose capture belongs behind explicit debug paths.
 - Harness additions should use the harness plugin/adapter pattern, not ad hoc command branching in the CLI.
-- Host adapters must retrieve trusted session ids from runtime context, not from user prompts or model output.
-- CLI `--session-id` is local/manual mode only and must not be described as a trusted host identity source.
+- Host adapters must retrieve runtime session ids from runtime context, not from user prompts or model output.
+- CLI `--session-id` is local/manual mode only and must not be described as a runtime host identity source.
 - Generic command/help/tool/report wording belongs in the Python core or core config, not duplicated in host adapters.
-- Host adapters must stay thin: trusted session identity, host UI/rendering, notifications, and host message injection only.
+- Host adapters must stay thin: runtime session identity, host UI/rendering, notifications, and host message injection only.
 - If changing public output strings, prompt labels, or tool metadata, update core/config and tests; do not patch only `extensions/pi/orchestra/index.ts`.

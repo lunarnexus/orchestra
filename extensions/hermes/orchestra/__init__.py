@@ -31,7 +31,7 @@ _FALLBACK_TOOL_INFO = {
 
 
 def normalize_hermes_session_id(raw_session_id: str) -> str:
-    """Normalize a trusted Hermes runtime session id for Orchestra ownership."""
+    """Normalize a Hermes runtime session id for Orchestra ownership."""
     normalized = raw_session_id.strip()
     if not normalized:
         raise ValueError("hermes session id is required")
@@ -171,33 +171,42 @@ def _log_progress_error(message: str) -> None:
     sys.stderr.write(f"orchestra progress watcher failed: {message}\n")
 
 
-def _trusted_slash_session_id() -> str | None:
-    # Hermes slash handlers currently receive only raw user text. Do not read session
-    # id from that text, process globals, or private Hermes internals. Until Hermes
-    # exposes a public trusted per-command session id, fail closed.
-    return None
+def _slash_session_id(ctx: Any | None) -> str | None:
+    # Hermes slash handlers currently receive only raw user text. Public Hermes does
+    # not expose a runtime per-command session id here yet, but interactive CLI keeps
+    # the active session id on the private CLI ref. Trust only that in-process CLI
+    # runtime object; never read identity from slash args, tool args, or globals.
+    manager = getattr(ctx, "_manager", None)
+    cli_ref = getattr(manager, "_cli_ref", None)
+    raw_session_id = getattr(cli_ref, "session_id", None)
+    if not isinstance(raw_session_id, str):
+        return None
+    try:
+        return normalize_hermes_session_id(raw_session_id)
+    except ValueError:
+        return None
 
 
-def _track_run(trusted_session_id: str, run_id: str) -> None:
+def _track_run(runtime_session_id: str, run_id: str) -> None:
     with _SESSION_LOCK:
-        runs = _SESSION_RUNS.setdefault(trusted_session_id, set())
+        runs = _SESSION_RUNS.setdefault(runtime_session_id, set())
         runs.add(run_id)
-        _SESSION_COMPLETED_RUNS.setdefault(trusted_session_id, set())
+        _SESSION_COMPLETED_RUNS.setdefault(runtime_session_id, set())
 
 
 def _record_completed_run(
-    trusted_session_id: str,
+    runtime_session_id: str,
     run_id: str,
     active_remaining: int | None,
 ) -> tuple[int, int]:
     with _SESSION_LOCK:
-        completed = _SESSION_COMPLETED_RUNS.setdefault(trusted_session_id, set())
+        completed = _SESSION_COMPLETED_RUNS.setdefault(runtime_session_id, set())
         completed.add(run_id)
-        tracked_total = len(_SESSION_RUNS.get(trusted_session_id, set()))
+        tracked_total = len(_SESSION_RUNS.get(runtime_session_id, set()))
         total = max(tracked_total, len(completed) + (active_remaining or 0))
         if active_remaining == 0:
-            _SESSION_RUNS.pop(trusted_session_id, None)
-            _SESSION_COMPLETED_RUNS.pop(trusted_session_id, None)
+            _SESSION_RUNS.pop(runtime_session_id, None)
+            _SESSION_COMPLETED_RUNS.pop(runtime_session_id, None)
         return len(completed), total
 
 
@@ -228,14 +237,14 @@ def _report_run_id_args(run_ids: list[str]) -> list[str]:
     return args
 
 
-def _release_session_report(trusted_session_id: str, run_ids: list[str]) -> None:
+def _release_session_report(runtime_session_id: str, run_ids: list[str]) -> None:
     if not run_ids:
         return
     result = _run_orchestra(
         [
             "_release-session-report",
             "--session-id",
-            trusted_session_id,
+            runtime_session_id,
             *_report_run_id_args(run_ids),
         ]
     )
@@ -243,14 +252,14 @@ def _release_session_report(trusted_session_id: str, run_ids: list[str]) -> None
         _log_watcher_error((result.stdout or result.stderr).strip() or "report release failed")
 
 
-def _mark_session_report_delivered(trusted_session_id: str, run_ids: list[str]) -> bool:
+def _mark_session_report_delivered(runtime_session_id: str, run_ids: list[str]) -> bool:
     if not run_ids:
         return True
     result = _run_orchestra(
         [
             "_mark-session-report-delivered",
             "--session-id",
-            trusted_session_id,
+            runtime_session_id,
             *_report_run_id_args(run_ids),
         ]
     )
@@ -271,7 +280,7 @@ def _inject_report(ctx: Any, message: str) -> bool:
 
 def _handle_session_report_result(
     ctx: Any,
-    trusted_session_id: str,
+    runtime_session_id: str,
     result: subprocess.CompletedProcess[str],
     fallback_run_ids: list[str] | None = None,
 ) -> None:
@@ -295,58 +304,58 @@ def _handle_session_report_result(
                 run_ids = parsed_run_ids
         message = payload.get("report") if isinstance(payload, dict) else None
         if not isinstance(message, str) or not message.strip():
-            _release_session_report(trusted_session_id, run_ids)
+            _release_session_report(runtime_session_id, run_ids)
             return
         if not _inject_report(ctx, message.strip()):
-            _release_session_report(trusted_session_id, run_ids)
+            _release_session_report(runtime_session_id, run_ids)
             return
-        if not _mark_session_report_delivered(trusted_session_id, run_ids):
-            _release_session_report(trusted_session_id, run_ids)
+        if not _mark_session_report_delivered(runtime_session_id, run_ids):
+            _release_session_report(runtime_session_id, run_ids)
     except Exception as exc:  # noqa: BLE001 - plugin must not crash watcher thread
-        _release_session_report(trusted_session_id, run_ids)
+        _release_session_report(runtime_session_id, run_ids)
         _log_watcher_error(str(exc))
 
 
-def _watch_session_report(ctx: Any, trusted_session_id: str, run_id: str) -> None:
+def _watch_session_report(ctx: Any, runtime_session_id: str, run_id: str) -> None:
     try:
         result = _run_orchestra(
             [
                 "_await-session-report",
                 "--session-id",
-                trusted_session_id,
+                runtime_session_id,
                 "--run-id",
                 run_id,
                 "--json",
             ]
         )
-        _handle_session_report_result(ctx, trusted_session_id, result, [run_id])
+        _handle_session_report_result(ctx, runtime_session_id, result, [run_id])
     finally:
         with _REPORT_WATCHERS_LOCK:
-            _REPORT_WATCHERS.discard(trusted_session_id)
+            _REPORT_WATCHERS.discard(runtime_session_id)
 
 
-def _start_session_report_watcher(ctx: Any | None, trusted_session_id: str, run_id: str) -> None:
+def _start_session_report_watcher(ctx: Any | None, runtime_session_id: str, run_id: str) -> None:
     if ctx is None:
         return
     with _REPORT_WATCHERS_LOCK:
-        if trusted_session_id in _REPORT_WATCHERS:
+        if runtime_session_id in _REPORT_WATCHERS:
             return
-        _REPORT_WATCHERS.add(trusted_session_id)
+        _REPORT_WATCHERS.add(runtime_session_id)
     thread = threading.Thread(
         target=_watch_session_report,
-        args=(ctx, trusted_session_id, run_id),
+        args=(ctx, runtime_session_id, run_id),
         daemon=True,
         name=f"orchestra-report-{run_id}",
     )
     thread.start()
 
 
-def _watch_run_progress(ctx: Any, trusted_session_id: str, run_id: str) -> None:
+def _watch_run_progress(ctx: Any, runtime_session_id: str, run_id: str) -> None:
     result = _run_orchestra(
         [
             "_await-run",
             "--session-id",
-            trusted_session_id,
+            runtime_session_id,
             "--run-id",
             run_id,
         ]
@@ -360,7 +369,7 @@ def _watch_run_progress(ctx: Any, trusted_session_id: str, run_id: str) -> None:
     role = _extract_field(result.stdout, "role")
     raw_active_remaining = _extract_field(result.stdout, "active_runs_remaining")
     active_remaining = int(raw_active_remaining) if raw_active_remaining is not None else None
-    completed, total = _record_completed_run(trusted_session_id, run_id, active_remaining)
+    completed, total = _record_completed_run(runtime_session_id, run_id, active_remaining)
     command = [
         "_progress-message",
         "--completed",
@@ -384,12 +393,12 @@ def _watch_run_progress(ctx: Any, trusted_session_id: str, run_id: str) -> None:
     _emit_progress(ctx, message)
 
 
-def _start_run_progress_watcher(ctx: Any | None, trusted_session_id: str, run_id: str) -> None:
+def _start_run_progress_watcher(ctx: Any | None, runtime_session_id: str, run_id: str) -> None:
     if ctx is None or not _has_progress_notifier(ctx):
         return
     thread = threading.Thread(
         target=_watch_run_progress,
-        args=(ctx, trusted_session_id, run_id),
+        args=(ctx, runtime_session_id, run_id),
         daemon=True,
         name=f"orchestra-progress-{run_id}",
     )
@@ -398,7 +407,7 @@ def _start_run_progress_watcher(ctx: Any | None, trusted_session_id: str, run_id
 
 def _dispatch_orchestra_run(
     payload: dict[str, Any],
-    trusted_session_id: str,
+    runtime_session_id: str,
     ctx: Any | None = None,
 ) -> str:
     goal = str(payload.get("goal", "")).strip()
@@ -413,7 +422,7 @@ def _dispatch_orchestra_run(
     command = [
         "do",
         "--session-id",
-        trusted_session_id,
+        runtime_session_id,
         "--role",
         role,
         "--goal",
@@ -433,9 +442,9 @@ def _dispatch_orchestra_run(
     if not run_id:
         return _error("orchestra dispatch did not return a run_id")
 
-    _track_run(trusted_session_id, run_id)
-    _start_run_progress_watcher(ctx, trusted_session_id, run_id)
-    _start_session_report_watcher(ctx, trusted_session_id, run_id)
+    _track_run(runtime_session_id, run_id)
+    _start_run_progress_watcher(ctx, runtime_session_id, run_id)
+    _start_session_report_watcher(ctx, runtime_session_id, run_id)
 
     ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", role])
     if ack.returncode != 0:
@@ -444,7 +453,7 @@ def _dispatch_orchestra_run(
 
 
 def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
-    """Dispatch a worker using only Hermes' trusted tool-call session_id kwarg."""
+    """Dispatch a worker using only Hermes' runtime tool-call session_id kwarg."""
     supplied_identity_args = sorted(_IDENTITY_ARG_NAMES.intersection(args))
     if supplied_identity_args:
         return _error(
@@ -453,13 +462,13 @@ def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
 
     raw_session_id = kwargs.get("session_id")
     if not isinstance(raw_session_id, str):
-        return _error("trusted Hermes session_id is required")
+        return _error("Hermes session_id is required")
     try:
-        trusted_session_id = normalize_hermes_session_id(raw_session_id)
+        runtime_session_id = normalize_hermes_session_id(raw_session_id)
     except ValueError:
-        return _error("trusted Hermes session_id is required")
+        return _error("Hermes session_id is required")
 
-    return _dispatch_orchestra_run(args, trusted_session_id, ctx=kwargs.get("_ctx"))
+    return _dispatch_orchestra_run(args, runtime_session_id, ctx=kwargs.get("_ctx"))
 
 
 def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
@@ -476,21 +485,21 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
         result = _run_orchestra(["doctor"])
         return result.stdout or result.stderr
 
-    trusted_session_id = _trusted_slash_session_id()
-    if trusted_session_id is None:
+    runtime_session_id = _slash_session_id(ctx)
+    if runtime_session_id is None:
         return (
-            "Hermes /orch requires trusted runtime session context. "
+            "Hermes /orch requires runtime session context. "
             "Start a new Hermes session or use the orch_dispatch tool."
         )
 
     if subcommand == "status":
-        result = _run_orchestra(["status", "--session-id", trusted_session_id])
+        result = _run_orchestra(["status", "--session-id", runtime_session_id])
         return result.stdout or result.stderr
 
     if subcommand == "history":
         limit = rest.strip() or "10"
         result = _run_orchestra(
-            ["history", "--session-id", trusted_session_id, "--limit", limit]
+            ["history", "--session-id", runtime_session_id, "--limit", limit]
         )
         return result.stdout or result.stderr
 
@@ -499,7 +508,7 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
         if not run_id:
             return "Usage: /orch stop <run-id>"
         result = _run_orchestra(
-            ["stop", "--session-id", trusted_session_id, "--run-id", run_id]
+            ["stop", "--session-id", runtime_session_id, "--run-id", run_id]
         )
         return result.stdout or result.stderr
 
@@ -507,7 +516,7 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
         payload = _parse_do_args(rest)
         if not str(payload.get("goal", "")).strip():
             return "Usage: /orch do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal>"
-        return _dispatch_orchestra_run(payload, trusted_session_id, ctx=ctx)
+        return _dispatch_orchestra_run(payload, runtime_session_id, ctx=ctx)
 
     result = _run_orchestra(["help-host"])
     return f"Unknown /orch subcommand: {subcommand}\n\n{result.stdout or result.stderr}"

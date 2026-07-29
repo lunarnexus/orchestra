@@ -35,7 +35,7 @@ decisions.
 2. **Thin host adapters** — Hermes plugins, Pi extensions, CLI commands, and MCP
    tools should call the same core logic instead of reimplementing orchestration.
    Native plugins/extensions are required where reliable slash-command UX,
-   trusted session ownership, or automatic returns are needed; MCP-only is not
+   session ownership, or automatic returns are needed; MCP-only is not
    enough for the full behavior.
 3. **Narrow worker slices** — child agents receive focused prompts with explicit
    scope, stop conditions, and return format.
@@ -59,7 +59,7 @@ decisions.
   Pi, Hermes, OpenCode, ACP, or another shell agent.
 - **Worker agent** — specialized child agent launched through a harness for one
   scoped task.
-- **`orchestrator_session_id`** — the trusted, exact host/calling session id that
+- **`orchestrator_session_id`** — the runtime, exact host/calling session id that
   invoked Orchestra. Worker ownership, control calls, approval routing, and
   auto-return are keyed by this identifier, not by best guesses, batches, humans,
   projects, host windows, or any id supplied by the LLM.
@@ -81,7 +81,7 @@ decisions.
 |----------|-----------|------|
 | Template scaffold | Initial bootstrap copied from template for project setup. | 2026-07-27 |
 | Core plus adapters | Put orchestration logic in a reusable core, then expose it through MCP, CLI, Hermes plugin, Pi extension, and future host adapters. | 2026-07-27 |
-| MCP-capable, not MCP-only | MCP is a good universal tool surface, but host-native plugins/extensions are required for reliable slash UX and trusted session ownership/auto-return; generic MCP alone cannot provide the full behavior. | 2026-07-27 |
+| MCP-capable, not MCP-only | MCP is a good universal tool surface, but host-native plugins/extensions are required for reliable slash UX and session ownership/auto-return; generic MCP alone cannot provide the full behavior. | 2026-07-27 |
 | Python core | Python fits local subprocess orchestration, SQLite, CLI packaging, and existing CelloS lessons. TypeScript should be used only where host extensions require it. | 2026-07-27 |
 | One-shot first | Start with simple subprocess calls such as Pi/Hermes/OpenCode one-shots; add RPC, ACP streaming, and approval passthrough later. | 2026-07-27 |
 | SQLite for lean runtime state | Track useful supervision state by default while writing JSONL operational logs for inspection. Debug mode may retain full prompts, transcripts, raw harness messages, stdout/stderr, and timing outside core run state. | 2026-07-27 |
@@ -89,8 +89,8 @@ decisions.
 | Separate agent catalog | Agent/model/role combinations, context limits, and harness-specific defaults should live outside core config once schema settles. | 2026-07-27 |
 | Minimal scheduler | Use a small run supervisor for concurrency, process tracking, status, and cancellation; avoid CelloS-style project-management weight. | 2026-07-27 |
 | Session-scoped returns | Worker returns are grouped by orchestrator session, not by batch. Send one consolidated return only when that session has no active workers remaining. | 2026-07-27 |
-| Exact session ownership | Multi-orchestrator support is mandatory: workers must be tracked and controlled by trusted `orchestrator_session_id`. Do not infer ownership. | 2026-07-27 |
-| Trusted adapter identity | Core requires a trusted `orchestrator_session_id` for worker ownership, control, and auto-return. Host plugins/extensions/adapters must hard-code retrieval from trusted runtime context and pass it to core; the LLM must never provide or remember this id. | 2026-07-27 |
+| Exact session ownership | Multi-orchestrator support is mandatory: workers must be tracked and controlled by `orchestrator_session_id`. Do not infer ownership. | 2026-07-27 |
+| Adapter identity | Core requires a `orchestrator_session_id` for worker ownership, control, and auto-return. Host plugins/extensions/adapters must hard-code retrieval from runtime context and pass it to core; the LLM must never provide or remember this id. | 2026-07-27 |
 | MVP limit handling | Enforce global and per-session concurrency limits. If a `/orch do` request exceeds either limit, return an error for MVP instead of queueing. | 2026-07-27 |
 | Config-driven harness selection | Harness selection should come from explicit config/catalog entries, not from startup-time plugin discovery or environment scanning. | 2026-07-28 |
 | Lazy harness loading | Harness implementations/plugins should load only when a configured role actually requests them, keeping startup overhead low. | 2026-07-28 |
@@ -123,7 +123,7 @@ unused harness plugins.
 Default state should include only:
 
 - run id
-- trusted `orchestrator_session_id`, provided by the host adapter from a
+- `orchestrator_session_id`, provided by the host adapter from a
   hard-coded reliable runtime-context retrieval method
 - optional batch id when a host command or API request submits grouped workers
 - worker harness
@@ -153,12 +153,12 @@ as required state.
 
 1. Orchestrator invokes Orchestra through CLI, MCP, or host-native adapter.
 2. Orchestra parses the requested operation, role, task, and options.
-3. The host adapter retrieves trusted `orchestrator_session_id` from runtime
+3. The host adapter retrieves `orchestrator_session_id` from runtime
    context and passes it to core. The LLM must not provide, remember, or infer
    this id.
 4. Core resolves defaults from `config.yaml` and the agent catalog.
 5. Harness discovery selects an available worker runtime.
-6. The run supervisor verifies the trusted `orchestrator_session_id` and enforces
+6. The run supervisor verifies the `orchestrator_session_id` and enforces
    global and per-session concurrency limits.
 7. `/orch do` starts one worker for the current orchestrator session. The
    orchestrator may call `/orch do` repeatedly and asynchronously until a
@@ -257,35 +257,35 @@ need.
 ### Multi-Orchestrator Ownership
 
 Multi-orchestrator support is mandatory. Every worker must be associated with
-the trusted `orchestrator_session_id` that created it, and commands such as
+the `orchestrator_session_id` that created it, and commands such as
 `/orch status`, `/orch stop`, return prods, and future approval routing must use
 that exact id to prevent separate orchestrators from receiving or controlling
 one another's workers.
 
 Do not allow best-guess ownership based on user, working directory, project,
 process tree, wall-clock recency, host window title, worker content, or LLM
-memory. Core must reject session-scoped operations when the trusted
-`orchestrator_session_id` is missing, untrusted, or mismatched; status-only
+memory. Core must reject session-scoped operations when the runtime
+`orchestrator_session_id` is missing, unruntime, or mismatched; status-only
 operations may be allowed only when explicitly safe and not capable of exposing
 or controlling another session's workers.
 
 ### Adapter Identity Decisions
 
 Host plugins/extensions/adapters must hard-code `orchestrator_session_id`
-retrieval from trusted runtime context and pass the normalized value to core. The
+retrieval from runtime context and pass the normalized value to core. The
 LLM must never provide, remember, echo, or infer this id.
 
 - **Hermes native plugin/tool:** use the runtime `session_id` kwarg and normalize
   it as `hermes:<session_id>`.
 - **Pi extension:** use `ctx.sessionManager.getSessionId()` and normalize it as
   `pi:<session_id>`.
-- **OpenCode plugin/tool:** use `context.sessionID` as the trusted adapter session
+- **OpenCode plugin/tool:** use `context.sessionID` as the runtime adapter session
   id source.
-- **ACP adapter:** use the protocol `sessionId` as the trusted adapter session id
+- **ACP adapter:** use the protocol `sessionId` as the runtime adapter session id
   source.
 - **Generic MCP:** MCP's session id is a transport identity, not an orchestrator
   conversation identity. Generic MCP alone is therefore not safe for auto-return
-  or session ownership. MCP needs a trusted host wrapper/injected
+  or session ownership. MCP needs a runtime host wrapper/injected
   `orchestrator_session_id` or isolated per-orchestrator session; otherwise core
   should reject control and auto-return calls and expose only safe/status-only
   behavior.
@@ -353,7 +353,7 @@ section is the source of truth.
 ### Core and Host Adapter Boundary
 
 Orchestra remains a Python core with thin host integrations. Host adapters and
-extensions retrieve trusted host identity and relay core operations; they must
+extensions retrieve runtime host identity and relay core operations; they must
 not own orchestration policy.
 
 Generic user-facing behavior should live in core or core configuration where
@@ -368,13 +368,13 @@ possible:
 - summary cleanup
 
 Host-specific mechanics stay in host adapters/extensions. For Pi, this includes
-TUI entries, notifications, colors/themes, `sendUserMessage`, and trusted
+TUI entries, notifications, colors/themes, `sendUserMessage`, and runtime
 session id retrieval.
 
 Future Hermes, OpenCode, ACP, and MCP wrappers should call the same core
 operations and reuse core formatting. Adapter-specific code should handle only
-trusted identity, host UI/rendering, and host-specific message injection. Generic
-MCP alone is not trusted for ownership or auto-return unless wrapped by a trusted
+runtime identity, host UI/rendering, and host-specific message injection. Generic
+MCP alone is not runtime for ownership or auto-return unless wrapped by a runtime
 host adapter.
 
 ### Host Commands and Natural Dispatch
@@ -395,13 +395,13 @@ parallelize a narrow task. If a role is omitted, the default role is `worker`.
 The dispatch tool should include available configured roles in its metadata, and
 that metadata should come from core so future host adapters stay consistent.
 
-### Trusted Session Identity
+### Session Identity
 
-Worker ownership is keyed by trusted `orchestrator_session_id`. CLI
-`--session-id` remains local/manual mode only and is not a trusted host identity
-boundary. Pi trusted identity is `ctx.sessionManager.getSessionId()` normalized
+Worker ownership is keyed by `orchestrator_session_id`. CLI
+`--session-id` remains local/manual mode only and is not a runtime host identity
+boundary. Pi runtime identity is `ctx.sessionManager.getSessionId()` normalized
 as `pi:<session_id>`. The LLM or user prompt must not provide, remember, infer,
-or override trusted session ids.
+or override runtime session ids.
 
 ### Returns and Auto-Return
 

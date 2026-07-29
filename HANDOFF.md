@@ -4,16 +4,16 @@ This file records app-level decisions made during the MVP finishing session. It 
 
 ## Core architecture
 
-- Orchestra is a Python core with thin host integrations. Host extensions/plugins should retrieve trusted host identity and relay core operations; they should not own orchestration policy.
+- Orchestra is a Python core with thin host integrations. Host extensions/plugins should retrieve runtime host identity and relay core operations; they should not own orchestration policy.
 - Generic wording, result formatting, report formatting, command echo policy, tool metadata, and progress message text should live in the core where possible.
 - Host-specific UI mechanics stay in the host adapter/extension. For Pi, that includes TUI entries, notifications, colors/themes, `sendUserMessage`, and session id retrieval.
 
-## Trusted session identity
+## Runtime session identity
 
-- Worker ownership is keyed by trusted `orchestrator_session_id`.
+- Worker ownership is keyed by `orchestrator_session_id`.
 - CLI `--session-id` remains local/manual mode only.
-- Pi trusted identity is `ctx.sessionManager.getSessionId()` normalized as `pi:<session_id>`.
-- The LLM/user prompt must not provide or infer trusted session ids.
+- Pi runtime identity is `ctx.sessionManager.getSessionId()` normalized as `pi:<session_id>`.
+- The LLM/user prompt must not provide or infer runtime session ids.
 
 ## Host command and natural dispatch
 
@@ -84,5 +84,5 @@ This file records app-level decisions made during the MVP finishing session. It 
 ## Future adapter guidance
 
 - Future Hermes/OpenCode/ACP/MCP wrappers should call the same core operations and reuse core formatting.
-- Adapter-specific code should only handle trusted identity, UI/rendering, and host-specific message injection.
-- Generic MCP alone is not trusted for ownership or auto-return unless wrapped by a trusted host adapter.
+- Adapter-specific code should only handle runtime identity, UI/rendering, and host-specific message injection.
+- Generic MCP alone is not runtime for ownership or auto-return unless wrapped by a runtime host adapter.

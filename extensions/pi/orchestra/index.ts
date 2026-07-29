@@ -405,8 +405,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       taskLabel: Type.Optional(Type.String({ description: toolInfo.taskLabelDescription })),
     }),
     async execute(_toolCallId, params: DispatchParams, _signal, _onUpdate, ctx) {
-      const trustedSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
-      const result = await dispatchWorker(trustedSessionId, params, progressNotifier(ctx));
+      const runtimeSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
+      const result = await dispatchWorker(runtimeSessionId, params, progressNotifier(ctx));
       return {
         content: [{ type: "text", text: result.output }],
         isError: result.code !== 0,
@@ -427,7 +427,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }
 
       const [subcommand, ...rest] = trimmed.split(/\s+/);
-      const trustedSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
+      const runtimeSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
 
       if (subcommand === "help") {
         emitEntryOutput(ctx, await hostHelp());
@@ -441,7 +441,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }
 
       if (subcommand === "status") {
-        const result = await runOrchestra(["status", "--session-id", trustedSessionId]);
+        const result = await runOrchestra(["status", "--session-id", runtimeSessionId]);
         emitEntryOutput(ctx, result.stdout || result.stderr);
         return;
       }
@@ -451,7 +451,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         const result = await runOrchestra([
           "history",
           "--session-id",
-          trustedSessionId,
+          runtimeSessionId,
           "--limit",
           limit,
         ]);
@@ -468,7 +468,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         const result = await runOrchestra([
           "stop",
           "--session-id",
-          trustedSessionId,
+          runtimeSessionId,
           "--run-id",
           runId,
         ]);
@@ -483,7 +483,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           return;
         }
         const result = await dispatchWorker(
-          trustedSessionId,
+          runtimeSessionId,
           {
             goal: parsed.goal,
             role: parsed.role,

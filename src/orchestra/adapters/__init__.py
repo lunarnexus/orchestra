@@ -1,4 +1,4 @@
-"""Trusted host adapter helpers."""
+"""Host adapter helpers."""
 
 from orchestra.adapters.hermes import normalize_hermes_session_id
 from orchestra.adapters.pi import normalize_pi_session_id

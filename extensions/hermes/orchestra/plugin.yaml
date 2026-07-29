@@ -1,6 +1,6 @@
 name: orchestra
 version: 0.1.0
-description: Safe Orchestra host plugin for trusted Hermes tool dispatch
+description: Safe Orchestra host plugin for runtime Hermes tool dispatch
 provides_tools:
   - orch_dispatch
 provides_commands:

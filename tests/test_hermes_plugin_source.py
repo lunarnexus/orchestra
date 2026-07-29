@@ -6,7 +6,7 @@ import importlib.util
 import json
 import subprocess
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -28,13 +28,15 @@ def load_plugin() -> ModuleType:
 
 
 class FakeHermesPluginContext:
-    def __init__(self) -> None:
+    def __init__(self, session_id: str | None = None) -> None:
         self.tools: list[dict[str, Any]] = []
         self.commands: list[dict[str, Any]] = []
         self.hooks: list[tuple[str, Any]] = []
         self.injected: list[tuple[str, str]] = []
         self.notifications: list[str] = []
         self.inject_success = True
+        if session_id is not None:
+            self._manager = SimpleNamespace(_cli_ref=SimpleNamespace(session_id=session_id))
 
     def register_tool(self, **kwargs: Any) -> None:
         self.tools.append(kwargs)
@@ -152,7 +154,7 @@ def test_hermes_plugin_uses_dynamic_tool_metadata(monkeypatch: pytest.MonkeyPatc
     assert schema["parameters"]["properties"]["taskLabel"]["description"] == "dynamic label"
 
 
-def test_orch_slash_session_scoped_commands_fail_closed_without_trusted_context(
+def test_orch_slash_session_scoped_commands_fail_closed_without_runtime_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -176,7 +178,7 @@ def test_orch_slash_session_scoped_commands_fail_closed_without_trusted_context(
         "stop run-1 session_id attacker",
     ]:
         output = ctx.commands[0]["handler"](raw_args)
-        assert "trusted runtime session context" in output
+        assert "runtime session context" in output
 
     assert calls == []
 
@@ -195,9 +197,9 @@ def test_orch_slash_doctor_help_are_sessionless_safe_wrappers_and_scoped_fail_cl
 
     assert plugin._orch_command("help") == "ok\n"
     assert plugin._orch_command("doctor") == "ok\n"
-    assert "trusted runtime session context" in plugin._orch_command("status")
-    assert "trusted runtime session context" in plugin._orch_command("history 7")
-    assert "trusted runtime session context" in plugin._orch_command("stop run-1")
+    assert "runtime session context" in plugin._orch_command("status")
+    assert "runtime session context" in plugin._orch_command("history 7")
+    assert "runtime session context" in plugin._orch_command("stop run-1")
 
     assert calls == [
         ["help-host"],
@@ -205,29 +207,127 @@ def test_orch_slash_doctor_help_are_sessionless_safe_wrappers_and_scoped_fail_cl
     ]
 
 
+def test_orch_slash_cli_private_session_fallback_scopes_status_history_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        return completed(args, "ok\n")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+    plugin.register(ctx)
+    calls.clear()
+
+    assert ctx.commands[0]["handler"]("status") == "ok\n"
+    assert ctx.commands[0]["handler"]("history 7") == "ok\n"
+    assert ctx.commands[0]["handler"]("stop run-1") == "ok\n"
+
+    assert calls == [
+        ["status", "--session-id", "hermes:cli-session"],
+        ["history", "--session-id", "hermes:cli-session", "--limit", "7"],
+        ["stop", "--session-id", "hermes:cli-session", "--run-id", "run-1"],
+    ]
+
+
+def test_orch_slash_cli_private_session_fallback_dispatches_do_and_watches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        if args[0] == "do":
+            return completed(args, "run_id: cli-run\nstatus: queued\n")
+        if args[0] == "_dispatch-ack":
+            return completed(args, "orchestra dispatched: reviewer cli-run\n")
+        if args[0] == "_await-run":
+            return completed(args, "status: done\nrole: reviewer\nactive_runs_remaining: 0\n")
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra:reviewer cli-run returned done (1/1)\n")
+        if args[0] == "_await-session-report":
+            return completed(
+                args,
+                json.dumps({"runIds": ["cli-run"], "report": "reviewer done"}),
+            )
+        if args[0] == "_mark-session-report-delivered":
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="hermes:cli-session")
+    plugin.register(ctx)
+    calls.clear()
+
+    output = ctx.commands[0]["handler"](
+        "do --role reviewer --timeout 5 --task-label cli-task session_id attacker ship it"
+    )
+
+    assert output == "orchestra dispatched: reviewer cli-run"
+    assert [
+        "do",
+        "--session-id",
+        "hermes:cli-session",
+        "--role",
+        "reviewer",
+        "--goal",
+        "session_id attacker ship it",
+        "--timeout",
+        "5",
+        "--task-label",
+        "cli-task",
+    ] in calls
+    assert [
+        "_await-run",
+        "--session-id",
+        "hermes:cli-session",
+        "--run-id",
+        "cli-run",
+    ] in calls
+    assert [
+        "_await-session-report",
+        "--session-id",
+        "hermes:cli-session",
+        "--run-id",
+        "cli-run",
+        "--json",
+    ] in calls
+    assert wait_for_condition(
+        lambda: ctx.notifications == ["orchestra:reviewer cli-run returned done (1/1)"]
+    )
+    assert wait_for_condition(lambda: ctx.injected == [("reviewer done", "user")])
+
+
 def test_orch_slash_fails_closed_without_hook_session_context() -> None:
     plugin = load_plugin()
 
     output = plugin._orch_command("status")
 
-    assert "trusted runtime session context" in output
+    assert "runtime session context" in output
 
 
-def test_hermes_plugin_source_does_not_trust_global_or_private_slash_session() -> None:
+def test_hermes_plugin_source_does_not_trust_global_or_lifecycle_slash_session() -> None:
     source = PLUGIN_PATH.read_text(encoding="utf-8")
 
     assert "_CURRENT_SESSION_ID" not in source
     assert "on_session_start" not in source
     assert "on_session_reset" not in source
     assert "on_session_finalize" not in source
-    assert "_cli_ref" not in source
 
 
 @pytest.mark.parametrize(
     "kwargs",
     [{}, {"session_id": ""}, {"session_id": "   "}, {"session_id": None}],
 )
-def test_orch_dispatch_rejects_missing_trusted_session_id(kwargs: dict[str, Any]) -> None:
+def test_orch_dispatch_rejects_missing_runtime_session_id(kwargs: dict[str, Any]) -> None:
     plugin = load_plugin()
 
     payload = json.loads(plugin.orch_dispatch({"goal": "do work"}, **kwargs))
@@ -241,7 +341,7 @@ def test_orch_dispatch_rejects_model_supplied_identity_args(identity_arg: str) -
     plugin = load_plugin()
 
     payload = json.loads(
-        plugin.orch_dispatch({"goal": "do work", identity_arg: "attacker"}, session_id="trusted")
+        plugin.orch_dispatch({"goal": "do work", identity_arg: "attacker"}, session_id="runtime")
     )
 
     assert payload == {
@@ -262,13 +362,13 @@ def test_orch_dispatch_rejects_non_positive_integer_timeout(
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
 
     payload = json.loads(
-        plugin.orch_dispatch({"goal": "do work", "timeout": timeout}, session_id="trusted")
+        plugin.orch_dispatch({"goal": "do work", "timeout": timeout}, session_id="runtime")
     )
 
     assert payload == {"error": "timeout must be a positive integer"}
 
 
-def test_orch_dispatch_builds_cli_args_from_trusted_kwargs_and_returns_ack(
+def test_orch_dispatch_builds_cli_args_from_runtime_kwargs_and_returns_ack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -291,14 +391,14 @@ def test_orch_dispatch_builds_cli_args_from_trusted_kwargs_and_returns_ack(
             "timeout": 42,
             "taskLabel": "review-task",
         },
-        session_id="trusted-session",
+        session_id="runtime-session",
     )
 
     assert calls == [
         [
             "do",
             "--session-id",
-            "hermes:trusted-session",
+            "hermes:runtime-session",
             "--role",
             "reviewer",
             "--goal",
@@ -323,10 +423,10 @@ def test_orch_dispatch_requires_run_id_before_ack(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
 
-    payload = json.loads(plugin.orch_dispatch({"goal": "do work"}, session_id="trusted"))
+    payload = json.loads(plugin.orch_dispatch({"goal": "do work"}, session_id="runtime"))
 
     assert calls == [
-        ["do", "--session-id", "hermes:trusted", "--role", "worker", "--goal", "do work"]
+        ["do", "--session-id", "hermes:runtime", "--role", "worker", "--goal", "do work"]
     ]
     assert payload == {"error": "orchestra dispatch did not return a run_id"}
 
@@ -362,7 +462,7 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
     ctx = FakeHermesPluginContext()
     plugin.register(ctx)
 
-    output = ctx.tools[0]["handler"]({"goal": "do work"}, session_id="trusted")
+    output = ctx.tools[0]["handler"]({"goal": "do work"}, session_id="runtime")
 
     assert output == "orchestra dispatched: worker abc123"
     assert wait_for_condition(
@@ -372,7 +472,7 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
     assert [
         "_await-session-report",
         "--session-id",
-        "hermes:trusted",
+        "hermes:runtime",
         "--run-id",
         "abc123",
         "--json",
@@ -380,7 +480,7 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
     assert [
         "_await-run",
         "--session-id",
-        "hermes:trusted",
+        "hermes:runtime",
         "--run-id",
         "abc123",
     ] in calls
@@ -400,7 +500,7 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
     assert [
         "_mark-session-report-delivered",
         "--session-id",
-        "hermes:trusted",
+        "hermes:runtime",
         "--run-id",
         "abc123",
     ] in calls
@@ -432,7 +532,7 @@ def test_progress_without_notification_api_skips_inject_fallback_but_final_repor
 
     output = plugin._dispatch_orchestra_run(
         {"goal": "do work"},
-        "hermes:trusted",
+        "hermes:runtime",
         ctx=ctx,
     )
 
@@ -443,7 +543,7 @@ def test_progress_without_notification_api_skips_inject_fallback_but_final_repor
     assert [
         "_await-session-report",
         "--session-id",
-        "hermes:trusted",
+        "hermes:runtime",
         "--run-id",
         "abc123",
         "--json",
@@ -468,7 +568,7 @@ def test_session_report_injection_failure_releases_without_marking(
 
     plugin._handle_session_report_result(
         ctx,
-        "hermes:trusted",
+        "hermes:runtime",
         completed(
             ["_await-session-report"],
             json.dumps({"runIds": ["abc123"], "report": "worker done"}),
@@ -480,7 +580,7 @@ def test_session_report_injection_failure_releases_without_marking(
         [
             "_release-session-report",
             "--session-id",
-            "hermes:trusted",
+            "hermes:runtime",
             "--run-id",
             "abc123",
         ]
@@ -506,7 +606,7 @@ def test_session_report_mark_failure_releases_for_retry(
 
     plugin._handle_session_report_result(
         ctx,
-        "hermes:trusted",
+        "hermes:runtime",
         completed(
             ["_await-session-report"],
             json.dumps({"runIds": ["abc123"], "report": "worker done"}),
@@ -518,14 +618,14 @@ def test_session_report_mark_failure_releases_for_retry(
         [
             "_mark-session-report-delivered",
             "--session-id",
-            "hermes:trusted",
+            "hermes:runtime",
             "--run-id",
             "abc123",
         ],
         [
             "_release-session-report",
             "--session-id",
-            "hermes:trusted",
+            "hermes:runtime",
             "--run-id",
             "abc123",
         ],
@@ -548,7 +648,7 @@ def test_session_report_malformed_json_releases_fallback_run_id(
 
     plugin._handle_session_report_result(
         FakeHermesPluginContext(),
-        "hermes:trusted",
+        "hermes:runtime",
         completed(["_await-session-report"], "{not json"),
         ["abc123"],
     )
@@ -557,7 +657,7 @@ def test_session_report_malformed_json_releases_fallback_run_id(
         [
             "_release-session-report",
             "--session-id",
-            "hermes:trusted",
+            "hermes:runtime",
             "--run-id",
             "abc123",
         ]

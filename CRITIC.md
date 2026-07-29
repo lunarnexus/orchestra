@@ -7,7 +7,7 @@
 - [x] global and per-session concurrency limits are enforced atomically in SQLite run reservation.
 - [x] consolidated session reporting now groups unreported terminal runs by session and includes log / artifact refs.
 - [x] CLI `--session-id` is documented as local/manual mode only.
-- [x] first trusted host adapter exists as a Pi extension using runtime session identity normalization.
+- [x] first runtime host adapter exists as a Pi extension using runtime session identity normalization.
 
 ## Remaining notes
 

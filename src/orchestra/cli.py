@@ -87,7 +87,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         "--session-id",
         required=True,
         help=(
-            "local/manual session id for CLI mode; trusted host adapters "
+            "local/manual session id for CLI mode; runtime host adapters "
             "supply session ids from runtime context"
         ),
     )

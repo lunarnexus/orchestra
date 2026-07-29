@@ -1,6 +1,6 @@
 # orchestra
 
-Orchestra is an agent-agnostic orchestration control plane for dispatching focused worker agents from a trusted parent session.
+Orchestra is an agent-agnostic orchestration control plane for dispatching focused worker agents from a parent session.
 
 ## MVP Status
 
@@ -12,7 +12,7 @@ Implemented now:
 - atomic global and per-session concurrency limits
 - supervised worker start/stop/timeout handling
 - session-scoped consolidated reports
-- first trusted host path: global Pi host extension
+- first runtime host path: global Pi host extension
 - host command surface: `/orch help`, `/orch do`, `/orch status`, `/orch stop`, `/orch doctor`, `/orch history`
 - natural-language dispatch through the Pi `orch_dispatch` tool
 - watcher-based Pi auto-return into the owning live session; manual persistent Pi E2E has passed
@@ -21,7 +21,7 @@ Still later / not implemented:
 
 - Hermes adapter
 - OpenCode adapter
-- MCP trusted wrapper path
+- MCP runtime wrapper path
 - ACP / RPC worker harnesses
 - workflow loops, watchdogs, approval routing
 - durable retry/recovery if live host reinjection fails
@@ -122,7 +122,7 @@ Notes:
 
 The CLI is useful for local/manual orchestration.
 
-`--session-id` in CLI mode is caller-supplied and is **not** the trusted host identity boundary described in `FOUNDATION.md`.
+`--session-id` in CLI mode is caller-supplied and is **not** the runtime host identity boundary described in `FOUNDATION.md`.
 
 ```bash
 orchestra doctor
@@ -145,7 +145,7 @@ Inside any Pi session with the global extension installed (`/orch help` lists av
 /orch history [limit]
 ```
 
-Trusted session identity comes from Pi runtime context via `ctx.sessionManager.getSessionId()`, normalized as `pi:<session_id>`.
+Runtime session identity comes from Pi runtime context via `ctx.sessionManager.getSessionId()`, normalized as `pi:<session_id>`.
 
 Slash commands are echoed in the Pi display as the exact `/orch ...` line typed.
 
