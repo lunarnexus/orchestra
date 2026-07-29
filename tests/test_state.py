@@ -4,6 +4,7 @@ import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -51,6 +52,30 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
 
     assert row is not None
     assert row[0] == 4
+
+
+def test_connect_retries_transient_sqlite_open_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    real_connect = sqlite3.connect
+    attempts = 0
+
+    def flaky_connect(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise sqlite3.OperationalError("unable to open database file")
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", flaky_connect)
+    monkeypatch.setattr("orchestra.state.time.sleep", lambda _seconds: None)
+
+    store.initialize()
+
+    assert attempts == 2
+    assert store.database_path.exists()
 
 
 def test_reserve_and_get_run_round_trip(state_store: StateStore, tmp_path: Path) -> None:

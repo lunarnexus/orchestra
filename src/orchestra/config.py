@@ -59,7 +59,7 @@ DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
 DEFAULT_HOST_HELP = """Orchestra commands:
   /orch help                         Show this help
   /orch doctor                       Check Orchestra setup
-  /orch do <request>                 Start a worker for this Pi session
+  /orch do <request>                 Start a worker for this session
   /orch do --role ROLE <request>     Start a worker with a role
   /orch do --timeout SEC <request>   Start a worker with a timeout
   /orch status                       Show active workers for this session

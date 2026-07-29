@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -17,6 +18,8 @@ STATUS_CANCELLED = "cancelled"
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
+_CONNECT_ATTEMPTS = 3
+_CONNECT_RETRY_DELAY_SECONDS = 0.05
 ALLOWED_TRANSITIONS = {
     STATUS_QUEUED: frozenset({STATUS_RUNNING, STATUS_FAILED, STATUS_CANCELLED}),
     STATUS_RUNNING: frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED}),
@@ -429,9 +432,19 @@ class StateStore:
         )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30.0)
-        connection.row_factory = sqlite3.Row
-        return connection
+        last_error: sqlite3.OperationalError | None = None
+        for attempt in range(_CONNECT_ATTEMPTS):
+            try:
+                connection = sqlite3.connect(self.database_path, timeout=30.0)
+                connection.row_factory = sqlite3.Row
+                return connection
+            except sqlite3.OperationalError as exc:
+                last_error = exc
+                if attempt == _CONNECT_ATTEMPTS - 1:
+                    break
+                time.sleep(_CONNECT_RETRY_DELAY_SECONDS * (attempt + 1))
+        assert last_error is not None
+        raise last_error
 
     def _merge_record(self, current: RunRecord, update: RunUpdate) -> RunRecord:
         next_record = replace(

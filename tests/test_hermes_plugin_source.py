@@ -550,6 +550,93 @@ def test_progress_without_notification_api_skips_inject_fallback_but_final_repor
     ] in calls
 
 
+def test_session_report_watcher_retries_after_transient_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        await_report_calls = [call for call in calls if call[0] == "_await-session-report"]
+        if args[0] == "_await-session-report" and len(await_report_calls) == 1:
+            return completed(args, stderr="unable to open database file", code=1)
+        if args[0] == "_await-session-report":
+            return completed(
+                args,
+                json.dumps({"runIds": ["abc123"], "report": "worker done"}),
+            )
+        if args[0] == "_mark-session-report-delivered":
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(plugin.time, "sleep", lambda _seconds: None)
+    ctx = FakeHermesPluginContext()
+
+    plugin._watch_session_report(ctx, "hermes:runtime", "abc123")
+
+    assert ctx.injected == [("worker done", "user")]
+    assert [call[0] for call in calls].count("_await-session-report") == 2
+    assert [
+        "_mark-session-report-delivered",
+        "--session-id",
+        "hermes:runtime",
+        "--run-id",
+        "abc123",
+    ] in calls
+
+
+def test_progress_completion_restarts_session_report_watcher_after_early_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+    await_report_count = 0
+
+    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        nonlocal await_report_count
+        calls.append(args)
+        if args[0] == "_await-session-report":
+            await_report_count += 1
+            if await_report_count <= plugin._REPORT_WATCHER_ATTEMPTS:
+                return completed(args, stderr="unable to open database file", code=1)
+            return completed(
+                args,
+                json.dumps({"runIds": ["abc123"], "report": "worker done"}),
+            )
+        if args[0] == "_await-run":
+            return completed(args, "status: done\nrole: worker\nactive_runs_remaining: 0\n")
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra:worker abc123 returned done (1/1)\n")
+        if args[0] == "_mark-session-report-delivered":
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(plugin.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        plugin,
+        "_start_session_report_watcher",
+        lambda report_ctx, session_id, report_run_id: plugin._watch_session_report(
+            report_ctx,
+            session_id,
+            report_run_id,
+        ),
+    )
+    ctx = FakeHermesPluginContext()
+
+    plugin._watch_session_report(ctx, "hermes:runtime", "abc123")
+    assert ctx.injected == []
+    assert plugin._session_report_watcher_failed("hermes:runtime")
+
+    plugin._watch_run_progress(ctx, "hermes:runtime", "abc123")
+
+    assert ctx.notifications == ["orchestra:worker abc123 returned done (1/1)"]
+    assert ctx.injected == [("worker done", "user")]
+    assert [call[0] for call in calls].count("_await-session-report") == 4
+
+
 def test_session_report_injection_failure_releases_without_marking(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

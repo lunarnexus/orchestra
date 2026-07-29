@@ -8,12 +8,16 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from typing import Any
 
 _IDENTITY_ARG_NAMES = frozenset({"session_id", "identity", "orchestrator_session_id"})
 _RUN_ID_RE = re.compile(r"^run_id:\s*(?P<run_id>\S+)\s*$")
 _SUBPROCESS_TIMEOUT_SECONDS = 300
+_REPORT_WATCHER_ATTEMPTS = 3
+_REPORT_WATCHER_RETRY_DELAY_SECONDS = 0.25
 _REPORT_WATCHERS: set[str] = set()
+_REPORT_WATCHER_FAILED_SESSIONS: set[str] = set()
 _REPORT_WATCHERS_LOCK = threading.Lock()
 _SESSION_LOCK = threading.Lock()
 _SESSION_RUNS: dict[str, set[str]] = {}
@@ -318,17 +322,32 @@ def _handle_session_report_result(
 
 def _watch_session_report(ctx: Any, runtime_session_id: str, run_id: str) -> None:
     try:
-        result = _run_orchestra(
-            [
-                "_await-session-report",
-                "--session-id",
-                runtime_session_id,
-                "--run-id",
-                run_id,
-                "--json",
-            ]
-        )
-        _handle_session_report_result(ctx, runtime_session_id, result, [run_id])
+        for attempt in range(_REPORT_WATCHER_ATTEMPTS):
+            result = _run_orchestra(
+                [
+                    "_await-session-report",
+                    "--session-id",
+                    runtime_session_id,
+                    "--run-id",
+                    run_id,
+                    "--json",
+                ]
+            )
+            if result.returncode == 0:
+                _handle_session_report_result(ctx, runtime_session_id, result, [run_id])
+                with _REPORT_WATCHERS_LOCK:
+                    _REPORT_WATCHER_FAILED_SESSIONS.discard(runtime_session_id)
+                return
+            if attempt == _REPORT_WATCHER_ATTEMPTS - 1:
+                _handle_session_report_result(ctx, runtime_session_id, result, [run_id])
+                with _REPORT_WATCHERS_LOCK:
+                    _REPORT_WATCHER_FAILED_SESSIONS.add(runtime_session_id)
+                return
+            time.sleep(_REPORT_WATCHER_RETRY_DELAY_SECONDS * (attempt + 1))
+    except Exception as exc:  # plugin watcher thread must survive unexpected command failures
+        _log_watcher_error(str(exc))
+        with _REPORT_WATCHERS_LOCK:
+            _REPORT_WATCHER_FAILED_SESSIONS.add(runtime_session_id)
     finally:
         with _REPORT_WATCHERS_LOCK:
             _REPORT_WATCHERS.discard(runtime_session_id)
@@ -348,6 +367,11 @@ def _start_session_report_watcher(ctx: Any | None, runtime_session_id: str, run_
         name=f"orchestra-report-{run_id}",
     )
     thread.start()
+
+
+def _session_report_watcher_failed(runtime_session_id: str) -> bool:
+    with _REPORT_WATCHERS_LOCK:
+        return runtime_session_id in _REPORT_WATCHER_FAILED_SESSIONS
 
 
 def _watch_run_progress(ctx: Any, runtime_session_id: str, run_id: str) -> None:
@@ -391,6 +415,8 @@ def _watch_run_progress(ctx: Any, runtime_session_id: str, run_id: str) -> None:
         else f"orchestra:{role_text} {run_id} returned {status} ({completed}/{total})"
     )
     _emit_progress(ctx, message)
+    if active_remaining == 0 and _session_report_watcher_failed(runtime_session_id):
+        _start_session_report_watcher(ctx, runtime_session_id, run_id)
 
 
 def _start_run_progress_watcher(ctx: Any | None, runtime_session_id: str, run_id: str) -> None:

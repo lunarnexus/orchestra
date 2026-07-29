@@ -7,6 +7,7 @@ import pytest
 from orchestra.config import (
     DEFAULT_AUTO_RETURN,
     DEFAULT_GLOBAL_CONCURRENCY,
+    DEFAULT_HOST_HELP,
     DEFAULT_LOG_DIR,
     DEFAULT_PER_SESSION_CONCURRENCY,
     DEFAULT_STATE_DIR,
@@ -94,6 +95,14 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.concurrency.global_limit == DEFAULT_GLOBAL_CONCURRENCY
     assert config.concurrency.per_session_limit == DEFAULT_PER_SESSION_CONCURRENCY
     assert config.auto_return is DEFAULT_AUTO_RETURN
+
+
+def test_default_host_help_uses_generic_session_wording() -> None:
+    assert (
+        "/orch do <request>                 Start a worker for this session"
+        in DEFAULT_HOST_HELP
+    )
+    assert "Pi session" not in DEFAULT_HOST_HELP
 
 
 @pytest.mark.parametrize(
