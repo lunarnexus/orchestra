@@ -12,6 +12,8 @@ from typing import Any
 import pytest
 import yaml
 
+from tests.helpers import wait_for_condition
+
 PLUGIN_PATH = Path("extensions/hermes/orchestra/__init__.py")
 MANIFEST_PATH = Path("extensions/hermes/orchestra/plugin.yaml")
 
@@ -29,12 +31,18 @@ class FakeHermesPluginContext:
     def __init__(self) -> None:
         self.tools: list[dict[str, Any]] = []
         self.commands: list[dict[str, Any]] = []
+        self.injected: list[tuple[str, str]] = []
+        self.inject_success = True
 
     def register_tool(self, **kwargs: Any) -> None:
         self.tools.append(kwargs)
 
     def register_command(self, name: str, **kwargs: Any) -> None:
         self.commands.append({"name": name, **kwargs})
+
+    def inject_message(self, content: str, role: str = "user") -> bool:
+        self.injected.append((content, role))
+        return self.inject_success
 
 
 def completed(
@@ -234,6 +242,123 @@ def test_orch_dispatch_requires_run_id_before_ack(monkeypatch: pytest.MonkeyPatc
         ["do", "--session-id", "hermes:trusted", "--role", "worker", "--goal", "do work"]
     ]
     assert payload == {"error": "orchestra dispatch did not return a run_id"}
+
+
+def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        if args[0] == "do":
+            return completed(args, "run_id: abc123\nstatus: queued\n")
+        if args[0] == "_dispatch-ack":
+            return completed(args, "orchestra dispatched: worker abc123\n")
+        if args[0] == "_await-session-report":
+            return completed(
+                args,
+                json.dumps({"runIds": ["abc123"], "report": "worker done"}),
+            )
+        if args[0] == "_mark-session-report-delivered":
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext()
+    plugin.register(ctx)
+
+    payload = json.loads(ctx.tools[0]["handler"]({"goal": "do work"}, session_id="trusted"))
+
+    assert payload == {"runId": "abc123", "ack": "orchestra dispatched: worker abc123"}
+    assert wait_for_condition(lambda: ctx.injected == [("worker done", "user")])
+    assert [
+        "_await-session-report",
+        "--session-id",
+        "hermes:trusted",
+        "--run-id",
+        "abc123",
+        "--json",
+    ] in calls
+    assert [
+        "_mark-session-report-delivered",
+        "--session-id",
+        "hermes:trusted",
+        "--run-id",
+        "abc123",
+    ] in calls
+
+
+def test_session_report_injection_failure_releases_without_marking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_release-session-report":
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext()
+    ctx.inject_success = False
+
+    plugin._handle_session_report_result(
+        ctx,
+        "hermes:trusted",
+        completed(
+            ["_await-session-report"],
+            json.dumps({"runIds": ["abc123"], "report": "worker done"}),
+        ),
+    )
+
+    assert ctx.injected == [("worker done", "user")]
+    assert calls == [
+        [
+            "_release-session-report",
+            "--session-id",
+            "hermes:trusted",
+            "--run-id",
+            "abc123",
+        ]
+    ]
+
+
+def test_session_report_malformed_json_releases_fallback_run_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_release-session-report":
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+
+    plugin._handle_session_report_result(
+        FakeHermesPluginContext(),
+        "hermes:trusted",
+        completed(["_await-session-report"], "{not json"),
+        ["abc123"],
+    )
+
+    assert calls == [
+        [
+            "_release-session-report",
+            "--session-id",
+            "hermes:trusted",
+            "--run-id",
+            "abc123",
+        ]
+    ]
 
 
 def test_run_orchestra_uses_bounded_subprocess_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

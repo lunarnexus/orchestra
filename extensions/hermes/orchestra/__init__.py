@@ -6,11 +6,15 @@ import json
 import os
 import re
 import subprocess
+import sys
+import threading
 from typing import Any
 
 _IDENTITY_ARG_NAMES = frozenset({"session_id", "identity", "orchestrator_session_id"})
 _RUN_ID_RE = re.compile(r"^run_id:\s*(?P<run_id>\S+)\s*$")
 _SUBPROCESS_TIMEOUT_SECONDS = 300
+_REPORT_WATCHERS: set[str] = set()
+_REPORT_WATCHERS_LOCK = threading.Lock()
 
 _FALLBACK_TOOL_INFO = {
     "description": "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
@@ -117,6 +121,172 @@ def _error(message: str) -> str:
     return json.dumps({"error": message})
 
 
+def _log_watcher_error(message: str) -> None:
+    sys.stderr.write(f"orchestra auto-return watcher failed: {message}\n")
+
+
+def _report_run_id_args(run_ids: list[str]) -> list[str]:
+    args: list[str] = []
+    for run_id in run_ids:
+        args.extend(["--run-id", run_id])
+    return args
+
+
+def _release_session_report(trusted_session_id: str, run_ids: list[str]) -> None:
+    if not run_ids:
+        return
+    result = _run_orchestra(
+        [
+            "_release-session-report",
+            "--session-id",
+            trusted_session_id,
+            *_report_run_id_args(run_ids),
+        ]
+    )
+    if result.returncode != 0:
+        _log_watcher_error((result.stdout or result.stderr).strip() or "report release failed")
+
+
+def _mark_session_report_delivered(trusted_session_id: str, run_ids: list[str]) -> None:
+    if not run_ids:
+        return
+    result = _run_orchestra(
+        [
+            "_mark-session-report-delivered",
+            "--session-id",
+            trusted_session_id,
+            *_report_run_id_args(run_ids),
+        ]
+    )
+    if result.returncode != 0:
+        _log_watcher_error(
+            (result.stdout or result.stderr).strip() or "report delivery mark failed"
+        )
+
+
+def _inject_report(ctx: Any, message: str) -> bool:
+    inject_message = getattr(ctx, "inject_message", None)
+    if not callable(inject_message):
+        return False
+    return bool(inject_message(message, role="user"))
+
+
+def _handle_session_report_result(
+    ctx: Any,
+    trusted_session_id: str,
+    result: subprocess.CompletedProcess[str],
+    fallback_run_ids: list[str] | None = None,
+) -> None:
+    if result.returncode != 0:
+        error_text = (result.stdout or result.stderr).strip()
+        if error_text:
+            _log_watcher_error(error_text)
+        return
+
+    raw_report = result.stdout.strip()
+    if not raw_report:
+        return
+
+    run_ids = list(fallback_run_ids or [])
+    try:
+        payload = json.loads(raw_report)
+        raw_run_ids = payload.get("runIds") if isinstance(payload, dict) else None
+        if isinstance(raw_run_ids, list):
+            parsed_run_ids = [run_id for run_id in raw_run_ids if isinstance(run_id, str)]
+            if parsed_run_ids:
+                run_ids = parsed_run_ids
+        message = payload.get("report") if isinstance(payload, dict) else None
+        if not isinstance(message, str) or not message.strip():
+            _release_session_report(trusted_session_id, run_ids)
+            return
+        if not _inject_report(ctx, message.strip()):
+            _release_session_report(trusted_session_id, run_ids)
+            return
+        _mark_session_report_delivered(trusted_session_id, run_ids)
+    except Exception as exc:  # noqa: BLE001 - plugin must not crash watcher thread
+        _release_session_report(trusted_session_id, run_ids)
+        _log_watcher_error(str(exc))
+
+
+def _watch_session_report(ctx: Any, trusted_session_id: str, run_id: str) -> None:
+    try:
+        result = _run_orchestra(
+            [
+                "_await-session-report",
+                "--session-id",
+                trusted_session_id,
+                "--run-id",
+                run_id,
+                "--json",
+            ]
+        )
+        _handle_session_report_result(ctx, trusted_session_id, result, [run_id])
+    finally:
+        with _REPORT_WATCHERS_LOCK:
+            _REPORT_WATCHERS.discard(trusted_session_id)
+
+
+def _start_session_report_watcher(ctx: Any | None, trusted_session_id: str, run_id: str) -> None:
+    if ctx is None:
+        return
+    with _REPORT_WATCHERS_LOCK:
+        if trusted_session_id in _REPORT_WATCHERS:
+            return
+        _REPORT_WATCHERS.add(trusted_session_id)
+    thread = threading.Thread(
+        target=_watch_session_report,
+        args=(ctx, trusted_session_id, run_id),
+        daemon=True,
+        name=f"orchestra-report-{run_id}",
+    )
+    thread.start()
+
+
+def _dispatch_orchestra_run(
+    payload: dict[str, Any],
+    trusted_session_id: str,
+    ctx: Any | None = None,
+) -> str:
+    goal = str(payload.get("goal", "")).strip()
+    if not goal:
+        return _error("goal is required")
+
+    timeout = payload.get("timeout")
+    if timeout is not None and (type(timeout) is not int or timeout <= 0):
+        return _error("timeout must be a positive integer")
+
+    role = str(payload.get("role") or "worker").strip() or "worker"
+    command = [
+        "do",
+        "--session-id",
+        trusted_session_id,
+        "--role",
+        role,
+        "--goal",
+        goal,
+    ]
+    if timeout is not None:
+        command.extend(["--timeout", str(timeout)])
+    task_label = str(payload.get("taskLabel", "")).strip()
+    if task_label:
+        command.extend(["--task-label", task_label])
+
+    result = _run_orchestra(command)
+    if result.returncode != 0:
+        return _error((result.stdout or result.stderr).strip() or "orchestra dispatch failed")
+
+    run_id = _extract_run_id(result.stdout)
+    if not run_id:
+        return _error("orchestra dispatch did not return a run_id")
+
+    _start_session_report_watcher(ctx, trusted_session_id, run_id)
+
+    ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", role])
+    if ack.returncode != 0:
+        return _error((ack.stdout or ack.stderr).strip() or "orchestra dispatch ack failed")
+    return json.dumps({"runId": run_id, "ack": ack.stdout.strip()})
+
+
 def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
     """Dispatch a worker using only Hermes' trusted tool-call session_id kwarg."""
     supplied_identity_args = sorted(_IDENTITY_ARG_NAMES.intersection(args))
@@ -133,42 +303,7 @@ def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
     except ValueError:
         return _error("trusted Hermes session_id is required")
 
-    goal = str(args.get("goal", "")).strip()
-    if not goal:
-        return _error("goal is required")
-
-    timeout = args.get("timeout")
-    if timeout is not None and (type(timeout) is not int or timeout <= 0):
-        return _error("timeout must be a positive integer")
-
-    role = str(args.get("role") or "worker").strip() or "worker"
-    command = [
-        "do",
-        "--session-id",
-        trusted_session_id,
-        "--role",
-        role,
-        "--goal",
-        goal,
-    ]
-    if timeout is not None:
-        command.extend(["--timeout", str(timeout)])
-    task_label = str(args.get("taskLabel", "")).strip()
-    if task_label:
-        command.extend(["--task-label", task_label])
-
-    result = _run_orchestra(command)
-    if result.returncode != 0:
-        return _error((result.stdout or result.stderr).strip() or "orchestra dispatch failed")
-
-    run_id = _extract_run_id(result.stdout)
-    if not run_id:
-        return _error("orchestra dispatch did not return a run_id")
-
-    ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", role])
-    if ack.returncode != 0:
-        return _error((ack.stdout or ack.stderr).strip() or "orchestra dispatch ack failed")
-    return json.dumps({"runId": run_id, "ack": ack.stdout.strip()})
+    return _dispatch_orchestra_run(args, trusted_session_id, ctx=kwargs.get("_ctx"))
 
 
 def _orch_command(_raw_args: str) -> str:
@@ -182,11 +317,16 @@ def _orch_command(_raw_args: str) -> str:
 def register(ctx: Any) -> None:
     """Register Hermes tool and fail-closed slash command."""
     tool_info = _load_tool_info()
+
+    def dispatch_handler(args: dict[str, Any], **kwargs: Any) -> str:
+        kwargs["_ctx"] = ctx
+        return orch_dispatch(args, **kwargs)
+
     ctx.register_tool(
         name="orch_dispatch",
         toolset="orchestra",
         schema=_schema(tool_info),
-        handler=orch_dispatch,
+        handler=dispatch_handler,
     )
     ctx.register_command(
         "orch",
