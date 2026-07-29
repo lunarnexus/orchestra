@@ -14,7 +14,7 @@ roles:
 
   reviewer:
     harness: pi
-    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    model: openai-codex/gpt-5.4
     prompt_addition: Focus on the assigned task and return a compact result.
     command:
       - pi

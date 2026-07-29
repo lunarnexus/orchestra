@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make Orchestra's core agent-agnostic, add config-driven harness connectors, add Hermes integration, and keep proof labels honest.
+Make Orchestra's core agent-agnostic, keep host adapters thin, keep Hermes and Pi workflows working, and keep proof labels honest.
 
 ## Completed Progress
 
@@ -38,7 +38,14 @@ Make Orchestra's core agent-agnostic, add config-driven harness connectors, add 
 - [x] Committed and pushed plugin source to GitHub.
 - [x] Installed and enabled the Hermes plugin in profile `tori` using `orchestra init hermes --profile tori --force`.
 - [x] Added CLI-only private session fallback so Hermes `/orch do` can dispatch through the local slash-command path when `ctx._manager._cli_ref.session_id` is available.
-- [x] Updated installed profile plugin after confirming GitHub installer source lagged behind local repo source.
+- [x] Restored Hermes CLI `/orch help`, `/orch doctor`, `/orch status`, `/orch history`, `/orch stop`, and `/orch do` behavior for the interactive CLI path.
+- [x] Added Hermes auto-return watcher for completed worker reports.
+- [x] Added Hermes reinjection through plugin context and delivery/release handling for report claims.
+- [x] Hardened Hermes auto-return watcher retry/restart behavior after transient SQLite open failures.
+- [x] Increased SQLite open retry/backoff and added database-path context to final open errors.
+- [x] Added slow transaction timing warnings around `BEGIN IMMEDIATE` paths.
+- [x] Removed the old session-ownership buzzword from tracked repo content.
+- [x] Installed the updated profile plugin after each plugin-source change.
 
 ### Core host status wording
 
@@ -48,10 +55,12 @@ Make Orchestra's core agent-agnostic, add config-driven harness connectors, add 
 - [x] Added role to `_await-run` output so host adapters can format role-aware progress messages.
 - [x] Updated Pi extension source and packaged Pi extension asset to pass role through progress formatting.
 - [x] Updated Hermes plugin source to pass role through dispatch acknowledgement formatting.
+- [x] Changed generic `/orch help` wording from “Pi session” to “this session”.
+- [x] Updated active Pi global config via `orchestra init pi --force` so `/orch help` uses the generic wording.
 
 ## Verification / Proof
 
-Last full verification before the status-wording change:
+Earlier full verification before later Hermes work:
 
 - [x] `python3 -m pytest` — `99 passed in 24.13s`
 - [x] `python3 -m ruff check .`
@@ -69,34 +78,32 @@ Focused checks previously passed for:
 - [x] Hermes adapter identity behavior
 - [x] Hermes plugin runtime-session and timeout behavior
 
-Status-wording worker reported passing:
+Latest Hermes CLI/plugin verification:
 
-- [x] focused tests for command echo, dispatch ack, progress message, Hermes plugin source, and Pi extension source
-- [x] ruff
-- [x] mypy
-- [x] build
-- [x] full suite split by test-file groups: `109 passed`
-
-Per user direction, skip extra verification workers until requested.
+- [x] Commit `ce09f98` restored CLI slash dispatch and removed old session-ownership wording across tracked repo content.
+- [x] Commit `df2cabc` added generic help text and first watcher/SQLite retry hardening.
+- [x] Commit `afff997` increased SQLite open retry/backoff, increased Hermes watcher retry budget, added database-path error context, and added slow transaction timing warnings.
+- [x] Pi GPT-5.4 verification of `df2cabc`: `63 passed`, ruff passed, installed Hermes plugin matched repo source.
+- [x] Pi GPT-5.4 review of expanded retry fix: `77 passed`, ruff passed, diff check passed, no old wording returned.
+- [x] Installed Hermes plugin for profile `tori` after `afff997`; repo and installed plugin hashes matched.
+- [x] User live-tested Hermes CLI `/orch help`, `/orch doctor`, `/orch do`, `/orch status`, `/orch stop`, and auto-return after plugin install.
+- [x] User live-tested Pi `/orch` multi-worker flow; Pi auto-return worked as expected.
 
 ## Not Yet Proven End-to-End
 
 These are not done and should not be described as working:
 
-- [ ] Invoking `orch_dispatch` from a real Hermes model/tool call and confirming `kwargs["session_id"]` is populated in that surface.
-- [ ] Returning worker completion reports into a live Hermes session.
-- [ ] Real Hermes end-to-end proof for `/orch do`, `/orch status`, and `/orch history` from Hermes itself, not just plugin unit tests.
-- [ ] Functional Hermes gateway `/orch` commands in surfaces that do not expose CLI session context.
-- [ ] Hermes auto-return reinjection from completed workers into the owning Hermes orchestrator session.
+- [ ] Long-duration repeated Hermes auto-return soak test after `afff997` to confirm transient SQLite open failures no longer strand reports.
+- [ ] UX improvement for collapsed multi-worker report previews so the first worker header and last worker log line do not look mismatched.
+- [ ] Optional live locker sampler/timing evidence if SQLite open failures recur.
 
 ## Current State
 
-- Active slice: Hermes auto-return debugging.
-- Next slice: add Hermes-side session-report watcher and reinjection path, matching Pi extension behavior where safe.
-- Status-wording source changes are not committed yet.
-- Hermes CLI `/orch do` now uses CLI session context when available.
-- Keep Hermes gateway `/orch` fail-closed until Hermes exposes slash-command session context through a public API.
-- Orchestra core pending-report generation works; Hermes host adapter is missing the reinjection/watch path.
+- Active slice: Hermes CLI plugin hardening after live auto-return tests.
+- Next slice: only investigate issues reproduced by live Hermes/Pi tests.
+- Help-text and watcher-hardening source changes are committed, pushed, and installed.
+- Hermes CLI `/orch do` uses CLI session context when available.
+- Orchestra core pending-report generation works; Hermes CLI auto-return reinjection is installed and live-tested.
 
 ## Next Approved Slice
 
@@ -105,10 +112,9 @@ These are not done and should not be described as working:
 - [ ] Add at least one real Hermes integration test that loads the plugin through Hermes and exercises `/orch help` plus `/orch do` against Orchestra state.
 - [ ] Add proof for installed-plugin sync or document installer-source drift risk in verification notes.
 - [ ] Run targeted pytest coverage for Hermes plugin unit tests plus new Hermes integration coverage.
-- [ ] Add Hermes-side watcher for `orchestra _await-session-report --session-id <id> --run-id <id> --json`.
-- [ ] Reinject completed session reports with Hermes plugin `ctx.inject_message(...)` into the owning session.
-- [ ] Mark delivered with `_mark-session-report-delivered` and release claims on reinjection failure.
-- [ ] Add focused regression tests proving pending report exists in core and Hermes plugin consumes/reinjects it.
+- [ ] If SQLite open failures recur, run a live read-only locker sampler during the stall.
+- [ ] If collapsed report previews remain confusing, add a session-level heading before multi-worker report blocks.
+- [ ] Consider reducing repeated SQLite reconnects inside `_await-session-report` polling by reusing a store/connection safely.
 
 ## Decisions / Scope Notes
 
@@ -118,11 +124,10 @@ These are not done and should not be described as working:
 - Harness loading stays lazy and explicit.
 - Core stays agent-agnostic; harnesses/plugins own runtime-specific behavior.
 - Hermes tool calls remain the primary path because they provide runtime session id; slash support stays intentionally narrow.
-- Hermes gateway slash commands stay fail-closed until Hermes exposes session identity to plugin command handlers through a public API.
 - Hermes plugin installation must be explicit and profile-safe; never silently write to a Hermes profile.
 - Do not restart Hermes gateway on this machine.
 - The specific Hermes process that loaded old plugin code must restart before new plugin code is exercised; do not describe that as a machine-wide requirement.
-- Missing auto-return in Hermes is a host-adapter gap, not a core-state or worker-supervision failure.
+- Use Pi GPT-5.4 background workers for future delegated review/verification unless the user says otherwise.
 
 ## Risks
 
@@ -132,3 +137,4 @@ These are not done and should not be described as working:
 - Hermes plugin installer currently pulls GitHub source, so local repo fixes can diverge from installed plugin until source is pushed or plugin file is manually synced.
 - Unit tests centered on fake plugin context can miss real Hermes plugin-loader, slash-dispatch, and install/reload failures.
 - Hermes reinjection must avoid duplicate delivery, leaked report claims, and cross-session message injection.
+- Untracked `SMOKETEST.md` remains in the working tree and should stay out of commits unless explicitly requested.

@@ -290,6 +290,11 @@ LLM must never provide, remember, echo, or infer this id.
   should reject control and auto-return calls and expose only safe/status-only
   behavior.
 
+Future Hermes work: gateway/TUI `/orch` command support is not part of the
+current CLI MVP. If it becomes needed, solve it in the Hermes host layer by
+passing command-time runtime session context to the plugin command handler, not
+with MCP and not with model/user-supplied ids.
+
 ### Harness Ownership
 
 Worker sessions and memory are owned by underlying harnesses, not Orchestra.
