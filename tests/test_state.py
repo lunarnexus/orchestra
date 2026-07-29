@@ -5,7 +5,7 @@ import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -68,7 +68,7 @@ def test_connect_retries_transient_sqlite_open_failure(
         attempts += 1
         if attempts == 1:
             raise sqlite3.OperationalError("unable to open database file")
-        return real_connect(*args, **kwargs)
+        return cast(sqlite3.Connection, real_connect(*args, **kwargs))
 
     monkeypatch.setattr(sqlite3, "connect", flaky_connect)
     monkeypatch.setattr("orchestra.state.time.sleep", lambda _seconds: None)

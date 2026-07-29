@@ -433,7 +433,10 @@ def format_orchestrator_return(runs: list[RunRecord]) -> str:
                 ]
             )
         )
-    return "\n\n".join(blocks)
+    report = "\n\n".join(blocks)
+    if len(runs) == 1:
+        return report
+    return f"[orchestra: {len(runs)} workers returned]\n\n{report}"
 
 
 def build_session_report(session_id: str, runs: list[RunRecord], *, active_remaining: int) -> str:

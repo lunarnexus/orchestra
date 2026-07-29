@@ -51,6 +51,22 @@ Create and run a tiny temporary script that waits 60 seconds, then prints one un
 
 Run from a Hermes CLI session with the Orchestra plugin loaded.
 
+### H0. Timeout boundary check
+
+Run a short timeout from Hermes:
+
+```text
+/orch do --timeout 1 Timeout soak only. Run long enough to exceed one second. Do not edit files. Return concise success/fail and any blocker.
+```
+
+Pass if:
+
+- the run becomes terminal
+- `/orch status` does not show a stranded active run
+- `/orch history 10` or the returned report shows `Worker exceeded timeout` or an equivalent timeout failure
+
+After watcher timeout fixes, also run one long worker whose expected duration is greater than the old plugin subprocess cap and less than the worker timeout. Pass if progress/final auto-return still appears and the worker is not abandoned by host watchers.
+
 ### H1. Three-worker dispatch with cancellation
 
 Ask Hermes:
@@ -182,6 +198,8 @@ Call the soak test FAIL if any of these happen twice in a row:
 - `/orch status` shows active runs that are no longer real processes
 - `/orch stop` cancels the wrong run
 - a worker edits repository files despite the prompt
+
+SQLite note: `database is locked` usually indicates write-lock contention. `unable to open database file` points more toward path, parent-directory, permissions, filesystem, or transient open/connect behavior. Record the exact error text.
 
 ## Final report format
 

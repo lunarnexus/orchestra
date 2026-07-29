@@ -160,7 +160,7 @@ def test_orch_slash_session_scoped_commands_fail_closed_without_runtime_context(
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, code=1)
@@ -189,7 +189,7 @@ def test_orch_slash_doctor_help_are_sessionless_safe_wrappers_and_scoped_fail_cl
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         return completed(args, "ok\n")
 
@@ -213,7 +213,7 @@ def test_orch_slash_cli_private_session_fallback_scopes_status_history_stop(
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, code=1)
@@ -241,7 +241,7 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_watches(
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, code=1)
@@ -268,7 +268,7 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_watches(
     calls.clear()
 
     output = ctx.commands[0]["handler"](
-        "do --role reviewer --timeout 5 --task-label cli-task session_id attacker ship it"
+        'do --role reviewer --timeout 5 --task-label "cli task" "session_id attacker ship it"'
     )
 
     assert output == "orchestra dispatched: reviewer cli-run"
@@ -283,7 +283,7 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_watches(
         "--timeout",
         "5",
         "--task-label",
-        "cli-task",
+        "cli task",
     ] in calls
     assert [
         "_await-run",
@@ -291,6 +291,8 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_watches(
         "hermes:cli-session",
         "--run-id",
         "cli-run",
+        "--timeout",
+        "35",
     ] in calls
     assert [
         "_await-session-report",
@@ -298,6 +300,8 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_watches(
         "hermes:cli-session",
         "--run-id",
         "cli-run",
+        "--timeout",
+        "35",
         "--json",
     ] in calls
     assert wait_for_condition(
@@ -356,7 +360,7 @@ def test_orch_dispatch_rejects_non_positive_integer_timeout(
 ) -> None:
     plugin = load_plugin()
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -368,13 +372,122 @@ def test_orch_dispatch_rejects_non_positive_integer_timeout(
     assert payload == {"error": "timeout must be a positive integer"}
 
 
+def test_parse_do_args_supports_shell_quoted_goal_and_task_label() -> None:
+    plugin = load_plugin()
+
+    payload = plugin._parse_do_args(
+        '--role reviewer --timeout 5 --task-label "cli task" "ship focused task"'
+    )
+
+    assert payload == {
+        "role": "reviewer",
+        "timeout": 5,
+        "taskLabel": "cli task",
+        "goal": "ship focused task",
+    }
+
+
+def test_parse_do_args_supports_hermes_escaped_quoted_goal_and_task_label() -> None:
+    plugin = load_plugin()
+
+    payload = plugin._parse_do_args(
+        '--role researcher --timeout 120 --task-label \\\"quoted smoke label\\\" '
+        '\\\"Smoke test only. Do not edit files. Inspect README.md, PLAN.md, and '
+        'agent-catalog.yaml. Return status, files inspected, configured worker role '
+        'harness, one-sentence project purpose, blockers.\\\"'
+    )
+
+    assert payload == {
+        "role": "researcher",
+        "timeout": 120,
+        "taskLabel": "quoted smoke label",
+        "goal": "Smoke test only. Do not edit files. Inspect README.md, PLAN.md, and "
+        "agent-catalog.yaml. Return status, files inspected, configured worker role "
+        "harness, one-sentence project purpose, blockers.",
+    }
+
+
+def test_orch_slash_cli_private_session_fallback_dispatches_hermes_escaped_quoted_do(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        if args[0] == "do":
+            return completed(args, "run_id: cli-run\nstatus: queued\n")
+        if args[0] == "_dispatch-ack":
+            return completed(args, "orchestra dispatched: researcher cli-run\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(plugin, "_start_run_progress_watcher", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_start_session_report_watcher", lambda *_args, **_kwargs: None)
+    ctx = FakeHermesPluginContext(session_id="hermes:cli-session")
+    plugin.register(ctx)
+    calls.clear()
+
+    output = ctx.commands[0]["handler"](
+        'do --role researcher --timeout 120 --task-label \\\"quoted smoke label\\\" '
+        '\\\"Smoke test only. Do not edit files. Inspect README.md, PLAN.md, and '
+        'agent-catalog.yaml. Return status, files inspected, configured worker role '
+        'harness, one-sentence project purpose, blockers.\\\"'
+    )
+
+    assert output == "orchestra dispatched: researcher cli-run"
+    assert calls == [
+        [
+            "do",
+            "--session-id",
+            "hermes:cli-session",
+            "--role",
+            "researcher",
+            "--goal",
+            "Smoke test only. Do not edit files. Inspect README.md, PLAN.md, and "
+            "agent-catalog.yaml. Return status, files inspected, configured worker role "
+            "harness, one-sentence project purpose, blockers.",
+            "--timeout",
+            "120",
+            "--task-label",
+            "quoted smoke label",
+        ],
+        ["_dispatch-ack", "--run-id", "cli-run", "--role", "researcher"],
+    ]
+
+
+def test_orch_slash_do_rejects_malformed_quotes_without_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+    plugin.register(ctx)
+    calls.clear()
+
+    output = ctx.commands[0]["handler"]('do --task-label "broken goal')
+
+    assert output == "Malformed quoted string in /orch do arguments"
+    assert calls == []
+
+
 def test_orch_dispatch_builds_cli_args_from_runtime_kwargs_and_returns_ack(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "do":
             return completed(args, "run_id: abc123\nstatus: queued\n")
@@ -417,7 +530,7 @@ def test_orch_dispatch_requires_run_id_before_ack(monkeypatch: pytest.MonkeyPatc
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         return completed(args, "status: queued\n")
 
@@ -437,7 +550,7 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, code=1)
@@ -475,6 +588,8 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
         "hermes:runtime",
         "--run-id",
         "abc123",
+        "--timeout",
+        "630",
         "--json",
     ] in calls
     assert [
@@ -483,6 +598,8 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
         "hermes:runtime",
         "--run-id",
         "abc123",
+        "--timeout",
+        "630",
     ] in calls
     assert [
         "_progress-message",
@@ -512,7 +629,7 @@ def test_progress_without_notification_api_skips_inject_fallback_but_final_repor
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "do":
             return completed(args, "run_id: abc123\nstatus: queued\n")
@@ -546,6 +663,8 @@ def test_progress_without_notification_api_skips_inject_fallback_but_final_repor
         "hermes:runtime",
         "--run-id",
         "abc123",
+        "--timeout",
+        "630",
         "--json",
     ] in calls
 
@@ -565,13 +684,28 @@ def test_session_report_watcher_uses_expanded_retry_budget_and_backoff() -> None
     ]
 
 
+def test_watcher_wait_budget_exceeds_observed_worker_timeout() -> None:
+    plugin = load_plugin()
+
+    wait_budget = plugin._watcher_wait_budget_seconds(600)
+
+    assert wait_budget > 600
+    assert plugin._watcher_subprocess_timeout_seconds(wait_budget) > wait_budget
+
+
+def test_watcher_wait_budget_uses_payload_timeout_not_default() -> None:
+    plugin = load_plugin()
+
+    assert plugin._watcher_wait_budget_seconds(5) == 35
+
+
 def test_session_report_watcher_retries_after_transient_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         await_report_calls = [call for call in calls if call[0] == "_await-session-report"]
         if args[0] == "_await-session-report" and len(await_report_calls) == 1:
@@ -589,10 +723,20 @@ def test_session_report_watcher_retries_after_transient_failure(
     monkeypatch.setattr(plugin.time, "sleep", lambda _seconds: None)
     ctx = FakeHermesPluginContext()
 
-    plugin._watch_session_report(ctx, "hermes:runtime", "abc123")
+    plugin._watch_session_report(ctx, "hermes:runtime", "abc123", 630)
 
     assert ctx.injected == [("worker done", "user")]
     assert [call[0] for call in calls].count("_await-session-report") == 2
+    assert [
+        "_await-session-report",
+        "--session-id",
+        "hermes:runtime",
+        "--run-id",
+        "abc123",
+        "--timeout",
+        "630",
+        "--json",
+    ] in calls
     assert [
         "_mark-session-report-delivered",
         "--session-id",
@@ -609,7 +753,7 @@ def test_progress_completion_restarts_session_report_watcher_after_early_exit(
     calls: list[list[str]] = []
     await_report_count = 0
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         nonlocal await_report_count
         calls.append(args)
         if args[0] == "_await-session-report":
@@ -633,19 +777,21 @@ def test_progress_completion_restarts_session_report_watcher_after_early_exit(
     monkeypatch.setattr(
         plugin,
         "_start_session_report_watcher",
-        lambda report_ctx, session_id, report_run_id: plugin._watch_session_report(
-            report_ctx,
-            session_id,
-            report_run_id,
-        ),
+        lambda report_ctx, session_id, report_run_id, wait_budget_seconds:
+            plugin._watch_session_report(
+                report_ctx,
+                session_id,
+                report_run_id,
+                wait_budget_seconds,
+            ),
     )
     ctx = FakeHermesPluginContext()
 
-    plugin._watch_session_report(ctx, "hermes:runtime", "abc123")
+    plugin._watch_session_report(ctx, "hermes:runtime", "abc123", 630)
     assert ctx.injected == []
     assert plugin._session_report_watcher_failed("hermes:runtime")
 
-    plugin._watch_run_progress(ctx, "hermes:runtime", "abc123")
+    plugin._watch_run_progress(ctx, "hermes:runtime", "abc123", 630)
 
     assert ctx.notifications == ["orchestra:worker abc123 returned done (1/1)"]
     assert ctx.injected == [("worker done", "user")]
@@ -660,7 +806,7 @@ def test_session_report_injection_failure_releases_without_marking(
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_release-session-report":
             return completed(args)
@@ -697,7 +843,7 @@ def test_session_report_mark_failure_releases_for_retry(
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_mark-session-report-delivered":
             return completed(args, stderr="mark failed", code=1)
@@ -742,7 +888,7 @@ def test_session_report_malformed_json_releases_fallback_run_id(
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    def fake_run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_release-session-report":
             return completed(args)
@@ -788,5 +934,33 @@ def test_run_orchestra_uses_bounded_subprocess_timeout(monkeypatch: pytest.Monke
             "capture_output": True,
             "text": True,
             "timeout": plugin._SUBPROCESS_TIMEOUT_SECONDS,
+        }
+    ]
+
+
+def test_watcher_subprocess_calls_use_larger_hard_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin = load_plugin()
+    calls: list[dict[str, Any]] = []
+
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append({"args": args, **kwargs})
+        return completed(args)
+
+    monkeypatch.setattr(plugin.subprocess, "run", fake_run)
+
+    wait_budget = plugin._watcher_wait_budget_seconds(5)
+    result = plugin._run_orchestra(
+        ["_await-run", "--timeout", str(wait_budget)],
+        timeout_seconds=plugin._watcher_subprocess_timeout_seconds(wait_budget),
+    )
+
+    assert result.returncode == 0
+    assert calls == [
+        {
+            "args": ["orchestra", "_await-run", "--timeout", "35"],
+            "check": False,
+            "capture_output": True,
+            "text": True,
+            "timeout": 65,
         }
     ]

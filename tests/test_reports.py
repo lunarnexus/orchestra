@@ -53,6 +53,7 @@ def test_consolidated_report_includes_all_unreported_terminal_runs(
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     report = consume_pending_session_report(context, "manual:report")
     assert report is not None
+    assert report.startswith("[orchestra: 2 workers returned]\n\n")
     assert f"[orchestra: Worker {first_id} success]" in report
     assert f"[orchestra: Worker {second_id} success]" in report
     assert "Request: first goal" in report

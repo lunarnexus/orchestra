@@ -306,6 +306,12 @@ Default worker timeout is 600s. Default concurrency limits are global `4` and
 per-session `3`. `auto_return` is enabled by default. These must be configurable
 through `config.yaml` and runtime options.
 
+The worker timeout is the authoritative execution budget for a worker process.
+Host watcher subprocesses, auto-return waiters, progress waiters, or other host
+adapter waits must not use a shorter hard stop than the worker timeout they are
+observing. If a host-side wait needs a timeout, derive it from the worker timeout
+plus a small margin or make the host wait budget explicitly configurable.
+
 ### Agent Catalog
 
 Role definitions live in `agent-catalog.yaml`. A role entry should stay small:
@@ -494,3 +500,11 @@ owned process or process group where supported. Terminal run updates must be
 idempotent: late worker exits must not overwrite terminal states. Global and
 per-session concurrency limits are enforced atomically. MVP over-limit behavior
 is fail-fast, not queueing.
+
+SQLite remains a lean runtime-state store, not a task queue. WAL mode allows
+readers and a writer to coexist, but SQLite still serializes writers: one writer
+holds the write lock and other writers wait through SQLite's busy timeout. Open
+or connection failures are a separate class from write-lock contention. Current
+connection retry/backoff handles transient `unable to open database file` style
+opens; write-lock contention relies on SQLite's busy timeout unless soak tests
+prove explicit write retry/backoff is needed.

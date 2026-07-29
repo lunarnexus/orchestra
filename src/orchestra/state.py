@@ -467,9 +467,11 @@ class StateStore:
             )
 
     def _connect_retry_delay_seconds(self, attempt: int) -> float:
-        return min(
-            _CONNECT_RETRY_BASE_DELAY_SECONDS * (2**attempt),
-            _CONNECT_RETRY_MAX_DELAY_SECONDS,
+        return float(
+            min(
+                _CONNECT_RETRY_BASE_DELAY_SECONDS * (2**attempt),
+                _CONNECT_RETRY_MAX_DELAY_SECONDS,
+            )
         )
 
     def _merge_record(self, current: RunRecord, update: RunUpdate) -> RunRecord:

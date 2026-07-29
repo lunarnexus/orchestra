@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -14,6 +15,8 @@ from typing import Any
 _IDENTITY_ARG_NAMES = frozenset({"session_id", "identity", "orchestrator_session_id"})
 _RUN_ID_RE = re.compile(r"^run_id:\s*(?P<run_id>\S+)\s*$")
 _SUBPROCESS_TIMEOUT_SECONDS = 300
+_PLUGIN_DEFAULT_WORKER_TIMEOUT_SECONDS = 600
+_WATCHER_TIMEOUT_MARGIN_SECONDS = 30
 _REPORT_WATCHER_ATTEMPTS = 8
 _REPORT_WATCHER_RETRY_BASE_DELAY_SECONDS = 0.25
 _REPORT_WATCHER_RETRY_MAX_DELAY_SECONDS = 3.0
@@ -54,7 +57,24 @@ def _orchestra_base_args() -> list[str]:
     return args
 
 
-def _run_orchestra(args: list[str]) -> subprocess.CompletedProcess[str]:
+def _watcher_wait_budget_seconds(worker_timeout_seconds: int | None) -> int:
+    observed_timeout_seconds = (
+        worker_timeout_seconds
+        if worker_timeout_seconds is not None
+        else _PLUGIN_DEFAULT_WORKER_TIMEOUT_SECONDS
+    )
+    return observed_timeout_seconds + _WATCHER_TIMEOUT_MARGIN_SECONDS
+
+
+def _watcher_subprocess_timeout_seconds(wait_budget_seconds: int) -> int:
+    return wait_budget_seconds + _WATCHER_TIMEOUT_MARGIN_SECONDS
+
+
+def _run_orchestra(
+    args: list[str],
+    *,
+    timeout_seconds: int = _SUBPROCESS_TIMEOUT_SECONDS,
+) -> subprocess.CompletedProcess[str]:
     command = ["orchestra", *_orchestra_base_args(), *args]
     try:
         return subprocess.run(
@@ -62,7 +82,7 @@ def _run_orchestra(args: list[str]) -> subprocess.CompletedProcess[str]:
             check=False,
             capture_output=True,
             text=True,
-            timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+            timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else exc.stdout or ""
@@ -70,7 +90,7 @@ def _run_orchestra(args: list[str]) -> subprocess.CompletedProcess[str]:
             args=command,
             returncode=124,
             stdout=stdout,
-            stderr=f"orchestra command timed out after {_SUBPROCESS_TIMEOUT_SECONDS} seconds",
+            stderr=f"orchestra command timed out after {timeout_seconds} seconds",
         )
 
 
@@ -126,7 +146,11 @@ def _extract_run_id(output: str) -> str | None:
 
 
 def _parse_do_args(raw_args: str) -> dict[str, Any]:
-    parts = raw_args.strip().split()
+    normalized_args = raw_args.replace(r'\"', '"')
+    try:
+        parts = shlex.split(normalized_args)
+    except ValueError:
+        return {"error": "Malformed quoted string in /orch do arguments"}
     payload: dict[str, Any] = {"role": "worker"}
     goal_parts: list[str] = []
     index = 0
@@ -321,7 +345,12 @@ def _handle_session_report_result(
         _log_watcher_error(str(exc))
 
 
-def _watch_session_report(ctx: Any, runtime_session_id: str, run_id: str) -> None:
+def _watch_session_report(
+    ctx: Any,
+    runtime_session_id: str,
+    run_id: str,
+    wait_budget_seconds: int,
+) -> None:
     try:
         for attempt in range(_REPORT_WATCHER_ATTEMPTS):
             result = _run_orchestra(
@@ -331,8 +360,11 @@ def _watch_session_report(ctx: Any, runtime_session_id: str, run_id: str) -> Non
                     runtime_session_id,
                     "--run-id",
                     run_id,
+                    "--timeout",
+                    str(wait_budget_seconds),
                     "--json",
-                ]
+                ],
+                timeout_seconds=_watcher_subprocess_timeout_seconds(wait_budget_seconds),
             )
             if result.returncode == 0:
                 _handle_session_report_result(ctx, runtime_session_id, result, [run_id])
@@ -361,7 +393,12 @@ def _report_watcher_retry_delay_seconds(attempt: int) -> float:
     )
 
 
-def _start_session_report_watcher(ctx: Any | None, runtime_session_id: str, run_id: str) -> None:
+def _start_session_report_watcher(
+    ctx: Any | None,
+    runtime_session_id: str,
+    run_id: str,
+    wait_budget_seconds: int,
+) -> None:
     if ctx is None:
         return
     with _REPORT_WATCHERS_LOCK:
@@ -370,7 +407,7 @@ def _start_session_report_watcher(ctx: Any | None, runtime_session_id: str, run_
         _REPORT_WATCHERS.add(runtime_session_id)
     thread = threading.Thread(
         target=_watch_session_report,
-        args=(ctx, runtime_session_id, run_id),
+        args=(ctx, runtime_session_id, run_id, wait_budget_seconds),
         daemon=True,
         name=f"orchestra-report-{run_id}",
     )
@@ -382,7 +419,12 @@ def _session_report_watcher_failed(runtime_session_id: str) -> bool:
         return runtime_session_id in _REPORT_WATCHER_FAILED_SESSIONS
 
 
-def _watch_run_progress(ctx: Any, runtime_session_id: str, run_id: str) -> None:
+def _watch_run_progress(
+    ctx: Any,
+    runtime_session_id: str,
+    run_id: str,
+    wait_budget_seconds: int,
+) -> None:
     result = _run_orchestra(
         [
             "_await-run",
@@ -390,7 +432,10 @@ def _watch_run_progress(ctx: Any, runtime_session_id: str, run_id: str) -> None:
             runtime_session_id,
             "--run-id",
             run_id,
-        ]
+            "--timeout",
+            str(wait_budget_seconds),
+        ],
+        timeout_seconds=_watcher_subprocess_timeout_seconds(wait_budget_seconds),
     )
     if result.returncode != 0:
         error_text = (result.stdout or result.stderr).strip()
@@ -424,15 +469,20 @@ def _watch_run_progress(ctx: Any, runtime_session_id: str, run_id: str) -> None:
     )
     _emit_progress(ctx, message)
     if active_remaining == 0 and _session_report_watcher_failed(runtime_session_id):
-        _start_session_report_watcher(ctx, runtime_session_id, run_id)
+        _start_session_report_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
 
 
-def _start_run_progress_watcher(ctx: Any | None, runtime_session_id: str, run_id: str) -> None:
+def _start_run_progress_watcher(
+    ctx: Any | None,
+    runtime_session_id: str,
+    run_id: str,
+    wait_budget_seconds: int,
+) -> None:
     if ctx is None or not _has_progress_notifier(ctx):
         return
     thread = threading.Thread(
         target=_watch_run_progress,
-        args=(ctx, runtime_session_id, run_id),
+        args=(ctx, runtime_session_id, run_id, wait_budget_seconds),
         daemon=True,
         name=f"orchestra-progress-{run_id}",
     )
@@ -453,6 +503,7 @@ def _dispatch_orchestra_run(
         return _error("timeout must be a positive integer")
 
     role = str(payload.get("role") or "worker").strip() or "worker"
+    wait_budget_seconds = _watcher_wait_budget_seconds(timeout)
     command = [
         "do",
         "--session-id",
@@ -477,8 +528,8 @@ def _dispatch_orchestra_run(
         return _error("orchestra dispatch did not return a run_id")
 
     _track_run(runtime_session_id, run_id)
-    _start_run_progress_watcher(ctx, runtime_session_id, run_id)
-    _start_session_report_watcher(ctx, runtime_session_id, run_id)
+    _start_run_progress_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
+    _start_session_report_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
 
     ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", role])
     if ack.returncode != 0:
@@ -548,6 +599,8 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
 
     if subcommand == "do":
         payload = _parse_do_args(rest)
+        if "error" in payload:
+            return str(payload["error"])
         if not str(payload.get("goal", "")).strip():
             return "Usage: /orch do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal>"
         return _dispatch_orchestra_run(payload, runtime_session_id, ctx=ctx)

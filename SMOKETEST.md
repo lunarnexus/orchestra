@@ -77,6 +77,11 @@ If either fails, stop the smoke test and mark it failed.
 
 Run this section from a Hermes session opened in this repo.
 
+Precondition:
+- Hermes must already have a real model/provider configured.
+- Hermes must already have Orchestra plugin enabled.
+- This remains manual: isolated noninteractive `hermes -z "/orch help"` still fails without real runtime credentials, so CI/test automation must skip live Hermes command coverage.
+
 ### 2.1 Optional Hermes slash-command check
 
 If the current Hermes surface supports slash commands, run:
@@ -93,7 +98,7 @@ If slash commands are not available in this Hermes surface, record `SKIPPED` and
 If `/orch do` works in the current Hermes surface, send exactly:
 
 ```text
-/orch do --role worker "Smoke test only. Do not edit files. Inspect README.md and agent-catalog.yaml. Return concise success/fail, files inspected, one-sentence repo summary, and any blocker."
+/orch do --role worker Smoke test only. Do not edit files. Inspect README.md and agent-catalog.yaml. Return concise success/fail, files inspected, one-sentence repo summary, and any blocker.
 ```
 
 If `/orch do` is not available, send exactly:
@@ -107,7 +112,7 @@ Dispatch a worker with role=worker and this exact goal: Smoke test only. Do not 
 If `/orch do` works in the current Hermes surface, send exactly:
 
 ```text
-/orch do --role critic "Smoke test only. Do not edit files. Inspect README.md and agent-catalog.yaml. Return concise success/fail, files inspected, one-sentence repo summary, and any blocker."
+/orch do --role critic Smoke test only. Do not edit files. Inspect README.md and agent-catalog.yaml. Return concise success/fail, files inspected, one-sentence repo summary, and any blocker.
 ```
 
 If `/orch do` is not available, send exactly:
@@ -126,6 +131,18 @@ Use whichever of these is available in the current Hermes surface:
 Pass if at least one of those is true.
 
 Do not require a manually invented or hidden session id for this step.
+
+### 2.5 Hermes timeout check
+
+If `/orch do` works in the current Hermes surface and the configured worker can safely exceed a one-second timeout, send exactly:
+
+```text
+/orch do --timeout 1 Timeout smoke only. Run long enough to exceed one second. Do not edit files. Return concise success/fail and any blocker.
+```
+
+Pass if the run becomes terminal, no active worker is stranded, and history or returned output clearly reports `Worker exceeded timeout` or an equivalent timeout failure.
+
+If the configured role cannot safely force a timeout from a prompt, record `SKIPPED` and continue.
 
 ---
 
