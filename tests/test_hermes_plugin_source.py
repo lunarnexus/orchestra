@@ -64,6 +64,18 @@ class InjectOnlyContext:
         return True
 
 
+class RegistrationOnlyContext:
+    def __init__(self) -> None:
+        self.tools: list[dict[str, Any]] = []
+        self.commands: list[dict[str, Any]] = []
+
+    def register_tool(self, **kwargs: Any) -> None:
+        self.tools.append(kwargs)
+
+    def register_command(self, name: str, **kwargs: Any) -> None:
+        self.commands.append({"name": name, **kwargs})
+
+
 def completed(
     args: list[str],
     stdout: str = "",
@@ -621,6 +633,51 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
         "--run-id",
         "abc123",
     ] in calls
+
+
+def test_registered_orch_dispatch_prefers_runtime_tool_context_for_progress_and_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        if args[0] == "do":
+            return completed(args, "run_id: abc123\nstatus: queued\n")
+        if args[0] == "_dispatch-ack":
+            return completed(args, "orchestra dispatched: worker abc123\n")
+        if args[0] == "_await-run":
+            return completed(args, "status: done\nrole: worker\nactive_runs_remaining: 0\n")
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra:worker abc123 returned done (1/1)\n")
+        if args[0] == "_await-session-report":
+            return completed(
+                args,
+                json.dumps({"runIds": ["abc123"], "report": "worker done"}),
+            )
+        if args[0] == "_mark-session-report-delivered":
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    register_ctx = RegistrationOnlyContext()
+    runtime_ctx = FakeHermesPluginContext()
+    plugin.register(register_ctx)
+
+    output = register_ctx.tools[0]["handler"](
+        {"goal": "do work"},
+        session_id="runtime",
+        _ctx=runtime_ctx,
+    )
+
+    assert output == "orchestra dispatched: worker abc123"
+    assert wait_for_condition(
+        lambda: runtime_ctx.notifications == ["orchestra:worker abc123 returned done (1/1)"]
+    )
+    assert wait_for_condition(lambda: runtime_ctx.injected == [("worker done", "user")])
 
 
 def test_progress_without_notification_api_skips_inject_fallback_but_final_report_injects(

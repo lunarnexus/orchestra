@@ -3,10 +3,12 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import uuid
 from pathlib import Path
 
 import pytest
 
+from orchestra.app import init_pi
 from tests.helpers import wait_for_condition
 from tests.types import RuntimeFilesFactory
 
@@ -17,15 +19,21 @@ def test_pi_extension_host_command_path(
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
     fake_worker_script: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_path, catalog_path, db_path = runtime_files_factory(
         tmp_path,
         [python_executable, str(fake_worker_script), "success", "--output", "adapter ok"],
     )
+    pi_dir = tmp_path / "pi-agent"
+    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
+    init_pi(source_root=Path(__file__).resolve().parents[1])
+    session_id = f"orch-host-e2e-{uuid.uuid4().hex}"
     env = {
         **os.environ,
         "ORCHESTRA_CONFIG": str(config_path),
         "ORCHESTRA_AGENT_CATALOG": str(catalog_path),
+        "PI_CODING_AGENT_DIR": str(pi_dir),
     }
 
     help_result = subprocess.run(
@@ -33,7 +41,7 @@ def test_pi_extension_host_command_path(
             "pi",
             "--no-approve",
             "--session-id",
-            "orch-host-e2e",
+            session_id,
             "-p",
             "/orch help",
         ],
@@ -53,7 +61,7 @@ def test_pi_extension_host_command_path(
             "pi",
             "--no-approve",
             "--session-id",
-            "orch-host-e2e",
+            session_id,
             "-p",
             "/orch doctor",
         ],
@@ -70,7 +78,7 @@ def test_pi_extension_host_command_path(
             "pi",
             "--no-approve",
             "--session-id",
-            "orch-host-e2e",
+            session_id,
             "-p",
             "/orch do adapter e2e worker",
         ],
@@ -88,7 +96,7 @@ def test_pi_extension_host_command_path(
                 "pi",
                 "--no-approve",
                 "--session-id",
-                "orch-host-e2e",
+                session_id,
                 "-p",
                 "/orch history 10",
             ],

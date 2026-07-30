@@ -614,7 +614,7 @@ def register(ctx: Any) -> None:
     tool_info = _load_tool_info()
 
     def dispatch_handler(args: dict[str, Any], **kwargs: Any) -> str:
-        kwargs["_ctx"] = ctx
+        kwargs.setdefault("_ctx", ctx)
         return orch_dispatch(args, **kwargs)
 
     def command_handler(raw_args: str) -> str:
