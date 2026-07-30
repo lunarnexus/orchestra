@@ -21,11 +21,7 @@ _REPORT_WATCHER_ATTEMPTS = 8
 _REPORT_WATCHER_RETRY_BASE_DELAY_SECONDS = 0.25
 _REPORT_WATCHER_RETRY_MAX_DELAY_SECONDS = 3.0
 _REPORT_WATCHERS: set[str] = set()
-_REPORT_WATCHER_FAILED_SESSIONS: set[str] = set()
 _REPORT_WATCHERS_LOCK = threading.Lock()
-_SESSION_LOCK = threading.Lock()
-_SESSION_RUNS: dict[str, set[str]] = {}
-_SESSION_COMPLETED_RUNS: dict[str, set[str]] = {}
 
 _FALLBACK_TOOL_INFO = {
     "description": "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
@@ -196,10 +192,6 @@ def _log_watcher_error(message: str) -> None:
     sys.stderr.write(f"orchestra auto-return watcher failed: {message}\n")
 
 
-def _log_progress_error(message: str) -> None:
-    sys.stderr.write(f"orchestra progress watcher failed: {message}\n")
-
-
 def _slash_session_id(ctx: Any | None) -> str | None:
     # Hermes slash handlers currently receive only raw user text. Public Hermes does
     # not expose a runtime per-command session id here yet, but interactive CLI keeps
@@ -214,49 +206,6 @@ def _slash_session_id(ctx: Any | None) -> str | None:
         return normalize_hermes_session_id(raw_session_id)
     except ValueError:
         return None
-
-
-def _track_run(runtime_session_id: str, run_id: str) -> None:
-    with _SESSION_LOCK:
-        runs = _SESSION_RUNS.setdefault(runtime_session_id, set())
-        runs.add(run_id)
-        _SESSION_COMPLETED_RUNS.setdefault(runtime_session_id, set())
-
-
-def _record_completed_run(
-    runtime_session_id: str,
-    run_id: str,
-    active_remaining: int | None,
-) -> tuple[int, int]:
-    with _SESSION_LOCK:
-        completed = _SESSION_COMPLETED_RUNS.setdefault(runtime_session_id, set())
-        completed.add(run_id)
-        tracked_total = len(_SESSION_RUNS.get(runtime_session_id, set()))
-        total = max(tracked_total, len(completed) + (active_remaining or 0))
-        if active_remaining == 0:
-            _SESSION_RUNS.pop(runtime_session_id, None)
-            _SESSION_COMPLETED_RUNS.pop(runtime_session_id, None)
-        return len(completed), total
-
-
-def _emit_progress(ctx: Any, message: str) -> bool:
-    notify = getattr(ctx, "notify", None)
-    if callable(notify):
-        notify(message)
-        return True
-    ui = getattr(ctx, "ui", None)
-    ui_notify = getattr(ui, "notify", None)
-    if callable(ui_notify):
-        ui_notify(message, "info")
-        return True
-    return False
-
-
-def _has_progress_notifier(ctx: Any) -> bool:
-    if callable(getattr(ctx, "notify", None)):
-        return True
-    ui = getattr(ctx, "ui", None)
-    return callable(getattr(ui, "notify", None))
 
 
 def _report_run_id_args(run_ids: list[str]) -> list[str]:
@@ -368,19 +317,13 @@ def _watch_session_report(
             )
             if result.returncode == 0:
                 _handle_session_report_result(ctx, runtime_session_id, result, [run_id])
-                with _REPORT_WATCHERS_LOCK:
-                    _REPORT_WATCHER_FAILED_SESSIONS.discard(runtime_session_id)
                 return
             if attempt == _REPORT_WATCHER_ATTEMPTS - 1:
                 _handle_session_report_result(ctx, runtime_session_id, result, [run_id])
-                with _REPORT_WATCHERS_LOCK:
-                    _REPORT_WATCHER_FAILED_SESSIONS.add(runtime_session_id)
                 return
             time.sleep(_report_watcher_retry_delay_seconds(attempt))
     except Exception as exc:  # plugin watcher thread must survive unexpected command failures
         _log_watcher_error(str(exc))
-        with _REPORT_WATCHERS_LOCK:
-            _REPORT_WATCHER_FAILED_SESSIONS.add(runtime_session_id)
     finally:
         with _REPORT_WATCHERS_LOCK:
             _REPORT_WATCHERS.discard(runtime_session_id)
@@ -410,81 +353,6 @@ def _start_session_report_watcher(
         args=(ctx, runtime_session_id, run_id, wait_budget_seconds),
         daemon=True,
         name=f"orchestra-report-{run_id}",
-    )
-    thread.start()
-
-
-def _session_report_watcher_failed(runtime_session_id: str) -> bool:
-    with _REPORT_WATCHERS_LOCK:
-        return runtime_session_id in _REPORT_WATCHER_FAILED_SESSIONS
-
-
-def _watch_run_progress(
-    ctx: Any,
-    runtime_session_id: str,
-    run_id: str,
-    wait_budget_seconds: int,
-) -> None:
-    result = _run_orchestra(
-        [
-            "_await-run",
-            "--session-id",
-            runtime_session_id,
-            "--run-id",
-            run_id,
-            "--timeout",
-            str(wait_budget_seconds),
-        ],
-        timeout_seconds=_watcher_subprocess_timeout_seconds(wait_budget_seconds),
-    )
-    if result.returncode != 0:
-        error_text = (result.stdout or result.stderr).strip()
-        if error_text:
-            _log_progress_error(error_text)
-        return
-    status = _extract_field(result.stdout, "status") or "done"
-    role = _extract_field(result.stdout, "role")
-    raw_active_remaining = _extract_field(result.stdout, "active_runs_remaining")
-    active_remaining = int(raw_active_remaining) if raw_active_remaining is not None else None
-    completed, total = _record_completed_run(runtime_session_id, run_id, active_remaining)
-    command = [
-        "_progress-message",
-        "--completed",
-        str(completed),
-        "--total",
-        str(total),
-        "--run-id",
-        run_id,
-        "--status",
-        status,
-    ]
-    if role:
-        command.extend(["--role", role])
-    message_result = _run_orchestra(command)
-    role_text = f" {role}" if role else ""
-    message = (
-        message_result.stdout.strip()
-        if message_result.returncode == 0 and message_result.stdout.strip()
-        else f"orchestra:{role_text} {run_id} returned {status} ({completed}/{total})"
-    )
-    _emit_progress(ctx, message)
-    if active_remaining == 0 and _session_report_watcher_failed(runtime_session_id):
-        _start_session_report_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
-
-
-def _start_run_progress_watcher(
-    ctx: Any | None,
-    runtime_session_id: str,
-    run_id: str,
-    wait_budget_seconds: int,
-) -> None:
-    if ctx is None or not _has_progress_notifier(ctx):
-        return
-    thread = threading.Thread(
-        target=_watch_run_progress,
-        args=(ctx, runtime_session_id, run_id, wait_budget_seconds),
-        daemon=True,
-        name=f"orchestra-progress-{run_id}",
     )
     thread.start()
 
@@ -527,8 +395,6 @@ def _dispatch_orchestra_run(
     if not run_id:
         return _error("orchestra dispatch did not return a run_id")
 
-    _track_run(runtime_session_id, run_id)
-    _start_run_progress_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
     _start_session_report_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
 
     ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", role])

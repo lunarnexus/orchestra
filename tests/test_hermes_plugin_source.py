@@ -33,7 +33,6 @@ class FakeHermesPluginContext:
         self.commands: list[dict[str, Any]] = []
         self.hooks: list[tuple[str, Any]] = []
         self.injected: list[tuple[str, str]] = []
-        self.notifications: list[str] = []
         self.inject_success = True
         if session_id is not None:
             self._manager = SimpleNamespace(_cli_ref=SimpleNamespace(session_id=session_id))
@@ -50,9 +49,6 @@ class FakeHermesPluginContext:
     def inject_message(self, content: str, role: str = "user") -> bool:
         self.injected.append((content, role))
         return self.inject_success
-
-    def notify(self, message: str) -> None:
-        self.notifications.append(message)
 
 
 class InjectOnlyContext:
@@ -261,10 +257,6 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_watches(
             return completed(args, "run_id: cli-run\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: reviewer cli-run\n")
-        if args[0] == "_await-run":
-            return completed(args, "status: done\nrole: reviewer\nactive_runs_remaining: 0\n")
-        if args[0] == "_progress-message":
-            return completed(args, "orchestra:reviewer cli-run returned done (1/1)\n")
         if args[0] == "_await-session-report":
             return completed(
                 args,
@@ -298,15 +290,6 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_watches(
         "cli task",
     ] in calls
     assert [
-        "_await-run",
-        "--session-id",
-        "hermes:cli-session",
-        "--run-id",
-        "cli-run",
-        "--timeout",
-        "35",
-    ] in calls
-    assert [
         "_await-session-report",
         "--session-id",
         "hermes:cli-session",
@@ -316,9 +299,8 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_watches(
         "35",
         "--json",
     ] in calls
-    assert wait_for_condition(
-        lambda: ctx.notifications == ["orchestra:reviewer cli-run returned done (1/1)"]
-    )
+    assert not any(args[0] == "_await-run" for args in calls)
+    assert not any(args[0] == "_progress-message" for args in calls)
     assert wait_for_condition(lambda: ctx.injected == [("reviewer done", "user")])
 
 
@@ -436,7 +418,6 @@ def test_orch_slash_cli_private_session_fallback_dispatches_hermes_escaped_quote
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
-    monkeypatch.setattr(plugin, "_start_run_progress_watcher", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(plugin, "_start_session_report_watcher", lambda *_args, **_kwargs: None)
     ctx = FakeHermesPluginContext(session_id="hermes:cli-session")
     plugin.register(ctx)
@@ -570,10 +551,6 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
             return completed(args, "run_id: abc123\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: worker abc123\n")
-        if args[0] == "_await-run":
-            return completed(args, "status: done\nrole: worker\nactive_runs_remaining: 0\n")
-        if args[0] == "_progress-message":
-            return completed(args, "orchestra:worker abc123 returned done (1/1)\n")
         if args[0] == "_await-session-report":
             return completed(
                 args,
@@ -590,9 +567,6 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
     output = ctx.tools[0]["handler"]({"goal": "do work"}, session_id="runtime")
 
     assert output == "orchestra dispatched: worker abc123"
-    assert wait_for_condition(
-        lambda: ctx.notifications == ["orchestra:worker abc123 returned done (1/1)"]
-    )
     assert wait_for_condition(lambda: ctx.injected == [("worker done", "user")])
     assert [
         "_await-session-report",
@@ -604,28 +578,8 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
         "630",
         "--json",
     ] in calls
-    assert [
-        "_await-run",
-        "--session-id",
-        "hermes:runtime",
-        "--run-id",
-        "abc123",
-        "--timeout",
-        "630",
-    ] in calls
-    assert [
-        "_progress-message",
-        "--completed",
-        "1",
-        "--total",
-        "1",
-        "--run-id",
-        "abc123",
-        "--status",
-        "done",
-        "--role",
-        "worker",
-    ] in calls
+    assert not any(args[0] == "_await-run" for args in calls)
+    assert not any(args[0] == "_progress-message" for args in calls)
     assert [
         "_mark-session-report-delivered",
         "--session-id",
@@ -635,7 +589,7 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
     ] in calls
 
 
-def test_registered_orch_dispatch_prefers_runtime_tool_context_for_progress_and_report(
+def test_registered_orch_dispatch_prefers_runtime_tool_context_for_report(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -649,10 +603,6 @@ def test_registered_orch_dispatch_prefers_runtime_tool_context_for_progress_and_
             return completed(args, "run_id: abc123\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: worker abc123\n")
-        if args[0] == "_await-run":
-            return completed(args, "status: done\nrole: worker\nactive_runs_remaining: 0\n")
-        if args[0] == "_progress-message":
-            return completed(args, "orchestra:worker abc123 returned done (1/1)\n")
         if args[0] == "_await-session-report":
             return completed(
                 args,
@@ -674,13 +624,10 @@ def test_registered_orch_dispatch_prefers_runtime_tool_context_for_progress_and_
     )
 
     assert output == "orchestra dispatched: worker abc123"
-    assert wait_for_condition(
-        lambda: runtime_ctx.notifications == ["orchestra:worker abc123 returned done (1/1)"]
-    )
     assert wait_for_condition(lambda: runtime_ctx.injected == [("worker done", "user")])
 
 
-def test_progress_without_notification_api_skips_inject_fallback_but_final_report_injects(
+def test_final_report_injects_without_progress_watcher_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -803,58 +750,6 @@ def test_session_report_watcher_retries_after_transient_failure(
     ] in calls
 
 
-def test_progress_completion_restarts_session_report_watcher_after_early_exit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    plugin = load_plugin()
-    calls: list[list[str]] = []
-    await_report_count = 0
-
-    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        nonlocal await_report_count
-        calls.append(args)
-        if args[0] == "_await-session-report":
-            await_report_count += 1
-            if await_report_count <= plugin._REPORT_WATCHER_ATTEMPTS:
-                return completed(args, stderr="unable to open database file", code=1)
-            return completed(
-                args,
-                json.dumps({"runIds": ["abc123"], "report": "worker done"}),
-            )
-        if args[0] == "_await-run":
-            return completed(args, "status: done\nrole: worker\nactive_runs_remaining: 0\n")
-        if args[0] == "_progress-message":
-            return completed(args, "orchestra:worker abc123 returned done (1/1)\n")
-        if args[0] == "_mark-session-report-delivered":
-            return completed(args)
-        raise AssertionError(f"unexpected command: {args}")
-
-    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
-    monkeypatch.setattr(plugin.time, "sleep", lambda _seconds: None)
-    monkeypatch.setattr(
-        plugin,
-        "_start_session_report_watcher",
-        lambda report_ctx, session_id, report_run_id, wait_budget_seconds:
-            plugin._watch_session_report(
-                report_ctx,
-                session_id,
-                report_run_id,
-                wait_budget_seconds,
-            ),
-    )
-    ctx = FakeHermesPluginContext()
-
-    plugin._watch_session_report(ctx, "hermes:runtime", "abc123", 630)
-    assert ctx.injected == []
-    assert plugin._session_report_watcher_failed("hermes:runtime")
-
-    plugin._watch_run_progress(ctx, "hermes:runtime", "abc123", 630)
-
-    assert ctx.notifications == ["orchestra:worker abc123 returned done (1/1)"]
-    assert ctx.injected == [("worker done", "user")]
-    assert [call[0] for call in calls].count("_await-session-report") == (
-        plugin._REPORT_WATCHER_ATTEMPTS + 1
-    )
 
 
 def test_session_report_injection_failure_releases_without_marking(
