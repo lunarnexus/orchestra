@@ -19,6 +19,7 @@ def write_runtime_files(
     state_dir = tmp_path / "state"
     log_dir = tmp_path / "logs"
     config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
 
     config_path.write_text(
@@ -34,6 +35,7 @@ def write_runtime_files(
         ),
         encoding="utf-8",
     )
+    prompts_path.write_text("{}\n", encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {

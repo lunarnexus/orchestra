@@ -1,4 +1,5 @@
 include config.yaml
+include prompts.yaml
 include agent-catalog.yaml
 recursive-include extensions *.ts
 recursive-include src/orchestra/assets *.yaml *.ts

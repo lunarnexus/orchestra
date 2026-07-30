@@ -12,6 +12,7 @@ import yaml
 DEFAULT_STATE_DIR = Path("state")
 DEFAULT_LOG_DIR = Path("logs")
 DEFAULT_CONFIG_FILENAME = "config.yaml"
+DEFAULT_PROMPTS_FILENAME = "prompts.yaml"
 DEFAULT_CATALOG_FILENAME = "agent-catalog.yaml"
 ORCHESTRA_CONFIG_ENV = "ORCHESTRA_CONFIG"
 ORCHESTRA_AGENT_CATALOG_ENV = "ORCHESTRA_AGENT_CATALOG"
@@ -24,13 +25,6 @@ DEFAULT_RETURN_FORMAT = (
     "Return a concise response with success/fail, files changed/inspected, "
     "if fail: exact commands run, results, if blockers: blockers, if risks: risks"
 )
-DEFAULT_WORKER_ROLE_LABEL = "Role"
-DEFAULT_WORKER_GOAL_LABEL = "Goal"
-DEFAULT_WORKER_ROLE_INSTRUCTIONS_LABEL = "Role instructions"
-DEFAULT_WORKER_APPROVED_CONTEXT_LABEL = "Approved context"
-DEFAULT_WORKER_BOUNDARIES_LABEL = "Out of scope"
-DEFAULT_WORKER_ACCEPTANCE_TARGET_LABEL = "Acceptance target"
-DEFAULT_WORKER_RETURN_FORMAT_LABEL = "Return format"
 DEFAULT_TOOL_DESCRIPTION = " ".join(
     [
         "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
@@ -86,13 +80,6 @@ class ConcurrencyConfig:
 @dataclass(frozen=True)
 class PromptConfig:
     default_return_format: str = DEFAULT_RETURN_FORMAT
-    worker_role_label: str = DEFAULT_WORKER_ROLE_LABEL
-    worker_goal_label: str = DEFAULT_WORKER_GOAL_LABEL
-    worker_role_instructions_label: str = DEFAULT_WORKER_ROLE_INSTRUCTIONS_LABEL
-    worker_approved_context_label: str = DEFAULT_WORKER_APPROVED_CONTEXT_LABEL
-    worker_boundaries_label: str = DEFAULT_WORKER_BOUNDARIES_LABEL
-    worker_acceptance_target_label: str = DEFAULT_WORKER_ACCEPTANCE_TARGET_LABEL
-    worker_return_format_label: str = DEFAULT_WORKER_RETURN_FORMAT_LABEL
     tool_description: str = DEFAULT_TOOL_DESCRIPTION
     tool_prompt_snippet: str = DEFAULT_TOOL_PROMPT_SNIPPET
     tool_prompt_guidelines: tuple[str, ...] = DEFAULT_TOOL_PROMPT_GUIDELINES
@@ -175,31 +162,11 @@ def load_app_config(path: str | Path) -> AppConfig:
         ),
     )
 
-    prompts_raw = raw.get("prompts", {})
-    if not isinstance(prompts_raw, dict):
-        raise ConfigError("'prompts' must be a mapping")
+    prompts_raw = _load_yaml_mapping(_prompts_path_for(path))
     prompts = PromptConfig(
         default_return_format=_get_optional_string(
             prompts_raw, "default_return_format"
         ) or DEFAULT_RETURN_FORMAT,
-        worker_role_label=_get_optional_string(prompts_raw, "worker_role_label")
-        or DEFAULT_WORKER_ROLE_LABEL,
-        worker_goal_label=_get_optional_string(prompts_raw, "worker_goal_label")
-        or DEFAULT_WORKER_GOAL_LABEL,
-        worker_role_instructions_label=_get_optional_string(
-            prompts_raw, "worker_role_instructions_label"
-        ) or DEFAULT_WORKER_ROLE_INSTRUCTIONS_LABEL,
-        worker_approved_context_label=_get_optional_string(
-            prompts_raw, "worker_approved_context_label"
-        ) or DEFAULT_WORKER_APPROVED_CONTEXT_LABEL,
-        worker_boundaries_label=_get_optional_string(prompts_raw, "worker_boundaries_label")
-        or DEFAULT_WORKER_BOUNDARIES_LABEL,
-        worker_acceptance_target_label=_get_optional_string(
-            prompts_raw, "worker_acceptance_target_label"
-        ) or DEFAULT_WORKER_ACCEPTANCE_TARGET_LABEL,
-        worker_return_format_label=_get_optional_string(
-            prompts_raw, "worker_return_format_label"
-        ) or DEFAULT_WORKER_RETURN_FORMAT_LABEL,
         tool_description=_get_optional_string(prompts_raw, "tool_description")
         or DEFAULT_TOOL_DESCRIPTION,
         tool_prompt_snippet=_get_optional_string(prompts_raw, "tool_prompt_snippet")
@@ -279,6 +246,11 @@ def _resolve_path(
     if global_default.exists():
         return global_default
     return cwd_default
+
+
+def _prompts_path_for(path: str | Path) -> Path:
+    config_path = Path(path)
+    return config_path.with_name(DEFAULT_PROMPTS_FILENAME)
 
 
 def _load_yaml_mapping(path: str | Path) -> dict[str, Any]:

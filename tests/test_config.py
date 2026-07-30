@@ -85,7 +85,9 @@ def test_load_app_config_reads_values_from_fixture(fixture_dir: Path) -> None:
 
 def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
     path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text("{}\n", encoding="utf-8")
 
     config = load_app_config(path)
 
@@ -138,15 +140,15 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
 
 
 def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    path.write_text(
+    path = tmp_path / "explicit-config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(
         """
-prompts:
-  default_return_format: Custom return.
-  worker_goal_label: Objective
-  tool_prompt_guidelines:
-    - Custom guideline.
-  host_help: Custom help {roles}
+default_return_format: Custom return.
+tool_prompt_guidelines:
+  - Custom guideline.
+host_help: Custom help {roles}
 """.lstrip(),
         encoding="utf-8",
     )
@@ -154,7 +156,6 @@ prompts:
     config = load_app_config(path)
 
     assert config.prompts.default_return_format == "Custom return."
-    assert config.prompts.worker_goal_label == "Objective"
     assert config.prompts.tool_prompt_guidelines == ("Custom guideline.",)
     assert config.prompts.host_help == "Custom help {roles}"
 
@@ -218,8 +219,9 @@ def test_load_agent_catalog_rejects_invalid_values(
         load_agent_catalog(path)
 
 
-def test_missing_config_file_raises_clear_error(tmp_path: Path) -> None:
-    path = tmp_path / "missing.yaml"
+def test_missing_prompts_file_raises_clear_error(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text("{}\n", encoding="utf-8")
 
     with pytest.raises(ConfigError, match="configuration file not found"):
         load_app_config(path)

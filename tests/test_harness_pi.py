@@ -89,24 +89,20 @@ def test_pi_harness_builds_scoped_prompt(worker_request: WorkerRequest) -> None:
     assert "Return format:" in prompt
 
 
-def test_pi_harness_uses_configured_prompt_text(worker_request: WorkerRequest) -> None:
+def test_pi_harness_uses_configured_default_return_format(worker_request: WorkerRequest) -> None:
     harness = PiHarness()
     role = RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])
     request = WorkerRequest(
         role_name=worker_request.role_name,
         goal=worker_request.goal,
         timeout_seconds=worker_request.timeout_seconds,
-        prompts=PromptConfig(
-            default_return_format="Configured return.",
-            worker_goal_label="Objective",
-            worker_return_format_label="Respond with",
-        ),
+        prompts=PromptConfig(default_return_format="Configured return."),
     )
 
     prompt = harness.build_prompt(request, role)
 
-    assert "Objective: Investigate the current implementation." in prompt
-    assert "Respond with: Configured return." in prompt
+    assert "Goal: Investigate the current implementation." in prompt
+    assert "Return format: Configured return." in prompt
 
 
 def test_pi_harness_uses_shared_prompt_and_command_helpers(worker_request: WorkerRequest) -> None:

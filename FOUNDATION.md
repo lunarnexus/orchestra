@@ -107,8 +107,9 @@ decisions.
 - **Runtime:** local subprocess orchestration first; MCP server and host-native
   adapters expose the same core operations.
 - **Database:** SQLite for lightweight runtime state.
-- **Configuration:** `config.yaml` plus `agent-catalog.yaml` for role definitions,
-  harness command definitions, and explicit harness selection/fallback behavior.
+- **Configuration:** `config.yaml` carries runtime configuration,
+  `prompts.yaml` carries prompt text, and `agent-catalog.yaml` carries role and
+  harness definitions.
 - **Initial harnesses:** Pi workers first, then Hermes, then OpenCode. Hermes is
   the likely first orchestrator host, followed by Pi and OpenCode.
 - **Future harness modes:** Pi RPC, ACP, and other streaming or interactive

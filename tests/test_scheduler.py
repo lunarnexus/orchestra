@@ -14,6 +14,7 @@ def test_global_concurrency_limit_is_atomic(
     fake_worker_script: Path,
 ) -> None:
     config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
         yaml.safe_dump(
@@ -28,6 +29,7 @@ def test_global_concurrency_limit_is_atomic(
         ),
         encoding="utf-8",
     )
+    prompts_path.write_text("{}\n", encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -80,6 +82,7 @@ def test_per_session_concurrency_limit_is_atomic(
     fake_worker_script: Path,
 ) -> None:
     config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
         yaml.safe_dump(
@@ -94,6 +97,7 @@ def test_per_session_concurrency_limit_is_atomic(
         ),
         encoding="utf-8",
     )
+    prompts_path.write_text("{}\n", encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {

@@ -9,6 +9,7 @@ import yaml
 
 def test_python_module_do_smoke(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
 
     config_path.write_text(
@@ -24,6 +25,7 @@ def test_python_module_do_smoke(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    prompts_path.write_text("{}\n", encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {

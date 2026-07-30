@@ -41,6 +41,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 orchestra = [
   "assets/config.yaml",
+  "assets/prompts.yaml",
   "assets/agent-catalog.yaml",
   "assets/pi/orchestra/index.ts",
 ]

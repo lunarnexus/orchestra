@@ -9,26 +9,20 @@ from orchestra.harnesses.base import WorkerRequest
 def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:
     prompts = request.prompts
     sections = [
-        f"{prompts.worker_role_label}: {request.role_name}",
-        f"{prompts.worker_goal_label}: {request.goal.strip()}",
+        f"Role: {request.role_name}",
+        f"Goal: {request.goal.strip()}",
     ]
     if role.prompt_addition:
-        sections.append(
-            f"{prompts.worker_role_instructions_label}: {role.prompt_addition.strip()}"
-        )
+        sections.append(f"Role instructions: {role.prompt_addition.strip()}")
     if request.approved_context.strip():
-        sections.append(
-            f"{prompts.worker_approved_context_label}: {request.approved_context.strip()}"
-        )
+        sections.append(f"Approved context: {request.approved_context.strip()}")
     if request.boundaries.strip():
-        sections.append(f"{prompts.worker_boundaries_label}: {request.boundaries.strip()}")
+        sections.append(f"Out of scope: {request.boundaries.strip()}")
     if request.acceptance_target.strip():
-        sections.append(
-            f"{prompts.worker_acceptance_target_label}: {request.acceptance_target.strip()}"
-        )
+        sections.append(f"Acceptance target: {request.acceptance_target.strip()}")
 
     return_format = request.return_format.strip() or prompts.default_return_format
-    sections.append(f"{prompts.worker_return_format_label}: {return_format}")
+    sections.append(f"Return format: {return_format}")
     return "\n\n".join(sections)
 
 

@@ -31,10 +31,11 @@ python -m pip install -e ".[dev]"
 
 ## Configuration
 
-Orchestra uses two YAML files:
+Orchestra uses three YAML files:
 
 ```text
 config.yaml
+prompts.yaml
 agent-catalog.yaml
 ```
 
@@ -44,6 +45,8 @@ Resolution order:
 2. env vars: `ORCHESTRA_CONFIG`, `ORCHESTRA_AGENT_CATALOG`
 3. Pi-user defaults: `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`
 4. cwd fallback for dev/manual mode: `./config.yaml`, `./agent-catalog.yaml`
+
+`prompts.yaml` is always loaded from the same directory as the resolved `config.yaml`.
 
 Default config shape:
 
@@ -115,10 +118,13 @@ Use `--force` to overwrite existing installed files:
 orchestra init pi --force
 ```
 
-Installed path:
+Installed paths:
 
 ```text
 ~/.pi/agent/extensions/orchestra/index.ts
+~/.pi/agent/orchestra/config.yaml
+~/.pi/agent/orchestra/prompts.yaml
+~/.pi/agent/orchestra/agent-catalog.yaml
 ```
 
 Repo source copy:
@@ -243,6 +249,7 @@ Host smoke checks are documented in `SMOKETEST.md`; longer timing/cancellation/a
 ├── TODO.md                      # Feature backlog from research
 ├── agent-catalog.yaml           # Dev/manual fallback role definitions
 ├── config.yaml                  # Dev/manual fallback runtime configuration
+├── prompts.yaml                 # Dev/manual fallback prompt text configuration
 ├── extensions/hermes/orchestra/ # Source copy of Hermes host plugin
 ├── extensions/pi/orchestra/     # Source copy of global Pi host extension
 ├── src/orchestra/               # Python core

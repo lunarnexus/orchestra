@@ -651,6 +651,11 @@ def init_pi(*, force: bool = False, source_root: str | Path | None = None) -> In
             force=force,
         ),
         _copy_init_file(
+            source_paths["prompts"],
+            pi_dir / "orchestra" / "prompts.yaml",
+            force=force,
+        ),
+        _copy_init_file(
             source_paths["catalog"],
             pi_dir / "orchestra" / "agent-catalog.yaml",
             force=force,
@@ -786,6 +791,7 @@ def _init_source_paths(source_root: str | Path | None) -> dict[str, Path]:
         return {
             "extension": root / "extensions" / "pi" / "orchestra" / "index.ts",
             "config": root / "config.yaml",
+            "prompts": root / "prompts.yaml",
             "catalog": root / "agent-catalog.yaml",
         }
 
@@ -794,6 +800,7 @@ def _init_source_paths(source_root: str | Path | None) -> dict[str, Path]:
         return {
             "extension": repo_root / "extensions" / "pi" / "orchestra" / "index.ts",
             "config": repo_root / "config.yaml",
+            "prompts": repo_root / "prompts.yaml",
             "catalog": repo_root / "agent-catalog.yaml",
         }
 
@@ -801,6 +808,7 @@ def _init_source_paths(source_root: str | Path | None) -> dict[str, Path]:
     return {
         "extension": assets / "pi" / "orchestra" / "index.ts",
         "config": assets / "config.yaml",
+        "prompts": assets / "prompts.yaml",
         "catalog": assets / "agent-catalog.yaml",
     }
 

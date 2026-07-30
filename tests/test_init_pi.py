@@ -13,6 +13,7 @@ def _write_source_tree(root: Path, extension_text: str = "extension v1") -> None
     extension.parent.mkdir(parents=True)
     extension.write_text(extension_text, encoding="utf-8")
     (root / "config.yaml").write_text("state_dir: state\n", encoding="utf-8")
+    (root / "prompts.yaml").write_text("{}\n", encoding="utf-8")
     (root / "agent-catalog.yaml").write_text(
         "roles:\n  worker:\n    harness: pi\n",
         encoding="utf-8",
@@ -31,10 +32,11 @@ def test_init_pi_installs_global_extension_and_config(
 
     result = init_pi(source_root=source)
 
-    assert [item.action for item in result.files] == ["created", "created", "created"]
+    assert [item.action for item in result.files] == ["created", "created", "created", "created"]
     installed_extension = pi_dir / "extensions" / "orchestra" / "index.ts"
     assert installed_extension.read_text(encoding="utf-8") == "extension v1"
     assert (pi_dir / "orchestra" / "config.yaml").exists()
+    assert (pi_dir / "orchestra" / "prompts.yaml").exists()
     assert (pi_dir / "orchestra" / "agent-catalog.yaml").exists()
     assert result.verification_command == 'pi --no-approve -p "/orch help"'
 
