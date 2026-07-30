@@ -187,13 +187,17 @@ Common user-visible messages:
 
 ```text
 orchestra dispatched: <run-id>
-orchestra: <run-id> returned <status> (<done>/<total>)
+orchestra: <run-id> returned <status> (<done>/<total>)  # Pi notification-capable hosts only
 
 [orchestra: Worker <run-id> success|fail]
 Request: <original request>
 Result: <summary>
 Log: <absolute-or-configured log path>
 ```
+
+Hermes does not currently emit per-worker progress notifications. It only
+injects the consolidated return when all active workers for the session have
+finished; this avoids using prompt injection as a fake notification rail.
 
 Failures use `Summary: <summary>` instead of `Result: <summary>`.
 

@@ -417,9 +417,14 @@ or override runtime session ids.
 ### Returns and Auto-Return
 
 Auto-return means prompting the owning orchestrator session when workers return.
-Every worker terminal event may produce a one-line notification, but only the
-all-workers-returned condition should inject a prompt into the orchestrator
-session.
+Only the all-workers-returned condition should inject a prompt into the
+orchestrator session.
+
+Pi host surfaces may also show per-worker progress notifications when their
+runtime provides a notification-only API. Hermes host surfaces must not fake
+per-worker progress by injecting prompt messages. Hermes per-worker progress is
+therefore intentionally disabled unless Hermes exposes a supported non-prompt
+plugin notification API.
 
 Core-formatted dispatch acknowledgement:
 
@@ -427,7 +432,8 @@ Core-formatted dispatch acknowledgement:
 orchestra dispatched: <run-id>
 ```
 
-Core-formatted progress notification:
+Core-formatted Pi progress notification, when the host supports notification-only
+updates:
 
 ```text
 orchestra: <run-id> returned <status> (<done>/<total>)

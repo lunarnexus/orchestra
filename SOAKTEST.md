@@ -65,7 +65,7 @@ Pass if:
 - `/orch status` does not show a stranded active run
 - `/orch history 10` or the returned report shows `Worker exceeded timeout` or an equivalent timeout failure
 
-After watcher timeout fixes, also run one long worker whose expected duration is greater than the old plugin subprocess cap and less than the worker timeout. Pass if progress/final auto-return still appears and the worker is not abandoned by host watchers.
+After watcher timeout fixes, also run one long worker whose expected duration is greater than the old plugin subprocess cap and less than the worker timeout. Pass if final auto-return still appears and the worker is not abandoned by host watchers. Hermes per-worker progress notifications are intentionally disabled unless Hermes exposes a supported non-prompt plugin notification API.
 
 ### H1. Three-worker dispatch with cancellation
 
@@ -151,7 +151,8 @@ Poll until no active runs remain:
 
 Pass if:
 
-- progress notifications appear as workers return
+- progress notifications appear as workers return on Pi notification-capable hosts
+- Hermes hosts may skip per-worker progress notifications; this is expected
 - one final consolidated auto-return appears
 - cancelled run is included as cancelled/fail
 - no unrelated session's workers appear
