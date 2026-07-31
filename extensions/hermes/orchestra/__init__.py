@@ -147,7 +147,7 @@ def _parse_do_args(raw_args: str) -> dict[str, Any]:
         parts = shlex.split(normalized_args)
     except ValueError:
         return {"error": "Malformed quoted string in /orch do arguments"}
-    payload: dict[str, Any] = {"role": "worker"}
+    payload: dict[str, Any] = {}
     goal_parts: list[str] = []
     index = 0
     while index < len(parts):
@@ -370,17 +370,17 @@ def _dispatch_orchestra_run(
     if timeout is not None and (type(timeout) is not int or timeout <= 0):
         return _error("timeout must be a positive integer")
 
-    role = str(payload.get("role") or "worker").strip() or "worker"
+    requested_role = str(payload.get("role") or "").strip()
     wait_budget_seconds = _watcher_wait_budget_seconds(timeout)
     command = [
         "do",
         "--session-id",
         runtime_session_id,
-        "--role",
-        role,
         "--goal",
         goal,
     ]
+    if requested_role:
+        command.extend(["--role", requested_role])
     if timeout is not None:
         command.extend(["--timeout", str(timeout)])
     task_label = str(payload.get("taskLabel", "")).strip()
@@ -397,10 +397,11 @@ def _dispatch_orchestra_run(
 
     _start_session_report_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
 
-    ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", role])
+    effective_role = _extract_field(result.stdout, "role") or requested_role or "worker"
+    ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", effective_role])
     if ack.returncode != 0:
         return _error((ack.stdout or ack.stderr).strip() or "orchestra dispatch ack failed")
-    return ack.stdout.strip() or f"orchestra dispatched: {role} {run_id}"
+    return ack.stdout.strip() or f"orchestra dispatched: {effective_role} {run_id}"
 
 
 def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
@@ -434,6 +435,10 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
 
     if subcommand == "doctor":
         result = _run_orchestra(["doctor"])
+        return result.stdout or result.stderr
+
+    if subcommand == "roles":
+        result = _run_orchestra(["roles"])
         return result.stdout or result.stderr
 
     runtime_session_id = _slash_session_id(ctx)
@@ -495,5 +500,5 @@ def register(ctx: Any) -> None:
     ctx.register_command(
         "orch",
         handler=command_handler,
-        description="Orchestra host adapter: /orch help|do|status|stop|doctor|history",
+        description="Orchestra host adapter: /orch help|do|roles|status|stop|doctor|history",
     )

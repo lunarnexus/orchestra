@@ -45,9 +45,9 @@ async function runOrchestra(args: string[]): Promise<{ code: number; stdout: str
   }
 }
 
-function parseDoArgs(args: string): { role: string; timeout: string | null; taskLabel: string | null; goal: string } {
+function parseDoArgs(args: string): { role: string | null; timeout: string | null; taskLabel: string | null; goal: string } {
   const parts = args.trim().split(/\s+/).filter(Boolean);
-  let role = "worker";
+  let role: string | null = null;
   let timeout: string | null = null;
   let taskLabel: string | null = null;
   const goalParts: string[] = [];
@@ -80,12 +80,16 @@ function parseDoArgs(args: string): { role: string; timeout: string | null; task
   };
 }
 
-function extractRunId(output: string): string | null {
+function extractField(output: string, field: string): string | null {
   for (const line of output.split(/\r?\n/)) {
-    const match = /^run_id:\s+(.+)$/.exec(line.trim());
+    const match = new RegExp(`^${field}:\\s+(.+)$`).exec(line.trim());
     if (match) return match[1].trim();
   }
   return null;
+}
+
+function extractRunId(output: string): string | null {
+  return extractField(output, "run_id");
 }
 
 interface OrchestraCommandEntry {
@@ -281,11 +285,13 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       "do",
       "--session-id",
       sessionId,
-      "--role",
-      params.role?.trim() || "worker",
       "--goal",
       goal,
     ];
+    const requestedRole = params.role?.trim();
+    if (requestedRole) {
+      command.push("--role", requestedRole);
+    }
     if (params.timeout !== undefined) {
       command.push("--timeout", String(params.timeout));
     }
@@ -299,7 +305,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       trackRun(sessionId, runId);
       watchRunProgress(sessionId, runId, notifier);
       watchSessionReport(sessionId, runId);
-      const role = params.role?.trim() || "worker";
+      const role = extractField(result.stdout, "role") || requestedRole || "worker";
       const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId, "--role", role]);
       return { code: 0, runId, output: ack.stdout || `orchestra dispatched: ${role} ${runId}` };
     }
@@ -415,7 +421,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("orch", {
-    description: "Orchestra host adapter: /orch do|status|stop|doctor|history",
+    description: "Orchestra host adapter: /orch help|do|roles|status|stop|doctor|history",
     handler: async (args, ctx) => {
       const trimmed = args.trim();
       pi.appendEntry<OrchestraCommandEntry>("orchestra-command", {
@@ -436,6 +442,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
       if (subcommand === "doctor") {
         const result = await runOrchestra(["doctor"]);
+        emitEntryOutput(ctx, result.stdout || result.stderr);
+        return;
+      }
+
+      if (subcommand === "roles") {
+        const result = await runOrchestra(["roles"]);
         emitEntryOutput(ctx, result.stdout || result.stderr);
         return;
       }

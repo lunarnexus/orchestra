@@ -65,9 +65,11 @@ auto_return: true
 Example role catalog entry:
 
 ```yaml
+default_role: worker
 roles:
   worker:
     harness: pi
+    enabled: true
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
     prompt_addition: Focus on the assigned task and return a compact result.
     command:
@@ -81,6 +83,8 @@ roles:
 
 Notes:
 
+- `default_role` is optional; when omitted it defaults to `worker`.
+- `enabled` is optional per role; when omitted it defaults to `true` for backward compatibility.
 - `harness` selects the worker runtime connector.
 - `command` is a tokenized argv template, not a shell string.
 - If `model` is omitted, harnesses that support model selection use their runtime default.
@@ -140,6 +144,7 @@ Inside a Pi session with the extension installed:
 /orch do <goal>
 /orch do --role critic <goal>
 /orch do --timeout 120 <goal>
+/orch roles
 /orch status
 /orch stop <run-id>
 /orch doctor
@@ -179,6 +184,7 @@ Inside a Hermes session with the plugin loaded:
 /orch do <goal>
 /orch do --role critic <goal>
 /orch do --timeout 120 <goal>
+/orch roles
 /orch status
 /orch stop <run-id>
 /orch doctor

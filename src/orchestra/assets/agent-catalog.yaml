@@ -1,4 +1,5 @@
 # Orchestra agent catalog
+default_role: worker
 roles:
   worker:
     harness: pi

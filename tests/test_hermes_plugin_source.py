@@ -205,6 +205,7 @@ def test_orch_slash_doctor_help_are_sessionless_safe_wrappers_and_scoped_fail_cl
 
     assert plugin._orch_command("help") == "ok\n"
     assert plugin._orch_command("doctor") == "ok\n"
+    assert plugin._orch_command("roles") == "ok\n"
     assert "runtime session context" in plugin._orch_command("status")
     assert "runtime session context" in plugin._orch_command("history 7")
     assert "runtime session context" in plugin._orch_command("stop run-1")
@@ -212,10 +213,11 @@ def test_orch_slash_doctor_help_are_sessionless_safe_wrappers_and_scoped_fail_cl
     assert calls == [
         ["help-host"],
         ["doctor"],
+        ["roles"],
     ]
 
 
-def test_orch_slash_cli_private_session_fallback_scopes_status_history_stop(
+def test_orch_slash_cli_private_session_fallback_scopes_roles_status_history_stop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -232,11 +234,13 @@ def test_orch_slash_cli_private_session_fallback_scopes_status_history_stop(
     plugin.register(ctx)
     calls.clear()
 
+    assert ctx.commands[0]["handler"]("roles") == "ok\n"
     assert ctx.commands[0]["handler"]("status") == "ok\n"
     assert ctx.commands[0]["handler"]("history 7") == "ok\n"
     assert ctx.commands[0]["handler"]("stop run-1") == "ok\n"
 
     assert calls == [
+        ["roles"],
         ["status", "--session-id", "hermes:cli-session"],
         ["history", "--session-id", "hermes:cli-session", "--limit", "7"],
         ["stop", "--session-id", "hermes:cli-session", "--run-id", "run-1"],
@@ -280,10 +284,10 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_watches(
         "do",
         "--session-id",
         "hermes:cli-session",
-        "--role",
-        "reviewer",
         "--goal",
         "session_id attacker ship it",
+        "--role",
+        "reviewer",
         "--timeout",
         "5",
         "--task-label",
@@ -436,12 +440,12 @@ def test_orch_slash_cli_private_session_fallback_dispatches_hermes_escaped_quote
             "do",
             "--session-id",
             "hermes:cli-session",
-            "--role",
-            "researcher",
             "--goal",
             "Smoke test only. Do not edit files. Inspect README.md, PLAN.md, and "
             "agent-catalog.yaml. Return status, files inspected, configured worker role "
             "harness, one-sentence project purpose, blockers.",
+            "--role",
+            "researcher",
             "--timeout",
             "120",
             "--task-label",
@@ -505,15 +509,40 @@ def test_orch_dispatch_builds_cli_args_from_runtime_kwargs_and_returns_ack(
             "do",
             "--session-id",
             "hermes:runtime-session",
-            "--role",
-            "reviewer",
             "--goal",
             "ship focused task",
+            "--role",
+            "reviewer",
             "--timeout",
             "42",
             "--task-label",
             "review-task",
         ],
+        ["_dispatch-ack", "--run-id", "abc123", "--role", "reviewer"],
+    ]
+    assert output == "orchestra dispatched: reviewer abc123"
+
+
+def test_orch_dispatch_uses_effective_default_role_from_cli_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "do":
+            return completed(args, "run_id: abc123\nrole: reviewer\nstatus: queued\n")
+        if args[0] == "_dispatch-ack":
+            return completed(args, "orchestra dispatched: reviewer abc123\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+
+    output = plugin.orch_dispatch({"goal": "do work"}, session_id="runtime")
+
+    assert calls == [
+        ["do", "--session-id", "hermes:runtime", "--goal", "do work"],
         ["_dispatch-ack", "--run-id", "abc123", "--role", "reviewer"],
     ]
     assert output == "orchestra dispatched: reviewer abc123"
@@ -531,9 +560,7 @@ def test_orch_dispatch_requires_run_id_before_ack(monkeypatch: pytest.MonkeyPatc
 
     payload = json.loads(plugin.orch_dispatch({"goal": "do work"}, session_id="runtime"))
 
-    assert calls == [
-        ["do", "--session-id", "hermes:runtime", "--role", "worker", "--goal", "do work"]
-    ]
+    assert calls == [["do", "--session-id", "hermes:runtime", "--goal", "do work"]]
     assert payload == {"error": "orchestra dispatch did not return a run_id"}
 
 

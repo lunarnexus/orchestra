@@ -9,6 +9,7 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
 
     assert 'name: "orch_dispatch"' in extension_source
     assert "_tool-info" in extension_source
+    assert 'subcommand === "roles"' in extension_source
     for keyword in ("delegate", "dispatch", "subagent", "sub-agent", "worker"):
         assert keyword in prompts_source
 
@@ -24,6 +25,10 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert '["_dispatch-ack", "--run-id", runId, "--role", role]' in extension_source
     assert 'command.push("--role", role)' in extension_source
     assert "help-host" in extension_source
+    assert (
+        'description: "Orchestra host adapter: /orch help|do|roles|status|stop|doctor|history"'
+        in extension_source
+    )
     assert "compactReturnMessage" not in extension_source
     assert "format_orchestrator_return" in core_source
     assert "format_progress_notification" in core_source

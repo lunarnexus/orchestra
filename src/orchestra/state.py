@@ -65,6 +65,8 @@ class RunRecord:
 @dataclass(frozen=True)
 class RunUpdate:
     status: str
+    harness: str | None = None
+    role: str | None = None
     started_at: str | None = None
     ended_at: str | None = None
     process_id: int | None = None
@@ -249,6 +251,8 @@ class StateStore:
             event="run.updated",
             details={
                 "previous_status": current.status,
+                "harness": next_record.harness,
+                "role": next_record.role,
                 "process_id": next_record.process_id,
                 "process_group_id": next_record.process_group_id,
                 "result_summary": next_record.result_summary,
@@ -478,6 +482,8 @@ class StateStore:
         next_record = replace(
             current,
             status=update.status,
+            harness=update.harness if update.harness is not None else current.harness,
+            role=update.role if update.role is not None else current.role,
             started_at=update.started_at if update.started_at is not None else current.started_at,
             ended_at=update.ended_at if update.ended_at is not None else current.ended_at,
             process_id=update.process_id if update.process_id is not None else current.process_id,
@@ -534,7 +540,9 @@ class StateStore:
         cursor = connection.execute(
             """
             UPDATE runs
-            SET status = ?,
+            SET harness = ?,
+                role = ?,
+                status = ?,
                 started_at = ?,
                 ended_at = ?,
                 process_id = ?,
@@ -551,6 +559,8 @@ class StateStore:
               AND status = ?
             """,
             (
+                record.harness,
+                record.role,
                 record.status,
                 record.started_at,
                 record.ended_at,

@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from orchestra.config import (
@@ -136,6 +136,12 @@ class StartedRun:
     request_file: Path
 
 
+@dataclass(frozen=True)
+class SelectedRole:
+    name: str
+    config: RoleConfig
+
+
 def create_default_registry() -> HarnessRegistry:
     return register_builtin_harnesses(HarnessRegistry())
 
@@ -165,7 +171,7 @@ def start_run(
     context: AppContext,
     *,
     session_id: str,
-    role_name: str,
+    role_name: str | None,
     goal: str,
     approved_context: str,
     boundaries: str,
@@ -176,7 +182,8 @@ def start_run(
     batch_id: str | None,
 ) -> StartedRun:
     _require_session_id(session_id)
-    role = _get_role(context.catalog, role_name)
+    selected_role = _select_role(context.catalog, role_name)
+    role = selected_role.config
 
     run_id = uuid.uuid4().hex[:12]
     log_path = context.config.log_dir / f"{run_id}.jsonl"
@@ -186,7 +193,7 @@ def start_run(
     request_file = request_dir / f"{run_id}.json"
     pending_request = PendingRunRequest(
         run_id=run_id,
-        role_name=role_name,
+        role_name=selected_role.name,
         goal=goal,
         approved_context=approved_context,
         boundaries=boundaries,
@@ -202,7 +209,7 @@ def start_run(
         orchestrator_session_id=session_id,
         batch_id=batch_id,
         harness=role.harness,
-        role=role_name,
+        role=selected_role.name,
         task_label=effective_task_label,
         log_path=log_path,
         created_at=utc_now(),
@@ -243,57 +250,59 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         return record
 
     pending_request = _load_pending_request(run_id, Path(request_file))
-    role = _get_role(context.catalog, record.role)
-    try:
-        harness = context.registry.get(role.harness)
-    except HarnessLoadError as exc:
-        _safe_unlink(pending_request.request_file)
-        detail = exc.args[0] if exc.args else str(exc)
-        return _finalize_supervisor_setup_failure(
-            context,
-            run_id,
-            error_text=detail,
-            blocker_text="Worker harness could not be loaded",
-        )
-    except KeyError as exc:
-        _safe_unlink(pending_request.request_file)
-        detail = exc.args[0] if exc.args else str(exc)
-        return _finalize_supervisor_setup_failure(
-            context,
-            run_id,
-            error_text=detail,
-            blocker_text="Worker harness is not configured",
-        )
-
-    request = WorkerRequest(
-        role_name=pending_request.role_name,
-        goal=pending_request.goal,
-        approved_context=pending_request.approved_context,
-        boundaries=pending_request.boundaries,
-        acceptance_target=pending_request.acceptance_target,
-        return_format=pending_request.return_format,
-        timeout_seconds=pending_request.timeout_seconds,
-        task_label=pending_request.task_label,
-        log_path=record.log_path,
-        prompts=context.config.prompts,
-    )
+    selected_role = _select_role(context.catalog, record.role)
+    fallback_note: str | None = None
 
     try:
-        worker = harness.start(request, role)
-    except Exception as exc:
-        _safe_unlink(pending_request.request_file)
-        return _finalize_supervisor_setup_failure(
+        started_role, worker = _start_worker_process(
             context,
-            run_id,
-            error_text=f"failed to start harness: {role.harness}: {exc}",
-            blocker_text="Worker harness could not start",
+            selected_role,
+            pending_request,
+            log_path=record.log_path,
         )
+    except AppError as exc:
+        fallback_role = _fallback_role_for(context.catalog, selected_role.name)
+        if fallback_role is None:
+            _safe_unlink(pending_request.request_file)
+            return _finalize_supervisor_setup_failure(
+                context,
+                run_id,
+                error_text=str(exc),
+                blocker_text=_setup_failure_blocker(str(exc)),
+            )
+
+        fallback_note = (
+            f"requested role {selected_role.name} could not start before worker launch; "
+            f"ran default role {fallback_role.name} instead"
+        )
+        try:
+            started_role, worker = _start_worker_process(
+                context,
+                fallback_role,
+                replace(pending_request, role_name=fallback_role.name),
+                log_path=record.log_path,
+            )
+        except AppError as fallback_exc:
+            _safe_unlink(pending_request.request_file)
+            failure_text = (
+                f"{exc}; fallback default role {fallback_role.name} also failed: "
+                f"{fallback_exc}"
+            )
+            return _finalize_supervisor_setup_failure(
+                context,
+                run_id,
+                error_text=failure_text,
+                blocker_text=_setup_failure_blocker(str(fallback_exc)),
+            )
 
     pgid = process_group_id(worker.process.pid)
     updated = context.store.update_run(
         run_id,
         RunUpdate(
             status=STATUS_RUNNING,
+
+            harness=started_role.config.harness,
+            role=started_role.name,
             process_id=worker.process.pid,
             process_group_id=pgid,
             worker_session_id=worker.worker_session_id,
@@ -307,7 +316,7 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         return updated
 
     try:
-        stdout, stderr = worker.process.communicate(timeout=request.timeout_seconds)
+        stdout, stderr = worker.process.communicate(timeout=pending_request.timeout_seconds)
     except subprocess.TimeoutExpired:
         stdout, stderr = _terminate_subprocess(worker.process, pgid)
         result = WorkerResult(
@@ -327,6 +336,9 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         )
     else:
         result = _result_from_completed_worker(worker, stdout, stderr)
+
+    if fallback_note:
+        result = _annotate_result_with_fallback(result, fallback_note)
 
     _safe_unlink(pending_request.request_file)
     return _finalize_run(context, record.run_id, result)
@@ -583,12 +595,31 @@ def format_status(context: AppContext, session_id: str) -> str:
     return "\n".join(lines)
 
 
-def format_roles(context: AppContext) -> str:
-    lines = ["roles:"]
-    for role_name, role in sorted(context.catalog.roles.items()):
+def format_roles(context: AppContext, *, include_disabled: bool = False) -> str:
+    enabled_lines = ["roles:"]
+    for role_name, role in _enabled_roles(context.catalog):
+        default = " default=true" if role_name == context.catalog.default_role else ""
         model = f" model={role.model}" if role.model else ""
         profile = f" profile={role.profile}" if role.profile else ""
-        lines.append(f"- {role_name} harness={role.harness}{model}{profile}")
+        enabled_lines.append(
+            f"- {role_name} harness={role.harness}{model}{profile}{default}"
+        )
+
+    if not include_disabled:
+        return "\n".join(enabled_lines)
+
+    lines = [f"default_role: {context.catalog.default_role}", *enabled_lines]
+    disabled_roles = [
+        (role_name, role)
+        for role_name, role in sorted(context.catalog.roles.items())
+        if not role.enabled
+    ]
+    if disabled_roles:
+        lines.append("disabled_roles:")
+        for role_name, role in disabled_roles:
+            model = f" model={role.model}" if role.model else ""
+            profile = f" profile={role.profile}" if role.profile else ""
+            lines.append(f"- {role_name} harness={role.harness}{model}{profile}")
     return "\n".join(lines)
 
 
@@ -891,6 +922,71 @@ def _finalize_supervisor_setup_failure(
     )
 
 
+
+def _start_worker_process(
+    context: AppContext,
+    selected_role: SelectedRole,
+    pending_request: PendingRunRequest,
+    *,
+    log_path: Path,
+) -> tuple[SelectedRole, WorkerProcess]:
+    role = selected_role.config
+    try:
+        harness = context.registry.get(role.harness)
+    except HarnessLoadError as exc:
+        detail = exc.args[0] if exc.args else str(exc)
+        raise AppError(detail) from exc
+    except KeyError as exc:
+        detail = exc.args[0] if exc.args else str(exc)
+        raise AppError(detail) from exc
+
+    request = WorkerRequest(
+        role_name=selected_role.name,
+        goal=pending_request.goal,
+        approved_context=pending_request.approved_context,
+        boundaries=pending_request.boundaries,
+        acceptance_target=pending_request.acceptance_target,
+        return_format=pending_request.return_format,
+        timeout_seconds=pending_request.timeout_seconds,
+        task_label=pending_request.task_label,
+        log_path=log_path,
+        prompts=context.config.prompts,
+    )
+
+    try:
+        return selected_role, harness.start(request, role)
+    except Exception as exc:
+        raise AppError(f"failed to start harness: {role.harness}: {exc}") from exc
+
+
+def _annotate_result_with_fallback(result: WorkerResult, note: str) -> WorkerResult:
+    result_summary = f"{note}; {result.result_summary}" if result.result_summary else note
+    error_text = f"{note}; {result.error_text}" if result.error_text else result.error_text
+    return WorkerResult(
+        status=result.status,
+        command=result.command,
+        prompt=result.prompt,
+        exit_code=result.exit_code,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        result_summary=result_summary,
+        error_text=error_text,
+        blocker_text=result.blocker_text,
+        timed_out=result.timed_out,
+        worker_session_id=result.worker_session_id,
+        transcript_path=result.transcript_path,
+        approval_needed=result.approval_needed,
+    )
+
+
+def _setup_failure_blocker(error_text: str) -> str:
+    if error_text.startswith("failed to load harness:"):
+        return "Worker harness could not be loaded"
+    if error_text.startswith("unknown harness:"):
+        return "Worker harness is not configured"
+    return "Worker harness could not start"
+
+
 def _result_from_completed_worker(
     worker: WorkerProcess,
     stdout: str,
@@ -1003,11 +1099,32 @@ def _safe_unlink(path: Path) -> None:
         return
 
 
-def _get_role(catalog: AgentCatalog, role_name: str) -> RoleConfig:
+def _enabled_roles(catalog: AgentCatalog) -> list[tuple[str, RoleConfig]]:
+    return [
+        (role_name, role)
+        for role_name, role in sorted(catalog.roles.items())
+        if role.enabled
+    ]
+
+
+def _select_role(catalog: AgentCatalog, role_name: str | None) -> SelectedRole:
+    normalized_role_name = (role_name or "").strip() or catalog.default_role
     try:
-        return catalog.roles[role_name]
+        role = catalog.roles[normalized_role_name]
     except KeyError as exc:
-        raise AppError(f"unknown role: {role_name}") from exc
+        raise AppError(f"unknown role: {normalized_role_name}") from exc
+    if not role.enabled:
+        raise AppError(f"role is disabled: {normalized_role_name}")
+    return SelectedRole(name=normalized_role_name, config=role)
+
+
+def _fallback_role_for(catalog: AgentCatalog, requested_role_name: str) -> SelectedRole | None:
+    if requested_role_name == catalog.default_role:
+        return None
+    role = catalog.roles[catalog.default_role]
+    if not role.enabled:
+        return None
+    return SelectedRole(name=catalog.default_role, config=role)
 
 
 def _require_session_id(session_id: str) -> None:

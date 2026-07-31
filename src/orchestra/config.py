@@ -21,6 +21,7 @@ DEFAULT_TIMEOUT = 600
 DEFAULT_GLOBAL_CONCURRENCY = 4
 DEFAULT_PER_SESSION_CONCURRENCY = 3
 DEFAULT_AUTO_RETURN = True
+DEFAULT_ROLE_NAME = "worker"
 DEFAULT_RETURN_FORMAT = (
     "Return a concise response with success/fail, files changed/inspected, "
     "if fail: exact commands run, results, if blockers: blockers, if risks: risks"
@@ -31,8 +32,8 @@ DEFAULT_TOOL_DESCRIPTION = " ".join(
         "Use when the user asks to delegate, dispatch, ask a worker, ask another agent, "
         "run a subagent/sub-agent, or parallelize a narrow task.",
         "Do not use for tasks you can answer directly without a worker.",
-        "Use only an exact configured role listed below. Omit role to use the default "
-        "worker role.",
+        "Use only an exact configured role listed below. Omit role to use the configured "
+        "default role.",
         "{roles}",
     ]
 )
@@ -42,11 +43,11 @@ DEFAULT_TOOL_PROMPT_GUIDELINES = (
     "sub-agent, ask a worker, ask another agent, or parallelize a focused task.",
     "Keep orch_dispatch requests narrow and explicit.",
     "Use only an exact configured role from the available roles list. Omit role to use "
-    "the default worker role.",
+    "the configured default role.",
 )
 DEFAULT_TOOL_GOAL_DESCRIPTION = "Focused worker request/task to delegate."
 DEFAULT_TOOL_ROLE_DESCRIPTION = (
-    "Optional exact configured role. Omit for default worker role. {roles}"
+    "Optional exact configured role. Omit for the configured default role. {roles}"
 )
 DEFAULT_TOOL_TIMEOUT_DESCRIPTION = "Optional timeout in seconds."
 DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
@@ -56,6 +57,7 @@ DEFAULT_HOST_HELP = """Orchestra commands:
   /orch do <request>                 Start a worker for this session
   /orch do --role ROLE <request>     Start a worker with a role
   /orch do --timeout SEC <request>   Start a worker with a timeout
+  /orch roles                        Show configured roles
   /orch status                       Show active workers for this session
   /orch stop <run-id>                Stop an owned active worker
   /orch history [limit]              Show recent results for this session
@@ -107,11 +109,13 @@ class RoleConfig:
     model: str | None = None
     profile: str | None = None
     command: list[str] | None = None
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
 class AgentCatalog:
     roles: dict[str, RoleConfig]
+    default_role: str = DEFAULT_ROLE_NAME
 
 
 def default_pi_orchestra_dir() -> Path:
@@ -203,6 +207,7 @@ def load_app_config(path: str | Path) -> AppConfig:
 
 def load_agent_catalog(path: str | Path) -> AgentCatalog:
     raw = _load_yaml_mapping(path)
+    default_role = _get_optional_string(raw, "default_role") or DEFAULT_ROLE_NAME
     roles_raw = raw.get("roles")
     if not isinstance(roles_raw, dict) or not roles_raw:
         raise ConfigError("'roles' must be a non-empty mapping")
@@ -226,9 +231,15 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
             model=model,
             profile=profile,
             command=command,
+            enabled=_get_optional_bool(role_raw, "enabled", True),
         )
 
-    return AgentCatalog(roles=roles)
+    if default_role not in roles:
+        raise ConfigError(f"default_role must name a configured role: {default_role}")
+    if not roles[default_role].enabled:
+        raise ConfigError(f"default_role must be enabled: {default_role}")
+
+    return AgentCatalog(roles=roles, default_role=default_role)
 
 
 def _resolve_path(

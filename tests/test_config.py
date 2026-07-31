@@ -10,6 +10,7 @@ from orchestra.config import (
     DEFAULT_HOST_HELP,
     DEFAULT_LOG_DIR,
     DEFAULT_PER_SESSION_CONCURRENCY,
+    DEFAULT_ROLE_NAME,
     DEFAULT_STATE_DIR,
     DEFAULT_TIMEOUT,
     ConfigError,
@@ -131,6 +132,7 @@ def test_load_app_config_rejects_invalid_values(
 def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
     catalog = load_agent_catalog(fixture_dir / "config" / "agent_catalog.yaml")
 
+    assert catalog.default_role == DEFAULT_ROLE_NAME
     worker = catalog.roles["worker"]
     assert worker.harness == "pi"
     assert worker.prompt_addition == "Focus on the assigned task and return a compact result."
@@ -164,6 +166,7 @@ def test_load_agent_catalog_supports_optional_fields(tmp_path: Path) -> None:
     path = tmp_path / "agent-catalog.yaml"
     path.write_text(
         """
+default_role: reviewer
 roles:
   reviewer:
     harness: hermes
@@ -182,11 +185,13 @@ roles:
 
     catalog = load_agent_catalog(path)
 
+    assert catalog.default_role == "reviewer"
     reviewer = catalog.roles["reviewer"]
     assert reviewer.harness == "hermes"
     assert reviewer.model == "gpt-5"
     assert reviewer.profile == "reviewer"
     assert reviewer.command == ["hermes", "--profile", "reviewer", "-z", "{prompt}"]
+    assert reviewer.enabled is True
 
 
 @pytest.mark.parametrize(
@@ -205,6 +210,14 @@ roles:
             "roles:\n  worker:\n    harness: pi\n    command: []\n",
             "role 'worker' requires 'command' to be a non-empty list of strings",
         ),
+        (
+            "default_role: reviewer\nroles:\n  worker:\n    harness: pi\n",
+            "default_role must name a configured role: reviewer",
+        ),
+        (
+            "default_role: worker\nroles:\n  worker:\n    harness: pi\n    enabled: false\n",
+            "default_role must be enabled: worker",
+        ),
     ],
 )
 def test_load_agent_catalog_rejects_invalid_values(
@@ -217,6 +230,29 @@ def test_load_agent_catalog_rejects_invalid_values(
 
     with pytest.raises(ConfigError, match=expected_message):
         load_agent_catalog(path)
+
+
+def test_load_agent_catalog_supports_default_role_and_enabled_flags(tmp_path: Path) -> None:
+    path = tmp_path / "agent-catalog.yaml"
+    path.write_text(
+        """
+default_role: reviewer
+roles:
+  worker:
+    harness: pi
+    enabled: false
+  reviewer:
+    harness: hermes
+    enabled: true
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    catalog = load_agent_catalog(path)
+
+    assert catalog.default_role == "reviewer"
+    assert catalog.roles["worker"].enabled is False
+    assert catalog.roles["reviewer"].enabled is True
 
 
 def test_missing_prompts_file_raises_clear_error(tmp_path: Path) -> None:

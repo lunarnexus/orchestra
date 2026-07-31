@@ -91,7 +91,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
             "supply session ids from runtime context"
         ),
     )
-    do_parser.add_argument("--role", default="worker", help="worker role name")
+    do_parser.add_argument("--role", default=None, help="worker role name")
     do_parser.add_argument("--goal", required=True, help="goal for the worker")
     do_parser.add_argument("--approved-context", default="", help="approved context for the worker")
     do_parser.add_argument("--boundaries", default="", help="out-of-scope boundaries")
@@ -123,6 +123,11 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     doctor_parser.set_defaults(handler=_handle_doctor)
 
     roles_parser = subparsers.add_parser("roles", help="list configured worker roles")
+    roles_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="include disabled roles and default role metadata",
+    )
     roles_parser.set_defaults(handler=_handle_roles)
 
     if include_internal:
@@ -278,7 +283,7 @@ def _handle_doctor(args: argparse.Namespace) -> int:
 
 def _handle_roles(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
-    print(format_roles(context))
+    print(format_roles(context, include_disabled=args.all))
     return 0
 
 

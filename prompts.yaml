@@ -6,7 +6,7 @@ tool_description: >-
   the user asks to delegate, dispatch, ask a worker, ask another agent, run a
   subagent/sub-agent, or parallelize a narrow task. Do not use for tasks you can
   answer directly without a worker. Use only an exact configured role listed
-  below. Omit role to use the default worker role. {roles}
+  below. Omit role to use the configured default role. {roles}
 tool_prompt_snippet: Dispatch focused work to Orchestra workers/subagents. {roles}
 tool_prompt_guidelines:
   - >-
@@ -16,9 +16,9 @@ tool_prompt_guidelines:
   - Keep orch_dispatch requests narrow and explicit.
   - >-
     Use only an exact configured role from the available roles list. Omit role
-    to use the default worker role.
+    to use the configured default role.
 tool_goal_description: Focused worker request/task to delegate.
-tool_role_description: Optional exact configured role. Omit for default worker role. {roles}
+tool_role_description: Optional exact configured role. Omit for the configured default role. {roles}
 tool_timeout_description: Optional timeout in seconds.
 tool_task_label_description: Optional short request label.
 host_help: |-
@@ -28,6 +28,7 @@ host_help: |-
     /orch do <request>                 Start a worker for this session
     /orch do --role ROLE <request>     Start a worker with a role
     /orch do --timeout SEC <request>   Start a worker with a timeout
+    /orch roles                        Show configured roles
     /orch status                       Show active workers for this session
     /orch stop <run-id>                Stop an owned active worker
     /orch history [limit]              Show recent results for this session
