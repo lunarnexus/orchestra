@@ -30,6 +30,7 @@ from orchestra.app import (
     release_session_report,
     run_doctor,
     run_supervisor,
+    set_role_setting,
     start_run,
     stop_run,
     tool_info,
@@ -128,6 +129,14 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         action="store_true",
         help="include disabled roles and default role metadata",
     )
+    roles_parser.add_argument("role", nargs="?", help="role to update")
+    roles_parser.add_argument(
+        "setting",
+        nargs="?",
+        choices=("enabled", "model"),
+        help="role setting to update",
+    )
+    roles_parser.add_argument("value", nargs="?", help="new role setting value")
     roles_parser.set_defaults(handler=_handle_roles)
 
     if include_internal:
@@ -283,6 +292,12 @@ def _handle_doctor(args: argparse.Namespace) -> int:
 
 def _handle_roles(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    role_update_args = (args.role, args.setting, args.value)
+    if any(value is not None for value in role_update_args):
+        if any(value is None for value in role_update_args):
+            raise AppError("usage: roles [--all] [ROLE enabled true|false] [ROLE model MODEL]")
+        print(set_role_setting(context, args.role, args.setting, args.value))
+        return 0
     print(format_roles(context, include_disabled=args.all))
     return 0
 

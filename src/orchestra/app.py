@@ -15,6 +15,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+import yaml
+
 from orchestra.config import (
     AgentCatalog,
     AppConfig,
@@ -636,6 +638,64 @@ def format_roles(context: AppContext, *, include_disabled: bool = False) -> str:
         else:
             lines.append("  - none")
     return "\n".join(lines)
+
+
+def set_role_setting(context: AppContext, role_name: str, setting: str, value: str) -> str:
+    role_key = role_name.strip()
+    if role_key not in context.catalog.roles:
+        raise AppError(f"unknown role: {role_key}")
+
+    raw_catalog = _load_catalog_mapping(context.paths.catalog_path)
+    roles_raw = raw_catalog.get("roles")
+    if not isinstance(roles_raw, dict):
+        raise AppError("agent catalog roles must be a mapping")
+    role_raw = roles_raw.get(role_key)
+    if not isinstance(role_raw, dict):
+        raise AppError(f"role '{role_key}' must be a mapping")
+
+    if setting == "enabled":
+        enabled = _parse_enabled_value(value)
+        if not enabled and role_key == context.catalog.default_role:
+            raise AppError(f"cannot disable default role: {role_key}")
+        role_raw["enabled"] = enabled
+        changed = f"enabled={str(enabled).lower()}"
+    elif setting == "model":
+        model = value.strip()
+        if not model:
+            raise AppError("model must be a non-empty string")
+        role_raw["model"] = model
+        changed = f"model={model}"
+    else:
+        raise AppError("role setting must be one of: enabled, model")
+
+    _write_catalog_mapping(context.paths.catalog_path, raw_catalog)
+    updated_catalog = load_agent_catalog(context.paths.catalog_path)
+    updated_context = replace(context, catalog=updated_catalog)
+    roles_output = format_roles(updated_context, include_disabled=True)
+    return f"Updated role {role_key}: {changed}\n\n{roles_output}"
+
+
+def _load_catalog_mapping(path: Path) -> dict[str, object]:
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise AppError(f"agent catalog not found: {path}") from exc
+    if not isinstance(loaded, dict):
+        raise AppError(f"agent catalog must contain a mapping: {path}")
+    return loaded
+
+
+def _write_catalog_mapping(path: Path, catalog: dict[str, object]) -> None:
+    path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
+
+
+def _parse_enabled_value(value: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise AppError("enabled must be true or false")
 
 
 def _format_role_lines(

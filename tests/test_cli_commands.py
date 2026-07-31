@@ -390,6 +390,195 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
     assert "✗ worker" in all_output
 
 
+def test_roles_command_updates_role_enabled_setting(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        encoding="utf-8",
+    )
+    prompts_path.write_text("{}\n", encoding="utf-8")
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "worker",
+                "roles": {
+                    "worker": {"harness": "pi"},
+                    "reviewer": {"harness": "pi"},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "roles",
+            "reviewer",
+            "enabled",
+            "false",
+        ]
+    )
+    output = capsys.readouterr().out
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert "Updated role reviewer: enabled=false" in output
+    assert "Disabled:" in output
+    assert "✗ reviewer" in output
+    assert catalog["roles"]["reviewer"]["enabled"] is False
+
+
+def test_roles_command_rejects_disabling_default_role(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        encoding="utf-8",
+    )
+    prompts_path.write_text("{}\n", encoding="utf-8")
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {"default_role": "worker", "roles": {"worker": {"harness": "pi"}}},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "roles",
+            "worker",
+            "enabled",
+            "false",
+        ]
+    )
+    output = capsys.readouterr().out
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 1
+    assert "error: cannot disable default role: worker" in output
+    assert "enabled" not in catalog["roles"]["worker"]
+
+
+def test_roles_command_updates_role_model(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        encoding="utf-8",
+    )
+    prompts_path.write_text("{}\n", encoding="utf-8")
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {"roles": {"worker": {"harness": "pi", "model": "old-model"}}},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "roles",
+            "worker",
+            "model",
+            "new/model",
+        ]
+    )
+    output = capsys.readouterr().out
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert "Updated role worker: model=new/model" in output
+    assert "new/model" in output
+    assert catalog["roles"]["worker"]["model"] == "new/model"
+
+
+def test_roles_command_rejects_invalid_role_mutations(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        encoding="utf-8",
+    )
+    prompts_path.write_text("{}\n", encoding="utf-8")
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "worker",
+                "roles": {
+                    "worker": {"harness": "pi"},
+                    "reviewer": {"harness": "pi", "model": "old-model"},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    from orchestra.cli import main
+
+    cases = [
+        (["missing", "enabled", "true"], "error: unknown role: missing"),
+        (["reviewer", "enabled", "yes"], "error: enabled must be true or false"),
+        (["reviewer", "model", ""], "error: model must be a non-empty string"),
+    ]
+    for role_args, expected_error in cases:
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "--agent-catalog",
+                str(catalog_path),
+                "roles",
+                *role_args,
+            ]
+        )
+        output = capsys.readouterr().out
+
+        assert exit_code == 1
+        assert expected_error in output
+
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    assert catalog["roles"]["reviewer"]["model"] == "old-model"
+    assert "enabled" not in catalog["roles"]["reviewer"]
+
+
 def test_host_help_and_tool_info_advertise_enabled_roles_only(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

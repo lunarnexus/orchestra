@@ -438,7 +438,14 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
         return result.stdout or result.stderr
 
     if subcommand == "roles":
-        result = _run_orchestra(["roles", "--all"])
+        if rest.strip():
+            try:
+                role_args = shlex.split(rest)
+            except ValueError as exc:
+                return f"Invalid /orch roles arguments: {exc}"
+            result = _run_orchestra(["roles", *role_args])
+        else:
+            result = _run_orchestra(["roles", "--all"])
         return result.stdout or result.stderr
 
     runtime_session_id = _slash_session_id(ctx)

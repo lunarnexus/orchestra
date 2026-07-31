@@ -206,6 +206,7 @@ def test_orch_slash_doctor_help_are_sessionless_safe_wrappers_and_scoped_fail_cl
     assert plugin._orch_command("help") == "ok\n"
     assert plugin._orch_command("doctor") == "ok\n"
     assert plugin._orch_command("roles") == "ok\n"
+    assert plugin._orch_command("roles reviewer enabled false") == "ok\n"
     assert "runtime session context" in plugin._orch_command("status")
     assert "runtime session context" in plugin._orch_command("history 7")
     assert "runtime session context" in plugin._orch_command("stop run-1")
@@ -214,6 +215,7 @@ def test_orch_slash_doctor_help_are_sessionless_safe_wrappers_and_scoped_fail_cl
         ["help-host"],
         ["doctor"],
         ["roles", "--all"],
+        ["roles", "reviewer", "enabled", "false"],
     ]
 
 
@@ -235,12 +237,14 @@ def test_orch_slash_cli_private_session_fallback_scopes_roles_status_history_sto
     calls.clear()
 
     assert ctx.commands[0]["handler"]("roles") == "ok\n"
+    assert ctx.commands[0]["handler"]("roles reviewer model openai-codex/gpt-5.5") == "ok\n"
     assert ctx.commands[0]["handler"]("status") == "ok\n"
     assert ctx.commands[0]["handler"]("history 7") == "ok\n"
     assert ctx.commands[0]["handler"]("stop run-1") == "ok\n"
 
     assert calls == [
         ["roles", "--all"],
+        ["roles", "reviewer", "model", "openai-codex/gpt-5.5"],
         ["status", "--session-id", "hermes:cli-session"],
         ["history", "--session-id", "hermes:cli-session", "--limit", "7"],
         ["stop", "--session-id", "hermes:cli-session", "--run-id", "run-1"],
