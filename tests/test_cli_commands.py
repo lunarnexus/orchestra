@@ -93,8 +93,12 @@ def test_roles_lists_configured_worker_roles(
     output = capsys.readouterr().out
 
     assert exit_code == 0
-    assert "roles:" in output
-    assert "- worker enabled=true harness=pi default=true" in output
+    assert "Configured roles" in output
+    assert "Default: worker" in output
+    assert "Enabled:" in output
+    assert "✓ worker" in output
+    assert "pi" in output
+    assert "default" in output
 
 
 def test_status_reports_active_run(
@@ -372,17 +376,18 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
     all_output = capsys.readouterr().out
 
     assert default_exit_code == 0
-    assert "roles:" in default_output
-    assert "default_role: reviewer" not in default_output
-    assert "- reviewer enabled=true harness=hermes default=true" in default_output
-    assert "disabled_roles:" not in default_output
-    assert "- worker harness=pi" not in default_output
+    assert "Configured roles" in default_output
+    assert "Default: reviewer" in default_output
+    assert "Enabled:" in default_output
+    assert "✓ reviewer  hermes  default" in default_output
+    assert "Disabled:" not in default_output
+    assert "✗ worker" not in default_output
 
     assert all_exit_code == 0
-    assert "default_role: reviewer" in all_output
-    assert "- reviewer enabled=true harness=hermes default=true" in all_output
-    assert "disabled_roles:" in all_output
-    assert "- worker enabled=false harness=pi" in all_output
+    assert "Default: reviewer" in all_output
+    assert "✓ reviewer  hermes  default" in all_output
+    assert "Disabled:" in all_output
+    assert "✗ worker" in all_output
 
 
 def test_host_help_and_tool_info_advertise_enabled_roles_only(
@@ -438,11 +443,12 @@ def test_host_help_and_tool_info_advertise_enabled_roles_only(
     assert help_exit == 0
     assert tool_exit == 0
     assert "/orch roles" in help_output
-    assert "- worker enabled=true harness=pi default=true" in help_output
-    assert "- critic harness=hermes" not in help_output
-    assert "- worker enabled=true harness=pi default=true" in tool_info["description"]
-    assert "- critic harness=hermes" not in tool_info["description"]
-    assert "- critic harness=hermes" not in tool_info["roleDescription"]
+    assert "Configured roles" in help_output
+    assert "✓ worker  pi  default" in help_output
+    assert "✗ critic" not in help_output
+    assert "✓ worker  pi  default" in tool_info["description"]
+    assert "✗ critic" not in tool_info["description"]
+    assert "✗ critic" not in tool_info["roleDescription"]
 
 
 def test_disabled_role_is_rejected_without_fallback(

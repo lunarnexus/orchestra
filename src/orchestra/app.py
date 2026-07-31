@@ -596,38 +596,71 @@ def format_status(context: AppContext, session_id: str) -> str:
 
 
 def format_roles(context: AppContext, *, include_disabled: bool = False) -> str:
-    enabled_lines = ["roles:"]
-    for role_name, role in _enabled_roles(context.catalog):
-        enabled_lines.append(
-            _format_role_line(
-                role_name,
-                role,
-                is_default=role_name == context.catalog.default_role,
-            )
-        )
-
-    if not include_disabled:
-        return "\n".join(enabled_lines)
-
-    lines = [f"default_role: {context.catalog.default_role}", *enabled_lines]
+    enabled_roles = _enabled_roles(context.catalog)
     disabled_roles = [
         (role_name, role)
         for role_name, role in sorted(context.catalog.roles.items())
         if not role.enabled
     ]
-    if disabled_roles:
-        lines.append("disabled_roles:")
-        for role_name, role in disabled_roles:
-            lines.append(_format_role_line(role_name, role, is_default=False))
+
+    visible_roles = [*enabled_roles, *(disabled_roles if include_disabled else [])]
+    name_width = max((len(role_name) for role_name, _role in visible_roles), default=4)
+    harness_width = max((len(role.harness) for _role_name, role in visible_roles), default=7)
+
+    lines = ["Configured roles", f"Default: {context.catalog.default_role}", "", "Enabled:"]
+    if enabled_roles:
+        lines.extend(
+            _format_role_lines(
+                context,
+                enabled_roles,
+                marker="✓",
+                name_width=name_width,
+                harness_width=harness_width,
+            )
+        )
+    else:
+        lines.append("  - none")
+
+    if include_disabled:
+        lines.extend(["", "Disabled:"])
+        if disabled_roles:
+            lines.extend(
+                _format_role_lines(
+                    context,
+                    disabled_roles,
+                    marker="✗",
+                    name_width=name_width,
+                    harness_width=harness_width,
+                )
+            )
+        else:
+            lines.append("  - none")
     return "\n".join(lines)
 
 
-def _format_role_line(role_name: str, role: RoleConfig, *, is_default: bool) -> str:
-    enabled = str(role.enabled).lower()
-    default = " default=true" if is_default else ""
-    model = f" model={role.model}" if role.model else ""
-    profile = f" profile={role.profile}" if role.profile else ""
-    return f"- {role_name} enabled={enabled} harness={role.harness}{model}{profile}{default}"
+def _format_role_lines(
+    context: AppContext,
+    roles: list[tuple[str, RoleConfig]],
+    *,
+    marker: str,
+    name_width: int,
+    harness_width: int,
+) -> list[str]:
+    lines: list[str] = []
+    for role_name, role in roles:
+        details: list[str] = []
+        if role_name == context.catalog.default_role:
+            details.append("default")
+        if role.model:
+            details.append(role.model)
+        if role.profile:
+            details.append(f"profile={role.profile}")
+        suffix = f"  {' '.join(details)}" if details else ""
+        lines.append(
+            f"  {marker} {role_name.ljust(name_width)}  "
+            f"{role.harness.ljust(harness_width)}{suffix}".rstrip()
+        )
+    return lines
 
 
 def format_host_help(context: AppContext) -> str:
