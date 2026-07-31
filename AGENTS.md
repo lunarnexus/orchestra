@@ -30,10 +30,10 @@ These rules apply to all AI coding agents working on this project.
 ## Project-Specific Commands
 
 ```bash
-python -m pytest
-python -m ruff check .
-python -m mypy src tests
-python -m build
+python3 -m pytest
+python3 -m ruff check .
+python3 -m mypy src tests
+python3 -m build
 ```
 
 CLI verification targets:
@@ -70,7 +70,7 @@ Source copy for the global Pi host extension lives at `extensions/pi/orchestra/i
 - Use `src/` layout for Python package code.
 - Add or update tests with behavior changes.
 - Run lint and type checks for touched Python code.
-- Run `python -m build` before claiming packaging changes are complete.
+- Run `python3 -m build` before claiming packaging changes are complete.
 - Keep logs, prompts, and transcripts lean by default; verbose capture belongs behind explicit debug paths.
 - Harness additions should use the harness plugin/adapter pattern, not ad hoc command branching in the CLI.
 - Host adapters must retrieve runtime session ids from runtime context, not from user prompts or model output.

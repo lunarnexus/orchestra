@@ -249,11 +249,15 @@ def _mark_session_report_delivered(runtime_session_id: str, run_ids: list[str]) 
     return True
 
 
-def _inject_report(ctx: Any, message: str) -> bool:
-    inject_message = getattr(ctx, "inject_message", None)
-    if not callable(inject_message):
+def _steer_report(ctx: Any, message: str) -> bool:
+    """Deliver a report message via Hermes steer without interrupting the active turn."""
+    manager = getattr(ctx, "_manager", None)
+    cli_ref = getattr(manager, "_cli_ref", None)
+    agent = getattr(cli_ref, "agent", None)
+    steer = getattr(agent, "steer", None)
+    if not callable(steer):
         return False
-    return bool(inject_message(message, role="user"))
+    return bool(steer(message))
 
 
 def _handle_session_report_result(
@@ -284,7 +288,7 @@ def _handle_session_report_result(
         if not isinstance(message, str) or not message.strip():
             _release_session_report(runtime_session_id, run_ids)
             return
-        if not _inject_report(ctx, message.strip()):
+        if not _steer_report(ctx, message.strip()):
             _release_session_report(runtime_session_id, run_ids)
             return
         if not _mark_session_report_delivered(runtime_session_id, run_ids):

@@ -14,19 +14,54 @@ It gives a host agent or CLI a small, consistent way to:
 
 - **Orchestrator session** — the parent CLI/host session that starts workers and owns their results.
 - **Worker run** — one focused task launched through a configured harness.
-- **Harness** — a runtime connector such as Pi or Hermes one-shot execution.
+- **Harness** — a runtime connector such as Pi, Hermes, or future OpenCode one-shot execution.
 - **Role** — a named catalog entry, such as `worker`, `reviewer`, `critic`, `researcher`, `appsec`, or `planner`, that selects a harness and prompt addition.
 - **Auto-return** — host integration behavior that reinjects one consolidated completion report after all active workers for the owning session finish.
+
+## Operating Model
+
+Orchestra is meant to keep the parent/orchestrator context clean. The
+orchestrator owns decomposition, approvals, sequencing, and final judgment, but
+bounded work should be delegated to appropriate worker roles when a role exists.
+
+Worker requests should say how much answer detail is needed:
+
+- If yes/no answers the question, ask for yes/no plus only a blocker if one
+  exists.
+- If the task asks for options, tradeoffs, research findings, or a plan, ask for
+  a concise but complete report with sources or file references.
+- If the task changes code, ask for files changed, checks run, results, blockers,
+  and risks.
+
+Orchestra enforces runtime ownership, timeouts, cancellation, and concurrency. It
+does not decide whether two write-capable tasks are semantically safe to run in
+parallel; the orchestrator must make that call until worktree/file-ownership
+features exist.
 
 ## Install
 
 Use Python 3.11+.
 
+For development, keep an editable install in a local virtualenv:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python3 -m pip install --upgrade pip
+python3 -m pip install -e ".[dev]"
+```
+
+For a stable user-facing `orchestra` CLI command, install this checkout with
+`pipx`:
+
+```bash
+pipx install -e /Users/james/workspace/orchestra
+```
+
+After local changes, refresh the pipx command with:
+
+```bash
+pipx reinstall orchestra
 ```
 
 ## Configuration
@@ -191,7 +226,7 @@ Inside a Hermes session with the plugin loaded:
 /orch history [limit]
 ```
 
-Hermes runtime session identity comes from the runtime `session_id` provided to the plugin tool handler and is normalized as `hermes:<session_id>`. The model or user prompt must not provide this identity.
+Hermes runtime session identity comes from the runtime `session_id` provided to the plugin tool handler and is normalized as `hermes:<session_id>`. The model or user prompt must not provide this identity. Hermes may rotate runtime ids during context compression; read-only `status` and `history` aggregate the Hermes compression lineage so an older parent session can still show runs owned by the current child session.
 
 ## Returns and Logs
 
@@ -208,8 +243,10 @@ Log: <absolute-or-configured log path>
 ```
 
 Hermes does not currently emit per-worker progress notifications. It only
-injects the consolidated return when all active workers for the session have
-finished; this avoids using prompt injection as a fake notification rail.
+returns the consolidated report when all active workers for the session have
+finished. The Hermes plugin delivers that report through non-interrupting
+`agent.steer(...)` instead of the interrupting plugin `inject_message(...)`
+path; this avoids using prompt injection as a fake notification rail.
 
 Failures use `Summary: <summary>` instead of `Result: <summary>`.
 
@@ -234,15 +271,15 @@ Logs are sparse JSONL lifecycle records. Reports may include log paths for debug
 ## Verification
 
 ```bash
-python -m pytest
-python -m ruff check .
-python -m mypy src tests
-python -m build
+python3 -m pytest
+python3 -m ruff check .
+python3 -m mypy src tests
+python3 -m build
 orchestra --help
 orchestra doctor
 ```
 
-Host smoke checks are documented in `SMOKETEST.md`; longer timing/cancellation/auto-return checks are documented in `SOAKTEST.md`.
+Use the CLI and host smoke commands above for manual verification.
 
 ## Repository Layout
 

@@ -33,9 +33,17 @@ class FakeHermesPluginContext:
         self.commands: list[dict[str, Any]] = []
         self.hooks: list[tuple[str, Any]] = []
         self.injected: list[tuple[str, str]] = []
+        self.steered: list[str] = []
         self.inject_success = True
-        if session_id is not None:
-            self._manager = SimpleNamespace(_cli_ref=SimpleNamespace(session_id=session_id))
+        self.steer_success = True
+
+        def steer(content: str) -> bool:
+            self.steered.append(content)
+            return self.steer_success
+
+        self._manager = SimpleNamespace(
+            _cli_ref=SimpleNamespace(session_id=session_id, agent=SimpleNamespace(steer=steer))
+        )
 
     def register_tool(self, **kwargs: Any) -> None:
         self.tools.append(kwargs)
@@ -309,7 +317,8 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_watches(
     ] in calls
     assert not any(args[0] == "_await-run" for args in calls)
     assert not any(args[0] == "_progress-message" for args in calls)
-    assert wait_for_condition(lambda: ctx.injected == [("reviewer done", "user")])
+    assert ctx.steered == ["reviewer done"]
+    assert ctx.injected == []
 
 
 def test_orch_slash_fails_closed_without_hook_session_context() -> None:
@@ -568,7 +577,7 @@ def test_orch_dispatch_requires_run_id_before_ack(monkeypatch: pytest.MonkeyPatc
     assert payload == {"error": "orchestra dispatch did not return a run_id"}
 
 
-def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
+def test_registered_orch_dispatch_watches_steers_and_marks_report_delivered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -598,7 +607,8 @@ def test_registered_orch_dispatch_watches_injects_and_marks_report_delivered(
     output = ctx.tools[0]["handler"]({"goal": "do work"}, session_id="runtime")
 
     assert output == "orchestra dispatched: worker abc123"
-    assert wait_for_condition(lambda: ctx.injected == [("worker done", "user")])
+    assert ctx.steered == ["worker done"]
+    assert ctx.injected == []
     assert [
         "_await-session-report",
         "--session-id",
@@ -655,10 +665,11 @@ def test_registered_orch_dispatch_prefers_runtime_tool_context_for_report(
     )
 
     assert output == "orchestra dispatched: worker abc123"
-    assert wait_for_condition(lambda: runtime_ctx.injected == [("worker done", "user")])
+    assert wait_for_condition(lambda: runtime_ctx.steered == ["worker done"])
+    assert runtime_ctx.injected == []
 
 
-def test_final_report_injects_without_progress_watcher_path(
+def test_final_report_releases_without_inject_when_steer_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -675,7 +686,7 @@ def test_final_report_injects_without_progress_watcher_path(
                 args,
                 json.dumps({"runIds": ["abc123"], "report": "worker done"}),
             )
-        if args[0] == "_mark-session-report-delivered":
+        if args[0] == "_release-session-report":
             return completed(args)
         raise AssertionError(f"unexpected command: {args}")
 
@@ -689,7 +700,12 @@ def test_final_report_injects_without_progress_watcher_path(
     )
 
     assert output == "orchestra dispatched: worker abc123"
-    assert wait_for_condition(lambda: ctx.injected == [("worker done", "user")])
+    assert wait_for_condition(
+        lambda: [call[0] for call in calls].count("_await-session-report") == 1
+        and any(call[0] == "_release-session-report" for call in calls)
+    )
+    assert ctx.injected == []
+    assert not hasattr(ctx, "steered") or ctx.steered == []
     assert not any(args[0] == "_await-run" for args in calls)
     assert not any(args[0] == "_progress-message" for args in calls)
     assert [
@@ -702,6 +718,14 @@ def test_final_report_injects_without_progress_watcher_path(
         "630",
         "--json",
     ] in calls
+    assert [
+        "_release-session-report",
+        "--session-id",
+        "hermes:runtime",
+        "--run-id",
+        "abc123",
+    ] in calls
+    assert not any(args[0] == "_mark-session-report-delivered" for args in calls)
 
 
 def test_session_report_watcher_uses_expanded_retry_budget_and_backoff() -> None:
@@ -760,7 +784,8 @@ def test_session_report_watcher_retries_after_transient_failure(
 
     plugin._watch_session_report(ctx, "hermes:runtime", "abc123", 630)
 
-    assert ctx.injected == [("worker done", "user")]
+    assert ctx.steered == ["worker done"]
+    assert ctx.injected == []
     assert [call[0] for call in calls].count("_await-session-report") == 2
     assert [
         "_await-session-report",
@@ -783,7 +808,7 @@ def test_session_report_watcher_retries_after_transient_failure(
 
 
 
-def test_session_report_injection_failure_releases_without_marking(
+def test_session_report_steer_failure_releases_without_marking(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -797,7 +822,7 @@ def test_session_report_injection_failure_releases_without_marking(
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
     ctx = FakeHermesPluginContext()
-    ctx.inject_success = False
+    ctx.steer_success = False
 
     plugin._handle_session_report_result(
         ctx,
@@ -808,7 +833,8 @@ def test_session_report_injection_failure_releases_without_marking(
         ),
     )
 
-    assert ctx.injected == [("worker done", "user")]
+    assert ctx.steered == ["worker done"]
+    assert ctx.injected == []
     assert calls == [
         [
             "_release-session-report",
@@ -846,7 +872,8 @@ def test_session_report_mark_failure_releases_for_retry(
         ),
     )
 
-    assert ctx.injected == [("worker done", "user")]
+    assert ctx.steered == ["worker done"]
+    assert ctx.injected == []
     assert calls == [
         [
             "_mark-session-report-delivered",

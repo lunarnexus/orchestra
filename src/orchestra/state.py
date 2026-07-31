@@ -19,9 +19,11 @@ STATUS_CANCELLED = "cancelled"
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
+_SCHEMA_VERSION = 4
 _CONNECT_ATTEMPTS = 8
 _CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
 _CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
+_SQLITE_CONNECT_TIMEOUT_SECONDS = 1.0
 _BEGIN_IMMEDIATE_SLOW_LOG_SECONDS = 0.1
 ALLOWED_TRANSITIONS = {
     STATUS_QUEUED: frozenset({STATUS_RUNNING, STATUS_FAILED, STATUS_CANCELLED}),
@@ -89,6 +91,24 @@ class StateStore:
 
     def initialize(self) -> None:
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._has_current_schema():
+            return
+
+        last_error: sqlite3.OperationalError | None = None
+        for attempt in range(_CONNECT_ATTEMPTS):
+            try:
+                self._initialize_schema()
+                return
+            except sqlite3.OperationalError as exc:
+                last_error = exc
+                if not _is_transient_sqlite_error(exc) or attempt == _CONNECT_ATTEMPTS - 1:
+                    break
+                time.sleep(self._connect_retry_delay_seconds(attempt))
+
+        assert last_error is not None
+        raise last_error
+
+    def _initialize_schema(self) -> None:
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute(
@@ -129,7 +149,7 @@ class StateStore:
                 "CREATE INDEX IF NOT EXISTS idx_runs_session_reported "
                 "ON runs(orchestrator_session_id, reported_at)"
             )
-            connection.execute("PRAGMA user_version = 4")
+            connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             connection.commit()
 
     def reserve_run(
@@ -393,6 +413,7 @@ class StateStore:
             return
         placeholders = ", ".join("?" for _ in run_ids)
         with self._connect() as connection:
+            self._begin_immediate(connection, operation="release_report_runs")
             connection.execute(
                 f"""
                 UPDATE runs
@@ -445,7 +466,10 @@ class StateStore:
         last_error: sqlite3.OperationalError | None = None
         for attempt in range(_CONNECT_ATTEMPTS):
             try:
-                connection = sqlite3.connect(self.database_path, timeout=30.0)
+                connection = sqlite3.connect(
+                    self.database_path,
+                    timeout=_SQLITE_CONNECT_TIMEOUT_SECONDS,
+                )
                 connection.row_factory = sqlite3.Row
                 return connection
             except sqlite3.OperationalError as exc:
@@ -459,16 +483,42 @@ class StateStore:
         ) from last_error
 
     def _begin_immediate(self, connection: sqlite3.Connection, *, operation: str) -> None:
-        started = time.perf_counter()
-        connection.execute("BEGIN IMMEDIATE")
-        elapsed = time.perf_counter() - started
-        if elapsed > _BEGIN_IMMEDIATE_SLOW_LOG_SECONDS:
-            _LOG.warning(
-                "StateStore BEGIN IMMEDIATE slow: operation=%s elapsed_ms=%.1f database_path=%s",
-                operation,
-                elapsed * 1000,
-                self.database_path,
-            )
+        last_error: sqlite3.OperationalError | None = None
+        for attempt in range(_CONNECT_ATTEMPTS):
+            started = time.perf_counter()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                elapsed = time.perf_counter() - started
+                if elapsed > _BEGIN_IMMEDIATE_SLOW_LOG_SECONDS:
+                    _LOG.warning(
+                        "StateStore BEGIN IMMEDIATE slow: "
+                        "operation=%s elapsed_ms=%.1f database_path=%s",
+                        operation,
+                        elapsed * 1000,
+                        self.database_path,
+                    )
+                return
+            except sqlite3.OperationalError as exc:
+                last_error = exc
+                if not _is_transient_sqlite_error(exc) or attempt == _CONNECT_ATTEMPTS - 1:
+                    break
+                time.sleep(self._connect_retry_delay_seconds(attempt))
+        assert last_error is not None
+        raise last_error
+
+    def _has_current_schema(self) -> bool:
+        if not self.database_path.exists():
+            return False
+        try:
+            with sqlite3.connect(
+                f"file:{self.database_path}?mode=ro",
+                uri=True,
+                timeout=_SQLITE_CONNECT_TIMEOUT_SECONDS,
+            ) as connection:
+                row = connection.execute("PRAGMA user_version").fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return row is not None and int(row[0]) >= _SCHEMA_VERSION
 
     def _connect_retry_delay_seconds(self, attempt: int) -> float:
         return float(
@@ -671,6 +721,11 @@ def _optional_text(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _is_transient_sqlite_error(exc: sqlite3.OperationalError) -> bool:
+    message = str(exc).lower()
+    return "database is locked" in message or "database is busy" in message
 
 
 def _validate_status(status: str) -> None:

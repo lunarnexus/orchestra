@@ -145,3 +145,80 @@ The main differentiator versus Pi-first packages is that Orchestra is an externa
 - Pi package pages are package READMEs surfaced by pi.dev; claims are useful for feature comparison but not independently audited.
 - GitHub README and AWS/blog sources are project/vendor-authored; treat product claims as directional.
 - CrewAI is a general multi-agent framework, not a close CLI coding-agent control-plane peer.
+
+## OpenCode Capability Research
+
+Research date: 2026-07-31
+
+### Sources inspected
+
+- OpenCode official docs:
+  - https://opencode.ai/docs/cli/
+  - https://opencode.ai/docs/plugins/
+  - https://opencode.ai/docs/custom-tools/
+  - https://opencode.ai/docs/server/
+  - https://opencode.ai/docs/agents/
+  - https://opencode.ai/docs/commands/
+  - https://opencode.ai/docs/permissions/
+  - https://opencode.ai/docs/tools/
+  - https://opencode.ai/docs/mcp-servers/
+- Local OpenCode help from version `1.17.11`:
+  - `opencode --help`
+  - `opencode run --help`
+  - `opencode agent --help`
+  - `opencode agent list`
+  - `opencode plugin --help`
+  - `opencode mcp --help`
+  - `opencode serve --help`
+
+### Findings
+
+- OpenCode parity should start with the same pattern as Pi and Hermes: a
+  one-shot worker harness launched from the Orchestra role catalog.
+- `opencode run` is the direct one-shot path. Local help confirms flags useful to
+  Orchestra roles: `--dir`, `--agent`, `--model`, `--format`, `--session`,
+  `--continue`, `--attach`, `--title`, `--file`, `--variant`, and permission
+  toggles.
+- `opencode run --attach <server>` can reuse a running `opencode serve` backend,
+  but this should be a later optimization, not the MVP path.
+- OpenCode plugins and custom tools are JavaScript/TypeScript. Custom tools can
+  call any language and receive a context object containing `sessionID`,
+  `messageID`, `directory`, `worktree`, and `agent`. This matches the existing
+  `FOUNDATION.md` decision that an OpenCode host adapter should derive runtime
+  identity from `context.sessionID`.
+- OpenCode custom commands can be defined in JSON config or markdown files under
+  `.opencode/commands/` or `~/.config/opencode/commands/`. Commands support an
+  `agent`, `model`, and `subtask` option. This is useful host UX, but the first
+  parity target should remain an `orch_dispatch` tool because it maps directly to
+  Pi/Hermes dispatch behavior.
+- OpenCode agents matter for safe role mapping:
+  - `build` is the default primary development agent with broad tool access.
+  - `plan` is a restricted primary planning/analysis agent.
+  - `general` is a full-access subagent intended for parallel work.
+  - `explore` is a fast read-only codebase exploration subagent.
+  - `scout` is read-only external/dependency research.
+- OpenCode supports agent permissions and a `task` permission that controls
+  subagent launches. Orchestra-launched OpenCode workers should avoid unbounded
+  nested delegation by using an appropriate agent and, where needed, configuring
+  `permission.task` or `subagent_depth`.
+- OpenCode permission defaults are permissive. The MVP should not use
+  `--auto`/`--dangerously-skip-permissions` by default; write-capable runs should
+  be explicitly approved by the orchestrator before dispatch.
+- OpenCode exposes a server/OpenAPI surface and ACP server, but ACP and
+  persistent/interactive modes are not required for parity with current Pi and
+  Hermes one-shot support.
+
+### Implications for Orchestra
+
+- Build `harness: opencode` first, using tokenized argv templates and the same
+  lean worker prompt format as Pi/Hermes.
+- Add an OpenCode host tool/plugin after the worker harness. It should normalize
+  `context.sessionID` as `opencode:<sessionID>` and call the same Orchestra core
+  operations as Pi/Hermes.
+- Do not make OpenCode the default worker harness automatically.
+- Do not build parallel-write safety as part of OpenCode parity. For now, the
+  orchestrator decides which read-only or file-disjoint tasks are safe to run in
+  parallel.
+- Improve worker return guidance before adding more storage machinery: workers
+  should return yes/no when yes/no is sufficient, and provide a complete compact
+  report only when the request asks for options, evidence, or a plan.

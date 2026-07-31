@@ -23,27 +23,31 @@ DEFAULT_PER_SESSION_CONCURRENCY = 3
 DEFAULT_AUTO_RETURN = True
 DEFAULT_ROLE_NAME = "worker"
 DEFAULT_RETURN_FORMAT = (
-    "Return a concise response with success/fail, files changed/inspected, "
-    "if fail: exact commands run, results, if blockers: blockers, if risks: risks"
+    "Return the smallest complete answer. If yes/no is enough, answer yes/no plus "
+    "blockers. For research/options/plans, return concise findings with sources or "
+    "file refs. For changes, return files changed, checks run, results, blockers, "
+    "and risks."
 )
 DEFAULT_TOOL_DESCRIPTION = " ".join(
     [
-        "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
-        "Use when the user asks to delegate, dispatch, ask a worker, ask another agent, "
-        "run a subagent/sub-agent, or parallelize a narrow task.",
-        "Do not use for tasks you can answer directly without a worker.",
-        "Use only an exact configured role listed below. Omit role to use the configured "
-        "default role.",
+        "Dispatch focused work to Orchestra workers to keep the parent/orchestrator "
+        "context clean.",
+        "Use for bounded research, planning, implementation, review, verification, "
+        "or safe parallel work.",
+        "The parent keeps scope, sequencing, approvals, and final synthesis.",
+        "Use an exact configured role; omit role for the default.",
         "{roles}",
     ]
 )
 DEFAULT_TOOL_PROMPT_SNIPPET = "Dispatch focused work to Orchestra workers/subagents. {roles}"
 DEFAULT_TOOL_PROMPT_GUIDELINES = (
-    "Use orch_dispatch when the user asks to delegate, dispatch, use a subagent, use a "
-    "sub-agent, ask a worker, ask another agent, or parallelize a focused task.",
-    "Keep orch_dispatch requests narrow and explicit.",
-    "Use only an exact configured role from the available roles list. Omit role to use "
-    "the configured default role.",
+    "Prefer orch_dispatch for bounded work that benefits from worker context, role "
+    "specialization, or parallelism.",
+    "Keep each request narrow and include the expected return detail: yes/no, concise "
+    "report, or files/checks/results.",
+    "After a dispatch error, preserve reliability: report the error/status and resume "
+    "dispatch only when capacity/setup is clear.",
+    "Use exact configured roles; omit role for the default.",
 )
 DEFAULT_TOOL_GOAL_DESCRIPTION = "Focused worker request/task to delegate."
 DEFAULT_TOOL_ROLE_DESCRIPTION = (

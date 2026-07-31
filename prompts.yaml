@@ -1,22 +1,27 @@
 default_return_format: >-
-  Return a concise response with success/fail, files changed/inspected, if fail:
-  exact commands run, results, if blockers: blockers, if risks: risks
+  Return the smallest complete answer. If yes/no is enough, answer yes/no plus
+  blockers. For research/options/plans, return concise findings with sources or
+  file refs. For changes, return files changed, checks run, results, blockers,
+  and risks.
 tool_description: >-
-  Delegate or dispatch a focused task to an Orchestra worker/subagent. Use when
-  the user asks to delegate, dispatch, ask a worker, ask another agent, run a
-  subagent/sub-agent, or parallelize a narrow task. Do not use for tasks you can
-  answer directly without a worker. Use only an exact configured role listed
-  below. Omit role to use the configured default role. {roles}
+  Dispatch focused work to Orchestra workers to keep the parent/orchestrator
+  context clean. Use for bounded research, planning, implementation, review,
+  verification, or safe parallel work. The parent keeps scope, sequencing,
+  approvals, and final synthesis. Use an exact configured role; omit role for the
+  default. {roles}
 tool_prompt_snippet: Dispatch focused work to Orchestra workers/subagents. {roles}
 tool_prompt_guidelines:
   - >-
-    Use orch_dispatch when the user asks to delegate, dispatch, use a subagent,
-    use a sub-agent, ask a worker, ask another agent, or parallelize a focused
-    task.
-  - Keep orch_dispatch requests narrow and explicit.
+    Prefer orch_dispatch for bounded work that benefits from worker context, role
+    specialization, or parallelism.
   - >-
-    Use only an exact configured role from the available roles list. Omit role
-    to use the configured default role.
+    Keep each request narrow and include the expected return detail: yes/no,
+    concise report, or files/checks/results.
+  - >-
+    After a dispatch error, preserve reliability: report the error/status and
+    resume dispatch only when capacity/setup is clear.
+  - >-
+    Use exact configured roles; omit role for the default.
 tool_goal_description: Focused worker request/task to delegate.
 tool_role_description: Optional exact configured role. Omit for the configured default role. {roles}
 tool_timeout_description: Optional timeout in seconds.

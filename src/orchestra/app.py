@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -543,6 +544,9 @@ def await_run_terminal_status(
         time.sleep(poll_interval)
 
 
+_SESSION_REPORT_DB_OPEN_RETRY_LIMIT = 3
+
+
 def await_session_report_payload(
     context: AppContext,
     session_id: str,
@@ -553,19 +557,45 @@ def await_session_report_payload(
 ) -> SessionReport | None:
     _require_session_id(session_id)
     deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+    db_open_failures = 0
+    last_db_open_error: sqlite3.OperationalError | None = None
 
     while True:
-        record = context.store.get_run(run_id)
-        if record.orchestrator_session_id != session_id:
-            raise AppError("run does not belong to the provided session_id")
+        try:
+            record = context.store.get_run(run_id)
+            if record.orchestrator_session_id != session_id:
+                raise AppError("run does not belong to the provided session_id")
 
-        if record.status not in ACTIVE_STATUSES:
-            if context.store.count_active_runs(session_id) == 0:
-                return pending_session_report(context, session_id)
+            if record.status not in ACTIVE_STATUSES:
+                if context.store.count_active_runs(session_id) == 0:
+                    return pending_session_report(context, session_id)
+            db_open_failures = 0
+            last_db_open_error = None
+        except sqlite3.OperationalError as exc:
+            if not _is_transient_session_report_db_open_error(context, exc):
+                raise
+            db_open_failures += 1
+            last_db_open_error = exc
+            if db_open_failures > _SESSION_REPORT_DB_OPEN_RETRY_LIMIT:
+                raise
 
         if deadline is not None and time.monotonic() >= deadline:
+            if last_db_open_error is not None:
+                raise last_db_open_error
             raise AppError("timed out waiting for session report")
         time.sleep(poll_interval)
+
+
+def _is_transient_session_report_db_open_error(
+    context: AppContext,
+    exc: sqlite3.OperationalError,
+) -> bool:
+    if "unable to open database file" not in str(exc).lower():
+        return False
+    database_path = getattr(context.store, "database_path", None)
+    if database_path is None:
+        return True
+    return Path(database_path).parent.exists()
 
 
 def await_session_report(
@@ -588,12 +618,18 @@ def await_session_report(
 
 def format_status(context: AppContext, session_id: str) -> str:
     _require_session_id(session_id)
-    runs = context.store.list_active_runs(session_id)
-    lines = [
-        f"session_id: {session_id}",
-        f"active_runs: {len(runs)}",
-        f"global_active_runs: {len(context.store.list_active_runs())}",
-    ]
+    lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
+    runs = _list_active_runs_for_session_ids(context, lineage_session_ids)
+    lines = [f"session_id: {session_id}"]
+    if len(lineage_session_ids) > 1:
+        lines.append(f"lineage_current_session_id: {lineage_session_ids[-1]}")
+        lines.append(f"lineage_session_ids: {', '.join(lineage_session_ids)}")
+    lines.extend(
+        [
+            f"active_runs: {len(runs)}",
+            f"global_active_runs: {len(context.store.list_active_runs())}",
+        ]
+    )
     if not runs:
         lines.append("status: no active runs")
         return "\n".join(lines)
@@ -601,7 +637,10 @@ def format_status(context: AppContext, session_id: str) -> str:
     lines.append("runs:")
     for run in runs:
         pid = f" pid={run.process_id}" if run.process_id is not None else ""
-        lines.append(f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label}{pid}")
+        owner = (
+            f" session={run.orchestrator_session_id}" if len(lineage_session_ids) > 1 else ""
+        )
+        lines.append(f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label}{pid}{owner}")
     return "\n".join(lines)
 
 
@@ -760,8 +799,13 @@ def tool_info(context: AppContext) -> ToolInfo:
 
 def format_history(context: AppContext, session_id: str, limit: int) -> str:
     _require_session_id(session_id)
-    runs = context.store.list_runs(session_id, limit=limit)
-    lines = [f"session_id: {session_id}", f"history_count: {len(runs)}"]
+    lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
+    runs = _list_runs_for_session_ids(context, lineage_session_ids, limit=limit)
+    lines = [f"session_id: {session_id}"]
+    if len(lineage_session_ids) > 1:
+        lines.append(f"lineage_current_session_id: {lineage_session_ids[-1]}")
+        lines.append(f"lineage_session_ids: {', '.join(lineage_session_ids)}")
+    lines.append(f"history_count: {len(runs)}")
     if not runs:
         lines.append("history: no runs found")
         return "\n".join(lines)
@@ -769,11 +813,172 @@ def format_history(context: AppContext, session_id: str, limit: int) -> str:
     lines.append("runs:")
     for run in runs:
         summary = clean_result_summary(run.blocker_text or run.error_text or run.result_summary)
+        owner = (
+            f" session={run.orchestrator_session_id}" if len(lineage_session_ids) > 1 else ""
+        )
         lines.append(
-            f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label} :: {summary}"
+            f"- {run.run_id} [{run.status}] {run.role}{owner} :: {run.task_label} :: {summary}"
         )
         lines.append(f"  log: {run.log_path}")
     return "\n".join(lines)
+
+
+def _list_active_runs_for_session_ids(
+    context: AppContext,
+    session_ids: list[str],
+) -> list[RunRecord]:
+    if len(session_ids) == 1:
+        return context.store.list_active_runs(session_ids[0])
+    runs = [
+        run
+        for lineage_session_id in session_ids
+        for run in context.store.list_active_runs(lineage_session_id)
+    ]
+    return sorted(runs, key=lambda run: (run.created_at, run.run_id))
+
+
+def _list_runs_for_session_ids(
+    context: AppContext,
+    session_ids: list[str],
+    *,
+    limit: int,
+) -> list[RunRecord]:
+    if len(session_ids) == 1:
+        return context.store.list_runs(session_ids[0], limit=limit)
+    runs = [
+        run
+        for lineage_session_id in session_ids
+        for run in context.store.list_runs(lineage_session_id, limit=limit)
+    ]
+    runs.sort(key=lambda run: (run.created_at, run.run_id), reverse=True)
+    return runs[:limit]
+
+
+def _orchestrator_lineage_session_ids(session_id: str) -> list[str]:
+    if not session_id.startswith("hermes:"):
+        return [session_id]
+
+    raw_session_id = session_id.removeprefix("hermes:")
+    try:
+        raw_ids = _read_hermes_compression_lineage(raw_session_id)
+    except (OSError, sqlite3.Error):
+        return [session_id]
+    if len(raw_ids) <= 1:
+        return [session_id]
+    return [f"hermes:{raw_id}" for raw_id in raw_ids]
+
+
+def _read_hermes_compression_lineage(session_id: str) -> list[str]:
+    db_path = _hermes_state_db_path()
+    if not db_path.exists():
+        return [session_id]
+
+    with sqlite3.connect(
+        f"file:{db_path}?mode=ro",
+        uri=True,
+        timeout=0.25,
+    ) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only = ON")
+        rows = connection.execute(
+            "SELECT id, parent_session_id, started_at, ended_at, end_reason FROM sessions"
+        ).fetchall()
+
+    by_id = {str(row["id"]): row for row in rows if row["id"]}
+    if session_id not in by_id:
+        return [session_id]
+
+    root_id = _hermes_compression_root_id(session_id, by_id)
+    return _hermes_compression_descendant_ids(root_id, by_id)
+
+
+def _hermes_state_db_path() -> Path:
+    explicit_home = os.environ.get("HERMES_HOME", "").strip()
+    if explicit_home:
+        return Path(explicit_home).expanduser() / "state.db"
+
+    root_home = Path.home() / ".hermes"
+    try:
+        active_profile = (root_home / "active_profile").read_text(encoding="utf-8").strip()
+    except OSError:
+        active_profile = ""
+    if active_profile and active_profile != "default":
+        return root_home / "profiles" / active_profile / "state.db"
+    return root_home / "state.db"
+
+
+def _hermes_compression_root_id(session_id: str, by_id: dict[str, sqlite3.Row]) -> str:
+    current = session_id
+    seen: set[str] = set()
+    while current not in seen:
+        seen.add(current)
+        row = by_id.get(current)
+        if row is None:
+            return current
+        parent_id = row["parent_session_id"]
+        if not parent_id or str(parent_id) not in by_id:
+            return current
+        parent = by_id[str(parent_id)]
+        if not _hermes_is_compression_edge(parent, row):
+            return current
+        current = str(parent_id)
+    return current
+
+
+def _hermes_compression_descendant_ids(root_id: str, by_id: dict[str, sqlite3.Row]) -> list[str]:
+    children_by_parent: dict[str, list[sqlite3.Row]] = {}
+    for row in by_id.values():
+        parent_id = row["parent_session_id"]
+        if parent_id:
+            children_by_parent.setdefault(str(parent_id), []).append(row)
+
+    lineage_ids: list[str] = []
+    stack = [root_id]
+    seen: set[str] = set()
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        lineage_ids.append(current)
+        parent = by_id.get(current)
+        if parent is None:
+            continue
+        children = [
+            row
+            for row in children_by_parent.get(current, [])
+            if _hermes_is_compression_edge(parent, row)
+        ]
+        children.sort(
+            key=lambda row: (float(row["started_at"] or 0.0), str(row["id"])),
+            reverse=True,
+        )
+        stack.extend(str(row["id"]) for row in children)
+
+    return sorted(
+        lineage_ids,
+        key=lambda raw_id: (float(by_id[raw_id]["started_at"] or 0.0), raw_id),
+    )
+
+
+def _hermes_is_compression_edge(parent: sqlite3.Row, child: sqlite3.Row) -> bool:
+    parent_ended_at = _optional_float(parent["ended_at"])
+    child_started_at = _optional_float(child["started_at"])
+    return (
+        parent["end_reason"] == "compression"
+        and parent_ended_at is not None
+        and child_started_at is not None
+        and child_started_at >= parent_ended_at
+    )
+
+
+def _optional_float(value: object) -> float | None:
+    if not isinstance(value, (int, float, str, bytes)):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def init_pi(*, force: bool = False, source_root: str | Path | None = None) -> InitPiResult:

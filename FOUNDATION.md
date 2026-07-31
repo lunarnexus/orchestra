@@ -63,6 +63,8 @@ decisions.
   invoked Orchestra. Worker ownership, control calls, approval routing, and
   auto-return are keyed by this identifier, not by best guesses, batches, humans,
   projects, host windows, or any id supplied by the LLM.
+  Read-only status/history may aggregate known runtime-continuation lineage for
+  host UX, but that does not change the stored owner id or control boundary.
 - **Role** — tentative reusable worker purpose such as `worker`, `reviewer`,
   `critic`, `researcher`, `appsec`, or possibly `planner`. Roles are a routing
   convenience, not a fixed taxonomy.
@@ -110,8 +112,8 @@ decisions.
 - **Configuration:** `config.yaml` carries runtime configuration,
   `prompts.yaml` carries prompt text, and `agent-catalog.yaml` carries role and
   harness definitions.
-- **Initial harnesses:** Pi workers first, then Hermes, then OpenCode. Hermes is
-  the likely first orchestrator host, followed by Pi and OpenCode.
+- **Implemented harnesses/host surfaces:** CLI, Pi extension, Hermes plugin, Pi
+  worker harnesses, and Hermes worker harnesses. OpenCode remains planned.
 - **Future harness modes:** Pi RPC, ACP, and other streaming or interactive
   protocols.
 
@@ -226,7 +228,10 @@ Worker completions are grouped by exact orchestrator session, not by batch. A
 batch may be stored as optional metadata, but it must not decide return routing or
 completion grouping. `/orch do` adds one worker to the current orchestrator
 session; the orchestrator may call `/orch do` repeatedly and asynchronously until
-a concurrency limit is reached.
+a concurrency limit is reached. For hosts that rotate session ids across a
+logical conversation, such as Hermes context compression, stored run ownership
+remains exact while read-only `status` and `history` may display the compression
+lineage to reduce operator confusion.
 
 When any worker finishes, Orchestra updates state and checks
 `count_active_workers(orchestrator_session_id)`. If the count is below 1,
@@ -257,12 +262,12 @@ need.
 
 ### Multi-Orchestrator Ownership
 
-Multi-orchestrator support is mandatory. Every worker must be associated with
-the `orchestrator_session_id` that created it, and commands such as
-`/orch status`, `/orch stop`, return prods, and future approval routing must use
-that exact id to prevent separate orchestrators from receiving or controlling
-one another's workers.
-
+Every worker must be associated with
+the `orchestrator_session_id` that created it, and control operations such as
+`/orch stop`, return prods, and future approval routing must use that exact id to
+prevent separate orchestrators from receiving or controlling one another's
+workers. Read-only `status` and `history` may include host-specific continuation
+lineage, but must not expand control authority.
 Do not allow best-guess ownership based on user, working directory, project,
 process tree, wall-clock recency, host window title, worker content, or LLM
 memory. Core must reject session-scoped operations when the runtime
@@ -277,7 +282,10 @@ retrieval from runtime context and pass the normalized value to core. The
 LLM must never provide, remember, echo, or infer this id.
 
 - **Hermes native plugin/tool:** use the runtime `session_id` kwarg and normalize
-  it as `hermes:<session_id>`.
+  it as `hermes:<session_id>`. Hermes context compression can rotate this id and
+  create a parent/child continuation chain; Orchestra preserves exact ownership
+  while read-only `status` and `history` resolve that compression lineage when
+  the Hermes session database is available.
 - **Pi extension:** use `ctx.sessionManager.getSessionId()` and normalize it as
   `pi:<session_id>`.
 - **OpenCode plugin/tool:** use `context.sessionID` as the runtime adapter session
@@ -381,13 +389,14 @@ possible:
 
 Host-specific mechanics stay in host adapters/extensions. For Pi, this includes
 TUI entries, notifications, colors/themes, `sendUserMessage`, and runtime
-session id retrieval.
+session id retrieval. For Hermes, this includes runtime `session_id` retrieval,
+slash/tool registration, and non-interrupting `agent.steer(...)` delivery for
+consolidated reports.
 
-Future Hermes, OpenCode, ACP, and MCP wrappers should call the same core
-operations and reuse core formatting. Adapter-specific code should handle only
-runtime identity, host UI/rendering, and host-specific message injection. Generic
-MCP alone is not runtime for ownership or auto-return unless wrapped by a runtime
-host adapter.
+Future OpenCode, ACP, and MCP wrappers should call the same core operations and
+reuse core formatting. Adapter-specific code should handle only runtime identity,
+host UI/rendering, and host-specific message delivery. Generic MCP alone is not
+runtime for ownership or auto-return unless wrapped by a runtime host adapter.
 
 ### Host Commands and Natural Dispatch
 
@@ -418,8 +427,9 @@ or override runtime session ids.
 ### Returns and Auto-Return
 
 Auto-return means prompting the owning orchestrator session when workers return.
-Only the all-workers-returned condition should inject a prompt into the
-orchestrator session.
+Only the all-workers-returned condition should re-enter the orchestrator session
+with a consolidated report. Hermes uses non-interrupting `agent.steer(...)` for
+that final report instead of the interrupting plugin `inject_message(...)` path.
 
 Pi host surfaces may also show per-worker progress notifications when their
 runtime provides a notification-only API. Hermes host surfaces must not fake
@@ -511,7 +521,8 @@ is fail-fast, not queueing.
 SQLite remains a lean runtime-state store, not a task queue. WAL mode allows
 readers and a writer to coexist, but SQLite still serializes writers: one writer
 holds the write lock and other writers wait through SQLite's busy timeout. Open
-or connection failures are a separate class from write-lock contention. Current
-connection retry/backoff handles transient `unable to open database file` style
-opens; write-lock contention relies on SQLite's busy timeout unless soak tests
-prove explicit write retry/backoff is needed.
+or connection failures are a separate class from write-lock contention. Normal
+startup avoids unnecessary schema/WAL writes for existing current databases,
+write transaction begin has bounded retry, and the auto-return watcher path has a
+bounded retry for transient `unable to open database file` errors. Persistent
+open failures still surface as SQLite errors rather than hanging indefinitely.

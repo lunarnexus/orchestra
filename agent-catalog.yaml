@@ -1,4 +1,3 @@
-# Orchestra agent catalog
 default_role: worker
 roles:
   worker:
@@ -6,68 +5,69 @@ roles:
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
     prompt_addition: Focus on the assigned task and return a compact result.
     command:
-      - pi
-      - --no-session
-      - --model
-      - "{model}"
-      - -p
-      - "{prompt}"
-
+    - pi
+    - --no-session
+    - --model
+    - '{model}'
+    - -p
+    - '{prompt}'
+    enabled: true
   reviewer:
     harness: pi
     model: openai-codex/gpt-5.4
     prompt_addition: Focus on the assigned task and return a compact result.
     command:
-      - pi
-      - --no-session
-      - --model
-      - "{model}"
-      - -p
-      - "{prompt}"
-
+    - pi
+    - --no-session
+    - --model
+    - '{model}'
+    - -p
+    - '{prompt}'
+    enabled: true
   critic:
     harness: hermes
     profile: tori
     prompt_addition: Focus on the assigned task and return a compact result.
     command:
-      - hermes
-      - --profile
-      - "{profile}"
-      - -z
-      - "{prompt}"
-
+    - hermes
+    - --profile
+    - '{profile}'
+    - -z
+    - '{prompt}'
+    enabled: true
   researcher:
     harness: pi
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
-    prompt_addition: Focus on the assigned task and return a compact result.
+    prompt_addition: Thoroughly research the the assigned topic using official docs, internet, or source code, and return a concise report.
     command:
-      - pi
-      - --no-session
-      - --model
-      - "{model}"
-      - -p
-      - "{prompt}"
-
+    - pi
+    - --no-session
+    - --model
+    - '{model}'
+    - -p
+    - '{prompt}'
+    enabled: true
   appsec:
     harness: pi
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
     prompt_addition: Focus on the assigned task and return a compact result.
     command:
-      - pi
-      - --no-session
-      - --model
-      - "{model}"
-      - -p
-      - "{prompt}"
-
+    - pi
+    - --no-session
+    - --model
+    - '{model}'
+    - -p
+    - '{prompt}'
+    enabled: false
   planner:
     harness: pi
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
-    prompt_addition: Focus on the assigned task and return a compact result.
+    prompt_addition: Focus on the assigned task and return a concise result.
     command:
-      - pi
-      - --no-session
-      - --model
-      - "{model}"
-      - -p
-      - "{prompt}"
+    - pi
+    - --no-session
+    - --model
+    - '{model}'
+    - -p
+    - '{prompt}'
+    enabled: false
