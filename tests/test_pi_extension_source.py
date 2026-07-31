@@ -25,6 +25,7 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert '["_dispatch-ack", "--run-id", runId, "--role", role]' in extension_source
     assert 'command.push("--role", role)' in extension_source
     assert "help-host" in extension_source
+    assert '["roles", "--all"]' in extension_source
     assert (
         'description: "Orchestra host adapter: /orch help|do|roles|status|stop|doctor|history"'
         in extension_source

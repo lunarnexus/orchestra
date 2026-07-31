@@ -94,7 +94,7 @@ def test_roles_lists_configured_worker_roles(
 
     assert exit_code == 0
     assert "roles:" in output
-    assert "- worker harness=pi" in output
+    assert "- worker enabled=true harness=pi default=true" in output
 
 
 def test_status_reports_active_run(
@@ -374,15 +374,15 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
     assert default_exit_code == 0
     assert "roles:" in default_output
     assert "default_role: reviewer" not in default_output
-    assert "- reviewer harness=hermes default=true" in default_output
+    assert "- reviewer enabled=true harness=hermes default=true" in default_output
     assert "disabled_roles:" not in default_output
     assert "- worker harness=pi" not in default_output
 
     assert all_exit_code == 0
     assert "default_role: reviewer" in all_output
-    assert "- reviewer harness=hermes default=true" in all_output
+    assert "- reviewer enabled=true harness=hermes default=true" in all_output
     assert "disabled_roles:" in all_output
-    assert "- worker harness=pi" in all_output
+    assert "- worker enabled=false harness=pi" in all_output
 
 
 def test_host_help_and_tool_info_advertise_enabled_roles_only(
@@ -438,9 +438,9 @@ def test_host_help_and_tool_info_advertise_enabled_roles_only(
     assert help_exit == 0
     assert tool_exit == 0
     assert "/orch roles" in help_output
-    assert "- worker harness=pi default=true" in help_output
+    assert "- worker enabled=true harness=pi default=true" in help_output
     assert "- critic harness=hermes" not in help_output
-    assert "- worker harness=pi default=true" in tool_info["description"]
+    assert "- worker enabled=true harness=pi default=true" in tool_info["description"]
     assert "- critic harness=hermes" not in tool_info["description"]
     assert "- critic harness=hermes" not in tool_info["roleDescription"]
 

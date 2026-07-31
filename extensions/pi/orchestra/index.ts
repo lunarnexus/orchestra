@@ -447,7 +447,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }
 
       if (subcommand === "roles") {
-        const result = await runOrchestra(["roles"]);
+        const result = await runOrchestra(["roles", "--all"]);
         emitEntryOutput(ctx, result.stdout || result.stderr);
         return;
       }

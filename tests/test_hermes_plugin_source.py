@@ -213,7 +213,7 @@ def test_orch_slash_doctor_help_are_sessionless_safe_wrappers_and_scoped_fail_cl
     assert calls == [
         ["help-host"],
         ["doctor"],
-        ["roles"],
+        ["roles", "--all"],
     ]
 
 
@@ -240,7 +240,7 @@ def test_orch_slash_cli_private_session_fallback_scopes_roles_status_history_sto
     assert ctx.commands[0]["handler"]("stop run-1") == "ok\n"
 
     assert calls == [
-        ["roles"],
+        ["roles", "--all"],
         ["status", "--session-id", "hermes:cli-session"],
         ["history", "--session-id", "hermes:cli-session", "--limit", "7"],
         ["stop", "--session-id", "hermes:cli-session", "--run-id", "run-1"],

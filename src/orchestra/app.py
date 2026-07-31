@@ -598,11 +598,12 @@ def format_status(context: AppContext, session_id: str) -> str:
 def format_roles(context: AppContext, *, include_disabled: bool = False) -> str:
     enabled_lines = ["roles:"]
     for role_name, role in _enabled_roles(context.catalog):
-        default = " default=true" if role_name == context.catalog.default_role else ""
-        model = f" model={role.model}" if role.model else ""
-        profile = f" profile={role.profile}" if role.profile else ""
         enabled_lines.append(
-            f"- {role_name} harness={role.harness}{model}{profile}{default}"
+            _format_role_line(
+                role_name,
+                role,
+                is_default=role_name == context.catalog.default_role,
+            )
         )
 
     if not include_disabled:
@@ -617,10 +618,16 @@ def format_roles(context: AppContext, *, include_disabled: bool = False) -> str:
     if disabled_roles:
         lines.append("disabled_roles:")
         for role_name, role in disabled_roles:
-            model = f" model={role.model}" if role.model else ""
-            profile = f" profile={role.profile}" if role.profile else ""
-            lines.append(f"- {role_name} harness={role.harness}{model}{profile}")
+            lines.append(_format_role_line(role_name, role, is_default=False))
     return "\n".join(lines)
+
+
+def _format_role_line(role_name: str, role: RoleConfig, *, is_default: bool) -> str:
+    enabled = str(role.enabled).lower()
+    default = " default=true" if is_default else ""
+    model = f" model={role.model}" if role.model else ""
+    profile = f" profile={role.profile}" if role.profile else ""
+    return f"- {role_name} enabled={enabled} harness={role.harness}{model}{profile}{default}"
 
 
 def format_host_help(context: AppContext) -> str:

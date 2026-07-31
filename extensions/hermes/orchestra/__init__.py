@@ -438,7 +438,7 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
         return result.stdout or result.stderr
 
     if subcommand == "roles":
-        result = _run_orchestra(["roles"])
+        result = _run_orchestra(["roles", "--all"])
         return result.stdout or result.stderr
 
     runtime_session_id = _slash_session_id(ctx)

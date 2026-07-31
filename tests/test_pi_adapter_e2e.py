@@ -54,7 +54,7 @@ def test_pi_extension_host_command_path(
     help_output = help_result.stdout + help_result.stderr
     assert "Orchestra commands:" in help_output
     assert "roles:" in help_output
-    assert "- worker harness=pi" in help_output
+    assert "- worker enabled=true harness=pi default=true" in help_output
 
     doctor = subprocess.run(
         [
