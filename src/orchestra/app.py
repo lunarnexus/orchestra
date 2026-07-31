@@ -52,6 +52,14 @@ from orchestra.state import (
 )
 
 REPORT_HEADER = "Orchestra session report"
+ROLE_USAGE = """Usage:
+  /orch roles
+  /orch roles ROLE enabled true|false
+  /orch roles ROLE model MODEL
+
+Examples:
+  /orch roles appsec enabled false
+  /orch roles reviewer model openai-codex/gpt-5.4"""
 
 
 class AppError(ValueError):
@@ -709,22 +717,24 @@ def _format_role_lines(
     lines: list[str] = []
     for role_name, role in roles:
         details: list[str] = []
-        if role_name == context.catalog.default_role:
-            details.append("default")
         if role.model:
             details.append(role.model)
         if role.profile:
             details.append(f"profile={role.profile}")
         suffix = f"  {' '.join(details)}" if details else ""
+        role_marker = "D" if role_name == context.catalog.default_role else marker
         lines.append(
-            f"  {marker} {role_name.ljust(name_width)}  "
+            f"  {role_marker} {role_name.ljust(name_width)}  "
             f"{role.harness.ljust(harness_width)}{suffix}".rstrip()
         )
     return lines
 
 
 def format_host_help(context: AppContext) -> str:
-    return context.config.prompts.host_help.format(roles=format_roles(context))
+    return context.config.prompts.host_help.format(
+        roles=format_roles(context),
+        role_usage=ROLE_USAGE,
+    )
 
 
 def format_command_echo(raw_command: str) -> str:

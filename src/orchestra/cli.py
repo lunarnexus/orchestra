@@ -8,6 +8,7 @@ import sys
 from collections.abc import Sequence
 
 from orchestra.app import (
+    ROLE_USAGE,
     AppError,
     await_run_terminal_status,
     await_session_report,
@@ -295,7 +296,7 @@ def _handle_roles(args: argparse.Namespace) -> int:
     role_update_args = (args.role, args.setting, args.value)
     if any(value is not None for value in role_update_args):
         if any(value is None for value in role_update_args):
-            raise AppError("usage: roles [--all] [ROLE enabled true|false] [ROLE model MODEL]")
+            raise AppError(f"missing value for role setting\n\n{ROLE_USAGE}")
         print(set_role_setting(context, args.role, args.setting, args.value))
         return 0
     print(format_roles(context, include_disabled=args.all))

@@ -96,9 +96,8 @@ def test_roles_lists_configured_worker_roles(
     assert "Configured roles" in output
     assert "Default: worker" in output
     assert "Enabled:" in output
-    assert "✓ worker" in output
+    assert "D worker" in output
     assert "pi" in output
-    assert "default" in output
 
 
 def test_status_reports_active_run(
@@ -379,13 +378,13 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
     assert "Configured roles" in default_output
     assert "Default: reviewer" in default_output
     assert "Enabled:" in default_output
-    assert "✓ reviewer  hermes  default" in default_output
+    assert "D reviewer  hermes" in default_output
     assert "Disabled:" not in default_output
     assert "✗ worker" not in default_output
 
     assert all_exit_code == 0
     assert "Default: reviewer" in all_output
-    assert "✓ reviewer  hermes  default" in all_output
+    assert "D reviewer  hermes" in all_output
     assert "Disabled:" in all_output
     assert "✗ worker" in all_output
 
@@ -557,7 +556,9 @@ def test_roles_command_rejects_invalid_role_mutations(
         (["missing", "enabled", "true"], "error: unknown role: missing"),
         (["reviewer", "enabled", "yes"], "error: enabled must be true or false"),
         (["reviewer", "model", ""], "error: model must be a non-empty string"),
+        (["reviewer", "enabled"], "error: missing value for role setting"),
     ]
+    incomplete_usage_output = ""
     for role_args, expected_error in cases:
         exit_code = main(
             [
@@ -573,6 +574,10 @@ def test_roles_command_rejects_invalid_role_mutations(
 
         assert exit_code == 1
         assert expected_error in output
+        if role_args == ["reviewer", "enabled"]:
+            incomplete_usage_output = output
+
+    assert "/orch roles ROLE model MODEL" in incomplete_usage_output
 
     catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
     assert catalog["roles"]["reviewer"]["model"] == "old-model"
@@ -632,10 +637,12 @@ def test_host_help_and_tool_info_advertise_enabled_roles_only(
     assert help_exit == 0
     assert tool_exit == 0
     assert "/orch roles" in help_output
+    assert "/orch roles ROLE enabled true|false" in help_output
+    assert "/orch roles ROLE model MODEL" in help_output
     assert "Configured roles" in help_output
-    assert "✓ worker  pi  default" in help_output
+    assert "D worker  pi" in help_output
     assert "✗ critic" not in help_output
-    assert "✓ worker  pi  default" in tool_info["description"]
+    assert "D worker  pi" in tool_info["description"]
     assert "✗ critic" not in tool_info["description"]
     assert "✗ critic" not in tool_info["roleDescription"]
 
