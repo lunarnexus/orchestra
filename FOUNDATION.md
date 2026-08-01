@@ -364,6 +364,10 @@ surface. Installing the Orchestra Pi host extension globally avoids that trust
 gate for normal use. Repo-local Pi files may still exist for repo-specific
 behavior, but the shared Orchestra host extension should be global.
 
+Shared Orchestra runtime config is a separate concern from host-extension code
+install. Pi and Hermes host adapters should consume core `orchestra` config
+resolution rather than owning duplicated config-install policy.
+
 ## Integrated MVP Decisions
 
 These decisions were accepted during MVP finishing and are appended here as the
@@ -491,24 +495,61 @@ Avoid hidden `.orchestra` directories for this project’s default install.
 
 ### Configuration and Install
 
-Global Pi-facing config lives under
-`${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`.
+Editable default Orchestra config for this checkout lives in the repo root:
 
-Config and catalog resolution order is:
+- `config.yaml`
+- `prompts.yaml`
+- `agent-catalog.yaml`
+
+Pi runtime config lives under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`.
+Hermes runtime config is Hermes-local and should live with the selected/default
+Hermes profile rather than under the Pi runtime path.
+
+Config and catalog resolution order for the generic CLI/core is:
 
 1. CLI flags
 2. `ORCHESTRA_CONFIG` / `ORCHESTRA_AGENT_CATALOG`
-3. Pi user defaults under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`
+3. Pi runtime defaults under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`
 4. cwd fallback for local/manual development
 
-`orchestra init pi [--force]` installs or copies:
+`prompts.yaml` resolves from the same directory as the selected `config.yaml`.
+Hermes host/plugin integration should pass explicit Orchestra config paths for
+its Hermes-local runtime directory rather than relying on the Pi default path.
 
-- global Pi extension
-- global Pi config
-- global Pi agent catalog
+The public init surface is:
 
-`--force` overwrites existing installed files. Without it, existing files are
-preserved.
+- `orchestra init pi [--force] [--copy]`
+- `orchestra init hermes [--force] [--copy]`
+- `orchestra init hermes --profile <profile> [--force] [--copy]`
+- `orchestra init opencode [--force] [--copy]`
+- `orchestra init all [--force] [--copy]`
+
+Runtime config should point at the canonical repo-root YAML files by default
+when installing from a source checkout. Init targets that need runtime config
+should materialize it in the relevant host-owned location using:
+
+- default link mode when repo-root source files are available
+- explicit `--copy` as the compatibility fallback
+- `--force` to replace existing installed files or links
+
+Target responsibilities:
+
+- `orchestra init pi` installs the global Pi extension and refreshes Pi runtime
+  config from repo-root defaults
+- `orchestra init hermes` installs the Hermes plugin using Hermes' normal
+  default-profile behavior and refreshes Hermes-local runtime config from
+  repo-root defaults
+- `orchestra init hermes --profile <profile>` keeps working as an explicit
+  profile override
+- `orchestra init opencode` reports that no Orchestra host/plugin install step
+  is required for the OpenCode harness
+- `orchestra init all` detects configured harnesses and runs the relevant init
+  actions without duplicating work
+
+For packaged/non-source installs, packaged asset fallbacks may be used only with
+explicit `--copy`. Default link mode should fail clearly when no source-root
+link target is available. Package assets are fallback install sources, not the
+canonical editable config.
 
 ### Process Supervision and Scheduling
 

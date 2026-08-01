@@ -74,7 +74,7 @@ prompts.yaml
 agent-catalog.yaml
 ```
 
-Resolution order:
+Resolution order for the generic CLI/core is:
 
 1. CLI flags: `--config`, `--agent-catalog`
 2. env vars: `ORCHESTRA_CONFIG`, `ORCHESTRA_AGENT_CATALOG`
@@ -82,6 +82,16 @@ Resolution order:
 4. cwd fallback for dev/manual mode: `./config.yaml`, `./agent-catalog.yaml`
 
 `prompts.yaml` is always loaded from the same directory as the resolved `config.yaml`.
+
+Canonical editable defaults for this checkout live in the repo root:
+
+```text
+config.yaml
+prompts.yaml
+agent-catalog.yaml
+```
+
+Init commands materialize host runtime config from those root files. Pi uses `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`. Hermes uses a Hermes-local Orchestra config directory for the selected/default profile.
 
 Default config shape:
 
@@ -145,19 +155,20 @@ orchestra history --session-id manual:demo --limit 10
 
 The Pi host extension provides `/orch ...` commands and the LLM-callable `orch_dispatch` tool.
 
-Install or update the global Pi extension/config:
+Install or update the global Pi extension and materialize Pi runtime config:
 
 ```bash
 orchestra init pi
 ```
 
-Use `--force` to overwrite existing installed files:
+Use `--force` to overwrite existing installed files, or `--copy` to copy config instead of linking it:
 
 ```bash
 orchestra init pi --force
+orchestra init pi --copy
 ```
 
-Installed paths:
+Installed/runtime paths:
 
 ```text
 ~/.pi/agent/extensions/orchestra/index.ts
@@ -194,17 +205,27 @@ The extension also registers `orch_dispatch`, so natural-language requests using
 
 The Hermes plugin provides the same `/orch ...` command surface and `orch_dispatch` tool for Hermes sessions that support plugins and slash commands.
 
-Install or update for a Hermes profile:
+Install or update the Hermes plugin using the current/default Hermes profile:
+
+```bash
+orchestra init hermes
+```
+
+Optional explicit profile override remains supported:
 
 ```bash
 orchestra init hermes --profile <profile>
 ```
 
-Use `--force` to reinstall:
+Use `--force` to reinstall, or `--copy` to copy config instead of linking it:
 
 ```bash
+orchestra init hermes --force
 orchestra init hermes --profile <profile> --force
+orchestra init hermes --copy
 ```
+
+Hermes runtime config is materialized into a Hermes-local Orchestra directory for the selected/default profile rather than `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`.
 
 Repo source copy:
 
@@ -227,6 +248,60 @@ Inside a Hermes session with the plugin loaded:
 ```
 
 Hermes runtime session identity comes from the runtime `session_id` provided to the plugin tool handler and is normalized as `hermes:<session_id>`. The model or user prompt must not provide this identity. Hermes may rotate runtime ids during context compression; read-only `status` and `history` aggregate the Hermes compression lineage so an older parent session can still show runs owned by the current child session.
+
+## OpenCode Worker Harness
+
+OpenCode is supported as a one-shot worker harness via `harness: opencode` in any role catalog entry.
+
+No Orchestra host-plugin install step is required for harness-only use. `orchestra init opencode` simply reports that no install action is needed. Users only need:
+
+1. The `opencode` CLI available on PATH (`which opencode`).
+2. A configured role with `harness: opencode` and a valid model string for OpenCode.
+
+The current repo catalog uses OpenCode for the `appsec` role.
+
+Example role:
+
+```yaml
+appsec:
+  harness: opencode
+  enabled: true
+  model: openai/gpt-5.4
+  prompt_addition: Focus on the assigned task and return a compact result.
+  command:
+    - opencode
+    - run
+    - --agent
+    - plan
+    - --model
+    - "{model}"
+    - "{prompt}"
+```
+
+Model naming is harness-specific. For example, Pi may use `openai-codex/gpt-5.4` while OpenCode expects `openai/gpt-5.4`.
+
+Recommended `--agent` choices by use case:
+- Implementation/writing: `--agent build`
+- Planning/review: `--agent plan`
+- Read-only planning or security review: `--agent plan`
+- External research: `--agent scout` (if available)
+
+One-shot init/setup helper for configured environments:
+
+```bash
+orchestra init all
+```
+
+This detects configured harnesses from the resolved catalog and runs the relevant init actions for `pi`, `hermes`, and `opencode` without duplicating work.
+
+Smoke test when the role is enabled and a model is configured:
+
+```bash
+opencode run --agent plan --model openai/gpt-5.4 "Reply with exactly OPENCODE_DIRECT_OK"
+orchestra do --session-id manual:opencode-demo --role appsec --goal "Inspect this repo for obvious security issues and return a concise report"
+```
+
+Orchestra does not currently provide a `{workdir}` placeholder for OpenCode command templates. Omitting `--dir` lets OpenCode run in the current working directory, which is the safer default for a shared catalog.
 
 ## Returns and Logs
 

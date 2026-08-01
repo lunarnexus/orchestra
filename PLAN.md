@@ -1,171 +1,512 @@
-# Orchestra Workflow Plan
-
-## Wishlist
-
-- Per-session configuration overrides
-  - Allow temporary config changes scoped to the current session instead of mutating the global `config.yaml` defaults for all new sessions.
-  - Likely settings to consider later: workflow/debug toggles, timeout/concurrency overrides, approval behavior, and host-surface defaults.
-  - Open questions: where session-local config should live, how host adapters surface it, and how to avoid confusing drift from the global config.
+# Orchestra Init / Root Config Plan
 
 ## Goal
 
-Define the first bounded workflow capability for Orchestra without turning it into a general workflow engine.
+Keep the Orchestra repo root as the single editable source of truth for default config, while simplifying install behavior around:
+
+- `orchestra init [pi|hermes|opencode|all] [--force] [--copy]`
+
+Compatibility/back-compat:
+- `orchestra init hermes --profile {profile}` should continue to work as an explicit profile override.
 
 ## Acceptance Criteria
 
-- Workflow planning is grounded in current project docs and prior research, not fresh invention.
-- The first workflow MVP is chosen from concrete candidates and justified against Orchestra's current architecture.
-- The plan makes clear what is in scope now versus explicitly deferred.
-- Approval behavior, read-only versus write-capable stages, and parallel-write safety rules are defined at the planning level.
-- No implementation starts until the workflow MVP and surface shape are approved.
+- Repo-root defaults are canonical:
+  - `config.yaml`
+  - `prompts.yaml`
+  - `agent-catalog.yaml`
+- No separate `init config` command exists.
+- `orchestra init pi` installs the Pi extension and ensures Pi runtime config is materialized from repo-root defaults.
+- `orchestra init hermes` installs the Hermes plugin and ensures Hermes-local runtime config is materialized from repo-root defaults.
+- `orchestra init hermes` does not require a profile argument; normal Hermes default-profile behavior is used.
+- `orchestra init hermes --profile {profile}` remains supported as an explicit override.
+- `orchestra init opencode` reports that no host/plugin install is required for OpenCode.
+- `orchestra init all` auto-detects relevant configured harnesses and installs their required plugins/extensions.
+- Pi runtime config under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/` is linked by default when installing from a source checkout.
+- Hermes does not use the Pi runtime config path.
+- `--copy` remains available as a compatibility fallback for config materialization.
+- `--force` remains supported.
+- Pi and Hermes keep using core `orchestra` config resolution; no host-specific YAML parsing is added.
+- Package fallback assets remain usable only for explicit `--copy` mode when no source checkout root is available.
+- Tests and docs reflect the final command shape and behavior.
+
+## Non-Goals
+
+- Do not add `init config`.
+- Do not rewrite the Pi extension to discover repo roots or parse YAML.
+- Do not rewrite the Hermes plugin for config ownership.
+- Do not make Hermes consume Pi-owned runtime config.
+- Do not add a fake OpenCode plugin install step.
+- Do not auto-fallback from default link mode to copy mode.
+- Do not expand the public init surface beyond `pi|hermes|opencode|all` plus `--force` and `--copy`.
 
 ## Inputs Reviewed
 
 - `AGENTS.md`
 - `README.md`
 - `FOUNDATION.md`
-- `docs/workflow-decisions.md`
-- `research.md`
-- `research-workflows.md`
+- `src/orchestra/config.py`
+- `src/orchestra/app.py`
+- `src/orchestra/cli.py`
+- `extensions/pi/orchestra/index.ts`
+- `extensions/hermes/orchestra/__init__.py`
+- `tests/test_config.py`
+- `tests/test_init_pi.py`
+- `tests/test_init_hermes.py`
+- packaging behavior verified with `python3 -m build`
+- Hermes CLI help verified with:
+  - `hermes plugins install --help`
+  - `hermes profile list`
+
+## Research / Verification Summary
+
+### What was verified
+
+- Pi extension is already a thin wrapper that shells out to `orchestra` and only passes explicit config overrides from env vars when present:
+  - `extensions/pi/orchestra/index.ts`
+- Hermes plugin is also a thin wrapper that shells out to `orchestra` and only passes explicit config overrides from env vars when present:
+  - `extensions/hermes/orchestra/__init__.py`
+- Shared config policy currently lives in core path resolution:
+  - `src/orchestra/config.py`
+- Current default resolution order is:
+  1. explicit CLI flags
+  2. `ORCHESTRA_CONFIG` / `ORCHESTRA_AGENT_CATALOG`
+  3. Pi runtime config under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`
+  4. cwd fallback
+- `prompts.yaml` resolves relative to the selected `config.yaml`, so linked/copied runtime config works if the three YAML files remain adjacent.
+- `orchestra init pi` currently mixes two concerns:
+  - Pi extension install
+  - Pi runtime config install
+- `orchestra init hermes` currently installs plugin code only.
+- `hermes plugins install --help` shows plugin install does not require a profile argument.
+- `hermes profile list` confirms Hermes has a default/active profile model, so default-profile behavior plus optional explicit `--profile` override is viable.
+- OpenCode has no Orchestra host plugin/extension install step today; repo docs already say it is harness-only.
+- Build output already includes packaged fallback YAML assets under `orchestra/assets/...`, so explicit `--copy` fallback is viable for non-source installs.
+
+### Why this plan should work
+
+- Pi does not need new config logic if core still resolves through `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`.
+- Hermes should stop relying on the Pi runtime path and instead use Hermes-local materialized config derived from the selected/default profile.
+- Replacing copied config with links where possible preserves the runtime contract while making repo-root files canonical.
+- Folding config materialization into `init pi`, `init hermes`, and `init all` keeps the public CLI simple without adding `init config`.
+- `init all` can orchestrate known init behaviors without changing host adapters.
+- Packaged installs can still use copied packaged assets when `--copy` is explicitly requested.
+
+### Key constraint confirmed
+
+A pure project-root-only runtime model with no runtime entrypoint would require Pi/Hermes adapters to discover the Orchestra repo root or pass explicit absolute paths every time. That is more invasive than necessary. Therefore the workable design is:
+
+- repo-root canonical config
+- Pi keeps a Pi-local runtime entrypoint
+- Hermes gets a Hermes-local runtime entrypoint tied to the selected/default profile
+- init commands materialize runtime config there by link default / explicit copy fallback
 
 ## Current Facts
 
-- Orchestra is a session-scoped orchestration control plane with compact consolidated returns, not a generic autonomous workflow engine.
-- Current runs are one-shot and session-scoped; there is no built-in DAG, dependency engine, reducer, retry loop, or workflow controller yet.
-- Host adapters are intentionally thin; core behavior belongs in Python core, not duplicated in Pi/Hermes surfaces.
-- Existing research already narrowed promising workflow directions to bounded recipes, worktree-aware write isolation, explicit review/appsec stages, and a small controller rather than a durable workflow framework.
-- Existing workflow scratchpad decisions already defer approval passthrough and kanban/task-board UX for the MVP.
+- Repo-root YAML files already exist and are the intended canonical defaults.
+- `src/orchestra/assets/config.yaml`
+- `src/orchestra/assets/prompts.yaml`
+- `src/orchestra/assets/agent-catalog.yaml`
+  already point at root YAML files in the source tree, which is acceptable as a maintenance convenience.
+- Pi and Hermes both consume Orchestra config indirectly through the `orchestra` CLI, but they should not have to share the same Pi-owned runtime config path.
+- `FOUNDATION.md` still describes the older split where `init pi` owns global config install and no `all` target exists.
+- `src/orchestra/cli.py` still exposes `init pi` and `init hermes`, and Hermes still requires `--profile` in the current parser.
 
-## Candidate Workflow Directions
+## Recommended Architecture
 
-### 1. Research-to-Plan Gate
+### Canonical source of truth
 
-- Researcher gathers constraints and precedents.
-- Planner writes a durable plan.
-- Critic reviews scope, dependencies, and collision/security risks.
-- Human approves before any write-capable dispatch.
+Editable defaults live only in the repo root:
 
-Why it fits:
-- Lowest-risk workflow.
-- Matches current `dev-orchestra` operating model.
-- Works with one-shot workers and current approval expectations.
+- `config.yaml`
+- `prompts.yaml`
+- `agent-catalog.yaml`
 
-### 2. Pair Slice
+These are the only files users should edit for default Orchestra behavior.
 
-- Planner defines one bounded slice plus file ownership.
-- Implementer works in isolation.
-- Reviewer checks diff against criteria.
-- At most one revise cycle.
+### Runtime entrypoints
 
-Why it fits:
-- Strong quality loop for risky edits.
-- More concrete than a generic workflow engine.
+Pi runtime config should continue to live under:
 
-Constraint:
-- Safer if worktree/isolation rules exist first for write-capable tasks.
+- `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`
 
-### 3. Parallel Delivery Tranche
-
-- Planning completes first.
-- Controller dispatches only ready, non-overlapping tasks.
-- Integration is serialized.
-- Review, verification, and appsec gate promotion.
-
-Why it is attractive:
-- Best flagship workflow long-term.
-
-Why it is not the first pick yet:
-- Needs collision prevention, ownership rules, and worktree discipline before it is safe.
-
-## Recommended Starting Point
-
-Start with `Research-to-Plan Gate` as the first workflow MVP.
+Hermes should not use the Pi runtime path. Hermes runtime config should live with the selected/default Hermes profile install, so Hermes sessions can resolve Orchestra config without borrowing Pi-owned state.
 
 Reason:
-- It fits the current one-shot/session-scoped architecture.
-- It reinforces the project's existing rule that the parent plans, routes, gates, and judges.
-- It avoids premature complexity around write collisions, retries, steering, and interactive approvals.
-- It gives a clean place to define reusable workflow recipe structure before adding more ambitious workflows.
+- Pi extension is global and can run from arbitrary working directories.
+- Hermes sessions are also not guaranteed to run with cwd at the Orchestra repo root.
+- A stable runtime path is still needed for each host even when root files are canonical.
+- The Hermes runtime path should be Hermes-owned, not Pi-owned.
 
-## Proposed MVP Shape
+### Runtime config materialization behavior
 
-- Use declarative named workflow recipes first, not a general graph engine.
-- Keep the primary command shape aligned with the scratchpad:
-  - `/orch workflow [workflow-name] start|stop|status|retry|steer`
-  - short alias: `/orch wf`
-- MVP workflow execution should support:
-  - ordered stages
-  - explicit stage role
-  - stage read-only vs write-capable classification
-  - human approval gates
-  - blocked state when a worker cannot proceed
-  - durable stage status/events
-- MVP should not include:
-  - approval passthrough
-  - kanban/task-board UX
-  - autonomous goal loops
-  - general-purpose workflow scripting engine
+When an init target needs runtime config available outside the repo root:
 
-## Files to Change
+- default behavior: create links from the target host runtime location to repo-root YAML files when source-root files are available
+- compatibility behavior: `--copy` creates regular files instead of links
+- `--force` replaces existing files or links
+- if no source-root files are available and `--copy` was not requested, fail with a clear error
 
-Planning/docs first:
-- `PLAN.md` — active workflow plan and progress
-- `FOUNDATION.md` — only if workflow architecture decisions become committed
-- `docs/workflow-decisions.md` — only when a workflow behavior decision is settled
-- `research-workflows.md` — reference only; do not treat it as executable spec
+### Target behavior
 
-Likely implementation targets later:
-- `src/orchestra/app.py` — workflow command entry and orchestration control flow
-- `src/orchestra/state.py` — durable workflow/run/stage state
-- `src/orchestra/config.py` — workflow recipe/config loading if recipes become config-driven
-- host adapter surfaces only as thin command/tool wiring after core shape is settled
+#### `orchestra init pi [--force] [--copy]`
 
-## Task Breakdown
+- install/update the global Pi extension
+- ensure Pi runtime config is materialized from repo-root defaults
+- default to link mode when source-root files are available
+- use copy mode only when `--copy` is supplied
 
-### Phase 1: Lock workflow MVP scope
-- [x] Review current docs and workflow research.
-- [ ] Compare `Research-to-Plan Gate`, `Pair Slice`, and `Parallel Delivery Tranche` against current architecture and choose the first MVP explicitly.
-- [ ] Decide whether MVP recipes are YAML-defined, built-in, or a small hybrid.
+#### `orchestra init hermes [--force] [--copy]`
 
-### Phase 2: Define workflow boundaries
-- [ ] Define the minimum stage model: ordered stages, role, status, approval gate, blocker, result.
-- [ ] Define read-only versus write-capable stage behavior.
-- [ ] Define blocked-state behavior when a worker hits a permission or approval boundary.
-- [ ] Define what workflow state must be durable in SQLite versus what stays in logs only.
+- install/update the Hermes plugin
+- do not require a profile argument
+- rely on Hermes' normal default-profile behavior
+- support optional `--profile {profile}` override
+- ensure Hermes-local runtime config is materialized from repo-root defaults
+- default to link mode when source-root files are available
+- use copy mode only when `--copy` is supplied
 
-### Phase 3: Define safety and quality gates
-- [ ] Define when human approval is required.
-- [ ] Define where review and appsec belong: explicit stages, not implicit role magic.
-- [ ] Define the minimum safe rule for parallel writes and whether worktrees are a prerequisite for any write-capable parallel workflow.
+#### `orchestra init opencode [--force] [--copy]`
 
-### Phase 4: Brainstorm follow-on workflow ideas
-- [ ] Identify which workflow ideas belong in the first release versus later: reusable recipes, live operator watch/status, worktree isolation, milestone review, security sentinel.
-- [ ] Decide whether per-session configuration belongs in the workflow track or should remain a separate cross-cutting wishlist item.
+- no Orchestra host/plugin install is required for OpenCode
+- report that no plugin/extension install action is needed
+- do not invent adapter behavior that does not exist
+- `--copy` has no effect except a clearly reported no-op if the implementation accepts it uniformly
 
-## Current State
+#### `orchestra init all [--force] [--copy]`
 
-- Active slice: planning-only workflow design grounded in existing docs and research
-- Next slice: choose the first workflow MVP explicitly and narrow the recipe/controller shape
+- detect relevant configured harnesses from the resolved catalog
+- materialize Pi and/or Hermes runtime config only for the targets actually being installed
+- run required target installs for configured harnesses
+- install Pi extension if any configured role uses `harness: pi`
+- install Hermes plugin if any configured role uses `harness: hermes`
+- report no plugin action needed for configured `harness: opencode` roles
+- avoid duplicate work when multiple roles use the same harness
 
-## Decisions / Scope Changes
+## Command Surface
 
-- Workflow work is planning-only right now.
-- The parent agent remains the orchestrator; workers stay narrow.
-- Approval passthrough is deferred.
-- Kanban/task-board workflow UX is deferred.
-- Per-session configuration is a wishlist item, not part of the active workflow slice unless it becomes clearly necessary for workflow operation.
+Primary public init surface:
 
-## Tests to Add or Update
+- `orchestra init pi [--force] [--copy]`
+- `orchestra init hermes [--force] [--copy]`
+- `orchestra init opencode [--force] [--copy]`
+- `orchestra init all [--force] [--copy]`
 
-When implementation begins:
-- workflow recipe parsing/validation tests
-- workflow stage-state persistence tests
-- blocked-state tests for permission/approval boundaries
-- host-surface smoke tests for `/orch workflow ...` once the command surface exists
+Compatibility/back-compat to preserve:
+
+- `orchestra init hermes --profile {profile}`
+
+No additional public init subcommands should be introduced for this change.
+
+## Source and Packaged Install Rules
+
+### Source checkout behavior
+
+When a source root is discoverable:
+- link mode is the default for Pi/Hermes runtime config materialization
+- repo-root YAML files are canonical
+- package assets remain fallback artifacts, not canonical editable config
+
+### Packaged/non-source behavior
+
+When only packaged assets are available and no source root is discoverable:
+- default link mode should fail with a clear error
+- `--copy` explicitly selects copy behavior
+- only explicit `--copy` may use packaged fallback assets
+
+## Detailed Files to Change
+
+### Core app/init logic
+- `src/orchestra/app.py`
+  - split init behavior into reusable target operations
+  - add runtime config materialization helpers (link/copy)
+  - add target orchestration for `pi`, `hermes`, `opencode`, and `all`
+  - remove Hermes-profile requirement from default init behavior while keeping optional profile override support
+  - support catalog-driven harness detection for `all`
+  - preserve package fallback behavior for explicit `--copy`
+  - preserve source-root detection for root-owned defaults
+
+### CLI surface
+- `src/orchestra/cli.py`
+  - expose exact init targets: `pi`, `hermes`, `opencode`, `all`
+  - add `--copy` and keep `--force`
+  - remove required `--profile` from Hermes init parser
+  - keep optional Hermes `--profile`
+  - update help text so it matches actual responsibilities
+
+### Config resolution
+- `src/orchestra/config.py`
+  - keep Pi resolution stable unless implementation reveals a necessary cleanup
+  - Hermes-local runtime config likely needs explicit path/env wiring from the Hermes plugin runtime location rather than Pi default resolution
+  - no host-specific YAML parsing should be added
+
+### Tests
+- `tests/test_init_pi.py`
+  - update for Pi extension + Pi runtime config materialization behavior
+- `tests/test_init_hermes.py`
+  - remove required-profile assumptions
+  - add default-profile install expectations
+  - keep explicit `--profile` override coverage
+- add new init coverage, likely in a new `tests/test_init_targets.py` or similar
+  - link default behavior
+  - `--copy` behavior
+  - `--force` behavior
+  - `all` harness auto-detection behavior
+  - `opencode` no-op/reporting behavior
+  - packaged fallback behavior
+- `tests/test_config.py`
+  - adjust only if wording/semantics need updates
+
+### Docs / architecture
+- `README.md`
+  - document root canonical config and exact init surface
+- `FOUNDATION.md`
+  - record accepted architecture and command shape
+- `AGENTS.md`
+  - update command/config guidance if needed
+
+### Package/source maintenance
+- `src/orchestra/assets/*.yaml`
+  - retain as package fallback artifacts
+  - keep aligned with root config via the current source-tree approach
+
+## Implementation Approach
+
+### Phase 1: Lock exact user-facing behavior
+- [x] Confirm no full Pi extension rewrite is needed.
+- [x] Confirm no Hermes plugin rewrite is needed.
+- [x] Confirm no `init config` command should exist.
+- [x] Confirm Hermes init should not require a profile argument by default.
+- [x] Confirm optional `--profile` override should remain supported.
+- [x] Confirm OpenCode has no Orchestra plugin/extension install step.
+- [x] Choose exact public init surface: `pi|hermes|opencode|all` plus `--force` and `--copy`.
+- [ ] Finalize exact output wording for link/copy/materialization and no-op actions.
+
+### Phase 2: Refactor init behavior in core
+- [ ] Add runtime config materialization helpers in `src/orchestra/app.py`.
+- [ ] Make Pi init call extension install + Pi runtime config materialization.
+- [ ] Make Hermes init call plugin install + Hermes-local runtime config materialization.
+- [ ] Add OpenCode init reporting path.
+- [ ] Add `all` target orchestration using resolved catalog harnesses.
+- [ ] Ensure `--force` cleanly replaces existing files or links.
+- [ ] Ensure missing source files surface as clear user-facing errors.
+
+### Phase 3: Update CLI
+- [ ] Add `init opencode` and `init all` parser/handlers.
+- [ ] Add `--copy` to relevant init targets.
+- [ ] Remove required `--profile` from Hermes init.
+- [ ] Keep optional `--profile` override.
+- [ ] Update help text so target semantics are obvious.
+
+### Phase 4: Preserve installed-package viability
+- [ ] Reuse packaged asset fallbacks only for explicit `--copy` behavior.
+- [ ] Implement clear errors when link mode is unavailable outside a source checkout.
+- [ ] Verify packaged build still includes needed fallback assets.
+
+### Phase 5: Update tests
+- [ ] Rewrite Hermes init tests around default-profile behavior.
+- [ ] Update Pi init tests.
+- [ ] Add all-target detection tests.
+- [ ] Add link/copy/force/fallback tests.
+- [ ] Run targeted tests first, then broader repo checks.
+
+### Phase 6: Update docs and architecture record
+- [ ] Update `README.md` command examples and install explanation.
+- [ ] Update `FOUNDATION.md` to record the accepted model.
+- [ ] Update `AGENTS.md` notes if command text changes.
+
+## Exact Behavior to Validate During Implementation
+
+### Runtime config materialization
+- source files exist
+- target parent dirs are created
+- default mode creates links when source-root files are available
+- `--copy` creates regular files instead
+- repeated init without `--force` reports `exists`
+- repeated init with `--force` refreshes files/links safely
+- `prompts.yaml` still resolves correctly alongside the selected `config.yaml`
+- Hermes materialization targets Hermes-local runtime config, not the Pi path
+
+### Pi target validation
+- extension is installed/updated
+- Pi runtime config is materialized from root defaults
+
+### Hermes target validation
+- plugin install works without requiring a profile arg
+- explicit `--profile` override still works
+- Hermes-local runtime config is materialized from root defaults into a Hermes-local target
+- verification output remains clear
+
+### OpenCode target validation
+- no plugin/extension install step is attempted
+- user gets a clear no-action-needed result
+
+### All target validation
+- catalog is loaded using normal core resolution
+- configured harnesses are deduplicated
+- Pi and Hermes actions run only when relevant harnesses exist
+- OpenCode is reported correctly when configured
+- Pi/Hermes runtime config materialization runs only for the relevant targets
+
+### Packaged fallback validation
+- when source root is unavailable, default link mode fails clearly
+- packaged fallback assets are used only with explicit `--copy`
+
+## Suggested Verification Commands
+
+Targeted:
+- `python3 -m pytest tests/test_init_pi.py`
+- `python3 -m pytest tests/test_init_hermes.py`
+- `python3 -m pytest tests/test_config.py`
+- `python3 -m pytest tests/test_init_targets.py` (new)
+
+Broader:
+- `python3 -m pytest`
+- `python3 -m ruff check .`
+- `python3 -m mypy src tests`
+- `python3 -m build`
+
+Host smoke after implementation:
+- `orchestra init pi --force`
+- `orchestra init hermes --force`
+- `orchestra init hermes --profile tori --force`
+- `orchestra init all --force`
+- `pi --no-approve --session-id orch-demo -p "/orch help"`
+- Hermes plugin verification command as printed by the final implementation
+
+## Migration Plan
+
+### For this checkout
+1. Root YAML files remain canonical.
+2. Re-run the relevant init target(s) to materialize host runtime config from root defaults.
+3. Use `orchestra init all --force` for the one-shot “set everything up” path.
+
+### For existing installs
+- Existing copied Pi config in `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/` remains readable until replaced.
+- Hermes should migrate to Hermes-local runtime config rather than continuing to rely on the Pi path.
+- New docs should make clear that root files are canonical and init targets refresh the relevant host runtime entrypoint from them.
+- `--copy` remains available for environments that prefer old-style copied files.
+
+## Rollback Plan
+
+If link-by-default proves brittle:
+- use the same public commands with `--copy --force`
+- retain packaged asset fallbacks
+- keep host adapters unchanged
 
 ## Risks
 
-- Overbuilding risk: turning Orchestra into a generic workflow engine too early.
-- Safety risk: parallel write workflows without worktree/ownership protection.
-- UX risk: leaking workflow complexity into thin host adapters.
-- Scope risk: mixing cross-cutting config/session ideas into the first workflow MVP before the workflow core is settled.
+- Compatibility: symlink behavior differs across environments.
+- Packaging: installed distributions may not have a meaningful repo-root target for links.
+- Migration: Hermes must stop borrowing Pi-owned runtime config and move to a Hermes-local location.
+- Compatibility: optional Hermes `--profile` override must continue to work.
+- UX: one exact init surface is simpler, but target behavior/output must still be very clear.
+- Maintenance: `all` must stay deterministic and not drift from the single-target logic.
+
+## Decisions / Scope Changes
+
+- No full Pi extension rewrite is planned.
+- No Hermes plugin rewrite is planned for config ownership.
+- No `init config` command will be added.
+- Public init surface is exactly `pi|hermes|opencode|all` with `--force` and `--copy`.
+- Hermes init should use default-profile behavior by default while still supporting explicit `--profile`.
+- Pi runtime config remains under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`, refreshed from root defaults by Pi-related init targets.
+- Hermes runtime config should be Hermes-local, not Pi-local.
+- Default config materialization mode is link-based.
+- `--copy` exists for compatibility.
+- `--force` remains.
+- Packaged assets remain fallback install sources, but only for explicit `--copy`.
+- `init all` should only materialize runtime config for targets it actually installs.
+- Packaged/non-source link mode should error; only explicit `--copy` may use packaged fallback assets.
+
+## Additional Accepted Design Direction
+
+### Role and harness-config split
+
+A follow-on catalog/command simplification is accepted for future implementation:
+
+- No legacy schema or backward-compatibility layer is required.
+- Introduce top-level `harness_configs:`.
+- A harness config should contain only launch/runtime details needed by the harness, primarily:
+  - `harness`
+  - `command`
+- Remove `model` from harness configs.
+- Roles should own worker-selection fields such as:
+  - `harness_config`
+  - `model`
+  - `profile`
+  - `agent`
+  - `prompt_addition`
+  - `enabled`
+- Dispatch resolution should be:
+  - role -> harness config -> render command with role fields -> apply explicit runtime args
+- No slash-command editing of raw command arrays is planned for MVP.
+- Host command UX should evolve away from treating `model` as a flat role setting bolted onto the old schema.
+
+### Intended command direction for that follow-on
+
+- `/orch roles`
+- `/orch roles ROLE show`
+- `/orch roles ROLE harness-config CONFIG`
+- `/orch roles ROLE enabled true|false`
+- `/orch roles ROLE model MODEL`
+- `/orch roles ROLE profile PROFILE`
+- `/orch roles ROLE agent AGENT`
+- `/orch harnesses`
+- `/orch harnesses CONFIG show`
+
+### Example target schema for that follow-on
+
+```yaml
+default_role: worker
+
+harness_configs:
+  pi:
+    harness: pi
+    command:
+      - pi
+      - --no-session
+      - --model
+      - "{model}"
+      - -p
+      - "{prompt}"
+
+  hermes:
+    harness: hermes
+    command:
+      - hermes
+      - --profile
+      - "{profile}"
+      - -z
+      - "{prompt}"
+
+roles:
+  worker:
+    harness_config: pi
+    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    prompt_addition: Focus on the assigned task and return a compact result.
+    enabled: true
+
+  critic:
+    harness_config: hermes
+    profile: tori
+    prompt_addition: Focus on the assigned task and return a compact result.
+    enabled: true
+```
+
+## Tests to Add or Update
+
+- `init pi` installs Pi extension and materializes Pi runtime config
+- `init hermes` installs Hermes plugin without requiring a profile arg, still supports explicit `--profile`, and materializes Hermes-local runtime config
+- `init opencode` reports that no install action is required
+- `init all` detects configured harnesses and runs the correct target set
+- `--copy` creates regular files instead of links where runtime config materialization is needed
+- `--force` replaces existing targets
+- packaged fallback behavior when repo-root linking is unavailable
+
+## Risks Summary
+
+- Security/privacy: low; this is install/path management, not secret handling.
+- Compatibility: medium; symlink semantics vary and copy fallback must be solid.
+- Migration: medium; Hermes config location and Hermes init args are changing.
+- Rollback: straightforward via the same commands with `--copy`.
