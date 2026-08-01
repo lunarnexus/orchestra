@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from orchestra.app import (
     ROLE_USAGE,
     AppError,
+    InitFileResult,
     await_run_terminal_status,
     await_session_report,
     await_session_report_payload,
@@ -24,7 +25,9 @@ from orchestra.app import (
     format_run_report,
     format_started_run,
     format_status,
+    init_all,
     init_hermes,
+    init_opencode,
     init_pi,
     load_context,
     mark_session_report_delivered,
@@ -155,18 +158,56 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
 
     init_parser = subparsers.add_parser("init", help="initialize host integrations")
     init_subparsers = init_parser.add_subparsers(dest="init_target", metavar="TARGET")
-    init_pi_parser = init_subparsers.add_parser("pi", help="install global Pi extension/config")
+    init_pi_parser = init_subparsers.add_parser("pi", help="install global Pi extension")
     init_pi_parser.add_argument("--force", action="store_true", help="overwrite existing files")
+    init_pi_parser.add_argument(
+        "--copy",
+        action="store_true",
+        help="copy config files instead of linking",
+    )
     init_pi_parser.set_defaults(handler=_handle_init_pi)
 
     init_hermes_parser = init_subparsers.add_parser("hermes", help="install Hermes plugin")
     init_hermes_parser.add_argument(
         "--profile",
-        required=True,
-        help="Hermes profile to install into",
+        default=None,
+        help="optional Hermes profile override",
     )
     init_hermes_parser.add_argument("--force", action="store_true", help="force reinstall")
+    init_hermes_parser.add_argument(
+        "--copy",
+        action="store_true",
+        help="copy config files instead of linking",
+    )
     init_hermes_parser.set_defaults(handler=_handle_init_hermes)
+
+    init_opencode_parser = init_subparsers.add_parser(
+        "opencode",
+        help="report OpenCode init status",
+    )
+    init_opencode_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="accepted for CLI compatibility",
+    )
+    init_opencode_parser.add_argument(
+        "--copy",
+        action="store_true",
+        help="accepted for CLI compatibility",
+    )
+    init_opencode_parser.set_defaults(handler=_handle_init_opencode)
+
+    init_all_parser = init_subparsers.add_parser(
+        "all",
+        help="initialize configured integrations",
+    )
+    init_all_parser.add_argument("--force", action="store_true", help="overwrite existing files")
+    init_all_parser.add_argument(
+        "--copy",
+        action="store_true",
+        help="copy config files instead of linking",
+    )
+    init_all_parser.set_defaults(handler=_handle_init_all)
 
     if include_internal:
         supervisor_parser = subparsers.add_parser("_run-supervisor", help=argparse.SUPPRESS)
@@ -318,15 +359,15 @@ def _handle_history(args: argparse.Namespace) -> int:
 
 
 def _handle_init_pi(args: argparse.Namespace) -> int:
-    result = init_pi(force=bool(args.force))
-    for file_result in result.files:
-        print(f"{file_result.action}: {file_result.target}")
+    result = init_pi(force=bool(args.force), copy=bool(args.copy))
+    _print_init_files(result.files)
     print(f"verify: {result.verification_command}")
     return 0
 
 
 def _handle_init_hermes(args: argparse.Namespace) -> int:
-    result = init_hermes(profile=args.profile, force=bool(args.force))
+    result = init_hermes(profile=args.profile, force=bool(args.force), copy=bool(args.copy))
+    _print_init_files(result.files)
     print(f"installed: {' '.join(result.command)}")
     if result.stdout:
         print(result.stdout)
@@ -334,6 +375,44 @@ def _handle_init_hermes(args: argparse.Namespace) -> int:
         print(result.stderr)
     print(f"verify: {result.verification_command}")
     return 0
+
+
+def _handle_init_opencode(args: argparse.Namespace) -> int:
+    if args.force or args.copy:
+        del args
+    result = init_opencode()
+    print(result.message)
+    return 0
+
+
+def _handle_init_all(args: argparse.Namespace) -> int:
+    result = init_all(
+        force=bool(args.force),
+        copy=bool(args.copy),
+        catalog_path=args.agent_catalog,
+    )
+    if result.pi is not None:
+        print("[pi]")
+        _print_init_files(result.pi.files)
+        print(f"verify: {result.pi.verification_command}")
+    for hermes_result in result.hermes:
+        print("[hermes]")
+        _print_init_files(hermes_result.files)
+        print(f"installed: {' '.join(hermes_result.command)}")
+        if hermes_result.stdout:
+            print(hermes_result.stdout)
+        if hermes_result.stderr:
+            print(hermes_result.stderr)
+        print(f"verify: {hermes_result.verification_command}")
+    if result.opencode is not None:
+        print("[opencode]")
+        print(result.opencode.message)
+    return 0
+
+
+def _print_init_files(files: Sequence[InitFileResult]) -> None:
+    for file_result in files:
+        print(f"{file_result.action}:{file_result.mode}: {file_result.target}")
 
 
 def _handle_dispatch_ack(args: argparse.Namespace) -> int:
@@ -439,5 +518,7 @@ def _handle_await_run(args: argparse.Namespace) -> int:
     print(f"run_id: {record.run_id}")
     print(f"status: {record.status}")
     print(f"role: {record.role}")
+    if record.blocker_text:
+        print(f"blocker: {record.blocker_text}")
     print(f"active_runs_remaining: {active_remaining}")
     return 0

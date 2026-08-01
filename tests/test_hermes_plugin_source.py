@@ -936,10 +936,18 @@ def test_run_orchestra_uses_bounded_subprocess_timeout(monkeypatch: pytest.Monke
 
     result = plugin._run_orchestra(["_tool-info"])
 
+    runtime_root = plugin._hermes_runtime_orchestra_dir()
     assert result.returncode == 0
     assert calls == [
         {
-            "args": ["orchestra", "_tool-info"],
+            "args": [
+                "orchestra",
+                "--config",
+                str(runtime_root / "config.yaml"),
+                "--agent-catalog",
+                str(runtime_root / "agent-catalog.yaml"),
+                "_tool-info",
+            ],
             "check": False,
             "capture_output": True,
             "text": True,
@@ -964,10 +972,20 @@ def test_watcher_subprocess_calls_use_larger_hard_stop(monkeypatch: pytest.Monke
         timeout_seconds=plugin._watcher_subprocess_timeout_seconds(wait_budget),
     )
 
+    runtime_root = plugin._hermes_runtime_orchestra_dir()
     assert result.returncode == 0
     assert calls == [
         {
-            "args": ["orchestra", "_await-run", "--timeout", "35"],
+            "args": [
+                "orchestra",
+                "--config",
+                str(runtime_root / "config.yaml"),
+                "--agent-catalog",
+                str(runtime_root / "agent-catalog.yaml"),
+                "_await-run",
+                "--timeout",
+                "35",
+            ],
             "check": False,
             "capture_output": True,
             "text": True,

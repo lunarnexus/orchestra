@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 _IDENTITY_ARG_NAMES = frozenset({"session_id", "identity", "orchestrator_session_id"})
@@ -44,12 +45,37 @@ def normalize_hermes_session_id(raw_session_id: str) -> str:
     return f"hermes:{normalized}"
 
 
+def _source_checkout_root() -> Path | None:
+    for candidate in Path(__file__).resolve().parents:
+        if (
+            (candidate / "config.yaml").exists()
+            and (candidate / "prompts.yaml").exists()
+            and (candidate / "agent-catalog.yaml").exists()
+        ):
+            return candidate
+    return None
+
+
+def _hermes_runtime_orchestra_dir() -> Path:
+    source_root = _source_checkout_root()
+    if source_root is not None:
+        return source_root
+    return Path(__file__).resolve().parents[2] / "orchestra"
+
+
 def _orchestra_base_args() -> list[str]:
     args: list[str] = []
     if config := os.environ.get("ORCHESTRA_CONFIG"):
         args.extend(["--config", config])
+    else:
+        args.extend(["--config", str(_hermes_runtime_orchestra_dir() / "config.yaml")])
     if catalog := os.environ.get("ORCHESTRA_AGENT_CATALOG"):
         args.extend(["--agent-catalog", catalog])
+    else:
+        args.extend([
+            "--agent-catalog",
+            str(_hermes_runtime_orchestra_dir() / "agent-catalog.yaml"),
+        ])
     return args
 
 

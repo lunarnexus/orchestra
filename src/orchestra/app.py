@@ -94,6 +94,7 @@ class InitFileResult:
     source: Path
     target: Path
     action: str
+    mode: str
 
 
 @dataclass(frozen=True)
@@ -104,10 +105,23 @@ class InitPiResult:
 
 @dataclass(frozen=True)
 class InitHermesResult:
+    files: list[InitFileResult]
     command: list[str]
     stdout: str
     stderr: str
     verification_command: str
+
+
+@dataclass(frozen=True)
+class InitOpencodeResult:
+    message: str
+
+
+@dataclass(frozen=True)
+class InitAllResult:
+    pi: InitPiResult | None
+    hermes: list[InitHermesResult]
+    opencode: InitOpencodeResult | None
 
 
 @dataclass(frozen=True)
@@ -311,7 +325,6 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         run_id,
         RunUpdate(
             status=STATUS_RUNNING,
-
             harness=started_role.config.harness,
             role=started_role.name,
             process_id=worker.process.pid,
@@ -319,6 +332,7 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
             worker_session_id=worker.worker_session_id,
             transcript_path=worker.transcript_path,
             approval_needed=worker.approval_needed,
+            blocker_text=fallback_note,
         ),
     )
     if updated.status != STATUS_RUNNING:
@@ -640,7 +654,10 @@ def format_status(context: AppContext, session_id: str) -> str:
         owner = (
             f" session={run.orchestrator_session_id}" if len(lineage_session_ids) > 1 else ""
         )
-        lines.append(f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label}{pid}{owner}")
+        blocker = f" blocker={run.blocker_text}" if run.blocker_text else ""
+        lines.append(
+            f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label}{pid}{owner}{blocker}"
+        )
     return "\n".join(lines)
 
 
@@ -981,8 +998,14 @@ def _optional_float(value: object) -> float | None:
         return None
 
 
-def init_pi(*, force: bool = False, source_root: str | Path | None = None) -> InitPiResult:
+def init_pi(
+    *,
+    force: bool = False,
+    copy: bool = False,
+    source_root: str | Path | None = None,
+) -> InitPiResult:
     source_paths = _init_source_paths(source_root)
+    config_source_paths = _config_source_paths(source_root, copy=copy)
     pi_dir = default_pi_orchestra_dir().parent
 
     files = [
@@ -991,20 +1014,11 @@ def init_pi(*, force: bool = False, source_root: str | Path | None = None) -> In
             pi_dir / "extensions" / "orchestra" / "index.ts",
             force=force,
         ),
-        _copy_init_file(
-            source_paths["config"],
-            pi_dir / "orchestra" / "config.yaml",
+        *_materialize_runtime_config(
+            config_source_paths,
+            _runtime_config_targets(default_pi_orchestra_dir()),
             force=force,
-        ),
-        _copy_init_file(
-            source_paths["prompts"],
-            pi_dir / "orchestra" / "prompts.yaml",
-            force=force,
-        ),
-        _copy_init_file(
-            source_paths["catalog"],
-            pi_dir / "orchestra" / "agent-catalog.yaml",
-            force=force,
+            copy=copy,
         ),
     ]
     return InitPiResult(
@@ -1015,24 +1029,19 @@ def init_pi(*, force: bool = False, source_root: str | Path | None = None) -> In
 
 def init_hermes(
     *,
-    profile: str,
+    profile: str | None = None,
     force: bool = False,
+    copy: bool = False,
+    source_root: str | Path | None = None,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> InitHermesResult:
-    hermes_profile = profile.strip()
-    if not hermes_profile:
-        raise AppError("Hermes profile is required")
-
+    hermes_profile = _normalized_optional_profile(profile)
+    config_source_paths = _config_source_paths(source_root, copy=copy)
     plugin_source = "lunarnexus/orchestra/extensions/hermes/orchestra"
-    command = [
-        "hermes",
-        "-p",
-        hermes_profile,
-        "plugins",
-        "install",
-        plugin_source,
-        "--enable",
-    ]
+    command = ["hermes"]
+    if hermes_profile is not None:
+        command.extend(["-p", hermes_profile])
+    command.extend(["plugins", "install", plugin_source, "--enable"])
     if force:
         command.append("--force")
 
@@ -1055,12 +1064,90 @@ def init_hermes(
         detail = stderr or stdout or f"hermes exited with status {result.returncode}"
         raise AppError(f"Hermes plugin install failed: {detail}")
 
+    files = _materialize_runtime_config(
+        config_source_paths,
+        _runtime_config_targets(default_hermes_orchestra_dir(hermes_profile)),
+        force=force,
+        copy=copy,
+    )
+
+    verify_command = (
+        f"hermes -p {hermes_profile} plugins list"
+        if hermes_profile is not None
+        else "hermes plugins list"
+    )
     return InitHermesResult(
+        files=files,
         command=command,
         stdout=stdout,
         stderr=stderr,
-        verification_command=f"hermes -p {hermes_profile} plugins list",
+        verification_command=verify_command,
     )
+
+
+def init_opencode() -> InitOpencodeResult:
+    return InitOpencodeResult(
+        message="opencode: no Orchestra host/plugin install action required"
+    )
+
+
+def init_all(
+    *,
+    force: bool = False,
+    copy: bool = False,
+    catalog_path: str | Path | None = None,
+    source_root: str | Path | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> InitAllResult:
+    source_root_path = _find_source_root(source_root)
+    resolved_catalog = (
+        source_root_path / "agent-catalog.yaml"
+        if catalog_path is None and source_root_path is not None
+        else resolve_agent_catalog_path(catalog_path)
+    )
+    catalog = load_agent_catalog(resolved_catalog)
+    harnesses = {role.harness for role in catalog.roles.values()}
+
+    pi_result = (
+        init_pi(force=force, copy=copy, source_root=source_root)
+        if "pi" in harnesses
+        else None
+    )
+
+    hermes_profiles = sorted(
+        {
+            role.profile.strip()
+            for role in catalog.roles.values()
+            if role.harness == "hermes" and role.profile is not None and role.profile.strip()
+        }
+    )
+    include_default_hermes = any(
+        role.harness == "hermes" and _normalized_optional_profile(role.profile) is None
+        for role in catalog.roles.values()
+    )
+    hermes_results: list[InitHermesResult] = []
+    if include_default_hermes:
+        hermes_results.append(
+            init_hermes(
+                force=force,
+                copy=copy,
+                source_root=source_root,
+                runner=runner,
+            )
+        )
+    hermes_results.extend(
+        init_hermes(
+            profile=hermes_profile,
+            force=force,
+            copy=copy,
+            source_root=source_root,
+            runner=runner,
+        )
+        for hermes_profile in hermes_profiles
+    )
+
+    opencode_result = init_opencode() if "opencode" in harnesses else None
+    return InitAllResult(pi=pi_result, hermes=hermes_results, opencode=opencode_result)
 
 
 def run_doctor(
@@ -1132,22 +1219,13 @@ def format_doctor_checks(checks: list[DoctorCheck]) -> str:
 
 
 def _init_source_paths(source_root: str | Path | None) -> dict[str, Path]:
-    if source_root is not None:
-        root = Path(source_root)
+    root = _find_source_root(source_root)
+    if root is not None:
         return {
             "extension": root / "extensions" / "pi" / "orchestra" / "index.ts",
             "config": root / "config.yaml",
             "prompts": root / "prompts.yaml",
             "catalog": root / "agent-catalog.yaml",
-        }
-
-    repo_root = _find_source_root()
-    if repo_root is not None:
-        return {
-            "extension": repo_root / "extensions" / "pi" / "orchestra" / "index.ts",
-            "config": repo_root / "config.yaml",
-            "prompts": repo_root / "prompts.yaml",
-            "catalog": repo_root / "agent-catalog.yaml",
         }
 
     assets = Path(__file__).resolve().parent / "assets"
@@ -1159,25 +1237,141 @@ def _init_source_paths(source_root: str | Path | None) -> dict[str, Path]:
     }
 
 
-def _find_source_root() -> Path | None:
+def _config_source_paths(source_root: str | Path | None, *, copy: bool) -> dict[str, Path]:
+    root = _find_source_root(source_root)
+    if root is not None:
+        return {
+            "config": root / "config.yaml",
+            "prompts": root / "prompts.yaml",
+            "catalog": root / "agent-catalog.yaml",
+        }
+    if not copy:
+        raise AppError("config link source root not found; rerun with --copy")
+    assets = Path(__file__).resolve().parent / "assets"
+    return {
+        "config": assets / "config.yaml",
+        "prompts": assets / "prompts.yaml",
+        "catalog": assets / "agent-catalog.yaml",
+    }
+
+
+def _find_source_root(source_root: str | Path | None = None) -> Path | None:
+    if source_root is not None:
+        candidate = Path(source_root)
+        if _is_source_root(candidate):
+            return candidate
+        return None
     candidates = [
         Path.cwd(),
         Path(__file__).resolve().parents[2],
     ]
     for candidate in candidates:
-        if (candidate / "extensions" / "pi" / "orchestra" / "index.ts").exists():
+        if _is_source_root(candidate):
             return candidate
     return None
+
+
+def _is_source_root(candidate: Path) -> bool:
+    return (
+        (candidate / "extensions" / "pi" / "orchestra" / "index.ts").exists()
+        and (candidate / "config.yaml").exists()
+        and (candidate / "prompts.yaml").exists()
+        and (candidate / "agent-catalog.yaml").exists()
+    )
+
+
+def _runtime_config_targets(runtime_dir: Path) -> dict[str, Path]:
+    return {
+        "config": runtime_dir / "config.yaml",
+        "prompts": runtime_dir / "prompts.yaml",
+        "catalog": runtime_dir / "agent-catalog.yaml",
+    }
+
+
+def _materialize_runtime_config(
+    source_paths: dict[str, Path],
+    targets: dict[str, Path],
+    *,
+    force: bool,
+    copy: bool,
+) -> list[InitFileResult]:
+    writer = _copy_init_file if copy else _link_init_file
+    return [
+        writer(source_paths["config"], targets["config"], force=force),
+        writer(source_paths["prompts"], targets["prompts"], force=force),
+        writer(source_paths["catalog"], targets["catalog"], force=force),
+    ]
 
 
 def _copy_init_file(source: Path, target: Path, *, force: bool) -> InitFileResult:
     if not source.exists():
         raise AppError(f"init source file not found: {source}")
-    if target.exists() and not force:
-        return InitFileResult(source=source, target=target, action="exists")
+    target_exists = target.exists() or target.is_symlink()
+    if target_exists and not force:
+        return InitFileResult(source=source, target=target, action="exists", mode="copy")
     target.parent.mkdir(parents=True, exist_ok=True)
+    if target_exists:
+        _remove_existing_target(target)
     shutil.copy2(source, target)
-    return InitFileResult(source=source, target=target, action="updated" if force else "created")
+    return InitFileResult(
+        source=source,
+        target=target,
+        action="updated" if target_exists else "created",
+        mode="copy",
+    )
+
+
+def _link_init_file(source: Path, target: Path, *, force: bool) -> InitFileResult:
+    if not source.exists():
+        raise AppError(f"init source file not found: {source}")
+    target_exists = target.exists() or target.is_symlink()
+    if target_exists and not force:
+        return InitFileResult(source=source, target=target, action="exists", mode="link")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target_exists:
+        _remove_existing_target(target)
+    target.symlink_to(source)
+    return InitFileResult(
+        source=source,
+        target=target,
+        action="updated" if target_exists else "created",
+        mode="link",
+    )
+
+
+def _remove_existing_target(target: Path) -> None:
+    if target.is_symlink() or target.is_file():
+        target.unlink()
+        return
+    if target.exists():
+        raise AppError(f"init target is not a file: {target}")
+
+
+def default_hermes_home() -> Path:
+    explicit_home = os.environ.get("HERMES_HOME", "").strip()
+    if explicit_home:
+        return Path(explicit_home).expanduser()
+    return Path.home() / ".hermes"
+
+
+def default_hermes_orchestra_dir(profile: str | None = None) -> Path:
+    root_home = default_hermes_home()
+    selected_profile = _normalized_optional_profile(profile)
+    if selected_profile is None:
+        try:
+            selected_profile = (root_home / "active_profile").read_text(encoding="utf-8").strip()
+        except OSError:
+            selected_profile = "default"
+    if selected_profile and selected_profile != "default":
+        return root_home / "profiles" / selected_profile / "orchestra"
+    return root_home / "orchestra"
+
+
+def _normalized_optional_profile(profile: str | None) -> str | None:
+    if profile is None:
+        return None
+    normalized = profile.strip()
+    return normalized or None
 
 
 def _spawn_supervisor(context: AppContext, request_file: Path, run_id: str) -> None:

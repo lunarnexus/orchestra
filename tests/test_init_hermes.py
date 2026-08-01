@@ -22,21 +22,39 @@ def completed(
     return subprocess.CompletedProcess(args=args, returncode=code, stdout=stdout, stderr=stderr)
 
 
-def test_init_hermes_installs_plugin_with_profile_and_enable() -> None:
+def _write_source_tree(root: Path) -> None:
+    extension = root / "extensions" / "pi" / "orchestra" / "index.ts"
+    extension.parent.mkdir(parents=True)
+    extension.write_text("extension", encoding="utf-8")
+    (root / "config.yaml").write_text("state_dir: state\n", encoding="utf-8")
+    (root / "prompts.yaml").write_text("{}\n", encoding="utf-8")
+    (root / "agent-catalog.yaml").write_text(
+        "roles:\n  critic:\n    harness: hermes\n",
+        encoding="utf-8",
+    )
+
+
+def test_init_hermes_installs_plugin_with_default_profile_and_materializes_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[dict[str, Any]] = []
+    source = tmp_path / "source"
+    hermes_home = tmp_path / "hermes-home"
+    source.mkdir()
+    _write_source_tree(source)
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     def fake_runner(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append({"args": args, **kwargs})
         return completed(args, stdout="installed")
 
-    result = init_hermes(profile="tori", runner=fake_runner)
+    result = init_hermes(source_root=source, runner=fake_runner)
 
     assert calls == [
         {
             "args": [
                 "hermes",
-                "-p",
-                "tori",
                 "plugins",
                 "install",
                 "lunarnexus/orchestra/extensions/hermes/orchestra",
@@ -50,17 +68,60 @@ def test_init_hermes_installs_plugin_with_profile_and_enable() -> None:
     ]
     assert result.stdout == "installed"
     assert result.stderr == ""
-    assert result.verification_command == "hermes -p tori plugins list"
+    assert result.verification_command == "hermes plugins list"
+    assert (hermes_home / "orchestra" / "config.yaml").is_symlink()
+    assert (hermes_home / "orchestra" / "prompts.yaml").is_symlink()
+    assert (hermes_home / "orchestra" / "agent-catalog.yaml").is_symlink()
 
 
-def test_init_hermes_passes_force_to_official_installer() -> None:
+def test_init_hermes_explicit_profile_override_still_works(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls: list[list[str]] = []
+    source = tmp_path / "source"
+    hermes_home = tmp_path / "hermes-home"
+    source.mkdir()
+    _write_source_tree(source)
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     def fake_runner(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         return completed(args)
 
-    init_hermes(profile="tori", force=True, runner=fake_runner)
+    result = init_hermes(profile="tori", source_root=source, runner=fake_runner)
+
+    assert calls == [
+        [
+            "hermes",
+            "-p",
+            "tori",
+            "plugins",
+            "install",
+            "lunarnexus/orchestra/extensions/hermes/orchestra",
+            "--enable",
+        ]
+    ]
+    assert result.verification_command == "hermes -p tori plugins list"
+    assert (hermes_home / "profiles" / "tori" / "orchestra" / "config.yaml").is_symlink()
+
+
+def test_init_hermes_passes_force_to_official_installer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+    source = tmp_path / "source"
+    hermes_home = tmp_path / "hermes-home"
+    source.mkdir()
+    _write_source_tree(source)
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+    def fake_runner(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return completed(args)
+
+    init_hermes(profile="tori", force=True, source_root=source, runner=fake_runner)
 
     assert calls == [
         [
@@ -76,26 +137,55 @@ def test_init_hermes_passes_force_to_official_installer() -> None:
     ]
 
 
-def test_init_hermes_requires_profile() -> None:
-    with pytest.raises(AppError, match="Hermes profile is required"):
-        init_hermes(profile="   ")
+def test_init_hermes_reports_installer_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    hermes_home = tmp_path / "hermes-home"
+    source.mkdir()
+    _write_source_tree(source)
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
-
-def test_init_hermes_reports_installer_failure() -> None:
     def fake_runner(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
         return completed(args, stderr="clone failed", code=1)
 
     with pytest.raises(AppError, match="Hermes plugin install failed: clone failed"):
-        init_hermes(profile="tori", runner=fake_runner)
+        init_hermes(source_root=source, runner=fake_runner)
 
 
-def test_cli_init_hermes_requires_profile(capsys: pytest.CaptureFixture[str]) -> None:
-    with pytest.raises(SystemExit) as exc_info:
-        main(["init", "hermes"])
+def test_cli_init_hermes_allows_default_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from orchestra import cli
+    from orchestra.app import InitHermesResult
+
+    def fake_init_hermes(
+        *,
+        profile: str | None = None,
+        force: bool = False,
+        copy: bool = False,
+    ) -> InitHermesResult:
+        assert profile is None
+        assert force is False
+        assert copy is False
+        return InitHermesResult(
+            files=[],
+            command=["hermes", "plugins", "install", "source", "--enable"],
+            stdout="enabled",
+            stderr="",
+            verification_command="hermes plugins list",
+        )
+
+    monkeypatch.setattr(cli, "init_hermes", fake_init_hermes)
+
+    exit_code = main(["init", "hermes"])
 
     captured = capsys.readouterr()
-    assert exc_info.value.code == 2
-    assert "--profile" in captured.err
+    assert exit_code == 0
+    assert "installed: hermes plugins install source --enable" in captured.out
+    assert "verify: hermes plugins list" in captured.out
 
 
 def test_cli_init_hermes_prints_verify_command(
@@ -105,10 +195,17 @@ def test_cli_init_hermes_prints_verify_command(
     from orchestra import cli
     from orchestra.app import InitHermesResult
 
-    def fake_init_hermes(*, profile: str, force: bool = False) -> InitHermesResult:
+    def fake_init_hermes(
+        *,
+        profile: str | None = None,
+        force: bool = False,
+        copy: bool = False,
+    ) -> InitHermesResult:
         assert profile == "tori"
         assert force is True
+        assert copy is False
         return InitHermesResult(
+            files=[],
             command=[
                 "hermes",
                 "-p",
