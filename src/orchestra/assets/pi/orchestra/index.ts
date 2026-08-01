@@ -45,27 +45,111 @@ async function runOrchestra(args: string[]): Promise<{ code: number; stdout: str
   }
 }
 
-function parseDoArgs(args: string): { role: string | null; timeout: string | null; taskLabel: string | null; goal: string } {
-  const parts = args.trim().split(/\s+/).filter(Boolean);
+interface TokenizeArgsResult {
+  tokens: string[];
+  trailingSpace: boolean;
+  error: string | null;
+}
+
+interface ParsedDoArgs {
+  role: string | null;
+  timeout: string | null;
+  taskLabel: string | null;
+  goal: string;
+  error: string | null;
+}
+
+function tokenizeArgs(input: string): TokenizeArgsResult {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let escaping = false;
+
+  for (const char of input) {
+    if (escaping) {
+      current += char;
+      escaping = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      escaping = true;
+      continue;
+    }
+
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += char;
+  }
+
+  if (escaping) {
+    current += "\\";
+  }
+  if (quote) {
+    return { tokens: [], trailingSpace: /\s$/.test(input), error: "Malformed quoted string in /orch do arguments" };
+  }
+  if (current) {
+    tokens.push(current);
+  }
+
+  return {
+    tokens,
+    trailingSpace: /\s$/.test(input),
+    error: null,
+  };
+}
+
+function parseDoArgs(args: string): ParsedDoArgs {
+  const tokenized = tokenizeArgs(args);
+  if (tokenized.error) {
+    return {
+      role: null,
+      timeout: null,
+      taskLabel: null,
+      goal: "",
+      error: tokenized.error,
+    };
+  }
+
   let role: string | null = null;
   let timeout: string | null = null;
   let taskLabel: string | null = null;
   const goalParts: string[] = [];
 
-  for (let i = 0; i < parts.length; i += 1) {
-    const token = parts[i];
-    if (token === "--role" && parts[i + 1]) {
-      role = parts[i + 1];
+  for (let i = 0; i < tokenized.tokens.length; i += 1) {
+    const token = tokenized.tokens[i];
+    if (token === "--role" && tokenized.tokens[i + 1]) {
+      role = tokenized.tokens[i + 1];
       i += 1;
       continue;
     }
-    if (token === "--timeout" && parts[i + 1]) {
-      timeout = parts[i + 1];
+    if (token === "--timeout" && tokenized.tokens[i + 1]) {
+      timeout = tokenized.tokens[i + 1];
       i += 1;
       continue;
     }
-    if (token === "--task-label" && parts[i + 1]) {
-      taskLabel = parts[i + 1];
+    if (token === "--task-label" && tokenized.tokens[i + 1]) {
+      taskLabel = tokenized.tokens[i + 1];
       i += 1;
       continue;
     }
@@ -77,6 +161,7 @@ function parseDoArgs(args: string): { role: string | null; timeout: string | nul
     timeout,
     taskLabel,
     goal: goalParts.join(" ").trim(),
+    error: null,
   };
 }
 
@@ -153,11 +238,85 @@ async function loadToolInfo(): Promise<ToolInfoPayload> {
   };
 }
 
+function parseRoleNames(output: string): string[] {
+  const roles = new Set<string>();
+  for (const line of output.split(/\r?\n/)) {
+    const match = /^\s+[D✓✗]\s+(\S+)/.exec(line);
+    if (match) roles.add(match[1]);
+  }
+  return [...roles];
+}
+
+function parseActiveRunIds(output: string): string[] {
+  const runIds = new Set<string>();
+  for (const line of output.split(/\r?\n/)) {
+    const match = /^-\s+(\S+)\s+\[/.exec(line.trim());
+    if (match) runIds.add(match[1]);
+  }
+  return [...runIds];
+}
+
+function replaceCurrentToken(rawPrefix: string, currentToken: string, replacement: string): string {
+  return rawPrefix.slice(0, rawPrefix.length - currentToken.length) + replacement;
+}
+
+function appendCompletion(rawPrefix: string, suffix: string): string {
+  return `${rawPrefix}${suffix}`;
+}
+
+function buildCompletionItem(value: string, label: string, description?: string): { value: string; label: string; description?: string } {
+  return description ? { value, label, description } : { value, label };
+}
+
+function filterStaticCompletions(
+  rawPrefix: string,
+  currentToken: string,
+  suggestions: Array<{ token: string; description?: string }>,
+): Array<{ value: string; label: string; description?: string }> | null {
+  const items = suggestions
+    .filter((suggestion) => suggestion.token.startsWith(currentToken))
+    .map((suggestion) => buildCompletionItem(
+      replaceCurrentToken(rawPrefix, currentToken, suggestion.token),
+      suggestion.token.trim(),
+      suggestion.description,
+    ));
+  return items.length > 0 ? items : null;
+}
+
+function doArgumentContext(tokens: string[]): { expecting: "role" | "timeout" | "taskLabel" | null; goalStarted: boolean } {
+  let expecting: "role" | "timeout" | "taskLabel" | null = null;
+  let goalStarted = false;
+
+  for (const token of tokens) {
+    if (expecting) {
+      expecting = null;
+      continue;
+    }
+    if (token === "--role") {
+      expecting = "role";
+      continue;
+    }
+    if (token === "--timeout") {
+      expecting = "timeout";
+      continue;
+    }
+    if (token === "--task-label") {
+      expecting = "taskLabel";
+      continue;
+    }
+    goalStarted = true;
+  }
+
+  return { expecting, goalStarted };
+}
+
 export default async function orchestraExtension(pi: ExtensionAPI) {
   let currentSessionId: string | null = null;
   const reportWatchers = new Map<string, Set<ChildProcessWithoutNullStreams>>();
   const sessionRuns = new Map<string, Set<string>>();
   const sessionCompletedRuns = new Map<string, Set<string>>();
+  let cachedRoleNames: { expiresAt: number; roles: string[] } | null = null;
+  let cachedActiveRuns: { expiresAt: number; sessionId: string; runIds: string[] } | null = null;
 
   pi.registerEntryRenderer<OrchestraCommandEntry>("orchestra-command", (entry) => {
     const text = entry.data?.text ?? "/orch";
@@ -177,9 +336,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
   }
 
-  function parseAwaitRunOutput(output: string): { status: string | null; role: string | null; activeRemaining: number | null } {
+  function parseAwaitRunOutput(output: string): { status: string | null; role: string | null; blocker: string | null; activeRemaining: number | null } {
     let status: string | null = null;
     let role: string | null = null;
+    let blocker: string | null = null;
     let activeRemaining: number | null = null;
     for (const line of output.split(/\r?\n/)) {
       const trimmed = line.trim();
@@ -187,10 +347,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       if (statusMatch) status = statusMatch[1].trim();
       const roleMatch = /^role:\s+(.+)$/.exec(trimmed);
       if (roleMatch) role = roleMatch[1].trim();
+      const blockerMatch = /^blocker:\s+(.+)$/.exec(trimmed);
+      if (blockerMatch) blocker = blockerMatch[1].trim();
       const activeMatch = /^active_runs_remaining:\s+(\d+)$/.exec(trimmed);
       if (activeMatch) activeRemaining = Number(activeMatch[1]);
     }
-    return { status, role, activeRemaining };
+    return { status, role, blocker, activeRemaining };
   }
 
   function progressNotifier(ctx: { hasUI: boolean; ui: { notify: (msg: string, level: "info" | "warning" | "error") => void } }): ProgressNotifier {
@@ -248,7 +410,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       const completed = sessionCompletedRuns.get(sessionId) ?? new Set<string>();
       completed.add(runId);
       sessionCompletedRuns.set(sessionId, completed);
-      const { status, role, activeRemaining } = parseAwaitRunOutput(stdout);
+      const { status, role, blocker, activeRemaining } = parseAwaitRunOutput(stdout);
       const total = sessionRuns.get(sessionId)?.size ?? completed.size + (activeRemaining ?? 0);
       const command = [
         "_progress-message",
@@ -264,7 +426,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       if (role) command.push("--role", role);
       void runOrchestra(command).then((result) => {
         const roleText = role ? ` ${role}` : "";
-        notifier.notify(result.stdout || `orchestra:${roleText} ${runId} returned ${status ?? "done"} (${completed.size}/${total})`);
+        const blockerText = blocker ? ` :: ${blocker}` : "";
+        notifier.notify(result.stdout || `orchestra:${roleText} ${runId} returned ${status ?? "done"} (${completed.size}/${total})${blockerText}`);
         if (activeRemaining === 0) {
           sessionRuns.delete(sessionId);
           sessionCompletedRuns.delete(sessionId);
@@ -398,6 +561,167 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   const toolInfo = await loadToolInfo();
 
+  async function getRoleNames(): Promise<string[]> {
+    const now = Date.now();
+    if (cachedRoleNames && cachedRoleNames.expiresAt > now) {
+      return cachedRoleNames.roles;
+    }
+    const result = await runOrchestra(["roles", "--all"]);
+    const roles = result.code === 0 ? parseRoleNames(result.stdout) : [];
+    cachedRoleNames = { expiresAt: now + 5_000, roles };
+    return roles;
+  }
+
+  async function getActiveRunIds(sessionId: string): Promise<string[]> {
+    const now = Date.now();
+    if (
+      cachedActiveRuns
+      && cachedActiveRuns.sessionId === sessionId
+      && cachedActiveRuns.expiresAt > now
+    ) {
+      return cachedActiveRuns.runIds;
+    }
+    const result = await runOrchestra(["status", "--session-id", sessionId]);
+    const runIds = result.code === 0 ? parseActiveRunIds(result.stdout) : [];
+    cachedActiveRuns = { expiresAt: now + 2_000, sessionId, runIds };
+    return runIds;
+  }
+
+  async function getOrchArgumentCompletions(argumentPrefix: string): Promise<Array<{ value: string; label: string; description?: string }> | null> {
+    const parsed = tokenizeArgs(argumentPrefix);
+    if (parsed.error) return null;
+
+    const subcommands = [
+      { token: "help", description: "Show Orchestra help" },
+      { token: "doctor", description: "Check Orchestra setup" },
+      { token: "do ", description: "Start a worker for this session" },
+      { token: "roles ", description: "Show or update configured roles" },
+      { token: "status", description: "Show active workers for this session" },
+      { token: "stop ", description: "Stop an owned active worker" },
+      { token: "history ", description: "Show recent results for this session" },
+    ];
+
+    if (parsed.tokens.length === 0) {
+      return subcommands.map((item) => buildCompletionItem(item.token, item.token.trim(), item.description));
+    }
+
+    if (parsed.tokens.length === 1 && !parsed.trailingSpace) {
+      return filterStaticCompletions(argumentPrefix, parsed.tokens[0], subcommands);
+    }
+
+    const subcommand = parsed.tokens[0];
+
+    if (subcommand === "history") {
+      const historyLimits = ["10", "20", "50"];
+      if (parsed.tokens.length === 1 && parsed.trailingSpace) {
+        return historyLimits.map((limit) => buildCompletionItem(appendCompletion(argumentPrefix, limit), limit));
+      }
+      if (parsed.tokens.length === 2 && !parsed.trailingSpace) {
+        return historyLimits
+          .filter((limit) => limit.startsWith(parsed.tokens[1]))
+          .map((limit) => buildCompletionItem(replaceCurrentToken(argumentPrefix, parsed.tokens[1], limit), limit));
+      }
+      return null;
+    }
+
+    if (subcommand === "stop") {
+      if (!currentSessionId) return null;
+      const runIds = await getActiveRunIds(currentSessionId);
+      if (parsed.tokens.length === 1 && parsed.trailingSpace) {
+        return runIds.map((runId) => buildCompletionItem(appendCompletion(argumentPrefix, runId), runId));
+      }
+      if (parsed.tokens.length === 2 && !parsed.trailingSpace) {
+        return runIds
+          .filter((runId) => runId.startsWith(parsed.tokens[1]))
+          .map((runId) => buildCompletionItem(replaceCurrentToken(argumentPrefix, parsed.tokens[1], runId), runId));
+      }
+      return null;
+    }
+
+    if (subcommand === "roles") {
+      const roleNames = await getRoleNames();
+      const roleSettings = [
+        { token: "enabled ", description: "Enable or disable a role" },
+        { token: "model ", description: "Set a role model" },
+      ];
+      const boolValues = ["true", "false"];
+
+      if (parsed.tokens.length === 1 && parsed.trailingSpace) {
+        return roleNames.map((roleName) => buildCompletionItem(appendCompletion(argumentPrefix, roleName), roleName));
+      }
+      if (parsed.tokens.length === 2 && !parsed.trailingSpace) {
+        return roleNames
+          .filter((roleName) => roleName.startsWith(parsed.tokens[1]))
+          .map((roleName) => buildCompletionItem(replaceCurrentToken(argumentPrefix, parsed.tokens[1], roleName), roleName));
+      }
+      if (parsed.tokens.length === 2 && parsed.trailingSpace) {
+        return roleSettings.map((setting) => buildCompletionItem(appendCompletion(argumentPrefix, setting.token), setting.token.trim(), setting.description));
+      }
+      if (parsed.tokens.length === 3 && !parsed.trailingSpace) {
+        return filterStaticCompletions(argumentPrefix, parsed.tokens[2], roleSettings);
+      }
+      if (parsed.tokens.length === 3 && parsed.trailingSpace && parsed.tokens[2] === "enabled") {
+        return boolValues.map((value) => buildCompletionItem(appendCompletion(argumentPrefix, value), value));
+      }
+      if (parsed.tokens.length === 4 && !parsed.trailingSpace && parsed.tokens[2] === "enabled") {
+        return boolValues
+          .filter((value) => value.startsWith(parsed.tokens[3]))
+          .map((value) => buildCompletionItem(replaceCurrentToken(argumentPrefix, parsed.tokens[3], value), value));
+      }
+      return null;
+    }
+
+    if (subcommand === "do") {
+      const roleNames = await getRoleNames();
+      const doFlags = [
+        { token: "--role ", description: "Select a configured role" },
+        { token: "--timeout ", description: "Set timeout in seconds" },
+        { token: "--task-label ", description: "Set a short task label" },
+      ];
+      const timeoutValues = ["60", "120", "300", "600"];
+      const doTokens = parsed.tokens.slice(1);
+      const beforeCurrentTokens = parsed.trailingSpace ? doTokens : doTokens.slice(0, -1);
+      const currentToken = parsed.trailingSpace ? "" : (doTokens.at(-1) ?? "");
+      const context = doArgumentContext(beforeCurrentTokens);
+
+      if (context.expecting === "role") {
+        if (parsed.trailingSpace) {
+          return roleNames.map((roleName) => buildCompletionItem(appendCompletion(argumentPrefix, roleName), roleName));
+        }
+        return roleNames
+          .filter((roleName) => roleName.startsWith(currentToken))
+          .map((roleName) => buildCompletionItem(replaceCurrentToken(argumentPrefix, currentToken, roleName), roleName));
+      }
+
+      if (context.expecting === "timeout") {
+        if (parsed.trailingSpace) {
+          return timeoutValues.map((value) => buildCompletionItem(appendCompletion(argumentPrefix, value), value));
+        }
+        return timeoutValues
+          .filter((value) => value.startsWith(currentToken))
+          .map((value) => buildCompletionItem(replaceCurrentToken(argumentPrefix, currentToken, value), value));
+      }
+
+      if (context.expecting === "taskLabel") {
+        return null;
+      }
+
+      if (context.goalStarted) {
+        return null;
+      }
+
+      if (parsed.trailingSpace) {
+        return doFlags.map((flag) => buildCompletionItem(appendCompletion(argumentPrefix, flag.token), flag.token.trim(), flag.description));
+      }
+
+      if (currentToken.startsWith("--")) {
+        return filterStaticCompletions(argumentPrefix, currentToken, doFlags);
+      }
+    }
+
+    return null;
+  }
+
   pi.registerTool({
     name: "orch_dispatch",
     label: "Orchestra Dispatch",
@@ -422,6 +746,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("orch", {
     description: "Orchestra host adapter: /orch help|do|roles|status|stop|doctor|history",
+    getArgumentCompletions: getOrchArgumentCompletions,
     handler: async (args, ctx) => {
       const trimmed = args.trim();
       pi.appendEntry<OrchestraCommandEntry>("orchestra-command", {
@@ -490,6 +815,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
       if (subcommand === "do") {
         const parsed = parseDoArgs(rest.join(" "));
+        if (parsed.error) {
+          emitOutput(ctx, parsed.error, "warning");
+          return;
+        }
         if (!parsed.goal) {
           emitOutput(ctx, "Usage: /orch do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal>", "warning");
           return;

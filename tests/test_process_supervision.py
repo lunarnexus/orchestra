@@ -242,10 +242,42 @@ def test_prestart_failure_falls_back_to_enabled_default_role(
     record = store.get_run(run_id)
     assert record.role == "worker"
     assert record.harness == "pi"
+    assert record.blocker_text is not None
+    assert "requested role reviewer could not start before worker launch" in record.blocker_text
+    assert "ran default role worker instead" in record.blocker_text
     assert record.result_summary is not None
     assert "requested role reviewer could not start before worker launch" in record.result_summary
     assert "ran default role worker instead" in record.result_summary
     assert "worker ok" in record.result_summary
+
+    await_run = run_cli(
+        "--config",
+        str(config_path),
+        "--agent-catalog",
+        str(catalog_path),
+        "_await-run",
+        "--session-id",
+        "manual:fallback",
+        "--run-id",
+        run_id,
+    )
+    assert "status: done" in await_run.stdout
+    assert "role: worker" in await_run.stdout
+    assert (
+        "blocker: requested role reviewer could not start before worker launch; "
+        "ran default role worker instead"
+    ) in await_run.stdout
+
+    status = run_cli(
+        "--config",
+        str(config_path),
+        "--agent-catalog",
+        str(catalog_path),
+        "status",
+        "--session-id",
+        "manual:fallback",
+    )
+    assert "status: no active runs" in status.stdout
 
 
 def test_poststart_worker_failure_does_not_fall_back_to_default_role(

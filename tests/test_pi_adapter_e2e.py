@@ -80,7 +80,7 @@ def test_pi_extension_host_command_path(
             "--session-id",
             session_id,
             "-p",
-            "/orch do adapter e2e worker",
+            '/orch do --task-label "adapter task" adapter e2e worker',
         ],
         check=False,
         capture_output=True,
@@ -105,7 +105,8 @@ def test_pi_extension_host_command_path(
             text=True,
             env=env,
         )
-        return "adapter ok" in result.stdout or "adapter ok" in result.stderr
+        output = result.stdout + result.stderr
+        return "adapter ok" in output and "adapter task" in output
 
     history_ready = wait_for_condition(history_contains_result, timeout=8)
     assert history_ready

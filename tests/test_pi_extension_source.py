@@ -10,6 +10,9 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert 'name: "orch_dispatch"' in extension_source
     assert "_tool-info" in extension_source
     assert 'subcommand === "roles"' in extension_source
+    assert 'getArgumentCompletions: getOrchArgumentCompletions' in extension_source
+    assert 'function tokenizeArgs(input: string): TokenizeArgsResult' in extension_source
+    assert 'Malformed quoted string in /orch do arguments' in extension_source
     for keyword in ("delegate", "dispatch", "subagent", "sub-agent", "worker"):
         assert keyword in prompts_source
 

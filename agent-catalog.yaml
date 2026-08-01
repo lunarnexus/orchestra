@@ -1,3 +1,8 @@
+# Orchestra agent catalog
+# Model strings and command templates are harness-specific.
+# Pi format: pi --no-session --model <provider/model> -p "<prompt>"
+# Hermes format: hermes --profile <profile> -z "<prompt>"
+# OpenCode format: opencode run --agent <agent> --model <provider/model> "<prompt>"
 default_role: worker
 roles:
   worker:
@@ -48,17 +53,18 @@ roles:
     - '{prompt}'
     enabled: true
   appsec:
-    harness: pi
-    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    harness: opencode
+    model: openai/gpt-5.4
     prompt_addition: Focus on the assigned task and return a compact result.
     command:
-    - pi
-    - --no-session
+    - opencode
+    - run
+    - --agent
+    - plan
     - --model
-    - '{model}'
-    - -p
-    - '{prompt}'
-    enabled: false
+    - "{model}"
+    - "{prompt}"
+    enabled: true
   planner:
     harness: pi
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved

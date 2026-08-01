@@ -13,6 +13,7 @@ from orchestra.app import (
 from orchestra.config import RoleConfig
 from orchestra.harnesses import HarnessRegistry, WorkerProcess, WorkerRequest
 from orchestra.harnesses.hermes import HermesHarness
+from orchestra.harnesses.opencode import OpenCodeHarness
 from orchestra.harnesses.pi import PiHarness
 from orchestra.state import STATUS_FAILED
 
@@ -134,7 +135,9 @@ def test_default_registry_registers_lazy_builtin_loaders() -> None:
     registry = create_default_registry()
 
     assert registry._harnesses == {}
+    assert "opencode" in registry._loaders
     assert "pi" in registry._loaders
     assert "hermes" in registry._loaders
+    assert isinstance(registry.get("opencode"), OpenCodeHarness)
     assert isinstance(registry.get("pi"), PiHarness)
     assert isinstance(registry.get("hermes"), HermesHarness)

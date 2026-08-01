@@ -42,6 +42,10 @@ not add permanent one-shot artifacts or full session recording for this slice.
 - Local OpenCode is installed at `/Users/james/.opencode/bin/opencode`, version `1.17.11`.
 - `opencode run --help` confirms useful flags for the worker harness: `--dir`, `--agent`, `--model`, `--format`, `--session`, `--continue`, `--attach`, and permission flags.
 - OpenCode docs say plugins are JavaScript/TypeScript modules and custom tools receive a context object containing `sessionID`, `directory`, and `worktree`.
+- OpenCode model strings are harness-specific. Confirmed example: OpenCode accepts `openai/gpt-5.4`, while Pi may use `openai-codex/gpt-5.4` for the corresponding model family.
+- Direct OpenCode smoke is now proven and must precede Orchestra smoke when changing OpenCode catalog/model wiring.
+- The current repo catalog uses OpenCode for `appsec` with `--agent plan` and model `openai/gpt-5.4`.
+- Omitting `--dir` is the correct shared-catalog default for OpenCode roles so runs use the current working directory instead of a hardcoded project path.
 - OpenCode built-in agents should inform role mapping: `build` for write-capable
   development, `plan` for planning/analysis, `explore` for read-only codebase
   exploration, `scout` for external/dependency research, and `general` for broad
@@ -73,8 +77,9 @@ not add permanent one-shot artifacts or full session recording for this slice.
 - OpenCode worker dispatch builds a tokenized command without shell joining.
 - OpenCode worker prompts use the same lean prompt format as Pi/Hermes unless a specific OpenCode need is discovered.
 - Tests cover harness registration, command rendering, prompt rendering, and process start behavior.
-- Example config/docs show a disabled OpenCode role so users can opt in without changing defaults.
+- Example config/docs show how to configure OpenCode roles without requiring a separate host-plugin install step.
 - Future OpenCode host plugin/tool design uses OpenCode `context.sessionID` as runtime identity and normalizes it as `opencode:<sessionID>`.
+- OpenCode host parity should be split explicitly into dispatch parity, command parity, notification parity, and auto-return parity; only the first three are currently low-risk.
 - OpenCode roles use explicit agent choices and avoid unbounded nested subagent
   spawning.
 - Worker prompts guide return size: yes/no when yes/no answers the question;
@@ -93,27 +98,26 @@ Add a one-shot subprocess harness mirroring the Pi/Hermes pattern:
 - `build_command()` delegates to `expand_command_template()`
 - `start()` launches the tokenized command with stdout/stderr pipes and process-group support
 
-MVP catalog entry can use existing fields only:
+MVP catalog entries can use existing fields only. Confirmed working pattern:
 
 ```yaml
-opencode-worker:
+appsec:
   harness: opencode
-  enabled: false
-  model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+  model: openai/gpt-5.4
   prompt_addition: Focus on the assigned task and return a compact result.
   command:
     - opencode
     - run
-    - --dir
-    - /Users/james/workspace/orchestra
     - --agent
-    - build
+    - plan
     - --model
     - "{model}"
     - "{prompt}"
 ```
 
-Open question: whether to add first-class placeholders such as `{workdir}` or `{agent}` to avoid hardcoding `--dir` and `--agent` in each role. MVP can avoid schema expansion unless repetition hurts.
+Do not hardcode `--dir` in shared examples or default catalogs. Omitting `--dir` lets OpenCode run in the current working directory, which is the correct default for Orchestra's shared catalog.
+
+Open question: whether to add first-class placeholders such as `{workdir}` or `{agent}` later. MVP can avoid schema expansion unless repetition hurts.
 
 Recommended initial role mapping:
 
@@ -140,12 +144,12 @@ Expected tests:
 
 ### 3. Catalog and Docs
 
-Prefer opt-in examples over default activation:
+Current direction is to document and ship the real OpenCode-backed `appsec` role instead of an artificial disabled example.
 
-- Add disabled OpenCode role examples to `agent-catalog.yaml` and `src/orchestra/assets/agent-catalog.yaml`, or document examples in README only if keeping default catalog minimal is preferred.
-- Update `README.md` with OpenCode harness example and smoke command.
+- Keep `agent-catalog.yaml` and `src/orchestra/assets/agent-catalog.yaml` aligned.
+- Document harness-specific model naming differences clearly in `README.md`.
 - Update `FOUNDATION.md` architecture decision if a new public capability lands.
-- Add or update smoke docs only after the harness is working.
+- Keep direct OpenCode smoke and Orchestra smoke docs current.
 
 ### 4. OpenCode Host Plugin / Tool
 
@@ -167,13 +171,14 @@ OpenCode docs support three relevant paths:
 
 Proposed host behavior:
 
-- expose `orch_dispatch` custom tool first, because that best matches Pi/Hermes
-  host parity;
+- expose `orch_dispatch` custom tool first, because that best matches Pi/Hermes host parity;
 - tool receives `context.sessionID`, `directory`, and `worktree`;
 - normalize identity as `opencode:<context.sessionID>`;
 - call `orchestra do --session-id <normalized> --goal <goal> ...`;
-- avoid fake per-worker progress injection unless OpenCode has a safe notification/toast or follow-up mechanism;
-- add auto-return only if OpenCode supports a reliable host-side session reinjection path.
+- add command wrappers second (`/orch`-style custom commands) only as thin wrappers around the same behavior;
+- use toasts/attention for progress/status if useful;
+- do not fake prompt-box manipulation as progress UX;
+- auto-return is not first-class/native in OpenCode, but appears implementable with supported SDK APIs, most likely `client.session.prompt(...)` targeted at the owning session.
 
 Custom commands can be added later for slash-style UX, but they should call or
 wrap the same tool/core behavior instead of becoming a separate orchestration
@@ -206,7 +211,8 @@ Add OpenCode host plugin/source tests only when plugin/tool files exist:
 - source contains `context.sessionID` use;
 - source rejects user/model-supplied session identity;
 - source calls Orchestra with tokenized args, not shell string;
-- installed source copy is packaged if `init opencode` is added.
+- installed source copy is packaged if `init opencode` is added;
+- if auto-return is implemented with `client.session.prompt(...)`, add tests/notes for loop prevention, compact report labeling, and behavior when the user is already active in the session.
 
 ### 6. Verification
 
@@ -233,10 +239,17 @@ orchestra do --session-id manual:opencode-demo --role opencode-worker --goal "Re
 orchestra history --session-id manual:opencode-demo --limit 5
 ```
 
-Potential direct OpenCode smoke:
+Required direct OpenCode smoke before Orchestra smoke:
 
 ```bash
-opencode run --dir /Users/james/workspace/orchestra --agent plan --model lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved "Respond with exactly OPENCODE_RUN_OK"
+opencode run --agent plan --model openai/gpt-5.4 "Reply with exactly OPENCODE_DIRECT_OK"
+```
+
+Then Orchestra smoke:
+
+```bash
+orchestra do --session-id manual:opencode-demo --role appsec --goal "Reply with exactly OPENCODE_ORCH_OK"
+orchestra history --session-id manual:opencode-demo --limit 5
 ```
 
 ## Task Breakdown
@@ -251,18 +264,19 @@ opencode run --dir /Users/james/workspace/orchestra --agent plan --model lmstudi
 - [ ] Slice 4 — add `tests/test_harness_opencode.py` mirroring Pi/Hermes coverage.
 - [ ] Slice 5 — run focused harness tests and fix only OpenCode-related failures.
 
-### Phase 2: Catalog / Docs Opt-In
+### Phase 2: Catalog / Docs
 
-- [ ] Slice 6 — decide whether disabled OpenCode role examples belong in default catalogs or docs only.
-- [ ] Slice 7 — update chosen catalog/docs locations with an opt-in OpenCode role example.
+- [ ] Slice 6 — decide which default catalog/docs locations should carry the initial OpenCode role examples.
+- [ ] Slice 7 — update the chosen catalog/docs locations with the initial OpenCode role examples.
 - [ ] Slice 8 — run config, CLI roles, and doctor tests.
 
 ### Phase 3: Host Plugin / Tool Planning
 
-- [ ] Slice 9 — inspect OpenCode local config/tool/plugin paths and source examples without changing them.
-- [ ] Slice 10 — decide project-local vs global install behavior for `orchestra init opencode`.
-- [ ] Slice 11 — draft host tool implementation plan, including session identity and auto-return limitations.
-- [ ] Slice 11a — decide initial OpenCode agent mapping and nested-subagent guardrails.
+- [x] Slice 9 — inspect OpenCode local config/tool/plugin paths and source examples without changing them.
+- [x] Slice 10 — decide project-local vs global install behavior for `orchestra init opencode`.
+- [x] Slice 11 — draft host tool implementation plan, including session identity and auto-return limitations.
+- [x] Slice 11a — decide initial OpenCode agent mapping and nested-subagent guardrails.
+- [ ] Slice 11b — decide whether OpenCode auto-return should use `client.session.prompt(...)` and what guardrails are required.
 
 ### Phase 4: OpenCode Host Tool Implementation
 
@@ -279,9 +293,18 @@ opencode run --dir /Users/james/workspace/orchestra --agent plan --model lmstudi
 - [ ] Slice 19 — run CLI smoke commands.
 - [ ] Slice 20 — summarize implemented vs planned OpenCode support.
 
+## Research Updates to Preserve
+
+- Confirmed direct OpenCode smoke can succeed and must be tested before Orchestra smoke when debugging model/provider/catalog issues.
+- Confirmed OpenCode model naming is harness-native; provider/model strings cannot be copied blindly from Pi or Hermes catalogs.
+- Confirmed OpenCode host support is viable as a thin surface: custom tool first, custom commands second, plugin/hooks only where needed.
+- Confirmed practical parity for dispatch, session identity, status/history/stop, and likely toast-based progress.
+- Confirmed no clearly documented first-class native auto-return rail exists today; the best candidate is plugin-driven `client.session.prompt(...)` into the owning session.
+- `session.prompt(...)` is not obviously a bad idea, but it is a normal session message/turn path, not a special non-interrupting host rail, so it needs explicit guardrails and UX validation.
+
 ## Risks
 
-- OpenCode host plugin APIs may not provide a safe follow-up/reinjection mechanism equivalent to Pi `sendUserMessage`; do not fake auto-return through prompt injection.
+- OpenCode does not appear to expose a first-class non-interrupting reinjection rail equivalent to Pi `sendUserMessage` or Hermes `agent.steer(...)`. Auto-return likely requires `client.session.prompt(...)`, which is workable but not the same kind of host rail and needs loop/UX guardrails.
 - OpenCode permission behavior differs from Pi/Hermes; do not use auto-approval flags by default.
 - OpenCode can launch subagents. Keep nested spawning bounded through agent
   choice, prompt scope, and OpenCode `permission.task`/`subagent_depth` if needed.
@@ -292,9 +315,9 @@ opencode run --dir /Users/james/workspace/orchestra --agent plan --model lmstudi
 ## Open Decisions
 
 1. Should MVP include only `harness: opencode`, or also an OpenCode host `orch_dispatch` tool in the same milestone?
-2. Should default catalogs include disabled OpenCode roles, or should README hold examples only?
+2. Keep the real OpenCode-backed `appsec` role in default catalogs; add more roles only when there is a concrete need.
 3. Should `RoleConfig` grow OpenCode-friendly placeholders like `{agent}` and `{workdir}`?
-4. Should `orchestra init opencode` install globally, project-locally, or support both?
-5. Should OpenCode auto-return be deferred until a safe host reinjection API is confirmed?
+4. `orchestra init opencode` should likely support both global and project-local install targets, with global as the more comparable Pi/Hermes path for shared tooling.
+5. If OpenCode auto-return uses `client.session.prompt(...)`, what exact guardrails are required for session targeting, loop prevention, user-active-session UX, and report compactness?
 6. Which OpenCode agent should each Orchestra role use by default?
 7. Do Orchestra-launched OpenCode workers need `subagent_depth` or `permission.task` guardrails in the installed config?

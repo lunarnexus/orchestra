@@ -17,6 +17,7 @@ from orchestra.harnesses.base import (
 def register_builtin_harnesses(registry: HarnessRegistry) -> HarnessRegistry:
     registry.register_loader("pi", _load_pi_harness)
     registry.register_loader("hermes", _load_hermes_harness)
+    registry.register_loader("opencode", _load_opencode_harness)
     return registry
 
 
@@ -32,6 +33,12 @@ def _load_hermes_harness() -> Harness:
     return HermesHarness()
 
 
+def _load_opencode_harness() -> Harness:
+    from orchestra.harnesses.opencode import OpenCodeHarness
+
+    return OpenCodeHarness()
+
+
 def __getattr__(name: str) -> object:
     if name == "PiHarness":
         from orchestra.harnesses.pi import PiHarness
@@ -41,11 +48,16 @@ def __getattr__(name: str) -> object:
         from orchestra.harnesses.hermes import HermesHarness
 
         return HermesHarness
+    if name == "OpenCodeHarness":
+        from orchestra.harnesses.opencode import OpenCodeHarness
+
+        return OpenCodeHarness
     raise AttributeError(name)
 
 
 if TYPE_CHECKING:
     from orchestra.harnesses.hermes import HermesHarness
+    from orchestra.harnesses.opencode import OpenCodeHarness
     from orchestra.harnesses.pi import PiHarness
 
 
@@ -54,6 +66,7 @@ __all__ = [
     "HarnessLoadError",
     "HarnessRegistry",
     "HermesHarness",
+    "OpenCodeHarness",
     "PiHarness",
     "WorkerProcess",
     "WorkerRequest",

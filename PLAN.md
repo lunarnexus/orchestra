@@ -280,40 +280,51 @@ When only packaged assets are available and no source root is discoverable:
 - [x] Confirm optional `--profile` override should remain supported.
 - [x] Confirm OpenCode has no Orchestra plugin/extension install step.
 - [x] Choose exact public init surface: `pi|hermes|opencode|all` plus `--force` and `--copy`.
-- [ ] Finalize exact output wording for link/copy/materialization and no-op actions.
+- [x] Finalize exact output wording for link/copy/materialization and no-op actions.
 
 ### Phase 2: Refactor init behavior in core
-- [ ] Add runtime config materialization helpers in `src/orchestra/app.py`.
-- [ ] Make Pi init call extension install + Pi runtime config materialization.
-- [ ] Make Hermes init call plugin install + Hermes-local runtime config materialization.
-- [ ] Add OpenCode init reporting path.
-- [ ] Add `all` target orchestration using resolved catalog harnesses.
-- [ ] Ensure `--force` cleanly replaces existing files or links.
-- [ ] Ensure missing source files surface as clear user-facing errors.
+- [x] Add runtime config materialization helpers in `src/orchestra/app.py`.
+- [x] Make Pi init call extension install + Pi runtime config materialization.
+- [x] Make Hermes init call plugin install + Hermes-local runtime config materialization.
+- [x] Add OpenCode init reporting path.
+- [x] Add `all` target orchestration using resolved catalog harnesses.
+- [x] Ensure `--force` cleanly replaces existing files or links.
+- [x] Ensure missing source files surface as clear user-facing errors.
 
 ### Phase 3: Update CLI
-- [ ] Add `init opencode` and `init all` parser/handlers.
-- [ ] Add `--copy` to relevant init targets.
-- [ ] Remove required `--profile` from Hermes init.
-- [ ] Keep optional `--profile` override.
-- [ ] Update help text so target semantics are obvious.
+- [x] Add `init opencode` and `init all` parser/handlers.
+- [x] Add `--copy` to relevant init targets.
+- [x] Remove required `--profile` from Hermes init.
+- [x] Keep optional `--profile` override.
+- [x] Update help text so target semantics are obvious.
 
 ### Phase 4: Preserve installed-package viability
-- [ ] Reuse packaged asset fallbacks only for explicit `--copy` behavior.
-- [ ] Implement clear errors when link mode is unavailable outside a source checkout.
-- [ ] Verify packaged build still includes needed fallback assets.
+- [x] Reuse packaged asset fallbacks only for explicit `--copy` behavior.
+- [x] Implement clear errors when link mode is unavailable outside a source checkout.
+- [x] Verify packaged build still includes needed fallback assets.
 
 ### Phase 5: Update tests
-- [ ] Rewrite Hermes init tests around default-profile behavior.
-- [ ] Update Pi init tests.
-- [ ] Add all-target detection tests.
-- [ ] Add link/copy/force/fallback tests.
-- [ ] Run targeted tests first, then broader repo checks.
+- [x] Rewrite Hermes init tests around default-profile behavior.
+- [x] Update Pi init tests.
+- [x] Add all-target detection tests.
+- [x] Add link/copy/force/fallback tests.
+- [x] Run targeted tests first, then broader repo checks.
 
 ### Phase 6: Update docs and architecture record
-- [ ] Update `README.md` command examples and install explanation.
-- [ ] Update `FOUNDATION.md` to record the accepted model.
+- [x] Update `README.md` command examples and install explanation.
+- [x] Update `FOUNDATION.md` to record the accepted model.
 - [ ] Update `AGENTS.md` notes if command text changes.
+
+## Current State
+
+- Init/runtime-config track is complete.
+- Verification completed successfully:
+  - `python3 -m pytest`
+  - `python3 -m ruff check .`
+  - `python3 -m mypy src tests`
+  - `python3 -m build`
+- `AGENTS.md` was not updated; leave as optional cleanup unless command/config guidance there needs exact sync.
+- The separate role/harness-config redesign is accepted as a follow-on track and is not implemented yet.
 
 ## Exact Behavior to Validate During Implementation
 
