@@ -24,8 +24,9 @@ This scratchpad records workflow decisions already made for Orchestra. It is not
 
 - Workers should receive only the strictly necessary prompt and context for their task.
 - Do not send useless workflow or stage identifiers to workers unless they materially help the worker complete the task.
-- Skill consumption means portable prompt bundles injected into worker prompts.
-- Skill consumption does not mean exposing harness-native skill tools inside the worker.
+- Skill consumption is local-first: inject portable prompt bundles from the project skill library when available.
+- If a configured skill is not present locally, Orchestra may fall back by instructing the worker to load the named native skill itself.
+- MVP skill consumption still does not require harness-specific skill tool bridging inside Orchestra.
 
 ## Workflow Definition Shape
 

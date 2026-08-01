@@ -6,9 +6,9 @@ Feature additions from `research.md` gap analysis.
 
 - [ ] Explore role-level prompt skills before building workflow machinery.
   - Add `skills` list to role config/catalog.
-  - Treat skills as portable prompt bundles injected by Orchestra, not harness-native skill/tool loading.
+  - Resolve skills local-first from the project library, then fall back to asking the worker to load the named native skill.
   - Start with defaults like planner -> planning bundle, reviewer -> code-review bundle, appsec -> security-review bundle, researcher -> research bundle.
-  - Verify bundles appear in worker prompts across harnesses.
+  - Verify local bundles appear in worker prompts across harnesses and native fallback instructions are emitted when local skills are absent.
 - [ ] Improve worker return contracts before adding heavier transcript/artifact storage.
   - [x] Prompt workers to answer yes/no when yes/no is sufficient.
   - [x] Prompt workers for concise complete reports when asked for options, tradeoffs, research findings, or plans.

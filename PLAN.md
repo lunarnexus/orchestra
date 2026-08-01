@@ -324,7 +324,7 @@ When only packaged assets are available and no source root is discoverable:
   - `python3 -m mypy src tests`
   - `python3 -m build`
 - `AGENTS.md` was not updated; leave as optional cleanup unless command/config guidance there needs exact sync.
-- The separate role/harness-config redesign is accepted as a follow-on track and is not implemented yet.
+- The role/harness-config split is now implemented in core config loading, catalog shape, and role editing.
 
 ## Exact Behavior to Validate During Implementation
 
@@ -430,31 +430,29 @@ If link-by-default proves brittle:
 - `init all` should only materialize runtime config for targets it actually installs.
 - Packaged/non-source link mode should error; only explicit `--copy` may use packaged fallback assets.
 
-## Additional Accepted Design Direction
+## Implemented Catalog Design
 
 ### Role and harness-config split
 
-A follow-on catalog/command simplification is accepted for future implementation:
+Implemented catalog/command simplification:
 
-- No legacy schema or backward-compatibility layer is required.
-- Introduce top-level `harness_configs:`.
-- A harness config should contain only launch/runtime details needed by the harness, primarily:
+- Introduced top-level `harness_configs:`.
+- A harness config contains launch/runtime details needed by the harness, primarily:
   - `harness`
   - `command`
-- Remove `model` from harness configs.
-- Roles should own worker-selection fields such as:
+- Roles own worker-selection fields such as:
   - `harness_config`
   - `model`
   - `profile`
   - `agent`
   - `prompt_addition`
   - `enabled`
-- Dispatch resolution should be:
+- Dispatch resolution is:
   - role -> harness config -> render command with role fields -> apply explicit runtime args
-- No slash-command editing of raw command arrays is planned for MVP.
-- Host command UX should evolve away from treating `model` as a flat role setting bolted onto the old schema.
+- Slash-command editing of raw command arrays is still not planned for MVP.
+- Host command UX no longer needs to treat `model` as a flat role setting bolted onto the old inline-command schema.
 
-### Intended command direction for that follow-on
+### Implemented command direction
 
 - `/orch roles`
 - `/orch roles ROLE show`
@@ -521,3 +519,172 @@ roles:
 - Compatibility: medium; symlink semantics vary and copy fallback must be solid.
 - Migration: medium; Hermes config location and Hermes init args are changing.
 - Rollback: straightforward via the same commands with `--copy`.
+
+## Planned Feature: Role-Scoped Skill Injection
+
+### Goal
+
+Allow a role to declare an optional `skills` list in `agent-catalog.yaml`, and have Orchestra resolve and inject those skills into worker prompts deterministically across Pi, Hermes, and OpenCode.
+
+### Research Findings
+
+#### Pi
+
+- Pi discovers skills at startup and includes available skill names/descriptions in the system prompt as XML.
+- Pi then loads full skill content on demand when the model decides to read the skill or when `/skill:name` is invoked explicitly.
+- The explicit skill invocation format wraps full content as a `<skill ...>` block with a relative-path note.
+- Evidence:
+  - Pi docs: `/Users/james/.nvm/versions/node/v22.19.0/lib/node_modules/@earendil-works/pi-coding-agent/docs/skills.md`
+  - Pi code: `dist/core/skills.js` `formatSkillsForPrompt(...)`
+  - Pi harness core: `@earendil-works/pi-agent-core/dist/harness/skills.js` `formatSkillInvocation(...)`
+- Conclusion:
+  - Pi's *skill index* is part of the base/system prompt and should survive normal turns and compaction.
+  - Full skill bodies are loaded on demand rather than permanently resident by default.
+
+#### Hermes
+
+- Hermes CLI supports `--skills/ -s` to preload one or more skills for a session.
+- Hermes `--ignore-rules` explicitly says it skips auto-injection of `AGENTS.md`, `SOUL.md`, memory, and **preloaded skills**.
+- `hermes prompt-size --json` reports a distinct `skills_index` budget and groups skills under `stable (identity/guidance/skills)`.
+- Evidence:
+  - `hermes --help`
+  - `hermes chat --help`
+  - `hermes prompt-size --json`
+- Conclusion:
+  - Hermes has native session/bootstrap skill behavior, and the skills index is treated as stable prompt budget.
+  - Exact compaction persistence of the *full preloaded skill body* was not directly verified from source/docs in this planning pass.
+
+#### OpenCode
+
+- OpenCode docs say available skills are exposed through the native `skill` tool description and full skill content is loaded on demand via tool call.
+- OpenCode docs do not describe role-scoped preloading as a first-class CLI/session bootstrap feature.
+- A maintenance-mode third-party OpenCode skills plugin still advertises extra behavior like synthetic context injection and compaction reinjection on top of first-party skills.
+- Evidence:
+  - Official docs: `https://opencode.ai/docs/skills/`
+  - Plugin note: `https://github.com/joshuadavidthomas/opencode-agent-skills`
+- Conclusion:
+  - OpenCode's native model-visible skill availability is tool-based and on-demand.
+  - First-party skills do not appear to promise compaction-resilient reinjection of full skill bodies.
+
+### Design Decision
+
+- Orchestra should use **local-first skill resolution**.
+- If a configured skill exists in the project library, Orchestra should inject it as a portable prompt bundle.
+- If a configured skill is not found locally, Orchestra should fall back to a native-harness instruction in the initial prompt telling the worker to load that named skill before proceeding.
+- Do not add harness-specific skill-bridge code for MVP.
+- For the current one-shot worker harnesses, both local injection and native fallback instructions live in the initial worker prompt.
+- For future interactive/sessionful harnesses, plan to refresh role-scoped skill context per turn or through harness/system-prompt construction rather than relying on a one-time bootstrap message.
+- This aligns with existing project notes:
+  - `docs/workflow-decisions.md`
+  - `TODO.md`
+
+### Proposed Schema Change
+
+Add optional `skills` to role config:
+
+```yaml
+roles:
+  reviewer:
+    harness_config: pi
+    model: openai-codex/gpt-5.4
+    prompt_addition: Focus on the assigned task and return a compact result.
+    skills:
+      - code-reviewer
+      - security-reviewer
+    enabled: true
+```
+
+### Proposed Behavior
+
+- `skills` is optional; omitted means no skill injection.
+- For MVP, Orchestra resolves skills from a project-local library first at `skills/`.
+- A skill name maps directly to `skills/<name>/SKILL.md`.
+- No explicit path support, no multi-library local search, and no collision handling are needed for MVP.
+- If a local skill resolves, Orchestra injects it into the worker prompt before normal role instructions.
+- Injected local format should follow the portable skill-block pattern already used by Pi's explicit invocation style:
+  - skill name
+  - absolute source path
+  - note that relative references resolve from the skill directory
+  - full skill body
+- If a local skill does not resolve, Orchestra should add a short native-fallback instruction to the initial prompt, e.g. load skill `<name>` before doing the task, and report clearly if unavailable.
+- Missing local skills should not fail dispatch by themselves when native fallback is available.
+- `doctor` should report which configured role skills resolve locally and which will rely on native fallback.
+- Role display output should show configured skills in `show` output.
+
+### Scope Choice for MVP
+
+Keep the first implementation simple:
+
+- Config-driven only
+- Project-local `skills/` library first
+- Native harness fallback by plain prompt instruction only
+- Name-only role references
+- No harness-native skill tool bridging
+- No slash-command editing of raw skill files
+- No special compaction persistence machinery yet beyond prompt injection for one-shot workers
+- No extra caching or registry/source abstraction unless it becomes necessary
+
+Optional follow-up after MVP:
+
+- slash-command editing of role skill lists
+- caching skill resolution/parsing
+- richer skill source configuration if needed
+- per-turn reinjection path for future interactive harnesses
+
+### Files Likely to Change
+
+- `agent-catalog.yaml`
+- `skills/README.md`
+- `src/orchestra/config.py`
+- `src/orchestra/harnesses/common.py`
+- `src/orchestra/app.py`
+- `src/orchestra/cli.py` (only if role-show output changes)
+- `tests/test_config.py`
+- `tests/test_cli_commands.py`
+- `tests/test_harness_pi.py`
+- `tests/test_harness_hermes.py`
+- `tests/test_harness_opencode.py`
+- Possibly a new skill-resolution test file
+
+### Acceptance Criteria
+
+- Roles may declare optional `skills: [name, ...]`.
+- A dispatched worker prompt contains fully injected skill blocks for configured skills found in the local library.
+- A dispatched worker prompt contains a native-fallback load instruction for configured skills not found locally.
+- Local injection behavior is harness-agnostic and identical for Pi, Hermes, and OpenCode one-shot workers.
+- Missing local skills do not fail dispatch automatically; the worker is instructed to report unavailable native skills clearly.
+- `doctor` reports whether each configured skill resolves locally or will rely on native fallback.
+- Tests cover config parsing, prompt rendering, and fallback behavior.
+
+### Task Breakdown
+
+#### Phase A: Lock behavior
+- [ ] Finalize the local-first resolution rule: `skills/<name>/SKILL.md`, then native fallback.
+- [ ] Finalize injected skill-block prompt format.
+- [ ] Finalize the native-fallback instruction text.
+
+#### Phase B: Config + resolution
+- [ ] Add optional `skills` list to `RoleConfig` and catalog loading.
+- [ ] Add simple local-first skill resolution helpers in core.
+- [ ] Validate/report configured role skills during load and/or doctor checks.
+
+#### Phase C: Prompt injection
+- [ ] Inject resolved local skill content into `render_worker_prompt(...)`.
+- [ ] Add native-fallback load instructions for unresolved local skills.
+- [ ] Keep ordering deterministic across multiple skills.
+
+#### Phase D: UX + verification
+- [ ] Show configured skills in role detail output.
+- [ ] Add/adjust tests for config parsing, prompt rendering, and local-miss fallback behavior.
+- [ ] Run targeted tests, then repo verification.
+
+### Current State for This Feature
+
+- Research complete enough to choose the MVP direction.
+- Recommended implementation path: Orchestra-managed portable prompt injection.
+- Not implemented yet.
+
+### Risks
+
+- Skill content can be large; prompt growth may reduce available worker context.
+- Future interactive harnesses may need reinjection logic beyond the one-shot MVP.
