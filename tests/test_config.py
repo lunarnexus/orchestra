@@ -156,6 +156,7 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
     assert worker.model == "lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved"
     assert worker.profile is None
     assert worker.command == ["pi", "--no-session", "--model", "{model}", "-p", "{prompt}"]
+    assert worker.skills == ()
 
 
 def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
@@ -200,6 +201,8 @@ roles:
     model: gpt-5
     profile: reviewer
     worker_budget: 2
+    skills:
+      - code-reviewer
 """.lstrip(),
         encoding="utf-8",
     )
@@ -215,6 +218,7 @@ roles:
     assert reviewer.worker_budget == 2
     assert reviewer.command == ["hermes", "--profile", "{profile}", "-z", "{prompt}"]
     assert reviewer.enabled is True
+    assert reviewer.skills == ("code-reviewer",)
 
 
 @pytest.mark.parametrize(
@@ -261,6 +265,31 @@ roles:
             "    harness_config: pi\n"
             "    worker_budget: 0\n",
             "'worker_budget' must be a positive integer",
+        ),
+        (
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n"
+            "    skills: code-reviewer\n",
+            "role 'worker' requires 'skills' to be a non-empty list of strings",
+        ),
+        (
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n"
+            "    skills:\n"
+            "      - ../secret\n",
+            "role 'worker' requires 'skills' to contain only skill names",
         ),
         (
             "default_role: reviewer\n"

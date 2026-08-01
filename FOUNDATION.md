@@ -345,6 +345,7 @@ A role entry should own worker-selection fields such as:
 - `model`
 - `profile`
 - `agent`
+- `skills`
 - `prompt_addition`
 - `enabled`
 
@@ -364,10 +365,7 @@ proven by implementation.
 Roles remain tentative and may be overreach. Likely roles include `worker`,
 `reviewer`, `critic`, `researcher`, and `appsec`; an optional `planner` role is
 undecided. Do not define a separate `verifier` role unless it proves distinct
-from reviewer. Role prompts should stay minimal: tell harness agents which
-skill/profile to load, then pass a normal delegation prompt. Avoid hard-coding
-planning, coding, reviewing, or other work methods into core. Planner and
-orchestrator separation is still undecided.
+from reviewer. Role prompts should stay minimal: load configured role skills first, then pass a normal delegation prompt. Orchestra resolves each role skill from `skills/<skill-name>/SKILL.md` relative to the current working directory and injects the local content when present. If no local skill file exists at that path, the prompt tells the worker to load the named native skill before doing the task. Avoid hard-coding planning, coding, reviewing, or other work methods into core. Planner and orchestrator separation is still undecided.
 
 ### Dispatch Prompt Shape
 

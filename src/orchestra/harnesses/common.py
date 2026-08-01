@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from pathlib import Path
 
 from orchestra.config import RoleConfig
 from orchestra.harnesses.base import WorkerRequest
 
 ORCHESTRA_WORKER_ENV = "ORCHESTRA_WORKER"
+SKILL_LIBRARY_DIR = "skills"
+SKILL_FILENAME = "SKILL.md"
 
 
 def orchestra_worker_budget(env: Mapping[str, str] | None = None) -> int:
@@ -46,8 +49,9 @@ def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:
     prompts = request.prompts
     sections = [
         f"Role: {request.role_name}",
-        f"Goal: {request.goal.strip()}",
     ]
+    sections.extend(_role_skill_sections(role.skills))
+    sections.append(f"Goal: {request.goal.strip()}")
     if role.prompt_addition:
         sections.append(f"Role instructions: {role.prompt_addition.strip()}")
     if request.approved_context.strip():
@@ -60,6 +64,30 @@ def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:
     return_format = request.return_format.strip() or prompts.default_return_format
     sections.append(f"Return format: {return_format}")
     return "\n\n".join(sections)
+
+
+def _role_skill_sections(skill_names: tuple[str, ...]) -> list[str]:
+    sections: list[str] = []
+    for skill_name in skill_names:
+        skill_path = _find_project_skill(skill_name)
+        if skill_path is not None:
+            sections.append(
+                f"Role skill: {skill_name}\n\n"
+                f"{skill_path.read_text(encoding='utf-8').strip()}"
+            )
+        else:
+            sections.append(
+                f"Role skill: {skill_name}\n"
+                f"Load the native skill named '{skill_name}' before doing the task."
+            )
+    return sections
+
+
+def _find_project_skill(skill_name: str) -> Path | None:
+    candidate = Path.cwd() / SKILL_LIBRARY_DIR / skill_name / SKILL_FILENAME
+    if candidate.is_file():
+        return candidate
+    return None
 
 
 def expand_command_template(role: RoleConfig, prompt: str) -> list[str]:

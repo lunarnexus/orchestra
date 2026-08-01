@@ -95,6 +95,53 @@ def test_pi_harness_builds_scoped_prompt(worker_request: WorkerRequest) -> None:
     assert "Return format:" in prompt
 
 
+def test_pi_harness_injects_local_role_skill_before_goal(
+    worker_request: WorkerRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    skill_dir = tmp_path / "skills" / "code-reviewer"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# Code Reviewer\n\nReview the diff.", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    role = RoleConfig(
+        harness="pi",
+        skills=("code-reviewer",),
+        command=["pi", "-p", "{prompt}"],
+    )
+
+    prompt = PiHarness().build_prompt(worker_request, role)
+
+    assert "Role skill: code-reviewer" in prompt
+    assert "# Code Reviewer" in prompt
+    assert "Loaded from:" not in prompt
+    assert prompt.index("Role skill: code-reviewer") < prompt.index("Goal:")
+
+
+def test_pi_harness_falls_back_to_native_skill_instruction(
+    worker_request: WorkerRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent_skill_dir = tmp_path / "skills" / "security-reviewer"
+    parent_skill_dir.mkdir(parents=True)
+    (parent_skill_dir / "SKILL.md").write_text("# Security Reviewer", encoding="utf-8")
+    child_dir = tmp_path / "child"
+    child_dir.mkdir()
+    monkeypatch.chdir(child_dir)
+    role = RoleConfig(
+        harness="pi",
+        skills=("security-reviewer",),
+        command=["pi", "-p", "{prompt}"],
+    )
+
+    prompt = PiHarness().build_prompt(worker_request, role)
+
+    assert "Role skill: security-reviewer" in prompt
+    assert "# Security Reviewer" not in prompt
+    assert "Load the native skill named 'security-reviewer' before doing the task." in prompt
+
+
 def test_pi_harness_uses_configured_default_return_format(worker_request: WorkerRequest) -> None:
     harness = PiHarness()
     role = RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])

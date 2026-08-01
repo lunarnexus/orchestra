@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ DEFAULT_GLOBAL_CONCURRENCY = 4
 DEFAULT_PER_SESSION_CONCURRENCY = 3
 DEFAULT_AUTO_RETURN = True
 DEFAULT_ROLE_NAME = "worker"
+SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 DEFAULT_RETURN_FORMAT = (
     "Return the smallest complete answer. If yes/no is enough, answer yes/no plus "
     "blockers. For research/options/plans, return concise findings with sources or "
@@ -124,6 +126,7 @@ class RoleConfig:
     agent: str | None = None
     worker_budget: int | None = None
     enabled: bool = True
+    skills: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -278,6 +281,14 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                 agent=_get_optional_string(role_raw, "agent"),
                 worker_budget=_get_optional_positive_int_or_none(role_raw, "worker_budget"),
                 enabled=_get_optional_bool(role_raw, "enabled", True),
+                skills=tuple(
+                    _get_optional_skill_names(
+                        role_raw,
+                        "skills",
+                        context=f"role '{role_name}'",
+                    )
+                    or []
+                ),
             )
             continue
 
@@ -290,6 +301,14 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
             agent=_get_optional_string(role_raw, "agent"),
             worker_budget=_get_optional_positive_int_or_none(role_raw, "worker_budget"),
             enabled=_get_optional_bool(role_raw, "enabled", True),
+            skills=tuple(
+                _get_optional_skill_names(
+                    role_raw,
+                    "skills",
+                    context=f"role '{role_name}'",
+                )
+                or []
+            ),
         )
 
     if default_role not in roles:
@@ -398,6 +417,24 @@ def _get_optional_string_list(
     if any(not isinstance(item, str) or not item.strip() for item in value):
         raise ConfigError(f"{context} requires '{key}' to contain only non-empty strings")
     return value
+
+
+def _get_optional_skill_names(
+    data: dict[str, Any],
+    key: str,
+    *,
+    context: str,
+) -> list[str] | None:
+    values = _get_optional_string_list(data, key, context=context)
+    if values is None:
+        return None
+    for value in values:
+        if not SKILL_NAME_PATTERN.fullmatch(value):
+            raise ConfigError(
+                f"{context} requires '{key}' to contain only skill names "
+                "using letters, numbers, underscore, dot, or dash"
+            )
+    return values
 
 
 def _get_required_string_list(

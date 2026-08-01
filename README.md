@@ -15,7 +15,7 @@ It gives a host agent or CLI a small, consistent way to:
 - **Orchestrator session** — the parent CLI/host session that starts workers and owns their results.
 - **Worker run** — one focused task launched through a configured harness.
 - **Harness** — a runtime connector such as Pi, Hermes, or future OpenCode one-shot execution.
-- **Role** — a named catalog entry, such as `worker`, `reviewer`, `critic`, `researcher`, `appsec`, or `planner`, that selects a harness and prompt addition.
+- **Role** — a named catalog entry, such as `worker`, `reviewer`, `critic`, `researcher`, `appsec`, or `planner`, that selects a harness, optional skills, and prompt addition.
 - **Auto-return** — host integration behavior that reinjects one consolidated completion report after all active workers for the owning session finish.
 
 ## Operating Model
@@ -127,6 +127,8 @@ roles:
     harness_config: pi
     enabled: true
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    skills:
+      - code-reviewer
     prompt_addition: Focus on the assigned task and return a compact result.
 ```
 
@@ -135,11 +137,12 @@ Notes:
 - `default_role` is optional; when omitted it defaults to `worker`.
 - `harness_configs` define reusable launch/runtime templates.
 - `harness` and `command` live in `harness_configs`, not in roles.
-- `roles` select a `harness_config` and own worker-selection fields such as `model`, `profile`, `agent`, `prompt_addition`, and `enabled`.
+- `roles` select a `harness_config` and own worker-selection fields such as `model`, `profile`, `agent`, `skills`, `prompt_addition`, and `enabled`.
 - `command` is a tokenized argv template, not a shell string.
 - If `model` is omitted, harnesses that support model selection use their runtime default.
 - If `profile` is omitted, harnesses that support profiles use their runtime default.
 - If `agent` is omitted, harnesses that support agent selection use their runtime default.
+- `skills` is optional. For each skill, Orchestra checks `skills/<skill-name>/SKILL.md` relative to the current working directory and injects that content near the start of the worker prompt. If no local skill file exists at that path, the worker prompt tells the harness agent to load the named native skill before doing the task.
 - `state_dir` and `log_dir` should be stable absolute paths for installed host integrations so state does not drift with host cwd.
 
 ## CLI Usage

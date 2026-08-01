@@ -43,6 +43,8 @@ roles:
   reviewer:
     harness_config: pi
     model: openai-codex/gpt-5.4
+    skills:
+    - code-reviewer
     prompt_addition: Focus on the assigned task and return a compact result.
     enabled: true
   critic:
@@ -59,10 +61,14 @@ roles:
     harness_config: opencode
     model: openai/gpt-5.4
     agent: plan
+    skills:
+    - security-reviewer
     prompt_addition: Focus on the assigned task and return a compact result.
     enabled: true
   planner:
     harness_config: pi
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    skills:
+    - code-planner
     prompt_addition: Focus on the assigned task and return a concise result.
     enabled: false

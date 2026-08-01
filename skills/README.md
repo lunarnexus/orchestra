@@ -17,9 +17,9 @@ skills/code-reviewer/SKILL.md
 skills/security-reviewer/SKILL.md
 ```
 
-## Intended Orchestra behavior
+## Orchestra behavior
 
-Planned role config shape:
+Role config shape:
 
 ```yaml
 roles:
@@ -29,7 +29,7 @@ roles:
       - security-reviewer
 ```
 
-For MVP, Orchestra will resolve each configured skill name like this:
+Orchestra resolves each configured skill name like this:
 
 1. Check project-local skill path:
 
@@ -37,7 +37,7 @@ For MVP, Orchestra will resolve each configured skill name like this:
 skills/<skill-name>/SKILL.md
 ```
 
-2. If found, inject that full skill into the initial worker prompt.
+2. If found, inject that full skill into the initial worker prompt before task instructions.
 
 3. If not found, fall back to a plain prompt instruction telling the worker to load the named skill natively before doing the task.
 
