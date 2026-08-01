@@ -32,9 +32,11 @@ def orchestra_can_dispatch(env: Mapping[str, str] | None = None) -> bool:
 def worker_subprocess_env(
     *,
     worker_budget: int | None = None,
+    role_env: Mapping[str, str] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     worker_env = dict(env or os.environ)
+    worker_env.update(role_env or {})
     current_budget = orchestra_worker_budget(worker_env)
     configured_budget = worker_budget or 1
     if current_budget > 1:

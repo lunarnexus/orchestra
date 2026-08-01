@@ -217,6 +217,29 @@ def test_compact_summary_normalizes_and_truncates_output() -> None:
     assert summary_was_truncated("line one", limit=10) is False
 
 
+def test_worker_subprocess_env_applies_role_env_without_mutating_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ROLE_ONLY", "parent")
+
+    env = worker_subprocess_env(role_env={"ROLE_ONLY": "role", "NEW_VALUE": "set"})
+
+    assert env["ROLE_ONLY"] == "role"
+    assert env["NEW_VALUE"] == "set"
+    assert env[ORCHESTRA_WORKER_ENV] == "1"
+    assert os.environ["ROLE_ONLY"] == "parent"
+
+
+def test_worker_subprocess_env_preserves_orchestra_worker_budget_over_role_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(ORCHESTRA_WORKER_ENV, raising=False)
+
+    env = worker_subprocess_env(role_env={ORCHESTRA_WORKER_ENV: "99"})
+
+    assert env[ORCHESTRA_WORKER_ENV] == "1"
+
+
 def test_pi_harness_start_sets_orchestra_worker_env_budget(
     worker_request: WorkerRequest,
     python_executable: str,
@@ -249,6 +272,30 @@ def test_pi_harness_start_sets_orchestra_worker_env_budget(
     assert stdout.strip() == "2"
     assert stderr.strip() == ""
     assert ORCHESTRA_WORKER_ENV not in os.environ
+
+
+def test_pi_harness_start_passes_role_env(
+    worker_request: WorkerRequest,
+    python_executable: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ROLE_ENV_TEST", raising=False)
+    role = RoleConfig(
+        harness="pi",
+        env={"ROLE_ENV_TEST": "configured"},
+        command=[
+            python_executable,
+            "-c",
+            "import os; print(os.environ.get('ROLE_ENV_TEST', 'missing'))",
+        ],
+    )
+
+    worker = PiHarness().start(worker_request, role)
+    stdout, stderr = worker.process.communicate(timeout=5)
+
+    assert stdout.strip() == "configured"
+    assert stderr.strip() == ""
+    assert "ROLE_ENV_TEST" not in os.environ
 
 
 def test_pi_harness_start_returns_process_wrapper(

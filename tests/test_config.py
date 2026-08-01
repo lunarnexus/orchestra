@@ -157,6 +157,7 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
     assert worker.profile is None
     assert worker.command == ["pi", "--no-session", "--model", "{model}", "-p", "{prompt}"]
     assert worker.skills == ()
+    assert worker.env == {}
 
 
 def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
@@ -203,6 +204,9 @@ roles:
     worker_budget: 2
     skills:
       - code-reviewer
+    env:
+      FEATURE_FLAG: "1"
+      EMPTY_OK: ""
 """.lstrip(),
         encoding="utf-8",
     )
@@ -219,6 +223,7 @@ roles:
     assert reviewer.command == ["hermes", "--profile", "{profile}", "-z", "{prompt}"]
     assert reviewer.enabled is True
     assert reviewer.skills == ("code-reviewer",)
+    assert reviewer.env == {"FEATURE_FLAG": "1", "EMPTY_OK": ""}
 
 
 @pytest.mark.parametrize(
@@ -290,6 +295,70 @@ roles:
             "    skills:\n"
             "      - ../secret\n",
             "role 'worker' requires 'skills' to contain only skill names",
+        ),
+        (
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n"
+            "    env: nope\n",
+            "role 'worker' requires 'env' to be a mapping of strings",
+        ),
+        (
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n"
+            "    env:\n"
+            "      '': value\n",
+            "role 'worker' requires 'env' keys to be non-empty strings",
+        ),
+        (
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n"
+            "    env:\n"
+            "      BAD-NAME: value\n",
+            "role 'worker' requires 'env' keys to be valid environment variable names",
+        ),
+        (
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n"
+            "    env:\n"
+            "      ORCHESTRA_WORKER: '99'\n",
+            "role 'worker' requires 'env' keys not to use reserved ORCHESTRA_ names",
+        ),
+        (
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n"
+            "    env:\n"
+            "      FEATURE_FLAG: true\n",
+            "role 'worker' requires 'env' values to be strings",
         ),
         (
             "default_role: reviewer\n"

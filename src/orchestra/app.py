@@ -842,6 +842,8 @@ def _format_role_lines(
             details.append(f"worker_budget={role.worker_budget}")
         if role.skills:
             details.append(f"skills={','.join(role.skills)}")
+        if role.env:
+            details.append(f"env={','.join(sorted(role.env))}")
         suffix = f"  {' '.join(details)}" if details else ""
         role_marker = "D" if role_name == context.catalog.default_role else marker
         lines.append(

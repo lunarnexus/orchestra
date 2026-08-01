@@ -129,6 +129,8 @@ roles:
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
     skills:
       - code-reviewer
+    env:
+      REVIEW_MODE: strict
     prompt_addition: Focus on the assigned task and return a compact result.
 ```
 
@@ -137,12 +139,13 @@ Notes:
 - `default_role` is optional; when omitted it defaults to `worker`.
 - `harness_configs` define reusable launch/runtime templates.
 - `harness` and `command` live in `harness_configs`, not in roles.
-- `roles` select a `harness_config` and own worker-selection fields such as `model`, `profile`, `agent`, `skills`, `prompt_addition`, and `enabled`.
+- `roles` select a `harness_config` and own worker-selection fields such as `model`, `profile`, `agent`, `skills`, `env`, `prompt_addition`, and `enabled`.
 - `command` is a tokenized argv template, not a shell string.
 - If `model` is omitted, harnesses that support model selection use their runtime default.
 - If `profile` is omitted, harnesses that support profiles use their runtime default.
 - If `agent` is omitted, harnesses that support agent selection use their runtime default.
 - `skills` is optional. For each skill, Orchestra checks `skills/<skill-name>/SKILL.md` relative to the current working directory and injects that content near the start of the worker prompt. If no local skill file exists at that path, the worker prompt tells the harness agent to load the named native skill before doing the task.
+- `env` is optional. Values are added to the worker subprocess environment for that role. Role env overrides the parent process environment. Keys must be valid environment variable names and cannot use the reserved `ORCHESTRA_` prefix. `/orch roles` shows env keys only, not values. Avoid committing secrets in catalogs; prefer external environment or secret management for sensitive values.
 - `state_dir` and `log_dir` should be stable absolute paths for installed host integrations so state does not drift with host cwd.
 
 ## CLI Usage

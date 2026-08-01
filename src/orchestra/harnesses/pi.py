@@ -49,7 +49,7 @@ class PiHarness:
             stderr=subprocess.PIPE,
             text=True,
             start_new_session=supports_process_groups(),
-            env=worker_subprocess_env(worker_budget=request.worker_budget),
+            env=worker_subprocess_env(worker_budget=request.worker_budget, role_env=role.env),
         )
         return WorkerProcess(
             process=process,
