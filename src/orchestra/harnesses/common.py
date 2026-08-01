@@ -89,9 +89,18 @@ def expand_command_template(role: RoleConfig, prompt: str) -> list[str]:
 
 
 def compact_summary(text: str, *, limit: int = 280) -> str | None:
-    if not text:
+    normalized = _normalized_summary_text(text)
+    if not normalized:
         return None
-    normalized = " ".join(text.split())
     if len(normalized) <= limit:
         return normalized
     return normalized[: limit - 3] + "..."
+
+
+def summary_was_truncated(text: str, *, limit: int = 280) -> bool:
+    normalized = _normalized_summary_text(text)
+    return len(normalized) > limit
+
+
+def _normalized_summary_text(text: str) -> str:
+    return " ".join(text.split())

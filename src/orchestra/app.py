@@ -37,7 +37,11 @@ from orchestra.harnesses import (
     WorkerResult,
     register_builtin_harnesses,
 )
-from orchestra.harnesses.common import compact_summary, orchestra_can_dispatch
+from orchestra.harnesses.common import (
+    compact_summary,
+    orchestra_can_dispatch,
+    summary_was_truncated,
+)
 from orchestra.harnesses.processes import process_group_id
 from orchestra.logs import utc_now
 from orchestra.state import (
@@ -360,6 +364,7 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
             result_summary=compact_summary(stdout),
             error_text="Worker timed out",
             blocker_text="Worker exceeded timeout",
+            result_summary_truncated=False,
             timed_out=True,
             worker_session_id=worker.worker_session_id,
             transcript_path=worker.transcript_path,
@@ -412,7 +417,12 @@ def format_run_report(record: RunRecord) -> str:
     if record.process_group_id is not None:
         lines.append(f"process_group_id: {record.process_group_id}")
     if record.result_summary:
-        lines.append(f"result: {record.result_summary}")
+        result = record.result_summary
+        if record.result_summary_truncated:
+            result = f"{result} [truncated]"
+        lines.append(f"result: {result}")
+    if record.result_summary_truncated and record.result_artifact_path:
+        lines.append(f"result_artifact_path: {record.result_artifact_path}")
     if record.error_text:
         lines.append(f"error: {record.error_text}")
     if record.blocker_text:
@@ -464,22 +474,35 @@ def format_orchestrator_return(runs: list[RunRecord]) -> str:
     blocks = []
     for run in runs:
         outcome = "success" if run.status == STATUS_DONE else "fail"
-        summary = clean_result_summary(run.blocker_text or run.error_text or run.result_summary)
+        summary = _format_run_summary(run)
         label = "Result" if outcome == "success" else "Summary"
-        blocks.append(
-            "\n".join(
-                [
-                    f"[orchestra: Worker {run.run_id} {outcome}]",
-                    f"Request: {run.task_label}",
-                    f"{label}: {summary}",
-                    f"Log: {run.log_path}",
-                ]
-            )
-        )
+        lines = [
+            f"[orchestra: Worker {run.run_id} {outcome}]",
+            f"Request: {run.task_label}",
+            f"{label}: {summary}",
+        ]
+        full_result_line = _full_result_line(run)
+        if full_result_line:
+            lines.append(full_result_line)
+        lines.append(f"Log: {run.log_path}")
+        blocks.append("\n".join(lines))
     report = "\n\n".join(blocks)
     if len(runs) == 1:
         return report
     return f"[orchestra: {len(runs)} workers returned]\n\n{report}"
+
+
+def _format_run_summary(run: RunRecord) -> str:
+    summary = clean_result_summary(run.blocker_text or run.error_text or run.result_summary)
+    if run.result_summary_truncated:
+        return f"{summary} [truncated]"
+    return summary
+
+
+def _full_result_line(run: RunRecord) -> str | None:
+    if run.result_summary_truncated and run.result_artifact_path:
+        return f"Full result: {run.result_artifact_path}"
+    return None
 
 
 def build_session_report(session_id: str, runs: list[RunRecord], *, active_remaining: int) -> str:
@@ -495,10 +518,13 @@ def build_session_report(session_id: str, runs: list[RunRecord], *, active_remai
 
     lines.append("runs:")
     for run in runs:
-        summary = clean_result_summary(run.blocker_text or run.error_text or run.result_summary)
+        summary = _format_run_summary(run)
         lines.append(
             f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label} :: {summary}"
         )
+        full_result_line = _full_result_line(run)
+        if full_result_line:
+            lines.append(f"  {full_result_line}")
         lines.append(f"  log: {run.log_path}")
     if active_remaining == 0:
         lines.append("session_report: all active workers for this session are complete")
@@ -865,13 +891,16 @@ def format_history(context: AppContext, session_id: str, limit: int) -> str:
 
     lines.append("runs:")
     for run in runs:
-        summary = clean_result_summary(run.blocker_text or run.error_text or run.result_summary)
+        summary = _format_run_summary(run)
         owner = (
             f" session={run.orchestrator_session_id}" if len(lineage_session_ids) > 1 else ""
         )
         lines.append(
             f"- {run.run_id} [{run.status}] {run.role}{owner} :: {run.task_label} :: {summary}"
         )
+        full_result_line = _full_result_line(run)
+        if full_result_line:
+            lines.append(f"  {full_result_line}")
         lines.append(f"  log: {run.log_path}")
     return "\n".join(lines)
 
@@ -1518,6 +1547,7 @@ def _annotate_result_with_fallback(result: WorkerResult, note: str) -> WorkerRes
         result_summary=result_summary,
         error_text=error_text,
         blocker_text=result.blocker_text,
+        result_summary_truncated=result.result_summary_truncated,
         timed_out=result.timed_out,
         worker_session_id=result.worker_session_id,
         transcript_path=result.transcript_path,
@@ -1538,20 +1568,19 @@ def _result_from_completed_worker(
     stdout: str,
     stderr: str,
 ) -> WorkerResult:
-    normalized_stdout = stdout.strip()
-    normalized_stderr = stderr.strip()
-    result_summary = compact_summary(normalized_stdout)
+    result_summary = compact_summary(stdout)
     if worker.process.returncode == 0:
         return WorkerResult(
             status=STATUS_DONE,
             command=worker.command,
             prompt=worker.prompt,
             exit_code=worker.process.returncode,
-            stdout=normalized_stdout,
-            stderr=normalized_stderr,
+            stdout=stdout,
+            stderr=stderr,
             result_summary=result_summary,
             error_text=None,
             blocker_text=None,
+            result_summary_truncated=summary_was_truncated(stdout),
             worker_session_id=worker.worker_session_id,
             transcript_path=worker.transcript_path,
             approval_needed=worker.approval_needed,
@@ -1561,11 +1590,12 @@ def _result_from_completed_worker(
         command=worker.command,
         prompt=worker.prompt,
         exit_code=worker.process.returncode,
-        stdout=normalized_stdout,
-        stderr=normalized_stderr,
+        stdout=stdout,
+        stderr=stderr,
         result_summary=result_summary,
-        error_text=compact_summary(normalized_stderr) or "Worker failed",
+        error_text=compact_summary(stderr) or "Worker failed",
         blocker_text=None,
+        result_summary_truncated=summary_was_truncated(stderr) if stderr else False,
         worker_session_id=worker.worker_session_id,
         transcript_path=worker.transcript_path,
         approval_needed=worker.approval_needed,
@@ -1573,23 +1603,82 @@ def _result_from_completed_worker(
 
 
 def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> RunRecord:
+    current = context.store.get_run(run_id)
+    if current.status not in ACTIVE_STATUSES:
+        return current
+
     terminal_status = (
         result.status
         if result.status in {STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED}
         else STATUS_FAILED
+    )
+    artifact_path: Path | None = None
+    blocker_text = result.blocker_text
+    try:
+        artifact_path = _write_return_artifact(context, run_id, result)
+    except OSError as exc:
+        artifact_error = f"Return artifact could not be written: {exc}"
+        blocker_text = f"{blocker_text}; {artifact_error}" if blocker_text else artifact_error
+
+    result_summary_truncated = (
+        result.result_summary_truncated if not (blocker_text or current.blocker_text) else False
     )
     return context.store.update_run(
         run_id,
         RunUpdate(
             status=terminal_status,
             result_summary=result.result_summary,
+            result_artifact_path=artifact_path,
+            result_summary_truncated=result_summary_truncated,
             error_text=result.error_text,
-            blocker_text=result.blocker_text,
+            blocker_text=blocker_text,
             worker_session_id=result.worker_session_id,
             transcript_path=result.transcript_path,
             approval_needed=result.approval_needed,
         ),
     )
+
+
+def _write_return_artifact(
+    context: AppContext,
+    run_id: str,
+    result: WorkerResult,
+) -> Path:
+    artifact_dir = context.config.state_dir / "return-artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_dir / f"{run_id}.md"
+    artifact_path.write_text(
+        _format_return_artifact(run_id, result),
+        encoding="utf-8",
+    )
+    return artifact_path
+
+
+def _format_return_artifact(run_id: str, result: WorkerResult) -> str:
+    content = (
+        "\n".join(
+            [
+                "# Orchestra worker return",
+                "",
+                f"Run: {run_id}",
+                "",
+                "## stdout",
+                "",
+            ]
+        )
+        + "\n"
+    )
+    content += result.stdout if result.stdout else "(empty)\n"
+    content = _ensure_terminal_newline(content)
+    if result.stderr:
+        content += "\n## stderr\n\n"
+        content += result.stderr
+        content = _ensure_terminal_newline(content)
+    return content
+
+
+def _ensure_terminal_newline(text: str) -> str:
+    return text if text.endswith("\n") else f"{text}\n"
 
 
 def _terminate_owned_process(process_id: int, process_group_id_value: int | None) -> None:
@@ -1613,7 +1702,7 @@ def _terminate_subprocess(
     except subprocess.TimeoutExpired:
         _send_termination(process.pid, process_group_id_value, signal.SIGKILL)
         stdout, stderr = process.communicate(timeout=1.0)
-    return stdout.strip(), stderr.strip()
+    return stdout, stderr
 
 
 def _send_termination(

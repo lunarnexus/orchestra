@@ -52,7 +52,7 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == 4
+    assert row[0] == 5
 
 
 def test_connect_retries_transient_sqlite_open_failure(
@@ -133,6 +133,8 @@ def test_update_run_tracks_state_transitions_and_metadata(
         RunUpdate(
             status=STATUS_DONE,
             result_summary="Completed successfully",
+            result_artifact_path=tmp_path / "state" / "return-artifacts" / "run-2.md",
+            result_summary_truncated=True,
         ),
     )
 
@@ -143,6 +145,8 @@ def test_update_run_tracks_state_transitions_and_metadata(
     assert running.transcript_path == tmp_path / "transcripts" / "run-2.md"
     assert done.ended_at is not None
     assert done.result_summary == "Completed successfully"
+    assert done.result_artifact_path == tmp_path / "state" / "return-artifacts" / "run-2.md"
+    assert done.result_summary_truncated is True
 
 
 def test_late_terminal_update_is_ignored(state_store: StateStore, tmp_path: Path) -> None:

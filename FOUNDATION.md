@@ -136,6 +136,7 @@ Default state should include only:
 - local process handle when available
 - short task label
 - compact final result or summary
+- optional return artifact path and summary-truncated flag
 - error or blocker
 - JSONL log path
 - optional worker session handle or transcript path when the harness exposes one
@@ -143,8 +144,10 @@ Default state should include only:
 
 Default state should not store full prompts, full transcripts, raw token streams,
 or every tool call. JSONL operational logs should record lifecycle events,
-status changes and result summaries. Debug mode may record raw details to logs
-for troubleshooting and failed-run inspection.
+status changes and result summaries. A worker's full final stdout/stderr is kept
+as a return artifact under `state/return-artifacts/` so truncated summaries can
+point the orchestrator at the complete worker return. Debug mode may record raw
+details to logs for troubleshooting and failed-run inspection.
 
 Future harnesses may opportunistically report a native session id or transcript
 file path for debugging or resume. This is not MVP and must remain optional: Pi
@@ -167,7 +170,8 @@ as required state.
    orchestrator may call `/orch do` repeatedly and asynchronously until a
    concurrency limit is reached.
 8. Each harness launches a focused child agent with scoped context.
-9. Orchestra tracks lean status while JSONL logs capture operational details.
+9. Orchestra tracks lean status while JSONL logs capture operational details and
+   stores the worker's full final stdout/stderr as a return artifact.
 10. When any worker finishes, Orchestra updates state and checks
    `count_active_workers(orchestrator_session_id)`.
 11. If that count is below 1, Orchestra creates one minimal consolidated return
@@ -238,7 +242,8 @@ When any worker finishes, Orchestra updates state and checks
 Orchestra sends one minimal consolidated return prompt/report for that
 orchestrator session with per-worker status, compact results or blockers, and
 JSONL log references. Do not send per-worker prompts, and do not return
-one report per batch.
+one report per batch. When a compact summary is truncated, the report marks it
+as truncated and includes the return artifact path for the full worker return.
 
 ### Scheduling and Workflows
 
@@ -481,11 +486,13 @@ Core-formatted final orchestrator return:
 ```text
 [orchestra: Worker <run-id> success|fail]
 Request: <original request>
-Result: <summary>
+Result: <summary> [truncated]
+Full result: <return artifact path>
 Log: <absolute-or-configured log path>
 ```
 
-Failures use `Summary: <summary>` instead of `Result: <summary>`.
+Failures use `Summary: <summary>` instead of `Result: <summary>`. The `[truncated]`
+marker and `Full result:` line appear only when the compact summary was cut.
 
 The default worker return format is:
 
@@ -505,7 +512,8 @@ reasoning. The orchestrator return may include a log path, but prompts should no
 tell the orchestrator to read logs unless needed.
 
 Logs should be sparse: omit `None`, empty strings, empty lists/dicts, and false
-optional flags. Successful logs should stay compact.
+optional flags. Successful logs should stay compact. Return artifacts hold the
+full final worker stdout/stderr outside SQLite and JSONL logs.
 
 Runtime state and log directories for this checkout are visible directories under
 the project:

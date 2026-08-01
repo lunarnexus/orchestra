@@ -19,7 +19,7 @@ STATUS_CANCELLED = "cancelled"
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 _CONNECT_ATTEMPTS = 8
 _CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
 _CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
@@ -55,6 +55,8 @@ class RunRecord:
     process_id: int | None = None
     process_group_id: int | None = None
     result_summary: str | None = None
+    result_artifact_path: Path | None = None
+    result_summary_truncated: bool = False
     error_text: str | None = None
     blocker_text: str | None = None
     worker_session_id: str | None = None
@@ -74,6 +76,8 @@ class RunUpdate:
     process_id: int | None = None
     process_group_id: int | None = None
     result_summary: str | None = None
+    result_artifact_path: Path | None = None
+    result_summary_truncated: bool | None = None
     error_text: str | None = None
     blocker_text: str | None = None
     worker_session_id: str | None = None
@@ -127,6 +131,8 @@ class StateStore:
                     process_group_id INTEGER,
                     task_label TEXT NOT NULL,
                     result_summary TEXT,
+                    result_artifact_path TEXT,
+                    result_summary_truncated INTEGER NOT NULL DEFAULT 0,
                     error_text TEXT,
                     blocker_text TEXT,
                     log_path TEXT NOT NULL,
@@ -139,6 +145,13 @@ class StateStore:
                 """
             )
             self._ensure_column(connection, "runs", "process_group_id", "INTEGER")
+            self._ensure_column(connection, "runs", "result_artifact_path", "TEXT")
+            self._ensure_column(
+                connection,
+                "runs",
+                "result_summary_truncated",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
             self._ensure_column(connection, "runs", "report_claimed_at", "TEXT")
             self._ensure_column(connection, "runs", "reported_at", "TEXT")
             connection.execute(
@@ -210,6 +223,8 @@ class StateStore:
                     process_group_id,
                     task_label,
                     result_summary,
+                    result_artifact_path,
+                    result_summary_truncated,
                     error_text,
                     blocker_text,
                     log_path,
@@ -218,7 +233,7 @@ class StateStore:
                     approval_needed,
                     report_claimed_at,
                     reported_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._serialize_record(record),
             )
@@ -276,6 +291,7 @@ class StateStore:
                 "process_id": next_record.process_id,
                 "process_group_id": next_record.process_group_id,
                 "result_summary": next_record.result_summary,
+                "result_summary_truncated": next_record.result_summary_truncated,
                 "error_text": next_record.error_text,
                 "blocker_text": next_record.blocker_text,
             },
@@ -547,6 +563,16 @@ class StateStore:
                 if update.result_summary is not None
                 else current.result_summary
             ),
+            result_artifact_path=(
+                update.result_artifact_path
+                if update.result_artifact_path is not None
+                else current.result_artifact_path
+            ),
+            result_summary_truncated=(
+                update.result_summary_truncated
+                if update.result_summary_truncated is not None
+                else current.result_summary_truncated
+            ),
             error_text=(
                 update.error_text if update.error_text is not None else current.error_text
             ),
@@ -598,6 +624,8 @@ class StateStore:
                 process_id = ?,
                 process_group_id = ?,
                 result_summary = ?,
+                result_artifact_path = ?,
+                result_summary_truncated = ?,
                 error_text = ?,
                 blocker_text = ?,
                 worker_session_id = ?,
@@ -617,6 +645,8 @@ class StateStore:
                 record.process_id,
                 record.process_group_id,
                 record.result_summary,
+                str(record.result_artifact_path) if record.result_artifact_path else None,
+                int(record.result_summary_truncated),
                 record.error_text,
                 record.blocker_text,
                 record.worker_session_id,
@@ -645,6 +675,8 @@ class StateStore:
             record.process_group_id,
             record.task_label,
             record.result_summary,
+            str(record.result_artifact_path) if record.result_artifact_path else None,
+            int(record.result_summary_truncated),
             record.error_text,
             record.blocker_text,
             str(record.log_path),
@@ -672,6 +704,12 @@ class StateStore:
             ),
             task_label=str(row["task_label"]),
             result_summary=_optional_text(row["result_summary"]),
+            result_artifact_path=(
+                Path(str(row["result_artifact_path"]))
+                if row["result_artifact_path"] is not None
+                else None
+            ),
+            result_summary_truncated=bool(row["result_summary_truncated"]),
             error_text=_optional_text(row["error_text"]),
             blocker_text=_optional_text(row["blocker_text"]),
             log_path=Path(str(row["log_path"])),

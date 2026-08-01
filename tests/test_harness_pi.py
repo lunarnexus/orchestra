@@ -14,6 +14,7 @@ from orchestra.harnesses.common import (
     orchestra_can_dispatch,
     orchestra_worker_budget,
     render_worker_prompt,
+    summary_was_truncated,
     worker_subprocess_env,
 )
 
@@ -165,6 +166,8 @@ def test_worker_subprocess_env_decrements_orchestra_worker_budget(
 def test_compact_summary_normalizes_and_truncates_output() -> None:
     assert compact_summary("line one\nline two") == "line one line two"
     assert compact_summary("x" * 12, limit=10) == "xxxxxxx..."
+    assert summary_was_truncated("x" * 12, limit=10) is True
+    assert summary_was_truncated("line one", limit=10) is False
 
 
 def test_pi_harness_start_sets_orchestra_worker_env_budget(

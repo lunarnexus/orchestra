@@ -325,7 +325,8 @@ orchestra: <run-id> returned <status> (<done>/<total>)  # Pi notification-capabl
 
 [orchestra: Worker <run-id> success|fail]
 Request: <original request>
-Result: <summary>
+Result: <summary> [truncated]
+Full result: <return artifact path>
 Log: <absolute-or-configured log path>
 ```
 
@@ -336,12 +337,14 @@ while Hermes is actively running it uses non-interrupting `agent.steer(...)`;
 when Hermes is idle it uses `inject_message(...)` to start the next turn with
 the consolidated report.
 
-Failures use `Summary: <summary>` instead of `Result: <summary>`.
+Failures use `Summary: <summary>` instead of `Result: <summary>`. The `[truncated]`
+marker and `Full result:` line appear only when the compact summary was cut.
 
 Default runtime files for this checkout:
 
 ```text
 /Users/james/workspace/orchestra/state/orchestra.db
+/Users/james/workspace/orchestra/state/return-artifacts/<run-id>.md
 /Users/james/workspace/orchestra/logs/<run-id>.jsonl
 ```
 
@@ -351,10 +354,11 @@ State stays lean:
 - process ids / process group ids when available
 - status transitions
 - compact result / error / blocker text
+- return artifact path and truncated-summary marker
 - optional transcript refs
 - report watermarking for consolidated returns
 
-Logs are sparse JSONL lifecycle records. Reports may include log paths for debugging, but normal use should not require reading logs.
+Logs are sparse JSONL lifecycle records. Return artifacts hold the full final worker stdout/stderr. Reports may include log paths for debugging, but normal use should not require reading logs.
 
 ## Verification
 
