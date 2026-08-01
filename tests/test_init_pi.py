@@ -15,7 +15,16 @@ def _write_source_tree(root: Path, extension_text: str = "extension v1") -> None
     (root / "config.yaml").write_text("state_dir: state\n", encoding="utf-8")
     (root / "prompts.yaml").write_text("{}\n", encoding="utf-8")
     (root / "agent-catalog.yaml").write_text(
-        "roles:\n  worker:\n    harness: pi\n",
+        "harness_configs:\n"
+        "  pi:\n"
+        "    harness: pi\n"
+        "    command:\n"
+        "      - pi\n"
+        "      - -p\n"
+        "      - '{prompt}'\n"
+        "roles:\n"
+        "  worker:\n"
+        "    harness_config: pi\n",
         encoding="utf-8",
     )
 

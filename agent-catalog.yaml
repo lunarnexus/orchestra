@@ -4,11 +4,9 @@
 # Hermes format: hermes --profile <profile> -z "<prompt>"
 # OpenCode format: opencode run --agent <agent> --model <provider/model> "<prompt>"
 default_role: worker
-roles:
-  worker:
+harness_configs:
+  pi:
     harness: pi
-    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
-    prompt_addition: Focus on the assigned task and return a compact result.
     command:
     - pi
     - --no-session
@@ -16,64 +14,53 @@ roles:
     - '{model}'
     - -p
     - '{prompt}'
-    enabled: true
-  reviewer:
-    harness: pi
-    model: openai-codex/gpt-5.4
-    prompt_addition: Focus on the assigned task and return a compact result.
-    command:
-    - pi
-    - --no-session
-    - --model
-    - '{model}'
-    - -p
-    - '{prompt}'
-    enabled: true
-  critic:
+  hermes:
     harness: hermes
-    profile: tori
-    prompt_addition: Focus on the assigned task and return a compact result.
     command:
     - hermes
     - --profile
     - '{profile}'
     - -z
     - '{prompt}'
-    enabled: true
-  researcher:
-    harness: pi
-    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
-    prompt_addition: Thoroughly research the the assigned topic using official docs, internet, or source code, and return a concise report.
-    command:
-    - pi
-    - --no-session
-    - --model
-    - '{model}'
-    - -p
-    - '{prompt}'
-    enabled: true
-  appsec:
+  opencode:
     harness: opencode
-    model: openai/gpt-5.4
-    prompt_addition: Focus on the assigned task and return a compact result.
     command:
     - opencode
     - run
     - --agent
-    - plan
-    - --model
-    - "{model}"
-    - "{prompt}"
-    enabled: true
-  planner:
-    harness: pi
-    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
-    prompt_addition: Focus on the assigned task and return a concise result.
-    command:
-    - pi
-    - --no-session
+    - '{agent}'
     - --model
     - '{model}'
-    - -p
     - '{prompt}'
+roles:
+  worker:
+    harness_config: pi
+    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    prompt_addition: Focus on the assigned task and return a compact result.
+    enabled: true
+  reviewer:
+    harness_config: pi
+    model: openai-codex/gpt-5.4
+    prompt_addition: Focus on the assigned task and return a compact result.
+    enabled: true
+  critic:
+    harness_config: hermes
+    profile: tori
+    prompt_addition: Focus on the assigned task and return a compact result.
+    enabled: true
+  researcher:
+    harness_config: pi
+    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    prompt_addition: Thoroughly research the the assigned topic using official docs, internet, or source code, and return a concise report.
+    enabled: true
+  appsec:
+    harness_config: opencode
+    model: openai/gpt-5.4
+    agent: plan
+    prompt_addition: Focus on the assigned task and return a compact result.
+    enabled: true
+  planner:
+    harness_config: pi
+    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    prompt_addition: Focus on the assigned task and return a concise result.
     enabled: false

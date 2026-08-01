@@ -39,12 +39,17 @@ def write_runtime_files(
     catalog_path.write_text(
         yaml.safe_dump(
             {
-                "roles": {
-                    "worker": {
+                "harness_configs": {
+                    "pi": {
                         "harness": "pi",
                         "command": command,
                     }
-                }
+                },
+                "roles": {
+                    "worker": {
+                        "harness_config": "pi",
+                    }
+                },
             },
             sort_keys=False,
         ),

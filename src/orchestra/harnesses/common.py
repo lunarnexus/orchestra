@@ -34,6 +34,7 @@ def expand_command_template(role: RoleConfig, prompt: str) -> list[str]:
         "{prompt}": prompt,
         "{model}": role.model,
         "{profile}": role.profile,
+        "{agent}": role.agent,
     }
     command: list[str] = []
 

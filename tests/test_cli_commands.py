@@ -339,9 +339,13 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
         yaml.safe_dump(
             {
                 "default_role": "reviewer",
+                "harness_configs": {
+                    "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                    "hermes": {"harness": "hermes", "command": ["hermes", "-z", "{prompt}"]},
+                },
                 "roles": {
-                    "worker": {"harness": "pi", "enabled": False},
-                    "reviewer": {"harness": "hermes"},
+                    "worker": {"harness_config": "pi", "enabled": False},
+                    "reviewer": {"harness_config": "hermes"},
                 },
             },
             sort_keys=False,
@@ -405,9 +409,12 @@ def test_roles_command_updates_role_enabled_setting(
         yaml.safe_dump(
             {
                 "default_role": "worker",
+                "harness_configs": {
+                    "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                },
                 "roles": {
-                    "worker": {"harness": "pi"},
-                    "reviewer": {"harness": "pi"},
+                    "worker": {"harness_config": "pi"},
+                    "reviewer": {"harness_config": "pi"},
                 },
             },
             sort_keys=False,
@@ -453,7 +460,13 @@ def test_roles_command_rejects_disabling_default_role(
     prompts_path.write_text("{}\n", encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
-            {"default_role": "worker", "roles": {"worker": {"harness": "pi"}}},
+            {
+                "default_role": "worker",
+                "harness_configs": {
+                    "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                },
+                "roles": {"worker": {"harness_config": "pi"}},
+            },
             sort_keys=False,
         ),
         encoding="utf-8",
@@ -495,7 +508,12 @@ def test_roles_command_updates_role_model(
     prompts_path.write_text("{}\n", encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
-            {"roles": {"worker": {"harness": "pi", "model": "old-model"}}},
+            {
+                "harness_configs": {
+                    "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                },
+                "roles": {"worker": {"harness_config": "pi", "model": "old-model"}},
+            },
             sort_keys=False,
         ),
         encoding="utf-8",
@@ -540,9 +558,12 @@ def test_roles_command_rejects_invalid_role_mutations(
         yaml.safe_dump(
             {
                 "default_role": "worker",
+                "harness_configs": {
+                    "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                },
                 "roles": {
-                    "worker": {"harness": "pi"},
-                    "reviewer": {"harness": "pi", "model": "old-model"},
+                    "worker": {"harness_config": "pi"},
+                    "reviewer": {"harness_config": "pi", "model": "old-model"},
                 },
             },
             sort_keys=False,
@@ -599,9 +620,13 @@ def test_host_help_and_tool_info_advertise_enabled_roles_only(
     catalog_path.write_text(
         yaml.safe_dump(
             {
+                "harness_configs": {
+                    "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                    "hermes": {"harness": "hermes", "command": ["hermes", "-z", "{prompt}"]},
+                },
                 "roles": {
-                    "worker": {"harness": "pi"},
-                    "critic": {"harness": "hermes", "enabled": False},
+                    "worker": {"harness_config": "pi"},
+                    "critic": {"harness_config": "hermes", "enabled": False},
                 }
             },
             sort_keys=False,
@@ -662,9 +687,13 @@ def test_disabled_role_is_rejected_without_fallback(
     catalog_path.write_text(
         yaml.safe_dump(
             {
+                "harness_configs": {
+                    "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                    "hermes": {"harness": "hermes", "command": ["hermes", "-z", "{prompt}"]},
+                },
                 "roles": {
-                    "worker": {"harness": "pi"},
-                    "critic": {"harness": "hermes", "enabled": False},
+                    "worker": {"harness_config": "pi"},
+                    "critic": {"harness_config": "hermes", "enabled": False},
                 }
             },
             sort_keys=False,

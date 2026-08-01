@@ -29,7 +29,16 @@ def _write_source_tree(root: Path) -> None:
     (root / "config.yaml").write_text("state_dir: state\n", encoding="utf-8")
     (root / "prompts.yaml").write_text("{}\n", encoding="utf-8")
     (root / "agent-catalog.yaml").write_text(
-        "roles:\n  critic:\n    harness: hermes\n",
+        "harness_configs:\n"
+        "  hermes:\n"
+        "    harness: hermes\n"
+        "    command:\n"
+        "      - hermes\n"
+        "      - -z\n"
+        "      - '{prompt}'\n"
+        "roles:\n"
+        "  critic:\n"
+        "    harness_config: hermes\n",
         encoding="utf-8",
     )
 

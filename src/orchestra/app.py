@@ -55,12 +55,17 @@ from orchestra.state import (
 REPORT_HEADER = "Orchestra session report"
 ROLE_USAGE = """Usage:
   /orch roles
+  /orch roles ROLE harness-config CONFIG
   /orch roles ROLE enabled true|false
   /orch roles ROLE model MODEL
+  /orch roles ROLE profile PROFILE
+  /orch roles ROLE agent AGENT
 
 Examples:
   /orch roles appsec enabled false
-  /orch roles reviewer model openai-codex/gpt-5.4"""
+  /orch roles reviewer model openai-codex/gpt-5.4
+  /orch roles critic profile tori
+  /orch roles appsec agent plan"""
 
 
 class AppError(ValueError):
@@ -729,8 +734,33 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
             raise AppError("model must be a non-empty string")
         role_raw["model"] = model
         changed = f"model={model}"
+    elif setting == "profile":
+        profile = value.strip()
+        if not profile:
+            raise AppError("profile must be a non-empty string")
+        role_raw["profile"] = profile
+        changed = f"profile={profile}"
+    elif setting == "agent":
+        agent = value.strip()
+        if not agent:
+            raise AppError("agent must be a non-empty string")
+        role_raw["agent"] = agent
+        changed = f"agent={agent}"
+    elif setting == "harness-config":
+        harness_config = value.strip()
+        if not harness_config:
+            raise AppError("harness-config must be a non-empty string")
+        harness_configs_raw = raw_catalog.get("harness_configs")
+        if not isinstance(harness_configs_raw, dict):
+            raise AppError("agent catalog harness_configs must be a mapping")
+        if harness_config not in harness_configs_raw:
+            raise AppError(f"unknown harness config: {harness_config}")
+        role_raw["harness_config"] = harness_config
+        changed = f"harness_config={harness_config}"
     else:
-        raise AppError("role setting must be one of: enabled, model")
+        raise AppError(
+            "role setting must be one of: harness-config, enabled, model, profile, agent"
+        )
 
     _write_catalog_mapping(context.paths.catalog_path, raw_catalog)
     updated_catalog = load_agent_catalog(context.paths.catalog_path)
@@ -773,10 +803,14 @@ def _format_role_lines(
     lines: list[str] = []
     for role_name, role in roles:
         details: list[str] = []
+        if role.harness_config:
+            details.append(f"cfg={role.harness_config}")
         if role.model:
             details.append(role.model)
         if role.profile:
             details.append(f"profile={role.profile}")
+        if role.agent:
+            details.append(f"agent={role.agent}")
         suffix = f"  {' '.join(details)}" if details else ""
         role_marker = "D" if role_name == context.catalog.default_role else marker
         lines.append(

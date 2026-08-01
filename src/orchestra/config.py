@@ -110,18 +110,27 @@ class AppConfig:
 
 
 @dataclass(frozen=True)
-class RoleConfig:
+class HarnessConfig:
     harness: str
+    command: list[str]
+
+
+@dataclass(frozen=True)
+class RoleConfig:
+    harness_config: str = ""
+    harness: str = ""
+    command: list[str] | None = None
     prompt_addition: str = ""
     model: str | None = None
     profile: str | None = None
-    command: list[str] | None = None
+    agent: str | None = None
     enabled: bool = True
 
 
 @dataclass(frozen=True)
 class AgentCatalog:
     roles: dict[str, RoleConfig]
+    harness_configs: dict[str, HarnessConfig] = field(default_factory=dict)
     default_role: str = DEFAULT_ROLE_NAME
 
 
@@ -215,9 +224,32 @@ def load_app_config(path: str | Path) -> AppConfig:
 def load_agent_catalog(path: str | Path) -> AgentCatalog:
     raw = _load_yaml_mapping(path)
     default_role = _get_optional_string(raw, "default_role") or DEFAULT_ROLE_NAME
+    harness_configs_raw = raw.get("harness_configs")
     roles_raw = raw.get("roles")
     if not isinstance(roles_raw, dict) or not roles_raw:
         raise ConfigError("'roles' must be a non-empty mapping")
+
+    harness_configs: dict[str, HarnessConfig] = {}
+    if harness_configs_raw is not None:
+        if not isinstance(harness_configs_raw, dict) or not harness_configs_raw:
+            raise ConfigError("'harness_configs' must be a non-empty mapping")
+        for config_name, config_raw in harness_configs_raw.items():
+            if not isinstance(config_name, str) or not config_name.strip():
+                raise ConfigError("harness config names must be non-empty strings")
+            if not isinstance(config_raw, dict):
+                raise ConfigError(f"harness config '{config_name}' must be a mapping")
+            harness_configs[config_name] = HarnessConfig(
+                harness=_get_required_string(
+                    config_raw,
+                    "harness",
+                    context=f"harness config '{config_name}'",
+                ),
+                command=_get_required_string_list(
+                    config_raw,
+                    "command",
+                    context=f"harness config '{config_name}'",
+                ),
+            )
 
     roles: dict[str, RoleConfig] = {}
     for role_name, role_raw in roles_raw.items():
@@ -226,18 +258,38 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
         if not isinstance(role_raw, dict):
             raise ConfigError(f"role '{role_name}' must be a mapping")
 
-        harness = _get_required_string(role_raw, "harness", context=f"role '{role_name}'")
-        prompt_addition = _get_optional_string(role_raw, "prompt_addition") or ""
-        model = _get_optional_string(role_raw, "model")
-        profile = _get_optional_string(role_raw, "profile")
-        command = _get_optional_string_list(role_raw, "command", context=f"role '{role_name}'")
+        if harness_configs:
+            harness_config_name = _get_required_string(
+                role_raw,
+                "harness_config",
+                context=f"role '{role_name}'",
+            )
+            if harness_config_name not in harness_configs:
+                raise ConfigError(
+                    "role "
+                    f"'{role_name}' must name a configured harness_config: "
+                    f"{harness_config_name}"
+                )
+            harness_config = harness_configs[harness_config_name]
+            roles[role_name] = RoleConfig(
+                harness_config=harness_config_name,
+                harness=harness_config.harness,
+                command=harness_config.command,
+                prompt_addition=_get_optional_string(role_raw, "prompt_addition") or "",
+                model=_get_optional_string(role_raw, "model"),
+                profile=_get_optional_string(role_raw, "profile"),
+                agent=_get_optional_string(role_raw, "agent"),
+                enabled=_get_optional_bool(role_raw, "enabled", True),
+            )
+            continue
 
         roles[role_name] = RoleConfig(
-            harness=harness,
-            prompt_addition=prompt_addition,
-            model=model,
-            profile=profile,
-            command=command,
+            harness=_get_required_string(role_raw, "harness", context=f"role '{role_name}'"),
+            command=_get_required_string_list(role_raw, "command", context=f"role '{role_name}'"),
+            prompt_addition=_get_optional_string(role_raw, "prompt_addition") or "",
+            model=_get_optional_string(role_raw, "model"),
+            profile=_get_optional_string(role_raw, "profile"),
+            agent=_get_optional_string(role_raw, "agent"),
             enabled=_get_optional_bool(role_raw, "enabled", True),
         )
 
@@ -246,7 +298,11 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
     if not roles[default_role].enabled:
         raise ConfigError(f"default_role must be enabled: {default_role}")
 
-    return AgentCatalog(roles=roles, default_role=default_role)
+    return AgentCatalog(
+        roles=roles,
+        harness_configs=harness_configs,
+        default_role=default_role,
+    )
 
 
 def _resolve_path(
@@ -333,4 +389,16 @@ def _get_optional_string_list(
         raise ConfigError(f"{context} requires '{key}' to be a non-empty list of strings")
     if any(not isinstance(item, str) or not item.strip() for item in value):
         raise ConfigError(f"{context} requires '{key}' to contain only non-empty strings")
+    return value
+
+
+def _get_required_string_list(
+    data: dict[str, Any],
+    key: str,
+    *,
+    context: str,
+) -> list[str]:
+    value = _get_optional_string_list(data, key, context=context)
+    if value is None:
+        raise ConfigError(f"{context} requires '{key}' to be a non-empty list of strings")
     return value

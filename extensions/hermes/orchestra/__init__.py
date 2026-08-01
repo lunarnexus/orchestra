@@ -275,15 +275,37 @@ def _mark_session_report_delivered(runtime_session_id: str, run_ids: list[str]) 
     return True
 
 
+def _cli_ref(ctx: Any) -> Any | None:
+    manager = getattr(ctx, "_manager", None)
+    return getattr(manager, "_cli_ref", None)
+
+
+def _session_is_busy(ctx: Any) -> bool:
+    cli_ref = _cli_ref(ctx)
+    return bool(getattr(cli_ref, "_agent_running", False))
+
+
 def _steer_report(ctx: Any, message: str) -> bool:
     """Deliver a report message via Hermes steer without interrupting the active turn."""
-    manager = getattr(ctx, "_manager", None)
-    cli_ref = getattr(manager, "_cli_ref", None)
+    cli_ref = _cli_ref(ctx)
     agent = getattr(cli_ref, "agent", None)
     steer = getattr(agent, "steer", None)
     if not callable(steer):
         return False
     return bool(steer(message))
+
+
+def _inject_report(ctx: Any, message: str) -> bool:
+    inject_message = getattr(ctx, "inject_message", None)
+    if not callable(inject_message):
+        return False
+    return bool(inject_message(message, role="user"))
+
+
+def _deliver_report(ctx: Any, message: str) -> bool:
+    if _session_is_busy(ctx):
+        return _steer_report(ctx, message)
+    return _inject_report(ctx, message)
 
 
 def _handle_session_report_result(
@@ -314,7 +336,7 @@ def _handle_session_report_result(
         if not isinstance(message, str) or not message.strip():
             _release_session_report(runtime_session_id, run_ids)
             return
-        if not _steer_report(ctx, message.strip()):
+        if not _deliver_report(ctx, message.strip()):
             _release_session_report(runtime_session_id, run_ids)
             return
         if not _mark_session_report_delivered(runtime_session_id, run_ids):

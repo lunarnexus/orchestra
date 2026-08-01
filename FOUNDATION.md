@@ -323,16 +323,36 @@ plus a small margin or make the host wait budget explicitly configurable.
 
 ### Agent Catalog
 
-Role definitions live in `agent-catalog.yaml`. A role entry should stay small:
-short prompt addition, optional model when the harness supports model selection,
-optional profile when the harness supports profiles, and an invocation command
-template. For example, Hermes can use a profile one-shot such as
-`hermes --profile <profile> -z "<prompt>"`; Pi can use a one-shot such as
-`PI_CODING_AGENT_DIR=/home/james/.pi/agent pi --no-session -p "<prompt>"`.
+Agent catalog definitions live in `agent-catalog.yaml` and are split into:
+
+- `harness_configs:` — reusable launch/runtime templates
+- `roles:` — worker-selection fields and role-specific prompt guidance
+
+A harness config should stay small and contain only harness launch/runtime
+details, primarily:
+
+- `harness`
+- `command`
+
+A role entry should own worker-selection fields such as:
+
+- `harness_config`
+- `model`
+- `profile`
+- `agent`
+- `prompt_addition`
+- `enabled`
+
+Dispatch resolution is role -> harness config -> render command with role
+fields -> apply explicit runtime args. For example, Hermes can use a profile
+one-shot such as `hermes --profile <profile> -z "<prompt>"`; Pi can use a
+one-shot such as `PI_CODING_AGENT_DIR=/home/james/.pi/agent pi --no-session -p
+"<prompt>"`; OpenCode can use a one-shot such as `opencode run --agent <agent>
+--model <model> "<prompt>"`.
+
 For MVP, assume each configured one-shot harness can run and record results;
-avoid compatibility flags or broad capability negotiation until the catalog
-schema and harness gaps are proven by implementation. Unsupported catalog fields
-should be harmless no-ops rather than validation blockers during early iteration.
+avoid broad capability negotiation until the catalog schema and harness gaps are
+proven by implementation.
 
 ### Roles and Core Boundaries
 
@@ -432,8 +452,10 @@ or override runtime session ids.
 
 Auto-return means prompting the owning orchestrator session when workers return.
 Only the all-workers-returned condition should re-enter the orchestrator session
-with a consolidated report. Hermes uses non-interrupting `agent.steer(...)` for
-that final report instead of the interrupting plugin `inject_message(...)` path.
+with a consolidated report. Hermes should deliver that final report with
+busy-aware behavior: use non-interrupting `agent.steer(...)` when the
+orchestrator session is actively running, and use `inject_message(...)` only
+when the session is idle and a new turn should begin.
 
 Pi host surfaces may also show per-worker progress notifications when their
 runtime provides a notification-only API. Hermes host surfaces must not fake

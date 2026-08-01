@@ -45,16 +45,26 @@ def test_init_all_detects_harnesses_and_deduplicates_targets(
         source,
         """
 default_role: worker
+harness_configs:
+  pi:
+    harness: pi
+    command: ["pi", "-p", "{prompt}"]
+  hermes:
+    harness: hermes
+    command: ["hermes", "-z", "{prompt}"]
+  opencode:
+    harness: opencode
+    command: ["opencode", "run", "{prompt}"]
 roles:
   worker:
-    harness: pi
+    harness_config: pi
   critic:
-    harness: hermes
+    harness_config: hermes
   reviewer:
-    harness: hermes
+    harness_config: hermes
     profile: tori
   appsec:
-    harness: opencode
+    harness_config: opencode
 """.lstrip(),
     )
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))

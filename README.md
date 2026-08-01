@@ -111,12 +111,9 @@ Example role catalog entry:
 
 ```yaml
 default_role: worker
-roles:
-  worker:
+harness_configs:
+  pi:
     harness: pi
-    enabled: true
-    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
-    prompt_addition: Focus on the assigned task and return a compact result.
     command:
       - pi
       - --no-session
@@ -124,16 +121,25 @@ roles:
       - "{model}"
       - -p
       - "{prompt}"
+
+roles:
+  worker:
+    harness_config: pi
+    enabled: true
+    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    prompt_addition: Focus on the assigned task and return a compact result.
 ```
 
 Notes:
 
 - `default_role` is optional; when omitted it defaults to `worker`.
-- `enabled` is optional per role; when omitted it defaults to `true` for backward compatibility.
-- `harness` selects the worker runtime connector.
+- `harness_configs` define reusable launch/runtime templates.
+- `harness` and `command` live in `harness_configs`, not in roles.
+- `roles` select a `harness_config` and own worker-selection fields such as `model`, `profile`, `agent`, `prompt_addition`, and `enabled`.
 - `command` is a tokenized argv template, not a shell string.
 - If `model` is omitted, harnesses that support model selection use their runtime default.
 - If `profile` is omitted, harnesses that support profiles use their runtime default.
+- If `agent` is omitted, harnesses that support agent selection use their runtime default.
 - `state_dir` and `log_dir` should be stable absolute paths for installed host integrations so state does not drift with host cwd.
 
 ## CLI Usage
@@ -251,31 +257,37 @@ Hermes runtime session identity comes from the runtime `session_id` provided to 
 
 ## OpenCode Worker Harness
 
-OpenCode is supported as a one-shot worker harness via `harness: opencode` in any role catalog entry.
+OpenCode is supported as a one-shot worker harness via `harness: opencode` in a harness config referenced by any role.
 
 No Orchestra host-plugin install step is required for harness-only use. `orchestra init opencode` simply reports that no install action is needed. Users only need:
 
 1. The `opencode` CLI available on PATH (`which opencode`).
-2. A configured role with `harness: opencode` and a valid model string for OpenCode.
+2. A configured role that points at an OpenCode harness config and uses a valid model string for OpenCode.
 
 The current repo catalog uses OpenCode for the `appsec` role.
 
-Example role:
+Example role + harness config:
 
 ```yaml
-appsec:
-  harness: opencode
-  enabled: true
-  model: openai/gpt-5.4
-  prompt_addition: Focus on the assigned task and return a compact result.
-  command:
-    - opencode
-    - run
-    - --agent
-    - plan
-    - --model
-    - "{model}"
-    - "{prompt}"
+harness_configs:
+  opencode:
+    harness: opencode
+    command:
+      - opencode
+      - run
+      - --agent
+      - "{agent}"
+      - --model
+      - "{model}"
+      - "{prompt}"
+
+roles:
+  appsec:
+    harness_config: opencode
+    enabled: true
+    model: openai/gpt-5.4
+    agent: plan
+    prompt_addition: Focus on the assigned task and return a compact result.
 ```
 
 Model naming is harness-specific. For example, Pi may use `openai-codex/gpt-5.4` while OpenCode expects `openai/gpt-5.4`.
@@ -319,9 +331,10 @@ Log: <absolute-or-configured log path>
 
 Hermes does not currently emit per-worker progress notifications. It only
 returns the consolidated report when all active workers for the session have
-finished. The Hermes plugin delivers that report through non-interrupting
-`agent.steer(...)` instead of the interrupting plugin `inject_message(...)`
-path; this avoids using prompt injection as a fake notification rail.
+finished. The Hermes plugin delivers that report with busy-aware behavior:
+while Hermes is actively running it uses non-interrupting `agent.steer(...)`;
+when Hermes is idle it uses `inject_message(...)` to start the next turn with
+the consolidated report.
 
 Failures use `Summary: <summary>` instead of `Result: <summary>`.
 

@@ -150,6 +150,7 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
 
     assert catalog.default_role == DEFAULT_ROLE_NAME
     worker = catalog.roles["worker"]
+    assert worker.harness_config == "pi"
     assert worker.harness == "pi"
     assert worker.prompt_addition == "Focus on the assigned task and return a compact result."
     assert worker.model == "lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved"
@@ -183,18 +184,21 @@ def test_load_agent_catalog_supports_optional_fields(tmp_path: Path) -> None:
     path.write_text(
         """
 default_role: reviewer
-roles:
-  reviewer:
+harness_configs:
+  hermes:
     harness: hermes
-    prompt_addition: Review only.
-    model: gpt-5
-    profile: reviewer
     command:
       - hermes
       - --profile
-      - reviewer
+      - "{profile}"
       - -z
       - "{prompt}"
+roles:
+  reviewer:
+    harness_config: hermes
+    prompt_addition: Review only.
+    model: gpt-5
+    profile: reviewer
 """.lstrip(),
         encoding="utf-8",
     )
@@ -203,10 +207,11 @@ roles:
 
     assert catalog.default_role == "reviewer"
     reviewer = catalog.roles["reviewer"]
+    assert reviewer.harness_config == "hermes"
     assert reviewer.harness == "hermes"
     assert reviewer.model == "gpt-5"
     assert reviewer.profile == "reviewer"
-    assert reviewer.command == ["hermes", "--profile", "reviewer", "-z", "{prompt}"]
+    assert reviewer.command == ["hermes", "--profile", "{profile}", "-z", "{prompt}"]
     assert reviewer.enabled is True
 
 
@@ -215,23 +220,57 @@ roles:
     [
         ("{}\n", "'roles' must be a non-empty mapping"),
         (
-            "roles:\n  worker: nope\n",
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker: nope\n",
             "role 'worker' must be a mapping",
         ),
         (
-            "roles:\n  worker: {}\n",
-            "role 'worker' requires a non-empty string for 'harness'",
+            "harness_configs:\n  pi: nope\nroles:\n  worker:\n    harness_config: pi\n",
+            "harness config 'pi' must be a mapping",
         ),
         (
-            "roles:\n  worker:\n    harness: pi\n    command: []\n",
-            "role 'worker' requires 'command' to be a non-empty list of strings",
+            "harness_configs:\n  pi:\n    harness: pi\nroles:\n  worker:\n    harness_config: pi\n",
+            "harness config 'pi' requires 'command' to be a non-empty list of strings",
         ),
         (
-            "default_role: reviewer\nroles:\n  worker:\n    harness: pi\n",
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: missing\n",
+            "role 'worker' must name a configured harness_config: missing",
+        ),
+        (
+            "default_role: reviewer\n"
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n",
             "default_role must name a configured role: reviewer",
         ),
         (
-            "default_role: worker\nroles:\n  worker:\n    harness: pi\n    enabled: false\n",
+            "default_role: worker\n"
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n"
+            "    enabled: false\n",
             "default_role must be enabled: worker",
         ),
     ],
@@ -253,12 +292,19 @@ def test_load_agent_catalog_supports_default_role_and_enabled_flags(tmp_path: Pa
     path.write_text(
         """
 default_role: reviewer
+harness_configs:
+  pi:
+    harness: pi
+    command: ["pi", "-p", "{prompt}"]
+  hermes:
+    harness: hermes
+    command: ["hermes", "-z", "{prompt}"]
 roles:
   worker:
-    harness: pi
+    harness_config: pi
     enabled: false
   reviewer:
-    harness: hermes
+    harness_config: hermes
     enabled: true
 """.lstrip(),
         encoding="utf-8",
