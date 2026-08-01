@@ -105,7 +105,7 @@ concurrency:
 auto_return: true
 ```
 
-`default_timeout` is the worker execution timeout in seconds. Per-run timeouts can be supplied with `orchestra do --timeout SEC` or host `/orch do --timeout SEC`.
+`default_timeout` is the worker execution timeout in seconds. Manual per-run timeouts can be supplied with `orchestra do --timeout SEC` or host `/orch do --timeout SEC`. The LLM-callable `orch_dispatch` tool intentionally does not expose a timeout parameter; tool dispatches use the configured default.
 
 Example role catalog entry:
 

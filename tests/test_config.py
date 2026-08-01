@@ -199,6 +199,7 @@ roles:
     prompt_addition: Review only.
     model: gpt-5
     profile: reviewer
+    worker_budget: 2
 """.lstrip(),
         encoding="utf-8",
     )
@@ -211,6 +212,7 @@ roles:
     assert reviewer.harness == "hermes"
     assert reviewer.model == "gpt-5"
     assert reviewer.profile == "reviewer"
+    assert reviewer.worker_budget == 2
     assert reviewer.command == ["hermes", "--profile", "{profile}", "-z", "{prompt}"]
     assert reviewer.enabled is True
 
@@ -247,6 +249,18 @@ roles:
             "  worker:\n"
             "    harness_config: missing\n",
             "role 'worker' must name a configured harness_config: missing",
+        ),
+        (
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n"
+            "    worker_budget: 0\n",
+            "'worker_budget' must be a positive integer",
         ),
         (
             "default_role: reviewer\n"

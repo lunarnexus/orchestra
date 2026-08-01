@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from orchestra.harnesses.common import ORCHESTRA_WORKER_ENV
 from orchestra.state import STATUS_DONE, StateStore
 from tests.helpers import extract_run_id, wait_for_condition
 from tests.types import RuntimeFilesFactory
@@ -65,6 +66,85 @@ def test_do_status_history_flow(
     assert history_exit == 0
     assert "history_count: 1" in history_output
     assert "worker done" in history_output
+
+
+def test_do_uses_role_worker_budget_for_worker_env(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [
+            python_executable,
+            "-c",
+            "import os; print(os.environ.get('ORCHESTRA_WORKER', 'missing'))",
+        ],
+    )
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    catalog["roles"]["worker"]["worker_budget"] = 2
+    catalog_path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "do",
+            "--session-id",
+            "manual:worker-budget-role",
+            "--goal",
+            "Print worker budget env.",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    run_id = extract_run_id(output)
+    assert wait_for_condition(
+        lambda: StateStore(db_path).get_run(run_id).status == STATUS_DONE,
+        timeout=5,
+    )
+    assert StateStore(db_path).get_run(run_id).result_summary == "2"
+
+
+def test_do_rejects_when_orchestra_worker_budget_is_exhausted(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path, catalog_path, _ = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "should not run"],
+    )
+    monkeypatch.setenv(ORCHESTRA_WORKER_ENV, "1")
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "do",
+            "--session-id",
+            "manual:worker-budget-exhausted",
+            "--goal",
+            "Should be rejected.",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "ORCHESTRA_WORKER dispatch budget exhausted" in output
 
 
 def test_roles_lists_configured_worker_roles(
@@ -670,6 +750,7 @@ def test_host_help_and_tool_info_advertise_enabled_roles_only(
     assert "D worker  pi" in tool_info["description"]
     assert "✗ critic" not in tool_info["description"]
     assert "✗ critic" not in tool_info["roleDescription"]
+    assert "timeoutDescription" not in tool_info
 
 
 def test_disabled_role_is_rejected_without_fallback(

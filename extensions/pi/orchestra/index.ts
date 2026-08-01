@@ -5,6 +5,19 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const execFileAsync = promisify(execFile);
+const TOOL_TIMEOUT_ERROR = "timeout is not accepted by orch_dispatch; configured default_timeout applies.";
+const ORCHESTRA_WORKER_ENV = "ORCHESTRA_WORKER";
+
+function orchestraWorkerBudget(): number {
+  const raw = process.env[ORCHESTRA_WORKER_ENV]?.trim();
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 1;
+}
+
+function canDispatchOrchestraWorker(): boolean {
+  return orchestraWorkerBudget() !== 1;
+}
 
 function normalizePiSessionId(raw: string): string {
   const normalized = raw.trim();
@@ -208,7 +221,6 @@ interface ToolInfoPayload {
   promptGuidelines: string[];
   goalDescription: string;
   roleDescription: string;
-  timeoutDescription: string;
   taskLabelDescription: string;
 }
 
@@ -233,7 +245,6 @@ async function loadToolInfo(): Promise<ToolInfoPayload> {
     promptGuidelines: ["Use orch_dispatch for narrow delegated worker tasks."],
     goalDescription: "Focused worker request/task to delegate.",
     roleDescription: "Optional exact configured role. Omit for default worker role.",
-    timeoutDescription: "Optional timeout in seconds.",
     taskLabelDescription: "Optional short request label.",
   };
 }
@@ -559,7 +570,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     currentSessionId = null;
   });
 
-  const toolInfo = await loadToolInfo();
+  const registerDispatchTool = canDispatchOrchestraWorker();
+  const toolInfo = registerDispatchTool ? await loadToolInfo() : null;
 
   async function getRoleNames(): Promise<string[]> {
     const now = Date.now();
@@ -722,27 +734,34 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     return null;
   }
 
-  pi.registerTool({
-    name: "orch_dispatch",
-    label: "Orchestra Dispatch",
-    description: toolInfo.description,
-    promptSnippet: toolInfo.promptSnippet,
-    promptGuidelines: toolInfo.promptGuidelines,
-    parameters: Type.Object({
-      goal: Type.String({ description: toolInfo.goalDescription }),
-      role: Type.Optional(Type.String({ description: toolInfo.roleDescription })),
-      timeout: Type.Optional(Type.Number({ description: toolInfo.timeoutDescription })),
-      taskLabel: Type.Optional(Type.String({ description: toolInfo.taskLabelDescription })),
-    }),
-    async execute(_toolCallId, params: DispatchParams, _signal, _onUpdate, ctx) {
-      const runtimeSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
-      const result = await dispatchWorker(runtimeSessionId, params, progressNotifier(ctx));
-      return {
-        content: [{ type: "text", text: result.output }],
-        isError: result.code !== 0,
-      };
-    },
-  });
+  if (registerDispatchTool && toolInfo) {
+    pi.registerTool({
+      name: "orch_dispatch",
+      label: "Orchestra Dispatch",
+      description: toolInfo.description,
+      promptSnippet: toolInfo.promptSnippet,
+      promptGuidelines: toolInfo.promptGuidelines,
+      parameters: Type.Object({
+        goal: Type.String({ description: toolInfo.goalDescription }),
+        role: Type.Optional(Type.String({ description: toolInfo.roleDescription })),
+        taskLabel: Type.Optional(Type.String({ description: toolInfo.taskLabelDescription })),
+      }),
+      async execute(_toolCallId, params: DispatchParams, _signal, _onUpdate, ctx) {
+        if (params.timeout !== undefined) {
+          return {
+            content: [{ type: "text", text: TOOL_TIMEOUT_ERROR }],
+            isError: true,
+          };
+        }
+        const runtimeSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
+        const result = await dispatchWorker(runtimeSessionId, params, progressNotifier(ctx));
+        return {
+          content: [{ type: "text", text: result.output }],
+          isError: result.code !== 0,
+        };
+      },
+    });
+  }
 
   pi.registerCommand("orch", {
     description: "Orchestra host adapter: /orch help|do|roles|status|stop|doctor|history",

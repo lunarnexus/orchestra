@@ -93,6 +93,11 @@ def completed(
     return subprocess.CompletedProcess(args=args, returncode=code, stdout=stdout, stderr=stderr)
 
 
+@pytest.fixture(autouse=True)
+def _clear_orchestra_worker_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ORCHESTRA_WORKER", raising=False)
+
+
 def test_hermes_plugin_source_does_not_import_orchestra_package() -> None:
     tree = ast.parse(PLUGIN_PATH.read_text(encoding="utf-8"))
 
@@ -137,13 +142,39 @@ def test_hermes_plugin_registers_dispatch_tool_without_session_id_schema(
 
     assert [tool["name"] for tool in ctx.tools] == ["orch_dispatch"]
     schema = ctx.tools[0]["schema"]
-    assert set(schema["parameters"]["properties"]) == {"goal", "role", "timeout", "taskLabel"}
-    assert schema["parameters"]["properties"]["timeout"]["type"] == "integer"
-    assert schema["parameters"]["properties"]["timeout"]["minimum"] == 1
+    assert set(schema["parameters"]["properties"]) == {"goal", "role", "taskLabel"}
+    assert "timeout" not in schema["parameters"]["properties"]
     assert "session_id" not in json.dumps(schema)
     assert ctx.commands[0]["name"] == "orch"
     assert ctx.commands[0]["handler"]("") == ""
     assert ctx.hooks == []
+
+
+@pytest.mark.parametrize(
+    ("budget", "registered_tools"),
+    [
+        (None, ["orch_dispatch"]),
+        ("0", ["orch_dispatch"]),
+        ("1", []),
+        ("2", ["orch_dispatch"]),
+        ("3", ["orch_dispatch"]),
+    ],
+)
+def test_hermes_plugin_gates_dispatch_tool_by_worker_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    budget: str | None,
+    registered_tools: list[str],
+) -> None:
+    plugin = load_plugin()
+    if budget is not None:
+        monkeypatch.setenv("ORCHESTRA_WORKER", budget)
+    monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, code=1))
+    ctx = FakeHermesPluginContext()
+
+    plugin.register(ctx)
+
+    assert [tool["name"] for tool in ctx.tools] == registered_tools
+    assert [command["name"] for command in ctx.commands] == ["orch"]
 
 
 def test_hermes_plugin_manifest_declares_tool_and_fail_closed_command() -> None:
@@ -160,7 +191,6 @@ def test_hermes_plugin_uses_dynamic_tool_metadata(monkeypatch: pytest.MonkeyPatc
         "description": "dynamic description",
         "goalDescription": "dynamic goal",
         "roleDescription": "dynamic role",
-        "timeoutDescription": "dynamic timeout",
         "taskLabelDescription": "dynamic label",
     }
     monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, json.dumps(payload)))
@@ -368,8 +398,8 @@ def test_orch_dispatch_rejects_model_supplied_identity_args(identity_arg: str) -
     }
 
 
-@pytest.mark.parametrize("timeout", [1.5, "42", 0, -1, True])
-def test_orch_dispatch_rejects_non_positive_integer_timeout(
+@pytest.mark.parametrize("timeout", [42, 1.5, "42", 0, -1, True])
+def test_orch_dispatch_rejects_timeout_parameter(
     monkeypatch: pytest.MonkeyPatch,
     timeout: object,
 ) -> None:
@@ -384,7 +414,9 @@ def test_orch_dispatch_rejects_non_positive_integer_timeout(
         plugin.orch_dispatch({"goal": "do work", "timeout": timeout}, session_id="runtime")
     )
 
-    assert payload == {"error": "timeout must be a positive integer"}
+    assert payload == {
+        "error": "timeout is not accepted by orch_dispatch; configured default_timeout applies."
+    }
 
 
 def test_parse_do_args_supports_shell_quoted_goal_and_task_label() -> None:
@@ -515,7 +547,6 @@ def test_orch_dispatch_builds_cli_args_from_runtime_kwargs_and_returns_ack(
         {
             "goal": "ship focused task",
             "role": "reviewer",
-            "timeout": 42,
             "taskLabel": "review-task",
         },
         session_id="runtime-session",
@@ -530,8 +561,6 @@ def test_orch_dispatch_builds_cli_args_from_runtime_kwargs_and_returns_ack(
             "ship focused task",
             "--role",
             "reviewer",
-            "--timeout",
-            "42",
             "--task-label",
             "review-task",
         ],

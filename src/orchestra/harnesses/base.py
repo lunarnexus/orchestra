@@ -21,6 +21,7 @@ class WorkerRequest:
     return_format: str = ""
     timeout_seconds: int = 600
     task_label: str = ""
+    worker_budget: int | None = None
     log_path: Path | None = None
     prompts: PromptConfig = PromptConfig()
 

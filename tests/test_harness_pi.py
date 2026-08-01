@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -7,9 +8,13 @@ import pytest
 from orchestra.config import PromptConfig, RoleConfig
 from orchestra.harnesses import HarnessRegistry, PiHarness, WorkerRequest
 from orchestra.harnesses.common import (
+    ORCHESTRA_WORKER_ENV,
     compact_summary,
     expand_command_template,
+    orchestra_can_dispatch,
+    orchestra_worker_budget,
     render_worker_prompt,
+    worker_subprocess_env,
 )
 
 
@@ -122,9 +127,78 @@ def test_pi_harness_uses_shared_prompt_and_command_helpers(worker_request: Worke
     assert command == expand_command_template(role, prompt)
 
 
+@pytest.mark.parametrize(
+    ("current", "configured", "can_dispatch", "child"),
+    [
+        (None, None, True, "1"),
+        ("0", None, True, "1"),
+        ("1", None, False, "1"),
+        ("2", None, True, "1"),
+        ("3", None, True, "1"),
+        (None, 2, True, "2"),
+        ("0", 2, True, "2"),
+        ("2", 2, True, "1"),
+        ("3", 2, True, "2"),
+    ],
+)
+def test_worker_subprocess_env_decrements_orchestra_worker_budget(
+    monkeypatch: pytest.MonkeyPatch,
+    current: str | None,
+    configured: int | None,
+    can_dispatch: bool,
+    child: str,
+) -> None:
+    if current is None:
+        monkeypatch.delenv(ORCHESTRA_WORKER_ENV, raising=False)
+    else:
+        monkeypatch.setenv(ORCHESTRA_WORKER_ENV, current)
+
+    env = worker_subprocess_env(worker_budget=configured)
+
+    assert orchestra_can_dispatch() is can_dispatch
+    assert env[ORCHESTRA_WORKER_ENV] == child
+    assert orchestra_worker_budget(env) == int(child)
+    if current is not None:
+        assert os.environ[ORCHESTRA_WORKER_ENV] == current
+
+
 def test_compact_summary_normalizes_and_truncates_output() -> None:
     assert compact_summary("line one\nline two") == "line one line two"
     assert compact_summary("x" * 12, limit=10) == "xxxxxxx..."
+
+
+def test_pi_harness_start_sets_orchestra_worker_env_budget(
+    worker_request: WorkerRequest,
+    python_executable: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(ORCHESTRA_WORKER_ENV, raising=False)
+    worker_request = WorkerRequest(
+        role_name=worker_request.role_name,
+        goal=worker_request.goal,
+        approved_context=worker_request.approved_context,
+        boundaries=worker_request.boundaries,
+        acceptance_target=worker_request.acceptance_target,
+        timeout_seconds=worker_request.timeout_seconds,
+        log_path=worker_request.log_path,
+        worker_budget=2,
+    )
+    harness = PiHarness()
+    role = RoleConfig(
+        harness="pi",
+        command=[
+            python_executable,
+            "-c",
+            "import os; print(os.environ.get('ORCHESTRA_WORKER'))",
+        ],
+    )
+
+    worker = harness.start(worker_request, role)
+    stdout, stderr = worker.process.communicate(timeout=5)
+
+    assert stdout.strip() == "2"
+    assert stderr.strip() == ""
+    assert ORCHESTRA_WORKER_ENV not in os.environ
 
 
 def test_pi_harness_start_returns_process_wrapper(

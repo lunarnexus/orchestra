@@ -436,7 +436,6 @@ def _handle_tool_info(args: argparse.Namespace) -> int:
                 "promptGuidelines": info.prompt_guidelines,
                 "goalDescription": info.goal_description,
                 "roleDescription": info.role_description,
-                "timeoutDescription": info.timeout_description,
                 "taskLabelDescription": info.task_label_description,
             }
         )

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from orchestra.config import RoleConfig
 from orchestra.harnesses import WorkerRequest
+from orchestra.harnesses.common import ORCHESTRA_WORKER_ENV
 from orchestra.harnesses.hermes import HermesHarness
 
 
@@ -84,6 +87,29 @@ def test_hermes_harness_drops_unset_optional_model_and_profile(
     assert command[:2] == ["hermes", "-z"]
     assert "--profile" not in command
     assert "--model" not in command
+
+
+def test_hermes_harness_start_sets_orchestra_worker_env_counter(
+    tmp_path: Path,
+    python_executable: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv(ORCHESTRA_WORKER_ENV, raising=False)
+    harness = HermesHarness()
+    role = RoleConfig(
+        harness="hermes",
+        command=[
+            python_executable,
+            "-c",
+            "import os; print(os.environ.get('ORCHESTRA_WORKER'))",
+        ],
+    )
+
+    worker = harness.start(_worker_request(tmp_path), role)
+    stdout, stderr = worker.process.communicate(timeout=5)
+
+    assert stdout.strip() == "1"
+    assert stderr.strip() == ""
 
 
 def test_hermes_harness_start_uses_configured_fake_command(

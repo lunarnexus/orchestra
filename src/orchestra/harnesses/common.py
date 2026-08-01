@@ -2,8 +2,44 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Mapping
+
 from orchestra.config import RoleConfig
 from orchestra.harnesses.base import WorkerRequest
+
+ORCHESTRA_WORKER_ENV = "ORCHESTRA_WORKER"
+
+
+def orchestra_worker_budget(env: Mapping[str, str] | None = None) -> int:
+    raw = (env or os.environ).get(ORCHESTRA_WORKER_ENV)
+    if raw is None or not raw.strip():
+        return 0
+    try:
+        budget = int(raw.strip())
+    except ValueError:
+        return 1
+    return max(budget, 0)
+
+
+def orchestra_can_dispatch(env: Mapping[str, str] | None = None) -> bool:
+    return orchestra_worker_budget(env) != 1
+
+
+def worker_subprocess_env(
+    *,
+    worker_budget: int | None = None,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    worker_env = dict(env or os.environ)
+    current_budget = orchestra_worker_budget(worker_env)
+    configured_budget = worker_budget or 1
+    if current_budget > 1:
+        child_budget = min(current_budget - 1, configured_budget)
+    else:
+        child_budget = configured_budget
+    worker_env[ORCHESTRA_WORKER_ENV] = str(child_budget)
+    return worker_env
 
 
 def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:

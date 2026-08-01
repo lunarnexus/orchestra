@@ -37,7 +37,7 @@ from orchestra.harnesses import (
     WorkerResult,
     register_builtin_harnesses,
 )
-from orchestra.harnesses.common import compact_summary
+from orchestra.harnesses.common import compact_summary, orchestra_can_dispatch
 from orchestra.harnesses.processes import process_group_id
 from orchestra.logs import utc_now
 from orchestra.state import (
@@ -136,7 +136,6 @@ class ToolInfo:
     prompt_guidelines: list[str]
     goal_description: str
     role_description: str
-    timeout_description: str
     task_label_description: str
 
 
@@ -212,6 +211,8 @@ def start_run(
     batch_id: str | None,
 ) -> StartedRun:
     _require_session_id(session_id)
+    if not orchestra_can_dispatch():
+        raise AppError("ORCHESTRA_WORKER dispatch budget exhausted")
     selected_role = _select_role(context.catalog, role_name)
     role = selected_role.config
 
@@ -811,6 +812,8 @@ def _format_role_lines(
             details.append(f"profile={role.profile}")
         if role.agent:
             details.append(f"agent={role.agent}")
+        if role.worker_budget is not None:
+            details.append(f"worker_budget={role.worker_budget}")
         suffix = f"  {' '.join(details)}" if details else ""
         role_marker = "D" if role_name == context.catalog.default_role else marker
         lines.append(
@@ -843,7 +846,6 @@ def tool_info(context: AppContext) -> ToolInfo:
         prompt_guidelines=list(prompts.tool_prompt_guidelines),
         goal_description=prompts.tool_goal_description,
         role_description=prompts.tool_role_description.format(roles=roles),
-        timeout_description=prompts.tool_timeout_description,
         task_label_description=prompts.tool_task_label_description,
     )
 
@@ -1492,6 +1494,7 @@ def _start_worker_process(
         return_format=pending_request.return_format,
         timeout_seconds=pending_request.timeout_seconds,
         task_label=pending_request.task_label,
+        worker_budget=role.worker_budget,
         log_path=log_path,
         prompts=context.config.prompts,
     )

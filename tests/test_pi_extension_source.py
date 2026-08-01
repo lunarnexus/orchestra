@@ -9,6 +9,13 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
 
     assert 'name: "orch_dispatch"' in extension_source
     assert "_tool-info" in extension_source
+    assert 'const ORCHESTRA_WORKER_ENV = "ORCHESTRA_WORKER"' in extension_source
+    assert "function canDispatchOrchestraWorker(): boolean" in extension_source
+    assert "return orchestraWorkerBudget() !== 1;" in extension_source
+    assert "const registerDispatchTool = canDispatchOrchestraWorker();" in extension_source
+    assert "if (registerDispatchTool && toolInfo)" in extension_source
+    assert "timeout: Type.Optional" not in extension_source
+    assert "timeout is not accepted by orch_dispatch" in extension_source
     assert 'subcommand === "roles"' in extension_source
     assert 'getArgumentCompletions: getOrchArgumentCompletions' in extension_source
     assert 'function tokenizeArgs(input: string): TokenizeArgsResult' in extension_source

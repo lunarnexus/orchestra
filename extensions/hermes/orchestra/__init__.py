@@ -30,9 +30,28 @@ _FALLBACK_TOOL_INFO = {
     "promptGuidelines": ["Use orch_dispatch for narrow delegated worker tasks."],
     "goalDescription": "Focused worker request/task to delegate.",
     "roleDescription": "Optional exact configured role. Omit for default worker role.",
-    "timeoutDescription": "Optional timeout in seconds.",
     "taskLabelDescription": "Optional short request label.",
 }
+
+_TOOL_TIMEOUT_ERROR = (
+    "timeout is not accepted by orch_dispatch; configured default_timeout applies."
+)
+_ORCHESTRA_WORKER_ENV = "ORCHESTRA_WORKER"
+
+
+def _orchestra_worker_budget() -> int:
+    raw = os.environ.get(_ORCHESTRA_WORKER_ENV, "").strip()
+    if not raw:
+        return 0
+    try:
+        budget = int(raw)
+    except ValueError:
+        return 1
+    return max(budget, 0)
+
+
+def _can_dispatch_orchestra_worker() -> bool:
+    return _orchestra_worker_budget() != 1
 
 
 def normalize_hermes_session_id(raw_session_id: str) -> str:
@@ -143,11 +162,6 @@ def _schema(tool_info: dict[str, Any]) -> dict[str, Any]:
                 "role": {
                     "type": "string",
                     "description": str(tool_info["roleDescription"]),
-                },
-                "timeout": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": str(tool_info["timeoutDescription"]),
                 },
                 "taskLabel": {
                     "type": "string",
@@ -413,14 +427,19 @@ def _dispatch_orchestra_run(
     payload: dict[str, Any],
     runtime_session_id: str,
     ctx: Any | None = None,
+    *,
+    allow_timeout: bool = False,
 ) -> str:
     goal = str(payload.get("goal", "")).strip()
     if not goal:
         return _error("goal is required")
 
     timeout = payload.get("timeout")
-    if timeout is not None and (type(timeout) is not int or timeout <= 0):
-        return _error("timeout must be a positive integer")
+    if timeout is not None:
+        if not allow_timeout:
+            return _error(_TOOL_TIMEOUT_ERROR)
+        if type(timeout) is not int or timeout <= 0:
+            return _error("timeout must be a positive integer")
 
     requested_role = str(payload.get("role") or "").strip()
     wait_budget_seconds = _watcher_wait_budget_seconds(timeout)
@@ -457,7 +476,7 @@ def _dispatch_orchestra_run(
 
 
 def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
-    """Dispatch a worker using only Hermes' runtime tool-call session_id kwarg."""
+    """Dispatch a worker using Hermes runtime session_id and configured default timeout."""
     supplied_identity_args = sorted(_IDENTITY_ARG_NAMES.intersection(args))
     if supplied_identity_args:
         return _error(
@@ -533,7 +552,12 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
             return str(payload["error"])
         if not str(payload.get("goal", "")).strip():
             return "Usage: /orch do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal>"
-        return _dispatch_orchestra_run(payload, runtime_session_id, ctx=ctx)
+        return _dispatch_orchestra_run(
+            payload,
+            runtime_session_id,
+            ctx=ctx,
+            allow_timeout=True,
+        )
 
     result = _run_orchestra(["help-host"])
     return f"Unknown /orch subcommand: {subcommand}\n\n{result.stdout or result.stderr}"
@@ -541,7 +565,6 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
 
 def register(ctx: Any) -> None:
     """Register Hermes tool, slash command, and report watcher."""
-    tool_info = _load_tool_info()
 
     def dispatch_handler(args: dict[str, Any], **kwargs: Any) -> str:
         kwargs.setdefault("_ctx", ctx)
@@ -550,12 +573,14 @@ def register(ctx: Any) -> None:
     def command_handler(raw_args: str) -> str:
         return _orch_command(raw_args, ctx=ctx)
 
-    ctx.register_tool(
-        name="orch_dispatch",
-        toolset="orchestra",
-        schema=_schema(tool_info),
-        handler=dispatch_handler,
-    )
+    if _can_dispatch_orchestra_worker():
+        tool_info = _load_tool_info()
+        ctx.register_tool(
+            name="orch_dispatch",
+            toolset="orchestra",
+            schema=_schema(tool_info),
+            handler=dispatch_handler,
+        )
     ctx.register_command(
         "orch",
         handler=command_handler,

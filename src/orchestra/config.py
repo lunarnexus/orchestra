@@ -53,7 +53,6 @@ DEFAULT_TOOL_GOAL_DESCRIPTION = "Focused worker request/task to delegate."
 DEFAULT_TOOL_ROLE_DESCRIPTION = (
     "Optional exact configured role. Omit for the configured default role. {roles}"
 )
-DEFAULT_TOOL_TIMEOUT_DESCRIPTION = "Optional timeout in seconds."
 DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
 DEFAULT_HOST_HELP = """Orchestra commands:
   /orch help                         Show this help
@@ -94,7 +93,6 @@ class PromptConfig:
     tool_prompt_guidelines: tuple[str, ...] = DEFAULT_TOOL_PROMPT_GUIDELINES
     tool_goal_description: str = DEFAULT_TOOL_GOAL_DESCRIPTION
     tool_role_description: str = DEFAULT_TOOL_ROLE_DESCRIPTION
-    tool_timeout_description: str = DEFAULT_TOOL_TIMEOUT_DESCRIPTION
     tool_task_label_description: str = DEFAULT_TOOL_TASK_LABEL_DESCRIPTION
     host_help: str = DEFAULT_HOST_HELP
 
@@ -124,6 +122,7 @@ class RoleConfig:
     model: str | None = None
     profile: str | None = None
     agent: str | None = None
+    worker_budget: int | None = None
     enabled: bool = True
 
 
@@ -203,8 +202,6 @@ def load_app_config(path: str | Path) -> AppConfig:
         or DEFAULT_TOOL_GOAL_DESCRIPTION,
         tool_role_description=_get_optional_string(prompts_raw, "tool_role_description")
         or DEFAULT_TOOL_ROLE_DESCRIPTION,
-        tool_timeout_description=_get_optional_string(prompts_raw, "tool_timeout_description")
-        or DEFAULT_TOOL_TIMEOUT_DESCRIPTION,
         tool_task_label_description=_get_optional_string(
             prompts_raw, "tool_task_label_description"
         ) or DEFAULT_TOOL_TASK_LABEL_DESCRIPTION,
@@ -279,6 +276,7 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                 model=_get_optional_string(role_raw, "model"),
                 profile=_get_optional_string(role_raw, "profile"),
                 agent=_get_optional_string(role_raw, "agent"),
+                worker_budget=_get_optional_positive_int_or_none(role_raw, "worker_budget"),
                 enabled=_get_optional_bool(role_raw, "enabled", True),
             )
             continue
@@ -290,6 +288,7 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
             model=_get_optional_string(role_raw, "model"),
             profile=_get_optional_string(role_raw, "profile"),
             agent=_get_optional_string(role_raw, "agent"),
+            worker_budget=_get_optional_positive_int_or_none(role_raw, "worker_budget"),
             enabled=_get_optional_bool(role_raw, "enabled", True),
         )
 
@@ -371,6 +370,15 @@ def _get_optional_positive_int(data: dict[str, Any], key: str, default: int) -> 
     value = data.get(key)
     if value is None:
         return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigError(f"'{key}' must be a positive integer")
+    return value
+
+
+def _get_optional_positive_int_or_none(data: dict[str, Any], key: str) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ConfigError(f"'{key}' must be a positive integer")
     return value

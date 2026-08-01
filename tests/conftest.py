@@ -9,6 +9,11 @@ import pytest
 from tests.helpers import write_runtime_files
 
 
+@pytest.fixture(autouse=True)
+def clear_orchestra_worker_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ORCHESTRA_WORKER", raising=False)
+
+
 @pytest.fixture
 def fixture_dir() -> Path:
     return Path(__file__).parent / "fixtures"
