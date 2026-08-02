@@ -86,9 +86,15 @@ def _role_skill_sections(skill_names: tuple[str, ...]) -> list[str]:
 
 
 def _find_project_skill(skill_name: str) -> Path | None:
-    candidate = Path.cwd() / SKILL_LIBRARY_DIR / skill_name / SKILL_FILENAME
+    skills_root = Path.cwd() / SKILL_LIBRARY_DIR
+    candidate = skills_root / skill_name / SKILL_FILENAME
     if candidate.is_file():
         return candidate
+    if not skills_root.is_dir():
+        return None
+    for nested_candidate in skills_root.rglob(SKILL_FILENAME):
+        if nested_candidate.parent.name == skill_name:
+            return nested_candidate
     return None
 
 

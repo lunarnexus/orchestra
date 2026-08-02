@@ -54,9 +54,7 @@ DEFAULT_TOOL_PROMPT_GUIDELINES = (
     "Use exact configured roles; omit role for the default.",
 )
 DEFAULT_TOOL_GOAL_DESCRIPTION = "Focused worker request/task to delegate."
-DEFAULT_TOOL_ROLE_DESCRIPTION = (
-    "Optional exact configured role. Omit for the configured default role. {roles}"
-)
+DEFAULT_TOOL_ROLE_DESCRIPTION = "(Optional) specific role; omit for default. {roles}"
 DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
 DEFAULT_HOST_HELP = """Orchestra commands:
   /orch help                         Show this help

@@ -8,6 +8,13 @@ const execFileAsync = promisify(execFile);
 const TOOL_TIMEOUT_ERROR = "timeout is not accepted by orch_dispatch; configured default_timeout applies.";
 const ORCHESTRA_WORKER_ENV = "ORCHESTRA_WORKER";
 
+function setOrchestraWorkerStatus(
+  ctx: { ui: { setStatus: (key: string, msg: string | undefined) => void } },
+  count: number,
+): void {
+  ctx.ui.setStatus("orchestra", count > 0 ? `orch:${count}` : undefined);
+}
+
 function orchestraWorkerBudget(): number {
   const raw = process.env[ORCHESTRA_WORKER_ENV]?.trim();
   if (!raw) return 0;
@@ -324,8 +331,11 @@ function doArgumentContext(tokens: string[]): { expecting: "role" | "timeout" | 
 export default async function orchestraExtension(pi: ExtensionAPI) {
   let currentSessionId: string | null = null;
   const reportWatchers = new Map<string, Set<ChildProcessWithoutNullStreams>>();
+  const awaitRunWatchers = new Map<string, Set<ChildProcessWithoutNullStreams>>();
   const sessionRuns = new Map<string, Set<string>>();
   const sessionCompletedRuns = new Map<string, Set<string>>();
+  const sessionGenerations = new Map<string, number>();
+  const sessionRefreshRequests = new Map<string, number>();
   let cachedRoleNames: { expiresAt: number; roles: string[] } | null = null;
   let cachedActiveRuns: { expiresAt: number; sessionId: string; runIds: string[] } | null = null;
 
@@ -381,9 +391,37 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     if (!sessionCompletedRuns.has(sessionId)) sessionCompletedRuns.set(sessionId, new Set<string>());
   }
 
-  function stopSessionWatchers(sessionId: string | null): void {
-    if (!sessionId) return;
-    const watchers = reportWatchers.get(sessionId);
+  function ensureSessionGeneration(sessionId: string): number {
+    const generation = sessionGenerations.get(sessionId) ?? 1;
+    sessionGenerations.set(sessionId, generation);
+    return generation;
+  }
+
+  function bumpSessionGeneration(sessionId: string): number {
+    const generation = ensureSessionGeneration(sessionId) + 1;
+    sessionGenerations.set(sessionId, generation);
+    return generation;
+  }
+
+  function isCurrentSessionGeneration(sessionId: string, generation: number): boolean {
+    return sessionGenerations.get(sessionId) === generation;
+  }
+
+  function nextRefreshRequestId(sessionId: string): number {
+    const requestId = (sessionRefreshRequests.get(sessionId) ?? 0) + 1;
+    sessionRefreshRequests.set(sessionId, requestId);
+    return requestId;
+  }
+
+  function isCurrentRefreshRequest(sessionId: string, generation: number, requestId: number): boolean {
+    return isCurrentSessionGeneration(sessionId, generation) && sessionRefreshRequests.get(sessionId) === requestId;
+  }
+
+  function stopWatcherSet(
+    watcherMap: Map<string, Set<ChildProcessWithoutNullStreams>>,
+    sessionId: string,
+  ): void {
+    const watchers = watcherMap.get(sessionId);
     if (!watchers) return;
     for (const watcher of watchers) {
       try {
@@ -392,12 +430,25 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         // ignore shutdown races
       }
     }
-    reportWatchers.delete(sessionId);
+    watcherMap.delete(sessionId);
+  }
+
+  function stopSessionWatchers(sessionId: string | null): void {
+    if (!sessionId) return;
+    stopWatcherSet(awaitRunWatchers, sessionId);
+    stopWatcherSet(reportWatchers, sessionId);
+    sessionRefreshRequests.delete(sessionId);
     sessionRuns.delete(sessionId);
     sessionCompletedRuns.delete(sessionId);
   }
 
-  function watchRunProgress(sessionId: string, runId: string, notifier: ProgressNotifier): void {
+  function watchRunProgress(
+    sessionId: string,
+    runId: string,
+    notifier: ProgressNotifier,
+    updateStatus?: (count: number) => void,
+  ): void {
+    const sessionGeneration = ensureSessionGeneration(sessionId);
     const child = spawn(
       "orchestra",
       [
@@ -411,13 +462,35 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       { stdio: ["ignore", "pipe", "pipe"] },
     );
 
+    const watchers = awaitRunWatchers.get(sessionId) ?? new Set<ChildProcessWithoutNullStreams>();
+    watchers.add(child);
+    awaitRunWatchers.set(sessionId, watchers);
+
     let stdout = "";
+    let refreshedFailureStatus = false;
+    const refreshFailureStatus = (): void => {
+      if (refreshedFailureStatus) return;
+      refreshedFailureStatus = true;
+      void refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true, expectedGeneration: sessionGeneration });
+    };
+
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
     });
 
+    child.on("error", () => {
+      refreshFailureStatus();
+    });
+
     child.on("close", (code) => {
-      if (code !== 0) return;
+      watchers.delete(child);
+      if (watchers.size === 0) awaitRunWatchers.delete(sessionId);
+
+      if (code !== 0) {
+        refreshFailureStatus();
+        return;
+      }
+      if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
       const completed = sessionCompletedRuns.get(sessionId) ?? new Set<string>();
       completed.add(runId);
       sessionCompletedRuns.set(sessionId, completed);
@@ -435,11 +508,13 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         status ?? "done",
       ];
       if (role) command.push("--role", role);
-      void runOrchestra(command).then((result) => {
+      void runOrchestra(command).then(async (result) => {
+        if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
         const roleText = role ? ` ${role}` : "";
         const blockerText = blocker ? ` :: ${blocker}` : "";
         notifier.notify(result.stdout || `orchestra:${roleText} ${runId} returned ${status ?? "done"} (${completed.size}/${total})${blockerText}`);
-        if (activeRemaining === 0) {
+        const activeCount = await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true, expectedGeneration: sessionGeneration });
+        if (activeCount === 0 && isCurrentSessionGeneration(sessionId, sessionGeneration)) {
           sessionRuns.delete(sessionId);
           sessionCompletedRuns.delete(sessionId);
         }
@@ -451,6 +526,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     sessionId: string,
     params: DispatchParams,
     notifier: ProgressNotifier,
+    updateStatus?: (count: number) => void,
   ): Promise<DispatchResult> {
     const goal = params.goal?.trim() ?? "";
     if (!goal) return { code: 1, runId: null, output: "Usage: provide a worker goal." };
@@ -477,10 +553,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     const runId = result.code === 0 ? extractRunId(result.stdout) : null;
     if (runId) {
       trackRun(sessionId, runId);
-      watchRunProgress(sessionId, runId, notifier);
+      watchRunProgress(sessionId, runId, notifier, updateStatus);
       watchSessionReport(sessionId, runId);
       const role = extractField(result.stdout, "role") || requestedRole || "worker";
       const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId, "--role", role]);
+      await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true });
       return { code: 0, runId, output: ack.stdout || `orchestra dispatched: ${role} ${runId}` };
     }
     return { code: result.code, runId: null, output: result.stdout || result.stderr };
@@ -489,6 +566,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   function watchSessionReport(sessionId: string, runId: string): void {
     if (reportWatchers.has(sessionId)) return;
 
+    const sessionGeneration = ensureSessionGeneration(sessionId);
     const child = spawn(
       "orchestra",
       [
@@ -521,6 +599,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     child.on("close", (code) => {
       watchers.delete(child);
       if (watchers.size === 0) reportWatchers.delete(sessionId);
+      if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
 
       const rawReport = stdout.trim();
       if (code === 0 && rawReport) {
@@ -563,15 +642,18 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     currentSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
+    bumpSessionGeneration(currentSessionId);
+    await refreshOrchestraWorkerStatus(currentSessionId, (count) => setOrchestraWorkerStatus(ctx, count), { fresh: true });
   });
 
-  pi.on("session_shutdown", async () => {
+  pi.on("session_shutdown", async (_event, ctx) => {
+    if (currentSessionId) bumpSessionGeneration(currentSessionId);
+    setOrchestraWorkerStatus(ctx, 0);
     stopSessionWatchers(currentSessionId);
     currentSessionId = null;
   });
 
   const registerDispatchTool = canDispatchOrchestraWorker();
-  const toolInfo = registerDispatchTool ? await loadToolInfo() : null;
 
   async function getRoleNames(): Promise<string[]> {
     const now = Date.now();
@@ -597,6 +679,29 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     const runIds = result.code === 0 ? parseActiveRunIds(result.stdout) : [];
     cachedActiveRuns = { expiresAt: now + 2_000, sessionId, runIds };
     return runIds;
+  }
+
+  async function refreshOrchestraWorkerStatus(
+    sessionId: string,
+    updateStatus?: (count: number) => void,
+    options?: { fresh?: boolean; expectedGeneration?: number },
+  ): Promise<number | null> {
+    const sessionGeneration = options?.expectedGeneration ?? ensureSessionGeneration(sessionId);
+    if (options?.expectedGeneration !== undefined && !isCurrentSessionGeneration(sessionId, sessionGeneration)) {
+      return null;
+    }
+    const requestId = nextRefreshRequestId(sessionId);
+    try {
+      if (options?.fresh) cachedActiveRuns = null;
+      const activeIds = await getActiveRunIds(sessionId);
+      if (!isCurrentRefreshRequest(sessionId, sessionGeneration, requestId)) return null;
+      updateStatus?.(activeIds.length);
+      return activeIds.length;
+    } catch {
+      if (!isCurrentRefreshRequest(sessionId, sessionGeneration, requestId)) return null;
+      updateStatus?.(0);
+      return null;
+    }
   }
 
   async function getOrchArgumentCompletions(argumentPrefix: string): Promise<Array<{ value: string; label: string; description?: string }> | null> {
@@ -734,7 +839,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     return null;
   }
 
-  if (registerDispatchTool && toolInfo) {
+  function registerOrchDispatchTool(toolInfo: ToolInfoPayload): void {
     pi.registerTool({
       name: "orch_dispatch",
       label: "Orchestra Dispatch",
@@ -754,7 +859,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           };
         }
         const runtimeSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
-        const result = await dispatchWorker(runtimeSessionId, params, progressNotifier(ctx));
+        const result = await dispatchWorker(runtimeSessionId, params, progressNotifier(ctx), (count) => setOrchestraWorkerStatus(ctx, count));
         return {
           content: [{ type: "text", text: result.output }],
           isError: result.code !== 0,
@@ -762,6 +867,13 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       },
     });
   }
+
+  async function refreshOrchDispatchToolRegistration(): Promise<void> {
+    if (!registerDispatchTool) return;
+    registerOrchDispatchTool(await loadToolInfo());
+  }
+
+  await refreshOrchDispatchToolRegistration();
 
   pi.registerCommand("orch", {
     description: "Orchestra host adapter: /orch help|do|roles|status|stop|doctor|history",
@@ -792,6 +904,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
       if (subcommand === "roles") {
         const result = await runOrchestra(rest.length > 0 ? ["roles", ...rest] : ["roles", "--all"]);
+        cachedRoleNames = null;
+        await refreshOrchDispatchToolRegistration();
         emitEntryOutput(ctx, result.stdout || result.stderr);
         return;
       }
@@ -829,6 +943,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           runId,
         ]);
         emitEntryOutput(ctx, result.stdout || result.stderr);
+        await refreshOrchestraWorkerStatus(runtimeSessionId, (count) => setOrchestraWorkerStatus(ctx, count), { fresh: true });
         return;
       }
 
@@ -851,6 +966,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
             taskLabel: parsed.taskLabel ?? undefined,
           },
           progressNotifier(ctx),
+          (count) => setOrchestraWorkerStatus(ctx, count),
         );
         emitOutput(ctx, result.output, result.code === 0 ? "info" : "error");
         return;

@@ -14,6 +14,15 @@ Feature additions from `research.md` gap analysis.
   - [x] Prompt workers for concise complete reports when asked for options, tradeoffs, research findings, or plans.
   - Stop treating the 280-character compact summary as the only useful final answer; keep auto-return compact, but do not artificially discard needed worker output.
   - Add reviewer/critic passes for important worker findings instead of recording full sessions by default.
+- [ ] Add model-callable worker stop/cancel support.
+  - Current state: core cancellation already exists through `stop_run(...)`, `orchestra stop --session-id ... --run-id ...`, Pi `/orch stop <run-id>`, and Hermes `/orch stop <run-id>`.
+  - Gap: host tool surfaces currently register only `orch_dispatch`, so an agent can start workers by tool call but cannot stop them by tool call.
+  - Add an LLM-callable `orch_stop` tool for Pi and Hermes host adapters.
+  - Use runtime session identity from host context, exactly like `orch_dispatch`; never accept model/user-supplied `session_id`, `identity`, or `orchestrator_session_id`.
+  - Suggested parameters: optional `runId`. If omitted, stop only when exactly one owned active run exists; otherwise return active run IDs and ask for a specific run.
+  - Reuse existing core `stop_run(...)` behavior and ownership checks rather than adding separate cancellation logic.
+  - Update tool/help metadata, Pi extension source and packaged asset copy, Hermes plugin manifest/source, and source tests.
+  - Verify with process-supervision tests plus Pi/Hermes host source tests.
 - [ ] Add OpenCode parity with Pi/Hermes.
   - Add `harness: opencode` one-shot worker support first.
   - Add OpenCode `orch_dispatch` custom tool/plugin using `context.sessionID` for runtime identity after the worker harness MVP is working.

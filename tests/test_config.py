@@ -16,6 +16,7 @@ from orchestra.config import (
     DEFAULT_TIMEOUT,
     DEFAULT_TOOL_DESCRIPTION,
     DEFAULT_TOOL_PROMPT_GUIDELINES,
+    DEFAULT_TOOL_ROLE_DESCRIPTION,
     ConfigError,
     load_agent_catalog,
     load_app_config,
@@ -101,6 +102,7 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.concurrency.global_limit == DEFAULT_GLOBAL_CONCURRENCY
     assert config.concurrency.per_session_limit == DEFAULT_PER_SESSION_CONCURRENCY
     assert config.auto_return is DEFAULT_AUTO_RETURN
+    assert config.prompts.tool_role_description == DEFAULT_TOOL_ROLE_DESCRIPTION
 
 
 def test_default_host_help_uses_generic_session_wording() -> None:

@@ -685,7 +685,7 @@ def test_roles_command_rejects_invalid_role_mutations(
     assert "enabled" not in catalog["roles"]["reviewer"]
 
 
-def test_host_help_and_tool_info_advertise_enabled_roles_only(
+def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -700,14 +700,16 @@ def test_host_help_and_tool_info_advertise_enabled_roles_only(
     catalog_path.write_text(
         yaml.safe_dump(
             {
+                "default_role": "reviewer",
                 "harness_configs": {
                     "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
                     "hermes": {"harness": "hermes", "command": ["hermes", "-z", "{prompt}"]},
                 },
                 "roles": {
                     "worker": {"harness_config": "pi"},
+                    "reviewer": {"harness_config": "hermes", "model": "gpt-5"},
                     "critic": {"harness_config": "hermes", "enabled": False},
-                }
+                },
             },
             sort_keys=False,
         ),
@@ -745,9 +747,15 @@ def test_host_help_and_tool_info_advertise_enabled_roles_only(
     assert "/orch roles ROLE enabled true|false" in help_output
     assert "/orch roles ROLE model MODEL" in help_output
     assert "Configured roles" in help_output
-    assert "D worker  pi" in help_output
+    assert "Default: reviewer" in help_output
+    assert "✓ worker    pi" in help_output
+    assert "D reviewer  hermes  cfg=hermes gpt-5" in help_output
     assert "✗ critic" not in help_output
-    assert "D worker  pi" in tool_info["description"]
+    assert "✓ worker    pi" in tool_info["description"]
+    assert "D reviewer  hermes  cfg=hermes gpt-5" in tool_info["description"]
+    assert tool_info["roleDescription"].startswith("(Optional) specific role; omit for default.")
+    assert "✓ worker    pi" in tool_info["roleDescription"]
+    assert "D reviewer  hermes  cfg=hermes gpt-5" in tool_info["roleDescription"]
     assert "✗ critic" not in tool_info["description"]
     assert "✗ critic" not in tool_info["roleDescription"]
     assert "timeoutDescription" not in tool_info

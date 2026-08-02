@@ -23,7 +23,7 @@ tool_prompt_guidelines:
   - >-
     Use exact configured roles; omit role for the default.
 tool_goal_description: Focused worker request/task to delegate.
-tool_role_description: Optional exact configured role. Omit for the configured default role. {roles}
+tool_role_description: (Optional) specific role; omit for default. {roles}
 tool_task_label_description: Optional short request label.
 host_help: |-
   Orchestra commands:
