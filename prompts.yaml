@@ -12,16 +12,16 @@ tool_description: >-
 tool_prompt_snippet: Dispatch focused work to Orchestra workers/subagents. {roles}
 tool_prompt_guidelines:
   - >-
-    Prefer orch_dispatch for bounded work that benefits from worker context, role
+    Use orch_dispatch for all tasks with more than one tool call, role
     specialization, or parallelism.
   - >-
-    Keep each request narrow and include the expected return detail: yes/no,
+    Keep each request narrow, single purpose/task, and include the expected return detail: yes/no,
     concise report, or files/checks/results.
   - >-
-    After a dispatch error, preserve reliability: report the error/status and
-    resume dispatch only when capacity/setup is clear.
+    After a dispatch error, preserve reliability: report the error/status.  For
+    timeouts, redispatch with a smaller task.
   - >-
-    Use exact configured roles; omit role for the default.
+    Use exact enabled roles; omit role for the default.
 tool_goal_description: Focused worker request/task to delegate.
 tool_role_description: (Optional) specific role; omit for default. {roles}
 tool_task_label_description: Optional short request label.
@@ -31,7 +31,6 @@ host_help: |-
     /orch doctor                       Check Orchestra setup
     /orch do <request>                 Start a worker for this session
     /orch do --role ROLE <request>     Start a worker with a role
-    /orch do --timeout SEC <request>   Start a worker with a timeout
     /orch roles                        Show configured roles
     /orch roles ROLE enabled true|false
                                        Enable or disable a non-default role

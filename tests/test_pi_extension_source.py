@@ -25,11 +25,15 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert 'getArgumentCompletions: getOrchArgumentCompletions' in extension_source
     assert 'function tokenizeArgs(input: string): TokenizeArgsResult' in extension_source
     assert 'Malformed quoted string in /orch do arguments' in extension_source
-    assert '''if (subcommand === "roles") {
-        const result = await runOrchestra(rest.length > 0 ? ["roles", ...rest] : ["roles", "--all"]);
-        cachedRoleNames = null;
-        await refreshOrchDispatchToolRegistration();
-''' in extension_source
+    expected_roles_block = (
+        'if (subcommand === "roles") {\n'
+        '        const result = await runOrchestra('
+        'rest.length > 0 ? ["roles", ...rest] : '
+        '["roles", "--all"]);\n'
+        '        cachedRoleNames = null;\n'
+        '        await refreshOrchDispatchToolRegistration();\n'
+    )
+    assert expected_roles_block in extension_source
     for keyword in ("delegate", "dispatch", "subagent", "sub-agent", "worker"):
         assert keyword in prompts_source
 
