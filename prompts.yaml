@@ -28,6 +28,7 @@ tool_task_label_description: Optional short request label.
 host_help: |-
   Orchestra commands:
     /orch help                         Show this help
+    /orch on                           Load the Orchestra main-session skill once
     /orch doctor                       Check Orchestra setup
     /orch do <request>                 Start a worker for this session
     /orch do --role ROLE <request>     Start a worker with a role

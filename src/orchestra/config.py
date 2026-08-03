@@ -22,7 +22,7 @@ DEFAULT_TIMEOUT = 600
 DEFAULT_GLOBAL_CONCURRENCY = 4
 DEFAULT_PER_SESSION_CONCURRENCY = 3
 DEFAULT_AUTO_RETURN = True
-DEFAULT_ROLE_NAME = "worker"
+DEFAULT_ROLE_NAME = "builder"
 SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RESERVED_ENV_PREFIXES = ("ORCHESTRA_",)
@@ -58,13 +58,15 @@ DEFAULT_TOOL_ROLE_DESCRIPTION = "(Optional) specific role; omit for default. {ro
 DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
 DEFAULT_HOST_HELP = """Orchestra commands:
   /orch help                         Show this help
+  /orch on                           Load the Orchestra main-session skill once
   /orch doctor                       Check Orchestra setup
   /orch do <request>                 Start a worker for this session
   /orch do --role ROLE <request>     Start a worker with a role
   /orch do --timeout SEC <request>   Start a worker with a timeout
   /orch roles                        Show configured roles
-  /orch roles ROLE enabled true|false
+  /orch roles ROLE enabled VALUE
                                      Enable or disable a non-default role
+                                     VALUE: true, yes, y, 1, on | false, no, n, 0, off
   /orch roles ROLE model MODEL       Set a role's model
   /orch status                       Show active workers for this session
   /orch stop <run-id>                Stop an owned active worker
@@ -116,10 +118,19 @@ class HarnessConfig:
 
 
 @dataclass(frozen=True)
+class RoleHarnessFallback:
+    harness_config: str
+    model: str | None = None
+    profile: str | None = None
+    agent: str | None = None
+
+
+@dataclass(frozen=True)
 class RoleConfig:
     harness_config: str = ""
     harness: str = ""
     command: list[str] | None = None
+    harness_fallback: tuple[RoleHarnessFallback, ...] = ()
     prompt_addition: str = ""
     model: str | None = None
     profile: str | None = None
@@ -276,6 +287,15 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                 harness_config=harness_config_name,
                 harness=harness_config.harness,
                 command=harness_config.command,
+                harness_fallback=tuple(
+                    _get_optional_harness_fallbacks(
+                        role_raw,
+                        "harness_fallback",
+                        context=f"role '{role_name}'",
+                        harness_configs=harness_configs,
+                    )
+                    or []
+                ),
                 prompt_addition=_get_optional_string(role_raw, "prompt_addition") or "",
                 model=_get_optional_string(role_raw, "model"),
                 profile=_get_optional_string(role_raw, "profile"),
@@ -302,6 +322,15 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
         roles[role_name] = RoleConfig(
             harness=_get_required_string(role_raw, "harness", context=f"role '{role_name}'"),
             command=_get_required_string_list(role_raw, "command", context=f"role '{role_name}'"),
+            harness_fallback=tuple(
+                _get_optional_harness_fallbacks(
+                    role_raw,
+                    "harness_fallback",
+                    context=f"role '{role_name}'",
+                    harness_configs=harness_configs,
+                )
+                or []
+            ),
             prompt_addition=_get_optional_string(role_raw, "prompt_addition") or "",
             model=_get_optional_string(role_raw, "model"),
             profile=_get_optional_string(role_raw, "profile"),
@@ -477,6 +506,50 @@ def _get_optional_skill_names(
                 "using letters, numbers, underscore, dot, or dash"
             )
     return values
+
+
+def _get_optional_harness_fallbacks(
+    data: dict[str, Any],
+    key: str,
+    *,
+    context: str,
+    harness_configs: dict[str, HarnessConfig],
+) -> list[RoleHarnessFallback] | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, list) or not value:
+        raise ConfigError(f"{context} requires '{key}' to be a non-empty list of mappings")
+    if not harness_configs:
+        raise ConfigError(f"{context} requires top-level 'harness_configs' when using '{key}'")
+
+    allowed_keys = {"harness_config", "model", "profile", "agent"}
+    result: list[RoleHarnessFallback] = []
+    for index, item in enumerate(value, start=1):
+        entry_context = f"{context} {key} entry {index}"
+        if not isinstance(item, dict):
+            raise ConfigError(f"{context} requires '{key}' entries to be mappings")
+        unknown_keys = sorted(set(item) - allowed_keys)
+        if unknown_keys:
+            joined = ", ".join(unknown_keys)
+            raise ConfigError(
+                f"{entry_context} uses unsupported keys: {joined}; "
+                "allowed keys are harness_config, model, profile, agent"
+            )
+        harness_config_name = _get_required_string(item, "harness_config", context=entry_context)
+        if harness_config_name not in harness_configs:
+            raise ConfigError(
+                f"{entry_context} must name a configured harness_config: {harness_config_name}"
+            )
+        result.append(
+            RoleHarnessFallback(
+                harness_config=harness_config_name,
+                model=_get_optional_string(item, "model"),
+                profile=_get_optional_string(item, "profile"),
+                agent=_get_optional_string(item, "agent"),
+            )
+        )
+    return result
 
 
 def _get_required_string_list(

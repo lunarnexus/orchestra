@@ -30,6 +30,9 @@ harness_configs:
 roles:
   builder:
     harness_config: pi
+    harness_fallback:
+    - harness_config: hermes
+      profile: tori
     model: openai-codex/gpt-5.4
     prompt_addition: Implement the assigned task only. Stay in scope. Return files
       changed, checks run, results, blockers, and risks.
@@ -72,8 +75,8 @@ roles:
   researcher:
     harness_config: pi
     model: openai-codex/gpt-5.4
-    prompt_addition: Gather evidence with sources from docs, web, codegraph, or code.
-      Do not change code. Return concise findings, sources, blockers, and risks.
+    prompt_addition: Gather evidence with sources from docs, web, or code. Do not
+      change code. Return concise findings, sources, blockers, and risks.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
@@ -105,9 +108,9 @@ roles:
     model: openai-codex/gpt-5.4
     skills:
     - planner
-    prompt_addition: Plan the work. Prefer codegraph for codebase structure when available.
-      May dispatch researchers for facts, docs, web, and code evidence. Return concise
-      plan findings and open questions.
+    prompt_addition: Plan the work. Ask numbered questions for unknowns. May dispatch
+      researchers for facts, docs, web, and code evidence. Return concise plan
+      findings and open questions.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'

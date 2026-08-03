@@ -65,16 +65,16 @@ decisions.
   projects, host windows, or any id supplied by the LLM.
   Read-only status/history may aggregate known runtime-continuation lineage for
   host UX, but that does not change the stored owner id or control boundary.
-- **Role** — tentative reusable worker purpose such as `worker`, `reviewer`,
-  `critic`, `researcher`, `appsec`, or possibly `planner`. Roles are a routing
-  convenience, not a fixed taxonomy.
+- **Role** — tentative reusable worker purpose such as `builder`, `reviewer`,
+  `researcher`, `appsec`, or `planner`. Roles are a routing convenience, not a
+  fixed taxonomy.
 - **Run** — one worker execution requested by an orchestrator session.
 - **Batch** — optional UI/API grouping for workers requested together. Batches do
   not define return semantics; returns are grouped by orchestrator session.
 - **Step** — one child-agent execution inside a run.
 - **Status** — lightweight runtime state: queued, running, waiting, done,
   failed, cancelled.
-- **Approval request** — future interactive event where a child harness asks the
+- **Approval request** — interactive event where a child harness asks the
   orchestrator or human for a decision.
 
 ## Architecture Decisions
@@ -85,7 +85,7 @@ decisions.
 | Core plus adapters | Put orchestration logic in a reusable core, then expose it through MCP, CLI, Hermes plugin, Pi extension, and future host adapters. | 2026-07-27 |
 | MCP-capable, not MCP-only | MCP is a good universal tool surface, but host-native plugins/extensions are required for reliable slash UX and session ownership/auto-return; generic MCP alone cannot provide the full behavior. | 2026-07-27 |
 | Python core | Python fits local subprocess orchestration, SQLite, CLI packaging, and existing CelloS lessons. TypeScript should be used only where host extensions require it. | 2026-07-27 |
-| One-shot first | Start with simple subprocess calls such as Pi/Hermes/OpenCode one-shots; add RPC, ACP streaming, and approval passthrough later. | 2026-07-27 |
+| One-shot first | Start with simple subprocess calls such as Pi/Hermes/OpenCode one-shots; keep RPC, ACP streaming, and approval passthrough on the roadmap. | 2026-07-27 |
 | SQLite for lean runtime state | Track useful supervision state by default while writing JSONL operational logs for inspection. Debug mode may retain full prompts, transcripts, raw harness messages, stdout/stderr, and timing outside core run state. | 2026-07-27 |
 | `config.yaml` as primary config | Project and user configuration should use YAML, including concurrency limits, defaults, logging, timeouts, and explicit harness selection/fallback policy. | 2026-07-27 |
 | Separate agent catalog | Agent/model/role combinations, context limits, and harness-specific defaults should live outside core config once schema settles. | 2026-07-27 |
@@ -113,9 +113,8 @@ decisions.
   `prompts.yaml` carries prompt text, and `agent-catalog.yaml` carries role and
   harness definitions.
 - **Implemented harnesses/host surfaces:** CLI, Pi extension, Hermes plugin, Pi
-  worker harnesses, and Hermes worker harnesses. OpenCode remains planned.
-- **Future harness modes:** Pi RPC, ACP, and other streaming or interactive
-  protocols.
+  worker harnesses, and Hermes worker harnesses.
+- **Planned harness and protocol work:** tracked in `ROADMAP.md`.
 
 Harness implementations should be loaded lazily only when referenced by the
 selected config/catalog path; Orchestra should not pay startup cost to scan for
@@ -140,7 +139,7 @@ Default state should include only:
 - error or blocker
 - JSONL log path
 - optional worker session handle or transcript path when the harness exposes one
-- approval-needed flag for future interactive modes
+- approval-needed flag for interactive modes
 
 Default state should not store full prompts, full transcripts, raw token streams,
 or every tool call. JSONL operational logs should record lifecycle events,
@@ -149,11 +148,11 @@ as a return artifact under `state/return-artifacts/` so truncated summaries can
 point the orchestrator at the complete worker return. Debug mode may record raw
 details to logs for troubleshooting and failed-run inspection.
 
-Future harnesses may opportunistically report a native session id or transcript
-file path for debugging or resume. This is not MVP and must remain optional: Pi
-may run with `--no-session`, while Hermes one-shots/profile runs usually persist
-sessions. Orchestra should store such handles as metadata or log references, not
-as required state.
+Harnesses may opportunistically report a native session id or transcript file
+path for debugging or resume. This remains optional: Pi may run with
+`--no-session`, while Hermes one-shots/profile runs usually persist sessions.
+Orchestra should store such handles as metadata or log references, not as
+required state.
 
 ## Data Flow
 
@@ -211,8 +210,8 @@ Use `/orch` as the host-facing command namespace:
 - `/orch doctor`
 - `/orch history`
 
-`/orch goal` is a future feature, not MVP. It should build on session-scoped
-worker returns, likely adding a standing objective and completion contract later.
+`/orch goal` is tracked in `ROADMAP.md`. It should build on session-scoped
+worker returns with a standing objective and completion contract.
 
 `/orch status` reports active agents/runs plus tiny service health. `/orch history`
 reads compact DB summaries and JSONL operational logs for previous inputs and
@@ -251,9 +250,8 @@ Parallelism is scheduler-driven under configured concurrency limits, not a
 separate command. Enforce both a global concurrency limit and a per-orchestrator
 session concurrency limit. MVP defaults are `global=4` and `per_session=3`.
 If a `/orch do` request would exceed either limit, return an error for MVP.
-Queued worker requests are a wishlist/future feature, not required for the first
-implementation. Workflow features come later and may include review loops and
-watchdogs.
+Queued worker requests, review loops, and watchdogs are tracked in
+`ROADMAP.md`.
 
 Worker completions should prod only the owning orchestrator session by
 re-entering as one new host/orchestrator turn with the consolidated session
@@ -269,7 +267,7 @@ need.
 
 Every worker must be associated with
 the `orchestrator_session_id` that created it, and control operations such as
-`/orch stop`, return prods, and future approval routing must use that exact id to
+`/orch stop`, return prods, and approval routing must use that exact id to
 prevent separate orchestrators from receiving or controlling one another's
 workers. Read-only `status` and `history` may include host-specific continuation
 lineage, but must not expand control authority.
@@ -363,10 +361,20 @@ proven by implementation.
 
 ### Roles and Core Boundaries
 
-Roles remain tentative and may be overreach. Likely roles include `worker`,
-`reviewer`, `critic`, `researcher`, and `appsec`; an optional `planner` role is
-undecided. Do not define a separate `verifier` role unless it proves distinct
-from reviewer. Role prompts should stay minimal: load configured role skills first, then pass a normal delegation prompt. Orchestra searches recursively under `skills/` for `<skill-name>/SKILL.md` relative to the current working directory and injects the local content when present. If no local skill file exists, the prompt tells the worker to load the named native skill before doing the task. Role `env` values are applied only to worker subprocess environments; env keys must be valid environment variable names and cannot use the reserved `ORCHESTRA_` prefix. User-facing role listings show env keys, not values. Avoid hard-coding planning, coding, reviewing, or other work methods into core. Planner and orchestrator separation is still undecided.
+Current worker roles are `builder`, `planner`, `researcher`, `reviewer`,
+`verifier`, and `appsec`; `critic` remains optional/disabled. The main session
+uses the `orchestrator` skill when Orchestra mode is manually enabled in Pi.
+Worker prompts should stay minimal: load configured role skills first, then
+pass a normal delegation prompt. Orchestra searches recursively under `skills/`
+for `<skill-name>/SKILL.md` relative to the current working directory and
+injects the local content when present. If no local skill file exists, the
+prompt tells the worker to load the named native skill before doing the task.
+`reviewer`, `verifier`, and `appsec` may share the same `reviewer` skill with
+different requested modes. Role `env` values are applied only to worker
+subprocess environments; env keys must be valid environment variable names and
+cannot use the reserved `ORCHESTRA_` prefix. User-facing role listings show env
+keys, not values. Avoid hard-coding planning, coding, reviewing, or other work
+methods into core.
 
 ### Dispatch Prompt Shape
 
@@ -440,9 +448,39 @@ The MVP host command surface is:
 `/orch do` is the manual dispatch path. Natural-language delegation is supported
 through a host tool named `orch_dispatch`. Dispatch trigger language includes
 delegate, dispatch, subagent/sub-agent, worker, ask another agent, and
-parallelize a narrow task. If a role is omitted, the default role is `worker`.
+parallelize a narrow task. If a role is omitted, the default role is `builder`.
 The dispatch tool should include available configured roles in its metadata, and
-that metadata should come from core so future host adapters stay consistent.
+that metadata should come from core so host adapters stay consistent.
+
+### Main-Session Orchestration Mode and Skills
+
+The main session is the orchestrator brain. It owns planning, sequencing,
+approvals, artifact alignment, and final judgment while worker agents perform
+focused research, implementation, verification, review, and security work.
+User-facing updates to the main session should stay concise and
+decision-focused.
+
+For Pi, `/orch on` manually injects the `orchestrator` skill into the current
+main session once. The workflow source for that injection is
+`skills/orchestrator/SKILL.md`. MVP does not include `/orch off`, and repeated
+or compaction-aware reinjection is tracked in `ROADMAP.md`. This main-session
+injection is Pi-first until other host adapters add equivalent support.
+
+### Requested-Role Fallback
+
+If no role is requested, use the catalog `default_role`. If a requested role
+fails to start on its primary harness, recoverable fallback must preserve the
+requested role name, skills, prompt additions, env, and worker budget. Fallback
+may change only the effective `harness_config` and optional runtime overrides
+such as `model`, `profile`, or `agent`, using the role's `harness_fallback`
+list. Disabled requested roles still fail clearly. Final reports and history
+should mention successful fallback.
+
+### Standard Artifacts
+
+The standard working artifacts are `FOUNDATION.md`, `ARCHITECTURE.md`,
+`RESEARCH.md`, `PLAN.md`, and `ROADMAP.md`. Skills may describe expected
+content. Template work is tracked in `ROADMAP.md`.
 
 ### Session Identity
 

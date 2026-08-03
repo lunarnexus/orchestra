@@ -33,6 +33,7 @@ def test_global_concurrency_limit_is_atomic(
     catalog_path.write_text(
         yaml.safe_dump(
             {
+                "default_role": "worker",
                 "roles": {
                     "worker": {
                         "harness": "pi",
@@ -101,6 +102,7 @@ def test_per_session_concurrency_limit_is_atomic(
     catalog_path.write_text(
         yaml.safe_dump(
             {
+                "default_role": "worker",
                 "roles": {
                     "worker": {
                         "harness": "pi",

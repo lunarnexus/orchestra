@@ -20,7 +20,12 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert "await refreshOrchDispatchToolRegistration();" in extension_source
     assert "timeout: Type.Optional" not in extension_source
     assert "timeout is not accepted by orch_dispatch" in extension_source
+    assert 'subcommand === "on"' in extension_source
     assert 'subcommand === "roles"' in extension_source
+    assert 'const orchestratorSkillSessions = new Set<string>();' in extension_source
+    assert '_orchestrator-skill' in extension_source
+    assert 'Orchestra main-session skill loaded for this session.' in extension_source
+    assert 'Orchestra main-session skill already loaded for this session.' in extension_source
     assert 'cachedRoleNames = null;' in extension_source
     assert 'getArgumentCompletions: getOrchArgumentCompletions' in extension_source
     assert 'function tokenizeArgs(input: string): TokenizeArgsResult' in extension_source
@@ -51,7 +56,11 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert "help-host" in extension_source
     assert 'rest.length > 0 ? ["roles", ...rest] : ["roles", "--all"]' in extension_source
     assert (
-        'description: "Orchestra host adapter: /orch help|do|roles|status|stop|doctor|history"'
+        'description: "Orchestra host adapter: /orch help|on|do|roles|status|stop|doctor|history"'
+        in extension_source
+    )
+    assert (
+        'pi.sendUserMessage(message, { deliverAs: "followUp", triggerTurn: true });'
         in extension_source
     )
     assert "compactReturnMessage" not in extension_source

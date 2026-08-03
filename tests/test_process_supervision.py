@@ -128,6 +128,7 @@ def test_unknown_harness_marks_run_failed_and_clears_active_queue(
     catalog_path.write_text(
         yaml.safe_dump(
             {
+                "default_role": "worker",
                 "roles": {
                     "worker": {
                         "harness": "missing",
@@ -184,7 +185,7 @@ def test_unknown_harness_marks_run_failed_and_clears_active_queue(
     assert "status: no active runs" in status.stdout
 
 
-def test_prestart_failure_falls_back_to_enabled_default_role(
+def test_prestart_failure_uses_requested_role_harness_fallback(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
@@ -197,9 +198,9 @@ def test_prestart_failure_falls_back_to_enabled_default_role(
     catalog_path.write_text(
         yaml.safe_dump(
             {
-                "default_role": "worker",
-                "roles": {
-                    "worker": {
+                "default_role": "builder",
+                "harness_configs": {
+                    "pi": {
                         "harness": "pi",
                         "command": [
                             python_executable,
@@ -209,9 +210,18 @@ def test_prestart_failure_falls_back_to_enabled_default_role(
                             "worker ok",
                         ],
                     },
+                    "hermes": {
+                        "harness": "hermes",
+                        "command": ["missing-hermes-binary", "-z", "{prompt}"],
+                    },
+                },
+                "roles": {
+                    "builder": {
+                        "harness_config": "pi",
+                    },
                     "reviewer": {
-                        "harness": "missing",
-                        "command": [python_executable, str(fake_worker_script), "success"],
+                        "harness_config": "hermes",
+                        "harness_fallback": [{"harness_config": "pi"}],
                     },
                 },
             },
@@ -240,14 +250,12 @@ def test_prestart_failure_falls_back_to_enabled_default_role(
     assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
 
     record = store.get_run(run_id)
-    assert record.role == "worker"
+    note = "fallback: reviewer used harness_config pi after hermes failed to start"
+    assert record.role == "reviewer"
     assert record.harness == "pi"
-    assert record.blocker_text is not None
-    assert "requested role reviewer could not start before worker launch" in record.blocker_text
-    assert "ran default role worker instead" in record.blocker_text
+    assert not record.blocker_text
     assert record.result_summary is not None
-    assert "requested role reviewer could not start before worker launch" in record.result_summary
-    assert "ran default role worker instead" in record.result_summary
+    assert note in record.result_summary
     assert "worker ok" in record.result_summary
 
     await_run = run_cli(
@@ -262,11 +270,20 @@ def test_prestart_failure_falls_back_to_enabled_default_role(
         run_id,
     )
     assert "status: done" in await_run.stdout
-    assert "role: worker" in await_run.stdout
-    assert (
-        "blocker: requested role reviewer could not start before worker launch; "
-        "ran default role worker instead"
-    ) in await_run.stdout
+    assert "role: reviewer" in await_run.stdout
+    assert f"result: {note}; worker ok" in await_run.stdout
+    assert "harness: pi" in await_run.stdout
+
+    history = run_cli(
+        "--config",
+        str(config_path),
+        "--agent-catalog",
+        str(catalog_path),
+        "history",
+        "--session-id",
+        "manual:fallback",
+    )
+    assert note in history.stdout
 
     status = run_cli(
         "--config",
@@ -293,9 +310,9 @@ def test_poststart_worker_failure_does_not_fall_back_to_default_role(
     catalog_path.write_text(
         yaml.safe_dump(
             {
-                "default_role": "worker",
+                "default_role": "builder",
                 "roles": {
-                    "worker": {
+                    "builder": {
                         "harness": "pi",
                         "command": [
                             python_executable,

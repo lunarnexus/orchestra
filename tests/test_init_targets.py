@@ -44,7 +44,7 @@ def test_init_all_detects_harnesses_and_deduplicates_targets(
     _write_source_tree(
         source,
         """
-default_role: worker
+default_role: builder
 harness_configs:
   pi:
     harness: pi
@@ -56,7 +56,7 @@ harness_configs:
     harness: opencode
     command: ["opencode", "run", "{prompt}"]
 roles:
-  worker:
+  builder:
     harness_config: pi
   critic:
     harness_config: hermes

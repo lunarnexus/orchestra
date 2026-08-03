@@ -284,7 +284,7 @@ async function loadToolInfo(): Promise<ToolInfoPayload> {
     promptSnippet: "Dispatch focused work to Orchestra workers/subagents.",
     promptGuidelines: ["Use orch_dispatch for narrow delegated worker tasks."],
     goalDescription: "Focused worker request/task to delegate.",
-    roleDescription: "Optional exact configured role. Omit for default worker role.",
+    roleDescription: "(Optional) specific role; omit for default.",
     taskLabelDescription: "Optional short request label.",
   };
 }
@@ -379,6 +379,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   const sessionCompletedRuns = new Map<string, Set<string>>();
   const sessionGenerations = new Map<string, number>();
   const sessionRefreshRequests = new Map<string, number>();
+  const orchestratorSkillSessions = new Set<string>();
   let cachedRoleNames: { expiresAt: number; roles: string[] } | null = null;
   let cachedActiveStatus: { expiresAt: number; sessionId: string; status: ActiveSessionStatus } | null = null;
 
@@ -684,13 +685,17 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    if (currentSessionId) orchestratorSkillSessions.delete(currentSessionId);
     currentSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
     bumpSessionGeneration(currentSessionId);
     await refreshOrchestraWorkerStatus(currentSessionId, (status) => setOrchestraWorkerStatus(ctx, status), { fresh: true });
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    if (currentSessionId) bumpSessionGeneration(currentSessionId);
+    if (currentSessionId) {
+      bumpSessionGeneration(currentSessionId);
+      orchestratorSkillSessions.delete(currentSessionId);
+    }
     setOrchestraWorkerStatus(ctx, null);
     stopSessionWatchers(currentSessionId);
     currentSessionId = null;
@@ -751,12 +756,30 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
   }
 
+  async function injectOrchestratorSkill(sessionId: string): Promise<{ code: number; output: string }> {
+    if (orchestratorSkillSessions.has(sessionId)) {
+      return { code: 0, output: "Orchestra main-session skill already loaded for this session." };
+    }
+    const result = await runOrchestra(["_orchestrator-skill"]);
+    const message = result.stdout.trim();
+    if (result.code !== 0 || !message) {
+      return {
+        code: result.code || 1,
+        output: result.stderr || message || "Failed to load Orchestra main-session skill.",
+      };
+    }
+    pi.sendUserMessage(message, { deliverAs: "followUp", triggerTurn: true });
+    orchestratorSkillSessions.add(sessionId);
+    return { code: 0, output: "Orchestra main-session skill loaded for this session." };
+  }
+
   async function getOrchArgumentCompletions(argumentPrefix: string): Promise<Array<{ value: string; label: string; description?: string }> | null> {
     const parsed = tokenizeArgs(argumentPrefix);
     if (parsed.error) return null;
 
     const subcommands = [
       { token: "help", description: "Show Orchestra help" },
+      { token: "on", description: "Load the Orchestra main-session skill once" },
       { token: "doctor", description: "Check Orchestra setup" },
       { token: "do ", description: "Start a worker for this session" },
       { token: "roles ", description: "Show or update configured roles" },
@@ -923,7 +946,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   await refreshOrchDispatchToolRegistration();
 
   pi.registerCommand("orch", {
-    description: "Orchestra host adapter: /orch help|do|roles|status|stop|doctor|history",
+    description: "Orchestra host adapter: /orch help|on|do|roles|status|stop|doctor|history",
     getArgumentCompletions: getOrchArgumentCompletions,
     handler: async (args, ctx) => {
       const trimmed = args.trim();
@@ -940,6 +963,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
       if (subcommand === "help") {
         emitEntryOutput(ctx, await hostHelp());
+        return;
+      }
+
+      if (subcommand === "on") {
+        const result = await injectOrchestratorSkill(runtimeSessionId);
+        emitOutput(ctx, result.output, result.code === 0 ? "info" : "error");
         return;
       }
 

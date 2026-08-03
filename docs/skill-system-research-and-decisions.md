@@ -1,6 +1,6 @@
 # Skill System Research and Decisions
 
-Status: working notes from the initial skill-system research session. Provisional, not final.
+Status: research notes plus implemented-shape updates for Phase 1-3. Historical provisional sections remain for traceability; use the implemented-shape section below and `FOUNDATION.md` for shipped behavior.
 
 ## Purpose
 
@@ -34,12 +34,12 @@ What Orchestra does today:
 - Skills are injected only when configured on a **role** in `agent-catalog.yaml`.
 - Initial wired roles at baseline:
   - `reviewer` -> `code-reviewer`
-  - `planner` -> `code-planner` (disabled)
+  - `planner` -> `code-planner` (disabled at baseline; archived later after `planner` replaced it)
   - `appsec` -> `security-reviewer` (disabled)
 - Current active role direction:
   - `builder` implements
   - `verifier`, `reviewer`, and `appsec` inject `reviewer`
-  - `planner` injects `code-planner`
+  - `planner` injects `planner`
   - superseded top-level skills are archived under `skills/archive/`
 - Local-first lookup:
   1. `skills/<skill-name>/SKILL.md`
@@ -365,3 +365,38 @@ Initial decision:
 3. Implement harness/model fallback that preserves requested role skills.
 4. Rewrite role skills around `builder`, `planner`, `researcher`, and `reviewer`.
 5. Add prompt-flow and E2E tests to measure whether the new flow actually improves behavior.
+
+## Implemented shape after Phase 1-3
+
+Shipped behavior:
+
+- The main session is the orchestrator brain and receives concise
+  decision-focused updates by default.
+- `/orch on` is a manual, one-time Pi main-session injection of the
+  `orchestrator` skill.
+- The injected workflow source is `skills/orchestrator/SKILL.md`.
+- MVP does not include `/orch off`.
+- Main-session orchestrator injection is Pi-first; worker role skill injection
+  remains core/catalog behavior.
+- Worker role skills still resolve local-first from `skills/<skill-name>/SKILL.md`
+  with native-skill fallback when no local file exists.
+- Requested-role startup fallback uses role-level `harness_fallback`.
+  Successful fallback preserves the requested role name, skills,
+  `prompt_addition`, env, and worker budget while changing only
+  `harness_config` plus optional runtime overrides such as `model`, `profile`,
+  or `agent`.
+- Successful fallback is surfaced in final reports/history.
+- Standard artifacts are `FOUNDATION.md`, `ARCHITECTURE.md`, `RESEARCH.md`,
+  and `PLAN.md`.
+- Planner may dispatch researchers initially; other roles do not nested-dispatch
+  in MVP.
+
+Differences from earlier provisional ideas:
+
+- The main-session skill is not always on; it is loaded only when `/orch on` is
+  used.
+- `/orch on` is one-time per Pi session, not compaction-aware reinjection.
+- There is still no `/orch off` command.
+- Main-session orchestration skill injection and worker role skill injection are
+  separate paths.
+- Equivalent non-Pi host support is still future work.

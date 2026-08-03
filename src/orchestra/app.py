@@ -38,6 +38,8 @@ from orchestra.harnesses import (
     register_builtin_harnesses,
 )
 from orchestra.harnesses.common import (
+    SKILL_FILENAME,
+    SKILL_LIBRARY_DIR,
     compact_summary,
     orchestra_can_dispatch,
     summary_was_truncated,
@@ -60,7 +62,7 @@ REPORT_HEADER = "Orchestra session report"
 ROLE_USAGE = """Usage:
   /orch roles
   /orch roles ROLE harness-config CONFIG
-  /orch roles ROLE enabled true|false
+  /orch roles ROLE enabled VALUE
   /orch roles ROLE model MODEL
   /orch roles ROLE profile PROFILE
   /orch roles ROLE agent AGENT
@@ -69,7 +71,11 @@ Examples:
   /orch roles appsec enabled false
   /orch roles reviewer model openai-codex/gpt-5.4
   /orch roles critic profile tori
-  /orch roles appsec agent plan"""
+  /orch roles appsec agent plan
+
+Enabled values:
+  true, yes, y, 1, on
+  false, no, n, 0, off"""
 
 
 class AppError(ValueError):
@@ -296,40 +302,46 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
             log_path=record.log_path,
         )
     except AppError as exc:
-        fallback_role = _fallback_role_for(context.catalog, selected_role.name)
-        if fallback_role is None:
+        startup_failures = [str(exc)]
+        last_failure_text = str(exc)
+        attempted_role = selected_role
+        started_role = None
+        worker = None
+
+        for fallback_role in _fallback_roles_for(context.catalog, selected_role):
+            candidate_note = _fallback_note(
+                role_name=selected_role.name,
+                fallback_harness_config=fallback_role.config.harness_config,
+                failed_harness=attempted_role.config.harness,
+            )
+            try:
+                started_role, worker = _start_worker_process(
+                    context,
+                    fallback_role,
+                    pending_request,
+                    log_path=record.log_path,
+                )
+                fallback_note = candidate_note
+                break
+            except AppError as fallback_exc:
+                startup_failures.append(
+                    "fallback harness_config "
+                    f"{fallback_role.config.harness_config} also failed: {fallback_exc}"
+                )
+                last_failure_text = str(fallback_exc)
+                attempted_role = fallback_role
+
+        if started_role is None or worker is None:
             _safe_unlink(pending_request.request_file)
             return _finalize_supervisor_setup_failure(
                 context,
                 run_id,
-                error_text=str(exc),
-                blocker_text=_setup_failure_blocker(str(exc)),
+                error_text="; ".join(startup_failures),
+                blocker_text=_setup_failure_blocker(last_failure_text),
             )
 
-        fallback_note = (
-            f"requested role {selected_role.name} could not start before worker launch; "
-            f"ran default role {fallback_role.name} instead"
-        )
-        try:
-            started_role, worker = _start_worker_process(
-                context,
-                fallback_role,
-                replace(pending_request, role_name=fallback_role.name),
-                log_path=record.log_path,
-            )
-        except AppError as fallback_exc:
-            _safe_unlink(pending_request.request_file)
-            failure_text = (
-                f"{exc}; fallback default role {fallback_role.name} also failed: "
-                f"{fallback_exc}"
-            )
-            return _finalize_supervisor_setup_failure(
-                context,
-                run_id,
-                error_text=failure_text,
-                blocker_text=_setup_failure_blocker(str(fallback_exc)),
-            )
-
+    assert started_role is not None
+    assert worker is not None
     pgid = process_group_id(worker.process.pid)
     updated = context.store.update_run(
         run_id,
@@ -750,7 +762,7 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
         raise AppError(f"role '{role_key}' must be a mapping")
 
     if setting == "enabled":
-        enabled = _parse_enabled_value(value)
+        enabled = _parse_user_toggle_bool(value, setting_name="enabled")
         if not enabled and role_key == context.catalog.default_role:
             raise AppError(f"cannot disable default role: {role_key}")
         role_raw["enabled"] = enabled
@@ -810,13 +822,15 @@ def _write_catalog_mapping(path: Path, catalog: dict[str, object]) -> None:
     path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
 
 
-def _parse_enabled_value(value: str) -> bool:
+def _parse_user_toggle_bool(value: str, *, setting_name: str) -> bool:
     normalized = value.strip().lower()
-    if normalized == "true":
+    if normalized in {"true", "yes", "y", "1", "on"}:
         return True
-    if normalized == "false":
+    if normalized in {"false", "no", "n", "0", "off"}:
         return False
-    raise AppError("enabled must be true or false")
+    raise AppError(
+        f"{setting_name} must be one of true/yes/y/1/on or false/no/n/0/off; got {value!r}"
+    )
 
 
 def _format_role_lines(
@@ -878,6 +892,57 @@ def tool_info(context: AppContext) -> ToolInfo:
         role_description=prompts.tool_role_description.format(roles=roles),
         task_label_description=prompts.tool_task_label_description,
     )
+
+
+def render_orchestrator_skill_message(
+    *,
+    cwd: str | Path | None = None,
+    source_root: str | Path | None = None,
+) -> str:
+    skill_path = _resolve_orchestrator_skill_path(cwd=cwd, source_root=source_root)
+    try:
+        skill_text = skill_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError as exc:
+        raise AppError(f"orchestrator skill file not found: {skill_path}") from exc
+    return f"Load this Orchestra main-session skill:\n\n{skill_text}"
+
+
+def _resolve_orchestrator_skill_path(
+    *,
+    cwd: str | Path | None = None,
+    source_root: str | Path | None = None,
+) -> Path:
+    candidates = _orchestrator_skill_candidates(cwd=cwd, source_root=source_root)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    looked = ", ".join(str(candidate) for candidate in candidates)
+    raise AppError(f"orchestrator skill file not found; looked for: {looked}")
+
+
+def _orchestrator_skill_candidates(
+    *,
+    cwd: str | Path | None = None,
+    source_root: str | Path | None = None,
+) -> list[Path]:
+    search_root = Path(cwd).resolve() if cwd is not None else Path.cwd().resolve()
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+
+    def add_candidate(root: Path) -> None:
+        candidate = root / SKILL_LIBRARY_DIR / "orchestrator" / SKILL_FILENAME
+        if candidate not in seen:
+            candidates.append(candidate)
+            seen.add(candidate)
+
+    for root in (search_root, *search_root.parents):
+        add_candidate(root)
+
+    resolved_source_root = Path(source_root) if source_root is not None else _find_source_root()
+    if resolved_source_root is not None:
+        add_candidate(resolved_source_root.resolve())
+
+    return candidates
 
 
 def format_history(context: AppContext, session_id: str, limit: int) -> str:
@@ -1541,6 +1606,7 @@ def _start_worker_process(
 def _annotate_result_with_fallback(result: WorkerResult, note: str) -> WorkerResult:
     result_summary = f"{note}; {result.result_summary}" if result.result_summary else note
     error_text = f"{note}; {result.error_text}" if result.error_text else result.error_text
+    blocker_text = f"{note}; {result.blocker_text}" if result.blocker_text else ""
     return WorkerResult(
         status=result.status,
         command=result.command,
@@ -1550,7 +1616,7 @@ def _annotate_result_with_fallback(result: WorkerResult, note: str) -> WorkerRes
         stderr=result.stderr,
         result_summary=result_summary,
         error_text=error_text,
-        blocker_text=result.blocker_text,
+        blocker_text=blocker_text,
         result_summary_truncated=result.result_summary_truncated,
         timed_out=result.timed_out,
         worker_session_id=result.worker_session_id,
@@ -1618,14 +1684,20 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
     )
     artifact_path: Path | None = None
     blocker_text = result.blocker_text
+    effective_blocker_text = current.blocker_text if blocker_text is None else blocker_text
     try:
         artifact_path = _write_return_artifact(context, run_id, result)
     except OSError as exc:
         artifact_error = f"Return artifact could not be written: {exc}"
-        blocker_text = f"{blocker_text}; {artifact_error}" if blocker_text else artifact_error
+        effective_blocker_text = (
+            f"{effective_blocker_text}; {artifact_error}"
+            if effective_blocker_text
+            else artifact_error
+        )
+        blocker_text = effective_blocker_text
 
     result_summary_truncated = (
-        result.result_summary_truncated if not (blocker_text or current.blocker_text) else False
+        result.result_summary_truncated if not effective_blocker_text else False
     )
     return context.store.update_run(
         run_id,
@@ -1757,13 +1829,52 @@ def _select_role(catalog: AgentCatalog, role_name: str | None) -> SelectedRole:
     return SelectedRole(name=normalized_role_name, config=role)
 
 
-def _fallback_role_for(catalog: AgentCatalog, requested_role_name: str) -> SelectedRole | None:
-    if requested_role_name == catalog.default_role:
-        return None
-    role = catalog.roles[catalog.default_role]
-    if not role.enabled:
-        return None
-    return SelectedRole(name=catalog.default_role, config=role)
+def _fallback_roles_for(
+    catalog: AgentCatalog,
+    selected_role: SelectedRole,
+) -> list[SelectedRole]:
+    fallback_roles: list[SelectedRole] = []
+    for fallback in selected_role.config.harness_fallback:
+        harness_config = catalog.harness_configs[fallback.harness_config]
+        fallback_roles.append(
+            SelectedRole(
+                name=selected_role.name,
+                config=replace(
+                    selected_role.config,
+                    harness_config=fallback.harness_config,
+                    harness=harness_config.harness,
+                    command=harness_config.command,
+                    model=(
+                        fallback.model
+                        if fallback.model is not None
+                        else selected_role.config.model
+                    ),
+                    profile=(
+                        fallback.profile
+                        if fallback.profile is not None
+                        else selected_role.config.profile
+                    ),
+                    agent=(
+                        fallback.agent
+                        if fallback.agent is not None
+                        else selected_role.config.agent
+                    ),
+                ),
+            )
+        )
+    return fallback_roles
+
+
+def _fallback_note(
+    *,
+    role_name: str,
+    fallback_harness_config: str,
+    failed_harness: str,
+) -> str:
+    return (
+        f"fallback: {role_name} used harness_config {fallback_harness_config} "
+        f"after {failed_harness} failed to start"
+    )
 
 
 def _require_session_id(session_id: str) -> None:

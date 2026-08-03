@@ -29,7 +29,7 @@ _FALLBACK_TOOL_INFO = {
     "promptSnippet": "Dispatch focused work to Orchestra workers/subagents.",
     "promptGuidelines": ["Use orch_dispatch for narrow delegated worker tasks."],
     "goalDescription": "Focused worker request/task to delegate.",
-    "roleDescription": "Optional exact configured role. Omit for default worker role.",
+    "roleDescription": "(Optional) specific role; omit for default.",
     "taskLabelDescription": "Optional short request label.",
 }
 

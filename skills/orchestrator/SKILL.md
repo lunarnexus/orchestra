@@ -8,7 +8,7 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [orchestration, workflow, sub-agents, planning, dispatch]
-    related_skills: [caveman, code-planner, reviewer]
+    related_skills: [caveman, planner, reviewer]
 ---
 
 # Orchestrator

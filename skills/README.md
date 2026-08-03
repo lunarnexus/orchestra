@@ -17,7 +17,17 @@ skills/orchestrator/SKILL.md
 skills/reviewer/SKILL.md
 ```
 
-## Orchestra behavior
+## Main-session vs worker skills
+
+There are two separate skill injection paths:
+
+- **Main session**: in Pi, `/orch on` injects `skills/orchestrator/SKILL.md`
+  into the current main session once. This is a manual one-time skill load for
+  orchestrator mode. MVP does not include `/orch off`.
+- **Workers**: role config in `agent-catalog.yaml` injects listed skills into
+  worker prompts when Orchestra launches that role.
+
+## Orchestra worker-skill behavior
 
 Role config shape:
 

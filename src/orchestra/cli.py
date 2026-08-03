@@ -32,6 +32,7 @@ from orchestra.app import (
     load_context,
     mark_session_report_delivered,
     release_session_report,
+    render_orchestrator_skill_message,
     run_doctor,
     run_supervisor,
     set_role_setting,
@@ -55,6 +56,7 @@ INTERNAL_COMMANDS = frozenset(
         "_progress-message",
         "_command-echo",
         "_tool-info",
+        "_orchestrator-skill",
     }
 )
 
@@ -268,6 +270,12 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         tool_info_parser = subparsers.add_parser("_tool-info", help=argparse.SUPPRESS)
         tool_info_parser.set_defaults(handler=_handle_tool_info)
 
+        orchestrator_skill_parser = subparsers.add_parser(
+            "_orchestrator-skill",
+            help=argparse.SUPPRESS,
+        )
+        orchestrator_skill_parser.set_defaults(handler=_handle_orchestrator_skill)
+
     return parser
 
 
@@ -443,6 +451,12 @@ def _handle_tool_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_orchestrator_skill(args: argparse.Namespace) -> int:
+    del args
+    print(render_orchestrator_skill_message())
+    return 0
+
+
 def _handle_progress_message(args: argparse.Namespace) -> int:
     print(
         format_progress_notification(
@@ -517,6 +531,11 @@ def _handle_await_run(args: argparse.Namespace) -> int:
     print(f"run_id: {record.run_id}")
     print(f"status: {record.status}")
     print(f"role: {record.role}")
+    print(f"harness: {record.harness}")
+    if record.result_summary:
+        print(f"result: {record.result_summary}")
+    if record.error_text:
+        print(f"error: {record.error_text}")
     if record.blocker_text:
         print(f"blocker: {record.blocker_text}")
     print(f"active_runs_remaining: {active_remaining}")

@@ -12,17 +12,20 @@ It gives a host agent or CLI a small, consistent way to:
 
 ## Concepts
 
-- **Orchestrator session** — the parent CLI/host session that starts workers and owns their results.
+- **Orchestrator session** — the main CLI/host session, the orchestrator brain that starts workers and owns their results.
 - **Worker run** — one focused task launched through a configured harness.
 - **Harness** — a runtime connector such as Pi, Hermes, or future OpenCode one-shot execution.
-- **Role** — a named catalog entry, such as `worker`, `reviewer`, `critic`, `researcher`, `appsec`, or `planner`, that selects a harness, optional skills, and prompt addition.
+- **Role** — a named catalog entry, such as `builder`, `verifier`, `reviewer`, `researcher`, `appsec`, or `planner`, that selects a harness, optional skills, and prompt addition.
 - **Auto-return** — host integration behavior that reinjects one consolidated completion report after all active workers for the owning session finish.
 
 ## Operating Model
 
 Orchestra is meant to keep the parent/orchestrator context clean. The
-orchestrator owns decomposition, approvals, sequencing, and final judgment, but
-bounded work should be delegated to appropriate worker roles when a role exists.
+orchestrator session is the main-session brain: it owns decomposition,
+approvals, sequencing, and final judgment, but bounded work should be
+delegated to appropriate worker roles when a role exists. In Pi, `/orch on`
+loads `skills/orchestrator/SKILL.md` into that main session once for
+orchestrator mode. MVP does not include `/orch off`.
 
 Worker requests should say how much answer detail is needed:
 
@@ -110,7 +113,7 @@ auto_return: true
 Example role catalog entry:
 
 ```yaml
-default_role: worker
+default_role: builder
 harness_configs:
   pi:
     harness: pi
@@ -121,6 +124,14 @@ harness_configs:
       - "{model}"
       - -p
       - "{prompt}"
+  hermes:
+    harness: hermes
+    command:
+      - hermes
+      - --profile
+      - "{profile}"
+      - -z
+      - "{prompt}"
 
 roles:
   builder:
@@ -129,9 +140,12 @@ roles:
     model: openai-codex/gpt-5.4
     prompt_addition: Implement the assigned task only. Stay in scope. Return files changed, checks run, results, blockers, and risks.
   reviewer:
-    harness_config: pi
+    harness_config: hermes
     enabled: true
-    model: openai-codex/gpt-5.4
+    profile: tori
+    harness_fallback:
+      - harness_config: pi
+        model: openai-codex/gpt-5.4
     skills:
       - reviewer
     prompt_addition: Check work in the requested mode: verify, review, or security. Read-only unless explicitly asked.
@@ -143,6 +157,8 @@ Notes:
 - `harness_configs` define reusable launch/runtime templates.
 - `harness` and `command` live in `harness_configs`, not in roles.
 - `roles` select a `harness_config` and own worker-selection fields such as `model`, `profile`, `agent`, `skills`, `env`, `prompt_addition`, and `enabled`.
+- `harness_fallback` is optional. On startup failure, Orchestra preserves the requested role and its skills, `prompt_addition`, env, and worker budget, and changes only `harness_config` plus optional runtime overrides such as `model`, `profile`, or `agent`.
+- Disabled roles fail clearly; Orchestra does not silently switch to the default role.
 - `command` is a tokenized argv template, not a shell string.
 - If `model` is omitted, harnesses that support model selection use their runtime default.
 - If `profile` is omitted, harnesses that support profiles use their runtime default.
@@ -168,7 +184,7 @@ orchestra history --session-id manual:demo --limit 10
 
 ## Pi Host Extension
 
-The Pi host extension provides `/orch ...` commands and the LLM-callable `orch_dispatch` tool.
+The Pi host extension provides `/orch ...` commands, including one-time main-session `/orch on`, and the LLM-callable `orch_dispatch` tool.
 
 Install or update the global Pi extension and materialize Pi runtime config:
 
@@ -201,9 +217,10 @@ extensions/pi/orchestra/index.ts
 Inside a Pi session with the extension installed:
 
 ```text
+/orch on
 /orch help
 /orch do <goal>
-/orch do --role critic <goal>
+/orch do --role reviewer <goal>
 /orch do --timeout 120 <goal>
 /orch roles
 /orch status
@@ -212,13 +229,15 @@ Inside a Pi session with the extension installed:
 /orch history [limit]
 ```
 
+`/orch on` loads `skills/orchestrator/SKILL.md` into the current Pi main session once. MVP does not include `/orch off`.
+
 Pi runtime session identity comes from `ctx.sessionManager.getSessionId()` and is normalized as `pi:<session_id>`.
 
 The extension also registers `orch_dispatch`, so natural-language requests using words like “delegate”, “dispatch”, “subagent”, “worker”, “ask another agent”, or “parallelize” can launch focused workers.
 
 ## Hermes Host Plugin
 
-The Hermes plugin provides the same `/orch ...` command surface and `orch_dispatch` tool for Hermes sessions that support plugins and slash commands.
+The Hermes plugin provides the same worker-management `/orch ...` command surface as Pi, except for Pi-specific main-session `/orch on`, plus the `orch_dispatch` tool for Hermes sessions that support plugins and slash commands.
 
 Install or update the Hermes plugin using the current/default Hermes profile:
 
@@ -253,7 +272,7 @@ Inside a Hermes session with the plugin loaded:
 ```text
 /orch help
 /orch do <goal>
-/orch do --role critic <goal>
+/orch do --role reviewer <goal>
 /orch do --timeout 120 <goal>
 /orch roles
 /orch status
@@ -261,6 +280,8 @@ Inside a Hermes session with the plugin loaded:
 /orch doctor
 /orch history [limit]
 ```
+
+Hermes does not currently provide main-session `/orch on`; that orchestrator-skill injection is Pi-specific in MVP.
 
 Hermes runtime session identity comes from the runtime `session_id` provided to the plugin tool handler and is normalized as `hermes:<session_id>`. The model or user prompt must not provide this identity. Hermes may rotate runtime ids during context compression; read-only `status` and `history` aggregate the Hermes compression lineage so an older parent session can still show runs owned by the current child session.
 
@@ -390,7 +411,7 @@ Use the CLI and host smoke commands above for manual verification.
 ├── FOUNDATION.md                # Architecture decisions and domain model
 ├── PLAN.md                      # Current implementation plan
 ├── README.md                    # User-facing overview and usage
-├── TODO.md                      # Feature backlog from research
+├── ROADMAP.md                   # TODO and wishlist backlog
 ├── agent-catalog.yaml           # Dev/manual fallback role definitions
 ├── config.yaml                  # Dev/manual fallback runtime configuration
 ├── prompts.yaml                 # Dev/manual fallback prompt text configuration

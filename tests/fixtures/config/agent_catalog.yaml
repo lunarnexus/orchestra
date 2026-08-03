@@ -1,4 +1,5 @@
 # Baseline agent catalog fixture for future harness and role tests.
+default_role: builder
 harness_configs:
   pi:
     harness: pi
@@ -10,7 +11,7 @@ harness_configs:
       - -p
       - "{prompt}"
 roles:
-  worker:
+  builder:
     harness_config: pi
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
-    prompt_addition: Focus on the assigned task and return a compact result.
+    prompt_addition: Implement the assigned task only. Stay in scope. Return files changed, checks run, results, blockers, and risks.

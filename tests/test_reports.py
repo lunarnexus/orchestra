@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 from orchestra.app import consume_pending_session_report, load_context
 from orchestra.state import STATUS_DONE, STATUS_FAILED, StateStore
 from tests.helpers import extract_run_id, run_cli, wait_for_condition
@@ -291,3 +293,73 @@ def test_long_stderr_marks_failed_summary_truncated(
     assert "Summary: stderr diagnostic" in report
     assert "[truncated]" in report
     assert f"Full result: {record.result_artifact_path}" in report
+
+
+def test_fallback_note_appears_in_final_report(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "worker ok"],
+    )
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "builder",
+                "harness_configs": {
+                    "pi": {
+                        "harness": "pi",
+                        "command": [
+                            python_executable,
+                            str(fake_worker_script),
+                            "success",
+                            "--output",
+                            "worker ok",
+                        ],
+                    },
+                    "hermes": {
+                        "harness": "hermes",
+                        "command": ["missing-hermes-binary", "-z", "{prompt}"],
+                    },
+                },
+                "roles": {
+                    "builder": {"harness_config": "pi"},
+                    "reviewer": {
+                        "harness_config": "hermes",
+                        "harness_fallback": [{"harness_config": "pi"}],
+                    },
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_cli(
+        "--config",
+        str(config_path),
+        "--agent-catalog",
+        str(catalog_path),
+        "do",
+        "--session-id",
+        "manual:fallback-report",
+        "--role",
+        "reviewer",
+        "--goal",
+        "Run with fallback.",
+    )
+    run_id = extract_run_id(result.stdout)
+
+    store = StateStore(db_path)
+    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
+
+    context = load_context(config_path=config_path, catalog_path=catalog_path)
+    report = consume_pending_session_report(context, "manual:fallback-report")
+
+    note = "fallback: reviewer used harness_config pi after hermes failed to start"
+    assert report is not None
+    assert f"[orchestra: Worker {run_id} success]" in report
+    assert f"Result: {note}; worker ok" in report

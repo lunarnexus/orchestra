@@ -158,6 +158,10 @@ def test_roles_lists_configured_worker_roles(
         tmp_path,
         [python_executable, str(fake_worker_script), "success"],
     )
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    catalog["default_role"] = "builder"
+    catalog["roles"] = {"builder": {"harness_config": "pi"}}
+    catalog_path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
 
     from orchestra.cli import main
 
@@ -174,9 +178,9 @@ def test_roles_lists_configured_worker_roles(
 
     assert exit_code == 0
     assert "Configured roles" in output
-    assert "Default: worker" in output
+    assert "Default: builder" in output
     assert "Enabled:" in output
-    assert "D worker" in output
+    assert "D builder" in output
     assert "pi" in output
 
 
@@ -346,6 +350,45 @@ def test_internal_progress_message_includes_role(capsys: pytest.CaptureFixture[s
     assert output.strip() == "orchestra: critic abc123 returned done (1/2)"
 
 
+def test_internal_orchestrator_skill_renders_project_skill(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    skill_dir = tmp_path / "skills" / "orchestrator"
+    skill_dir.mkdir(parents=True)
+    skill_dir.joinpath("SKILL.md").write_text("# Test skill\n\nUse it.", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    from orchestra.cli import main
+
+    exit_code = main(["_orchestrator-skill"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert output == "Load this Orchestra main-session skill:\n\n# Test skill\n\nUse it.\n"
+
+
+def test_internal_orchestrator_skill_errors_when_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    import orchestra.app as app
+    from orchestra.cli import main
+
+    monkeypatch.setattr(app, "_find_source_root", lambda source_root=None: None)
+
+    exit_code = main(["_orchestrator-skill"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "error: orchestrator skill file not found; looked for:" in output
+    assert "skills/orchestrator/SKILL.md" in output
+
+
 def test_internal_await_run_outputs_role(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
@@ -473,9 +516,11 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
     assert "✗ worker" in all_output
 
 
-def test_roles_command_updates_role_enabled_setting(
+@pytest.mark.parametrize("value", ["true", "yes", "y", "1", "on"])
+def test_roles_command_accepts_common_true_enabled_values(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    value: str,
 ) -> None:
     config_path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
@@ -488,12 +533,66 @@ def test_roles_command_updates_role_enabled_setting(
     catalog_path.write_text(
         yaml.safe_dump(
             {
-                "default_role": "worker",
+                "default_role": "builder",
                 "harness_configs": {
                     "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
                 },
                 "roles": {
-                    "worker": {"harness_config": "pi"},
+                    "builder": {"harness_config": "pi"},
+                    "reviewer": {"harness_config": "pi", "enabled": False},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "roles",
+            "reviewer",
+            "enabled",
+            value,
+        ]
+    )
+    output = capsys.readouterr().out
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert "Updated role reviewer: enabled=true" in output
+    assert "Enabled:" in output
+    assert catalog["roles"]["reviewer"]["enabled"] is True
+
+
+@pytest.mark.parametrize("value", ["false", "no", "n", "0", "off"])
+def test_roles_command_accepts_common_false_enabled_values(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    value: str,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        encoding="utf-8",
+    )
+    prompts_path.write_text("{}\n", encoding="utf-8")
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "builder",
+                "harness_configs": {
+                    "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                },
+                "roles": {
+                    "builder": {"harness_config": "pi"},
                     "reviewer": {"harness_config": "pi"},
                 },
             },
@@ -513,7 +612,7 @@ def test_roles_command_updates_role_enabled_setting(
             "roles",
             "reviewer",
             "enabled",
-            "false",
+            value,
         ]
     )
     output = capsys.readouterr().out
@@ -541,11 +640,11 @@ def test_roles_command_rejects_disabling_default_role(
     catalog_path.write_text(
         yaml.safe_dump(
             {
-                "default_role": "worker",
+                "default_role": "builder",
                 "harness_configs": {
                     "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
                 },
-                "roles": {"worker": {"harness_config": "pi"}},
+                "roles": {"builder": {"harness_config": "pi"}},
             },
             sort_keys=False,
         ),
@@ -561,17 +660,17 @@ def test_roles_command_rejects_disabling_default_role(
             "--agent-catalog",
             str(catalog_path),
             "roles",
-            "worker",
+            "builder",
             "enabled",
-            "false",
+            "off",
         ]
     )
     output = capsys.readouterr().out
     catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
 
     assert exit_code == 1
-    assert "error: cannot disable default role: worker" in output
-    assert "enabled" not in catalog["roles"]["worker"]
+    assert "error: cannot disable default role: builder" in output
+    assert "enabled" not in catalog["roles"]["builder"]
 
 
 def test_roles_command_updates_role_model(
@@ -589,6 +688,7 @@ def test_roles_command_updates_role_model(
     catalog_path.write_text(
         yaml.safe_dump(
             {
+                "default_role": "worker",
                 "harness_configs": {
                     "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
                 },
@@ -637,12 +737,12 @@ def test_roles_command_rejects_invalid_role_mutations(
     catalog_path.write_text(
         yaml.safe_dump(
             {
-                "default_role": "worker",
+                "default_role": "builder",
                 "harness_configs": {
                     "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
                 },
                 "roles": {
-                    "worker": {"harness_config": "pi"},
+                    "builder": {"harness_config": "pi"},
                     "reviewer": {"harness_config": "pi", "model": "old-model"},
                 },
             },
@@ -655,7 +755,14 @@ def test_roles_command_rejects_invalid_role_mutations(
 
     cases = [
         (["missing", "enabled", "true"], "error: unknown role: missing"),
-        (["reviewer", "enabled", "yes"], "error: enabled must be true or false"),
+        (
+            ["reviewer", "enabled", "maybe"],
+            "error: enabled must be one of true/yes/y/1/on or false/no/n/0/off; got 'maybe'",
+        ),
+        (
+            ["reviewer", "enabled", "2"],
+            "error: enabled must be one of true/yes/y/1/on or false/no/n/0/off; got '2'",
+        ),
         (["reviewer", "model", ""], "error: model must be a non-empty string"),
         (["reviewer", "enabled"], "error: missing value for role setting"),
     ]
@@ -743,8 +850,13 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
 
     assert help_exit == 0
     assert tool_exit == 0
+    assert (
+        "/orch on                           Load the Orchestra main-session skill once"
+        in help_output
+    )
     assert "/orch roles" in help_output
-    assert "/orch roles ROLE enabled true|false" in help_output
+    assert "/orch roles ROLE enabled VALUE" in help_output
+    assert "VALUE: true, yes, y, 1, on | false, no, n, 0, off" in help_output
     assert "/orch roles ROLE model MODEL" in help_output
     assert "Configured roles" in help_output
     assert "Default: reviewer" in help_output
@@ -776,13 +888,18 @@ def test_disabled_role_is_rejected_without_fallback(
     catalog_path.write_text(
         yaml.safe_dump(
             {
+                "default_role": "worker",
                 "harness_configs": {
                     "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
                     "hermes": {"harness": "hermes", "command": ["hermes", "-z", "{prompt}"]},
                 },
                 "roles": {
                     "worker": {"harness_config": "pi"},
-                    "critic": {"harness_config": "hermes", "enabled": False},
+                    "critic": {
+                        "harness_config": "hermes",
+                        "enabled": False,
+                        "harness_fallback": [{"harness_config": "pi"}],
+                    },
                 }
             },
             sort_keys=False,
@@ -811,3 +928,200 @@ def test_disabled_role_is_rejected_without_fallback(
 
     assert exit_code == 1
     assert "role is disabled: critic" in output
+
+
+def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavior(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    python_executable: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    skill_dir = tmp_path / "skills" / "reviewer"
+    skill_dir.mkdir(parents=True)
+    skill_dir.joinpath("SKILL.md").write_text("# Reviewer Skill\n\nInspect only.", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    prompts_path.write_text("{}\n", encoding="utf-8")
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "builder",
+                "harness_configs": {
+                    "pi": {
+                        "harness": "pi",
+                        "command": [
+                            python_executable,
+                            "-c",
+                            (
+                                "import json, os, sys; "
+                                "print(json.dumps({"
+                                "'argv': sys.argv[1:-1], "
+                                "'prompt': sys.argv[-1], "
+                                "'worker_budget': os.environ.get('ORCHESTRA_WORKER'), "
+                                "'role_env': os.environ.get('ROLE_ENV_TEST')"
+                                "}))"
+                            ),
+                            "--model",
+                            "{model}",
+                            "{prompt}",
+                        ],
+                    },
+                    "hermes": {
+                        "harness": "hermes",
+                        "command": ["missing-hermes-binary", "-z", "{prompt}"],
+                    },
+                },
+                "roles": {
+                    "builder": {
+                        "harness_config": "pi",
+                        "model": "builder-model",
+                    },
+                    "reviewer": {
+                        "harness_config": "hermes",
+                        "harness_fallback": [{"harness_config": "pi", "model": "fallback-model"}],
+                        "model": "requested-model",
+                        "prompt_addition": "Review only.",
+                        "skills": ["reviewer"],
+                        "worker_budget": 2,
+                        "env": {"ROLE_ENV_TEST": "configured"},
+                    },
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "do",
+            "--session-id",
+            "manual:fallback-requested-role",
+            "--role",
+            "reviewer",
+            "--goal",
+            "Run the requested role with fallback.",
+        ]
+    )
+    do_output = capsys.readouterr().out
+
+    assert exit_code == 0
+    run_id = extract_run_id(do_output)
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
+
+    record = store.get_run(run_id)
+    note = "fallback: reviewer used harness_config pi after hermes failed to start"
+    assert record.role == "reviewer"
+    assert record.harness == "pi"
+    assert record.result_summary is not None
+    assert note in record.result_summary
+    assert not record.blocker_text
+    assert record.result_artifact_path is not None
+
+    artifact_text = record.result_artifact_path.read_text(encoding="utf-8")
+    payload = json.loads(artifact_text.split("## stdout\n\n", 1)[1].strip())
+    assert payload["argv"] == ["--model", "fallback-model"]
+    assert payload["worker_budget"] == "2"
+    assert payload["role_env"] == "configured"
+    assert "Role: reviewer" in payload["prompt"]
+    assert "Role skill: reviewer" in payload["prompt"]
+    assert "# Reviewer Skill" in payload["prompt"]
+    assert "Role instructions: Review only." in payload["prompt"]
+
+    history_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "history",
+            "--session-id",
+            "manual:fallback-requested-role",
+        ]
+    )
+    history_output = capsys.readouterr().out
+
+    assert history_exit == 0
+    assert note in history_output
+    assert "reviewer ::" in history_output
+
+
+def test_do_without_role_uses_default_role(
+    tmp_path: Path,
+    python_executable: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")},
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    prompts_path.write_text("{}\n", encoding="utf-8")
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "reviewer",
+                "harness_configs": {
+                    "pi": {
+                        "harness": "pi",
+                        "command": [python_executable, "-c", "print('default reviewer ran')"],
+                    },
+                },
+                "roles": {
+                    "worker": {"harness_config": "pi"},
+                    "reviewer": {"harness_config": "pi"},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "do",
+            "--session-id",
+            "manual:default-role",
+            "--goal",
+            "Use the default role.",
+        ]
+    )
+    do_output = capsys.readouterr().out
+
+    assert exit_code == 0
+    run_id = extract_run_id(do_output)
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
+
+    record = store.get_run(run_id)
+    assert record.role == "reviewer"
+    assert record.harness == "pi"
+    assert record.result_summary == "default reviewer ran"

@@ -40,6 +40,7 @@ def _write_runtime_files(tmp_path: Path, *, harness: str = "dummy") -> tuple[Pat
     prompts_path.write_text("{}\n", encoding="utf-8")
     catalog_path.write_text(
         f"""
+default_role: worker
 roles:
   worker:
     harness: {harness}
