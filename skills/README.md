@@ -13,8 +13,8 @@ skills/<skill-name>/SKILL.md
 Example:
 
 ```text
-skills/code-reviewer/SKILL.md
-skills/security-reviewer/SKILL.md
+skills/orchestrator/SKILL.md
+skills/reviewer/SKILL.md
 ```
 
 ## Orchestra behavior
@@ -25,8 +25,7 @@ Role config shape:
 roles:
   reviewer:
     skills:
-      - code-reviewer
-      - security-reviewer
+      - reviewer
 ```
 
 Orchestra resolves each configured skill name like this:

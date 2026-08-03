@@ -123,20 +123,23 @@ harness_configs:
       - "{prompt}"
 
 roles:
-  worker:
+  builder:
     harness_config: pi
     enabled: true
-    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    model: openai-codex/gpt-5.4
+    prompt_addition: Implement the assigned task only. Stay in scope. Return files changed, checks run, results, blockers, and risks.
+  reviewer:
+    harness_config: pi
+    enabled: true
+    model: openai-codex/gpt-5.4
     skills:
-      - code-reviewer
-    env:
-      REVIEW_MODE: strict
-    prompt_addition: Focus on the assigned task and return a compact result.
+      - reviewer
+    prompt_addition: Check work in the requested mode: verify, review, or security. Read-only unless explicitly asked.
 ```
 
 Notes:
 
-- `default_role` is optional; when omitted it defaults to `worker`.
+- `default_role` is optional; when omitted it uses the configured default role.
 - `harness_configs` define reusable launch/runtime templates.
 - `harness` and `command` live in `harness_configs`, not in roles.
 - `roles` select a `harness_config` and own worker-selection fields such as `model`, `profile`, `agent`, `skills`, `env`, `prompt_addition`, and `enabled`.

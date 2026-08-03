@@ -32,10 +32,15 @@ What Orchestra does today:
 
 - Skill injection is **worker-prompt only**.
 - Skills are injected only when configured on a **role** in `agent-catalog.yaml`.
-- Current wired roles:
+- Initial wired roles at baseline:
   - `reviewer` -> `code-reviewer`
   - `planner` -> `code-planner` (disabled)
   - `appsec` -> `security-reviewer` (disabled)
+- Current active role direction:
+  - `builder` implements
+  - `verifier`, `reviewer`, and `appsec` inject `reviewer`
+  - `planner` injects `code-planner`
+  - superseded top-level skills are archived under `skills/archive/`
 - Local-first lookup:
   1. `skills/<skill-name>/SKILL.md`
   2. else recursive `skills/**/SKILL.md` match by parent directory name
@@ -187,10 +192,11 @@ Current view:
 
 ### 3. Specific workflow
 
-Desired direction:
+Decision direction:
 
 - Orchestra should have a specific workflow to follow.
-- This may live in an orchestration skill, YAML-coded workflows, or both.
+- Workflow source is `skills/orchestrator/SKILL.md` first.
+- Add YAML-coded workflows only if the skill-only approach proves weak.
 
 ### 5. Sequencing and conflicting workers
 
@@ -211,11 +217,11 @@ Decision: use a single `reviewer` skill that explains multiple checking modes.
 
 Working definitions:
 
-- **Verify**: did the work satisfy the requested behavior and acceptance target?
-- **Review**: is the implementation simple, maintainable, reusable, and within scope?
-- **Security**: are there risks with secrets, injection, auth, data handling, dependencies, or shell/file/network use?
+- **Verify**: quick pass/fail on requested behavior and acceptance target. No commentary unless there is an issue.
+- **Review**: implementation quality, simplicity, maintainability, reuse, relevant edge cases, and scope control.
+- **Security**: deeper security check based on OWASP Top 10 plus secrets, injection, auth, data handling, dependencies, file/shell/network use, and AI-agent risks.
 
-Different roles such as `reviewer` and `appsec` can still inject the same `reviewer` skill with a different requested mode.
+Different roles such as `verifier`, `reviewer`, and `appsec` can inject the same `reviewer` skill with a different requested mode.
 
 ### 7. Caveman
 
@@ -231,8 +237,9 @@ Confirmed direction:
 - mandatory skills should be configured centrally in Orchestra.
 - role behavior should stay consistent across orchestrator and worker harnesses.
 - optional additional skills are still allowed.
-- the main-session skill is `orchestrator`, enabled by session-scoped `/orch on` and disabled by `/orch off`.
-- `/orch status` should show `orchestrator: true|false`.
+- the main-session skill is `orchestrator`.
+- `/orch on` injects the `orchestrator` skill into the main session once.
+- `/orch off` is deferred.
 
 ### 10. Standard artifacts
 
@@ -243,6 +250,7 @@ Decision direction:
 - `RESEARCH.md` should store research findings, sources, options, and evidence.
 - `PLAN.md` should store the active execution plan. It can be cleared or replaced after completion.
 - Git is the long-term completed-work record.
+- Rigid artifact templates are deferred; skills should describe expected content. Add templates later only if artifacts become inconsistent.
 
 ## Provisional design ideas
 
@@ -267,9 +275,9 @@ Working default flow:
 Possible compact core:
 
 - `orchestrator` — main-session planning, sequencing, dispatch, and judgment
-- `planner` — planning and research coordination
-- `researcher` — facts, docs, web, and code research
-- `builder` — implementation
+- `planner` — planning and research coordination; injects `planner`, uses Pi for MVP, and has `worker_budget: 2` so it can dispatch researchers
+- `researcher` — facts, docs, web, and code research; injects `researcher`
+- `builder` — implementation; prompt_addition only for now, no full builder skill until real use shows it is needed
 - `reviewer` — verify/review/security checking modes
 - `caveman` — style/compression
 
@@ -278,14 +286,14 @@ Possible compact core:
 Decision:
 
 - The main-session skill is named `orchestrator`.
-- `/orch on` enables session-scoped orchestrator mode.
-- `/orch off` disables session-scoped orchestrator mode.
-- `/orch status` shows `orchestrator: true|false`.
-- Orchestrator mode is not one-time injection; the host adapter should keep the main session under the compact orchestrator contract while mode is on.
+- `/orch on` injects the `orchestrator` skill into the main session once.
+- `/orch off` is deferred.
+- Use the same host message injection style as worker return prompts. In Pi, this means `sendUserMessage(..., { deliverAs: "followUp", triggerTurn: true })` or equivalent host API.
+- Repeated or compaction-aware reinjection is deferred until evidence shows it is needed.
 
 Possible structure:
 
-- **Orchestrator mode**: inject compact `orchestrator` skill into the main session when enabled
+- **Orchestrator injection**: `/orch on` injects compact `orchestrator` skill into the main session once
 - **Role-loaded**: mandatory skills for specific worker roles
 - **Optional**: additional skills chosen by the agent when useful
 
@@ -295,6 +303,22 @@ Fallback decision:
 - A requested role should not silently become the default role after harness/model failure.
 - Recoverable fallback should preserve the requested role and skills, change only harness/model, and mention the fallback in the final report.
 - Disabled roles should fail clearly unless explicitly re-enabled.
+- MVP config should use role-level `harness_fallback`.
+- Preferred shape:
+
+```yaml
+roles:
+  reviewer:
+    harness_config: hermes
+    harness_fallback:
+      - harness_config: pi
+        model: openai-codex/gpt-5.4
+      - harness_config: opencode
+        model: openai/gpt-5.4
+        agent: plan
+```
+
+- Harness-global fallback is deferred. Role-level fallback is clearer because each role may need different model/profile/agent values.
 
 ### Candidate state model
 
@@ -318,17 +342,17 @@ Prefer lightweight continuity over a heavy workflow cockpit:
 Initial decision:
 
 - Planner agents may dispatch researcher agents to verify facts, inspect code, search docs/web, and gather evidence.
-- Keep nested dispatch to one level for now.
+- Planner role uses `worker_budget: 2`; child researchers keep the default budget and cannot dispatch again.
 - Researchers, builders, reviewers, and appsec agents do not dispatch subagents initially.
 
 ## Next questions
 
-1. Should workflow sequencing live mostly in skills, mostly in config/YAML, or split across both?
-2. What are the minimum dependency rules needed to stop conflicting workers?
-3. Which skills are mandatory per worker role?
-4. How much persisted next-step state is actually needed beyond existing artifacts?
-5. Should Orchestra add first-class git commit support before worktree isolation?
-6. When should parallel builders require isolated worktrees?
+1. What are the minimum dependency rules needed to stop conflicting workers?
+2. Which skills are mandatory per worker role?
+3. How much persisted next-step state is actually needed beyond existing artifacts?
+4. Should Orchestra add first-class git commit support before worktree isolation?
+5. When should parallel builders require isolated worktrees?
+6. If one-time `/orch on` injection proves fragile, what reinjection trigger should be added first?
 
 ## Implementation notes
 
@@ -336,9 +360,8 @@ Initial decision:
 
 ## Next recommended steps
 
-1. Review proposed `agent-catalog.yaml` `prompt_addition` wording before editing role prompts.
-2. Decide whether workflow sequencing lives in the skill, YAML config, or both.
-3. Implement `/orch on|off` and orchestrator mode status.
-4. Implement harness/model fallback that preserves requested role skills.
-5. Rewrite role skills around `builder`, `planner`, `researcher`, and `reviewer`.
-6. Add prompt-flow and E2E tests to measure whether the new flow actually improves behavior.
+1. Implement approved `agent-catalog.yaml` `prompt_addition` wording.
+2. Implement one-time `/orch on` orchestrator skill injection.
+3. Implement harness/model fallback that preserves requested role skills.
+4. Rewrite role skills around `builder`, `planner`, `researcher`, and `reviewer`.
+5. Add prompt-flow and E2E tests to measure whether the new flow actually improves behavior.

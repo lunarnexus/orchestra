@@ -68,14 +68,27 @@ Only planner agents may dispatch researcher agents to verify facts, inspect code
 
 ## Sequencing
 
-Dispatch parallel work when tasks are independent.
+Plans may mark work as:
+- `sequential` — run after prior dependency
+- `parallel-safe` — can run with other parallel-safe work
+- `blocked` — needs answer, decision, or artifact first
 
-Run checkers after the relevant work exists:
+Dispatch rules:
+- run `sequential` work in order
+- batch only `parallel-safe` work with non-overlapping scopes
+- resolve `blocked` work before dispatching it
+- run checkers after the relevant work exists
+
+Marker updates:
+- update `PLAN.md` markers as worker results, user answers, or artifact changes remove blockers
+- change `blocked` to `sequential` or `parallel-safe` when the missing decision/evidence/artifact is available
+- change `parallel-safe` to `sequential` if new dependency or file overlap appears
+- ask the user when a blocker needs a decision
+
+Checker timing:
 - verify after completed behavior
 - review at step or phase boundaries
 - security when risk justifies it
-
-For parallel code work, use clearly non-overlapping scopes.
 
 ## Worker brief
 
