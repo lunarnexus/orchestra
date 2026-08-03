@@ -118,23 +118,23 @@ def test_pi_extension_host_on_loads_skill_once_per_session(
         event
         for event in events
         if event.get("type") == "entry_appended"
-        and isinstance(event.get("entry"), dict)
-        and isinstance(event["entry"].get("data"), dict)
-        and event["entry"]["data"].get("text") == "/orch on"
+        and isinstance((entry := event.get("entry")), dict)
+        and isinstance((data := entry.get("data")), dict)
+        and data.get("text") == "/orch on"
     ]
     skill_messages = [
         event
         for event in events
         if event.get("type") == "message_start"
-        and isinstance(event.get("message"), dict)
-        and event["message"].get("role") == "user"
-        and isinstance(event["message"].get("content"), list)
+        and isinstance((message := event.get("message")), dict)
+        and message.get("role") == "user"
+        and isinstance((content := message.get("content")), list)
         and any(
             isinstance(item, dict)
             and item.get("type") == "text"
             and isinstance(item.get("text"), str)
             and item["text"].startswith("Load this Orchestra main-session skill:\n\n")
-            for item in event["message"]["content"]
+            for item in content
         )
     ]
 
