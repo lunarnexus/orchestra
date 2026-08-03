@@ -274,6 +274,89 @@ def test_pending_report_runs_are_not_marked_until_delivered(
     assert state_store.list_pending_report_runs("pi:session-r") == []
 
 
+def test_stale_report_claims_can_be_reclaimed(
+    state_store: StateStore,
+    tmp_path: Path,
+) -> None:
+    run = make_run(tmp_path, "run-stale-report", "pi:session-r")
+    state_store.create_run(run)
+    state_store.update_run("run-stale-report", RunUpdate(status=STATUS_RUNNING, process_id=1))
+    state_store.update_run(
+        "run-stale-report",
+        RunUpdate(status=STATUS_DONE, result_summary="ok"),
+    )
+
+    first_claim = state_store.claim_pending_report_runs("pi:session-r")
+    assert [record.run_id for record in first_claim] == ["run-stale-report"]
+    assert state_store.claim_pending_report_runs("pi:session-r") == []
+
+    stale_claimed_at = "2000-01-01T00:00:00Z"
+    with state_store._connect() as connection:
+        connection.execute(
+            "UPDATE runs SET report_claimed_at = ? WHERE run_id = ?",
+            (stale_claimed_at, "run-stale-report"),
+        )
+        connection.commit()
+
+    listed = state_store.list_pending_report_runs("pi:session-r")
+    reclaimed = state_store.claim_pending_report_runs("pi:session-r")
+
+    assert [record.run_id for record in listed] == ["run-stale-report"]
+    assert [record.run_id for record in reclaimed] == ["run-stale-report"]
+    assert reclaimed[0].report_claimed_at is not None
+    assert reclaimed[0].report_claimed_at != stale_claimed_at
+    assert reclaimed[0].reported_at is None
+
+
+def test_stale_report_claim_recovery_stays_exact_session_scoped(
+    state_store: StateStore,
+    tmp_path: Path,
+) -> None:
+    session_a = make_run(tmp_path, "run-stale-a", "pi:session-a")
+    session_b = make_run(tmp_path, "run-stale-b", "pi:session-b")
+    state_store.create_run(session_a)
+    state_store.create_run(session_b)
+    for run_id in ("run-stale-a", "run-stale-b"):
+        state_store.update_run(run_id, RunUpdate(status=STATUS_RUNNING, process_id=1))
+        state_store.update_run(run_id, RunUpdate(status=STATUS_DONE, result_summary="ok"))
+    with state_store._connect() as connection:
+        connection.execute(
+            "UPDATE runs SET report_claimed_at = ? WHERE run_id IN (?, ?)",
+            ("2000-01-01T00:00:00Z", "run-stale-a", "run-stale-b"),
+        )
+        connection.commit()
+
+    reclaimed = state_store.claim_pending_report_runs("pi:session-a")
+
+    assert [record.run_id for record in reclaimed] == ["run-stale-a"]
+    assert [record.run_id for record in state_store.list_pending_report_runs("pi:session-b")] == [
+        "run-stale-b"
+    ]
+
+
+def test_delivered_report_runs_are_not_reclaimed_even_with_stale_claim(
+    state_store: StateStore,
+    tmp_path: Path,
+) -> None:
+    run = make_run(tmp_path, "run-delivered-report", "pi:session-r")
+    state_store.create_run(run)
+    state_store.update_run("run-delivered-report", RunUpdate(status=STATUS_RUNNING, process_id=1))
+    state_store.update_run(
+        "run-delivered-report",
+        RunUpdate(status=STATUS_DONE, result_summary="ok"),
+    )
+    state_store.consume_pending_report_runs("pi:session-r")
+    with state_store._connect() as connection:
+        connection.execute(
+            "UPDATE runs SET report_claimed_at = ? WHERE run_id = ?",
+            ("2000-01-01T00:00:00Z", "run-delivered-report"),
+        )
+        connection.commit()
+
+    assert state_store.list_pending_report_runs("pi:session-r") == []
+    assert state_store.claim_pending_report_runs("pi:session-r") == []
+
+
 def test_consume_pending_report_runs_marks_rows_reported(
     state_store: StateStore,
     tmp_path: Path,

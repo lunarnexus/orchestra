@@ -6,6 +6,7 @@ import logging
 import sqlite3
 import time
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from orchestra.logs import append_jsonl_event, utc_now
@@ -25,6 +26,7 @@ _CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
 _CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
 _SQLITE_CONNECT_TIMEOUT_SECONDS = 1.0
 _BEGIN_IMMEDIATE_SLOW_LOG_SECONDS = 0.1
+_REPORT_CLAIM_LEASE_SECONDS = 300
 ALLOWED_TRANSITIONS = {
     STATUS_QUEUED: frozenset({STATUS_RUNNING, STATUS_FAILED, STATUS_CANCELLED}),
     STATUS_RUNNING: frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED}),
@@ -340,6 +342,7 @@ class StateStore:
         return [self._row_to_record(row) for row in rows]
 
     def list_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
+        claim_stale_before = _report_claim_stale_before()
         with self._connect() as connection:
             active = int(
                 connection.execute(
@@ -361,15 +364,22 @@ class StateStore:
                 FROM runs
                 WHERE orchestrator_session_id = ?
                   AND status IN (?, ?, ?)
-                  AND report_claimed_at IS NULL
                   AND reported_at IS NULL
+                  AND (report_claimed_at IS NULL OR report_claimed_at < ?)
                 ORDER BY created_at, run_id
                 """,
-                (orchestrator_session_id, STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED),
+                (
+                    orchestrator_session_id,
+                    STATUS_DONE,
+                    STATUS_FAILED,
+                    STATUS_CANCELLED,
+                    claim_stale_before,
+                ),
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
     def claim_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
+        claim_stale_before = _report_claim_stale_before()
         with self._connect() as connection:
             self._begin_immediate(connection, operation="claim_pending_report_runs")
             active = int(
@@ -393,11 +403,17 @@ class StateStore:
                 FROM runs
                 WHERE orchestrator_session_id = ?
                   AND status IN (?, ?, ?)
-                  AND report_claimed_at IS NULL
                   AND reported_at IS NULL
+                  AND (report_claimed_at IS NULL OR report_claimed_at < ?)
                 ORDER BY created_at, run_id
                 """,
-                (orchestrator_session_id, STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED),
+                (
+                    orchestrator_session_id,
+                    STATUS_DONE,
+                    STATUS_FAILED,
+                    STATUS_CANCELLED,
+                    claim_stale_before,
+                ),
             ).fetchall()
             if not rows:
                 connection.rollback()
@@ -412,10 +428,10 @@ class StateStore:
                 SET report_claimed_at = ?
                 WHERE orchestrator_session_id = ?
                   AND run_id IN ({placeholders})
-                  AND report_claimed_at IS NULL
                   AND reported_at IS NULL
+                  AND (report_claimed_at IS NULL OR report_claimed_at < ?)
                 """,
-                (claimed_at, orchestrator_session_id, *run_ids),
+                (claimed_at, orchestrator_session_id, *run_ids, claim_stale_before),
             )
             connection.commit()
         return [replace(self._row_to_record(row), report_claimed_at=claimed_at) for row in rows]
@@ -759,6 +775,11 @@ def _optional_text(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _report_claim_stale_before() -> str:
+    stale_before = datetime.now(UTC) - timedelta(seconds=_REPORT_CLAIM_LEASE_SECONDS)
+    return stale_before.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _is_transient_sqlite_error(exc: sqlite3.OperationalError) -> bool:
