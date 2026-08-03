@@ -31,11 +31,7 @@ roles:
 
 Orchestra resolves each configured skill name like this:
 
-1. Check project-local skill path:
-
-```text
-skills/<skill-name>/SKILL.md
-```
+1. Search recursively under `skills/` for `<skill-name>/SKILL.md`.
 
 2. If found, inject that full skill into the initial worker prompt before task instructions.
 
