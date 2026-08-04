@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -48,13 +49,12 @@ def test_registry_returns_registered_harness() -> None:
             "lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved",
             [
                 "pi",
-                "--no-session",
                 "--model",
                 "lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved",
                 "-p",
             ],
         ),
-        (None, ["pi", "--no-session", "-p"]),
+        (None, ["pi", "-p"]),
     ],
 )
 def test_pi_harness_builds_command_without_shell_joining(
@@ -67,7 +67,7 @@ def test_pi_harness_builds_command_without_shell_joining(
         harness="pi",
         model=model,
         prompt_addition="Focus on the assigned task.",
-        command=["pi", "--no-session", "--model", "{model}", "-p", "{prompt}"],
+        command=["pi", "--model", "{model}", "-p", "{prompt}"],
     )
 
     command = harness.build_command(role, harness.build_prompt(worker_request, role))
@@ -93,6 +93,7 @@ def test_pi_harness_builds_scoped_prompt(worker_request: WorkerRequest) -> None:
     assert "Out of scope: Do not edit files." in prompt
     assert "Acceptance target: Return a short status report." in prompt
     assert "Return format:" in prompt
+    assert "PI_SESSION_ID" not in prompt
 
 
 def test_pi_harness_injects_local_role_skill_before_goal(
@@ -173,6 +174,73 @@ def test_pi_harness_uses_shared_prompt_and_command_helpers(worker_request: Worke
 
     assert prompt == render_worker_prompt(worker_request, role)
     assert command == expand_command_template(role, prompt)
+
+
+def test_pi_harness_start_assigns_deterministic_session_id(
+    worker_request: WorkerRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeProcess:
+        pid = 123
+        returncode = 0
+
+        def communicate(self, timeout: int | None = None) -> tuple[str, str]:
+            return "", ""
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_starter(args: list[str], **kwargs: object) -> FakeProcess:
+        captured["args"] = args
+        return FakeProcess()
+
+    request = WorkerRequest(
+        role_name=worker_request.role_name,
+        goal=worker_request.goal,
+        run_id="abc123",
+        timeout_seconds=worker_request.timeout_seconds,
+    )
+    role = RoleConfig(harness="pi", command=["pi", "--model", "{model}", "-p", "{prompt}"])
+
+    worker = PiHarness(starter=cast(Any, fake_starter)).start(request, role)
+
+    assert worker.worker_session_id == "orchestra-worker-abc123"
+    assert captured["args"] == [
+        "pi",
+        "--session-id",
+        "orchestra-worker-abc123",
+        "-p",
+        worker.prompt,
+    ]
+
+
+def test_pi_harness_start_removes_no_session_when_assigning_session_id(
+    worker_request: WorkerRequest,
+) -> None:
+    class FakeProcess:
+        pid = 123
+        returncode = 0
+
+        def communicate(self, timeout: int | None = None) -> tuple[str, str]:
+            return "", ""
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_starter(args: list[str], **kwargs: object) -> FakeProcess:
+        captured["args"] = args
+        return FakeProcess()
+
+    request = WorkerRequest(
+        role_name=worker_request.role_name,
+        goal=worker_request.goal,
+        run_id="def456",
+        timeout_seconds=worker_request.timeout_seconds,
+    )
+    role = RoleConfig(harness="pi", command=["pi", "--no-session", "-p", "{prompt}"])
+
+    PiHarness(starter=cast(Any, fake_starter)).start(request, role)
+
+    assert "--no-session" not in captured["args"]
+    assert captured["args"][:3] == ["pi", "--session-id", "orchestra-worker-def456"]
 
 
 @pytest.mark.parametrize(

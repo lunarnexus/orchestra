@@ -42,7 +42,8 @@ class PiHarness:
 
     def start(self, request: WorkerRequest, role: RoleConfig) -> WorkerProcess:
         prompt = self.build_prompt(request, role)
-        command = self.build_command(role, prompt)
+        worker_session_id = _worker_session_id(request)
+        command = _with_worker_session(self.build_command(role, prompt), worker_session_id)
         process = self.starter(
             command,
             stdout=subprocess.PIPE,
@@ -55,4 +56,26 @@ class PiHarness:
             process=process,
             command=command,
             prompt=prompt,
+            worker_session_id=worker_session_id,
         )
+
+
+def _worker_session_id(request: WorkerRequest) -> str | None:
+    return f"orchestra-worker-{request.run_id}" if request.run_id else None
+
+
+def _with_worker_session(command: list[str], worker_session_id: str | None) -> list[str]:
+    if worker_session_id is None or not command or not _is_pi_command(command[0]):
+        return command
+    stripped = [token for token in command if token != "--no-session"]
+    if _has_session_arg(stripped):
+        return stripped
+    return [stripped[0], "--session-id", worker_session_id, *stripped[1:]]
+
+
+def _is_pi_command(executable: str) -> bool:
+    return executable == "pi" or executable.endswith("/pi")
+
+
+def _has_session_arg(command: list[str]) -> bool:
+    return any(token in {"--session", "--session-id"} for token in command)

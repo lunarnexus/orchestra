@@ -189,7 +189,7 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
     )
     assert builder.model == "lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved"
     assert builder.profile is None
-    assert builder.command == ["pi", "--no-session", "--model", "{model}", "-p", "{prompt}"]
+    assert builder.command == ["pi", "--model", "{model}", "-p", "{prompt}"]
     assert builder.skills == ()
     assert builder.env == {}
 
@@ -277,7 +277,6 @@ harness_configs:
     harness: pi
     command:
       - pi
-      - --no-session
       - --model
       - "{model}"
       - -p

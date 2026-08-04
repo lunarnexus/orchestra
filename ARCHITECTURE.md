@@ -165,7 +165,8 @@ Every run is keyed by exact `orchestrator_session_id`.
 
 Examples:
 
-- Pi: `pi:<session_id>` from `ctx.sessionManager.getSessionId()`
+- Pi parent sessions: `pi:<session_id>` from `ctx.sessionManager.getSessionId()`
+- Pi worker sessions: deterministic `orchestra-worker-<run-id>` ids stored as `worker_session_id`
 - Hermes: `hermes:<session_id>` from plugin runtime context
 - CLI/manual mode: explicit `--session-id`
 
@@ -223,7 +224,7 @@ SQLite stores compact operational state:
 - return artifact path
 - fallback metadata when relevant
 
-JSONL logs record lifecycle events and debugging metadata. Return artifacts under `state/return-artifacts/` hold full final worker stdout/stderr when compact summaries are truncated.
+JSONL logs record lifecycle events and debugging metadata, including worker session ids when harnesses provide them. Return artifacts under `state/return-artifacts/` hold full final worker stdout/stderr when compact summaries are truncated. Pi worker session files can be found under Pi's session directory by the stored `worker_session_id`.
 
 ## Auto-return
 

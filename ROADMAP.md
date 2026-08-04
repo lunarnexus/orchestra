@@ -9,7 +9,7 @@ Orchestra roadmap items are split into:
 
 ### Skill system and development methodology
 
-- [ ] Update active skills with dispatch-scoping lessons from real Orchestra use.
+- [x] Update active skills with dispatch-scoping lessons from real Orchestra use.
   - Research workers should be **read-only** by default.
   - Use **one topic or one tight file cluster per researcher**.
   - Name **exact files, directories, or one exact topic** instead of asking workers to inspect broadly relevant context.
@@ -18,19 +18,20 @@ Orchestra roadmap items are split into:
   - Set an expected shape and rough size for returns, e.g. concise findings, sources, blockers, risks; use a word/section limit when the task is lookup or triage.
   - After the first timeout, retry with a smaller slice. After repeated timeout on the same topic, switch strategy: split to one topic, use main-session web tools, or stop.
 
-- [ ] Add industry-standard development terminology to active skills without bundling full methodology manuals.
+- [x] Add industry-standard development terminology to active skills without bundling full methodology manuals.
   - Use terms such as Agile, Lean, Kanban/WIP, XP, TDD, BDD, spike, CI/CD, feature branch, trunk-based development, code review, DevSecOps, RCA, risk-based testing, refactoring, acceptance criteria, vertical slice, tracer bullet, and systematic debugging.
   - Let harness-native skills load when available; otherwise the terminology should guide the model without bloating prompts.
   - Keep full method skills optional and project/harness-local.
 
-- [ ] Improve role-level skill injection ergonomics.
-  - Keep role `skills` lists in the catalog.
-  - Resolve local project skills first from `skills/<name>/SKILL.md` or recursive skill directories.
-  - When a local skill is absent, ask the harness/worker to load the named native skill if available.
-  - Keep injected local skills concise and avoid bundling generic methodology manuals by default.
-  - Verify worker prompts across harnesses include local skills or native-load fallback instructions.
+- [x] Improve role-level skill injection ergonomics.
+  - Role `skills` lists are in the catalog, including active builder/planner/researcher/reviewer wiring.
+  - Local project skills resolve from `skills/<name>/SKILL.md` or recursive skill directories.
+  - When a local skill is absent, the worker is asked to load the named native skill if available.
+  - Injected local skills stay concise and avoid bundling generic methodology manuals by default.
+  - Existing prompt-rendering tests cover local skill injection and native-load fallback instructions.
 
 - [ ] Refine the concise active `builder` skill after real use.
+  - Active `builder` skill now exists and is wired into the catalog.
   - Keep TDD, Red -> Green -> Refactor, systematic debugging/RCA, git discipline, minimal-change rules, and verification handoff concise.
   - Adjust only when real worker behavior shows missing or bloated guidance.
 
@@ -109,12 +110,13 @@ Orchestra roadmap items are split into:
 - [ ] Add real-agent eval/reporting harness for prompt-flow quality.
   - Prefer live Pi/Hermes/OpenCode runs.
   - Use fake workers only for focused unit tests where isolation is necessary.
+  - Start with a small scenario runner and human-readable reports before automated scoring.
 
 ### Documentation cleanup
 
-- [ ] Decide whether `TODO.md` should be retired after `ROADMAP.md` is established.
+- [x] Retire `TODO.md` after establishing `ROADMAP.md`.
   - Existing `TODO.md` items have been consolidated here.
-  - Update README layout and links if `ROADMAP.md` becomes canonical.
+  - README layout now points to `ROADMAP.md`.
 
 ## Wishlist
 
@@ -150,3 +152,4 @@ Orchestra roadmap items are split into:
 - [ ] Metrics/exporters and import/export bundles.
 - [ ] Dashboard/widget UI after watch/status tooling proves insufficient.
 - [ ] Richer transcript/session handles where harnesses expose them, kept optional and debug-oriented.
+- [ ] Retention/prune command for Orchestra DB rows, JSONL logs, return artifacts, and harness session logs after development-time session capture proves useful.

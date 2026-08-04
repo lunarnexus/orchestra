@@ -40,9 +40,9 @@ decisions.
 3. **Narrow worker slices** — child agents receive focused prompts with explicit
    scope, stop conditions, and return format.
 4. **Lean state** — store only operational state needed for supervision,
-   recovery, and status. JSONL operational logs keep compact lifecycle records;
-   full prompts, transcripts, and raw streams belong only in debug artifacts when
-   enabled.
+   recovery, and status. JSONL operational logs keep compact lifecycle records
+   and harness session ids when available; full prompts and raw streams stay in
+   harness-owned session logs or return artifacts.
 5. **Deterministic coordination** — code controls run state, queueing,
    concurrency, cancellation, and routing policy. Agents reason inside assigned
    boundaries.
@@ -86,7 +86,7 @@ decisions.
 | MCP-capable, not MCP-only | MCP is a good universal tool surface, but host-native plugins/extensions are required for reliable slash UX and session ownership/auto-return; generic MCP alone cannot provide the full behavior. | 2026-07-27 |
 | Python core | Python fits local subprocess orchestration, SQLite, CLI packaging, and existing CelloS lessons. TypeScript should be used only where host extensions require it. | 2026-07-27 |
 | One-shot first | Start with simple subprocess calls such as Pi/Hermes/OpenCode one-shots; keep RPC, ACP streaming, and approval passthrough on the roadmap. | 2026-07-27 |
-| SQLite for lean runtime state | Track useful supervision state by default while writing JSONL operational logs for inspection. Debug mode may retain full prompts, transcripts, raw harness messages, stdout/stderr, and timing outside core run state. | 2026-07-27 |
+| SQLite for lean runtime state | Track useful supervision state by default while writing JSONL operational logs for inspection. Harness-owned session logs and return artifacts may retain full worker context outside core run state. | 2026-07-27 |
 | `config.yaml` as primary config | Project and user configuration should use YAML, including concurrency limits, defaults, logging, timeouts, and explicit harness selection/fallback policy. | 2026-07-27 |
 | Separate agent catalog | Agent/model/role combinations, context limits, and harness-specific defaults should live outside core config once schema settles. | 2026-07-27 |
 | Minimal scheduler | Use a small run supervisor for concurrency, process tracking, status, and cancellation; avoid CelloS-style project-management weight. | 2026-07-27 |
@@ -143,16 +143,16 @@ Default state should include only:
 
 Default state should not store full prompts, full transcripts, raw token streams,
 or every tool call. JSONL operational logs should record lifecycle events,
-status changes and result summaries. A worker's full final stdout/stderr is kept
-as a return artifact under `state/return-artifacts/` so truncated summaries can
-point the orchestrator at the complete worker return. Debug mode may record raw
-details to logs for troubleshooting and failed-run inspection.
+status changes, result summaries, and harness session ids when available. A
+worker's full final stdout/stderr is kept as a return artifact under
+`state/return-artifacts/` so truncated summaries can point the orchestrator at
+the complete worker return.
 
-Harnesses may opportunistically report a native session id or transcript file
-path for debugging or resume. This remains optional: Pi may run with
-`--no-session`, while Hermes one-shots/profile runs usually persist sessions.
-Orchestra should store such handles as metadata or log references, not as
-required state.
+Harnesses may report or assign a native session id or transcript file path for
+debugging or resume. Pi workers run as saved sessions with deterministic
+`orchestra-worker-<run-id>` ids; Hermes one-shots/profile runs usually persist
+sessions. Orchestra should store such handles as metadata or log references, not
+as required state.
 
 ## Data Flow
 
@@ -196,7 +196,7 @@ required state.
 - Support multiple orchestrator sessions concurrently without allowing one
   session to receive, stop, or control another session's workers.
 - Store lean run status in SQLite plus JSONL operational logs.
-- Keep verbose details available only through JSONL logs or optional debug paths.
+- Keep verbose details available through JSONL logs, return artifacts, or harness-owned session logs.
 
 ## Current Design Decisions
 
@@ -351,7 +351,7 @@ A role entry should own worker-selection fields such as:
 Dispatch resolution is role -> harness config -> render command with role
 fields -> apply explicit runtime args. For example, Hermes can use a profile
 one-shot such as `hermes --profile <profile> -z "<prompt>"`; Pi can use a
-one-shot such as `PI_CODING_AGENT_DIR=/home/james/.pi/agent pi --no-session -p
+one-shot such as `PI_CODING_AGENT_DIR=/home/james/.pi/agent pi -p
 "<prompt>"`; OpenCode can use a one-shot such as `opencode run --agent <agent>
 --model <model> "<prompt>"`.
 

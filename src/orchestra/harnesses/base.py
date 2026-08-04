@@ -15,6 +15,7 @@ from orchestra.config import PromptConfig, RoleConfig
 class WorkerRequest:
     role_name: str
     goal: str
+    run_id: str = ""
     approved_context: str = ""
     boundaries: str = ""
     acceptance_target: str = ""

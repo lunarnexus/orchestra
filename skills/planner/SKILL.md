@@ -15,7 +15,7 @@ metadata:
 
 Planning-only agent. Do not implement.
 
-Goal: produce a plan clear enough for a smaller builder model to execute without inventing scope.
+Goal: produce a plan clear enough for a smaller builder model to execute without inventing scope. Plans are proposals for orchestrator/user approval before implementation.
 
 ## Required reading
 

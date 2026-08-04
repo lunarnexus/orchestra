@@ -119,7 +119,6 @@ harness_configs:
     harness: pi
     command:
       - pi
-      - --no-session
       - --model
       - "{model}"
       - -p
@@ -428,4 +427,4 @@ Use the CLI and host smoke commands above for manual verification.
 
 - Keep secrets out of the repository.
 - Host adapters must get runtime session identity from host context, not from user prompts or model output.
-- Default behavior keeps logs lean; raw prompts/transcripts stay optional.
+- Default behavior keeps Orchestra logs lean. Pi workers save normal Pi sessions with ids like `orchestra-worker-<run-id>` for debugging while this project is under active development.

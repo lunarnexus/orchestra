@@ -142,6 +142,7 @@ def test_update_run_tracks_state_transitions_and_metadata(
     assert running.process_id == 1234
     assert running.process_group_id == 1234
     assert running.worker_session_id == "worker-session-1"
+    assert "worker-session-1" in running.log_path.read_text(encoding="utf-8")
     assert running.transcript_path == tmp_path / "transcripts" / "run-2.md"
     assert done.ended_at is not None
     assert done.result_summary == "Completed successfully"

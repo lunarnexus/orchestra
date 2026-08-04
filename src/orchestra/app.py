@@ -77,7 +77,6 @@ Enabled values:
   true, yes, y, 1, on
   false, no, n, 0, off"""
 
-
 class AppError(ValueError):
     """Raised for user-facing application errors."""
 
@@ -439,6 +438,8 @@ def format_run_report(record: RunRecord) -> str:
         lines.append(f"error: {record.error_text}")
     if record.blocker_text:
         lines.append(f"blocker: {record.blocker_text}")
+    if record.worker_session_id:
+        lines.append(f"worker_session_id: {record.worker_session_id}")
     if record.transcript_path:
         lines.append(f"transcript_path: {record.transcript_path}")
     return "\n".join(lines)
@@ -496,6 +497,8 @@ def format_orchestrator_return(runs: list[RunRecord]) -> str:
         full_result_line = _full_result_line(run)
         if full_result_line:
             lines.append(full_result_line)
+        if run.worker_session_id:
+            lines.append(f"Worker session: {run.worker_session_id}")
         lines.append(f"Log: {run.log_path}")
         blocks.append("\n".join(lines))
     report = "\n\n".join(blocks)
@@ -537,6 +540,8 @@ def build_session_report(session_id: str, runs: list[RunRecord], *, active_remai
         full_result_line = _full_result_line(run)
         if full_result_line:
             lines.append(f"  {full_result_line}")
+        if run.worker_session_id:
+            lines.append(f"  worker_session_id: {run.worker_session_id}")
         lines.append(f"  log: {run.log_path}")
     if active_remaining == 0:
         lines.append("session_report: all active workers for this session are complete")
@@ -970,6 +975,8 @@ def format_history(context: AppContext, session_id: str, limit: int) -> str:
         full_result_line = _full_result_line(run)
         if full_result_line:
             lines.append(f"  {full_result_line}")
+        if run.worker_session_id:
+            lines.append(f"  worker_session_id: {run.worker_session_id}")
         lines.append(f"  log: {run.log_path}")
     return "\n".join(lines)
 
@@ -1586,6 +1593,7 @@ def _start_worker_process(
     request = WorkerRequest(
         role_name=selected_role.name,
         goal=pending_request.goal,
+        run_id=pending_request.run_id,
         approved_context=pending_request.approved_context,
         boundaries=pending_request.boundaries,
         acceptance_target=pending_request.acceptance_target,

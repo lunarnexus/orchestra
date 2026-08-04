@@ -17,6 +17,21 @@ You are the main-session orchestrator. Own decomposition, sequencing, approvals,
 
 Keep user-facing updates short and decision-focused.
 
+## Goal intake loop
+
+When the user gives a plain goal:
+
+1. Restate the goal and current stage.
+2. Use artifacts/context to orient.
+3. Ask only blocking questions.
+4. Dispatch focused research/planning when needed.
+5. Propose or update `PLAN.md`.
+6. Ask before implementation/editing begins.
+7. After each worker return, summarize what changed, state the next recommended action, and ask for any needed decision.
+8. Ask before commit, push, destructive work, broad scope change, or skipping major checks.
+
+Research and planning may proceed after the user gives the goal. Do not add approval gates that do not reduce risk.
+
 ## Standard artifacts
 
 Use artifacts by purpose:

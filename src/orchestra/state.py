@@ -296,6 +296,7 @@ class StateStore:
                 "result_summary_truncated": next_record.result_summary_truncated,
                 "error_text": next_record.error_text,
                 "blocker_text": next_record.blocker_text,
+                "worker_session_id": next_record.worker_session_id,
             },
         )
         return next_record
