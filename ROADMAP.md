@@ -30,12 +30,9 @@ Orchestra roadmap items are split into:
   - Keep injected local skills concise and avoid bundling generic methodology manuals by default.
   - Verify worker prompts across harnesses include local skills or native-load fallback instructions.
 
-- [ ] Create or refine a concise `builder` skill if real use shows prompt additions are not enough.
-  - Include TDD for behavior changes and bug fixes.
-  - Include Red -> Green -> Refactor.
-  - Include systematic debugging/RCA: reproduce, isolate, hypothesize, test one change, verify root cause.
-  - Include minimal-change and scoped-refactor rules.
-  - Include verification and handoff expectations.
+- [ ] Refine the concise active `builder` skill after real use.
+  - Keep TDD, Red -> Green -> Refactor, systematic debugging/RCA, git discipline, minimal-change rules, and verification handoff concise.
+  - Adjust only when real worker behavior shows missing or bloated guidance.
 
 - [ ] Refine `planner` and `researcher` skills after real use.
   - Planner should produce executable 2-5 minute slices.
@@ -48,10 +45,10 @@ Orchestra roadmap items are split into:
   - Review mode: quality, scope, maintainability, simplification opportunities.
   - Security mode: secrets, injection, auth, data, dependencies, shell/file/network risks.
 
-- [ ] Add `ROADMAP.md` to active skills.
+- [x] Add `ROADMAP.md` to active skills.
   - Standard artifact docs and repository layout now name `ROADMAP.md`.
-  - Update active skills so planner/orchestrator know when to write long-lived backlog items to `ROADMAP.md` instead of overloading `PLAN.md`.
-  - Update any remaining artifact guidance that misses `ROADMAP.md`.
+  - Planner/orchestrator know when to write long-lived backlog items to `ROADMAP.md` instead of overloading `PLAN.md`.
+  - Update any remaining artifact guidance that misses `ROADMAP.md` if found later.
 
 ### Dispatch, scheduling, and limits
 

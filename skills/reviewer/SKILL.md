@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Read-only checker for verify, review, and security modes. Use after work exists to check behavior, implementation quality, or security risk.
+description: Independent read-only checker for verify, review, and security modes. Use after work exists to check behavior, implementation quality, or security risk with evidence.
 version: 0.1.0
 author: LunarNexus
 license: MIT
@@ -8,22 +8,32 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [review, verify, security, quality, read-only]
-    related_skills: [caveman, orchestrator]
+    related_skills: [caveman, orchestrator, builder]
 ---
 
 # Reviewer
 
-Read-only checker. Run only the requested mode: `verify`, `review`, or `security`.
+Independent read-only checker. Run only the requested mode: `verify`, `review`, or `security`.
+
+No agent should be the only verifier of its own non-trivial work.
 
 ## First read
 
 Read only what matters:
 - user request or assigned task
-- `PLAN.md` scope
+- `PLAN.md` scope and acceptance criteria
 - relevant `FOUNDATION.md`, `ARCHITECTURE.md`, `RESEARCH.md`
-- changed files or diff
+- changed files, diff, staged changes, or git status when relevant
 - commands/checks already run
 - `AGENTS.md` conventions
+
+## Evidence rules
+
+Use evidence from code, diff, command output, docs, tests, or project convention.
+
+Do not guess. Do not invent issues. Do not claim checks ran if they did not.
+
+Distinguish baseline failures from new failures when possible.
 
 ## Modes
 
@@ -35,16 +45,19 @@ Quick pass/fail. No commentary unless there is an issue.
 
 Check:
 - requested behavior vs actual behavior
+- acceptance criteria
 - task scope
 - focused tests/checks when available
 - missing required check only if it affects confidence
+- bug fixes include repro/regression evidence when practical
 
 Output:
 
 ```md
 Mode: verify
-Verdict: pass|fail
+Verdict: pass|fail|blocked
 Issue: <only if fail or blocked>
+Evidence: <brief command/file evidence>
 ```
 
 ### review
@@ -58,23 +71,26 @@ Check:
 - edge cases that matter for this task
 - error handling on relevant paths
 - test quality
+- TDD/repro evidence when relevant
+- RCA evidence for bug fixes
 - scope creep
 - over-engineering
 - dead code, duplication, unnecessary abstraction
 - consistency with project style
+- git diff includes no unrelated edits, secrets, debug prints, or generated junk
 
-Favor simple code. Do not expand scope to handle speculative edge cases. Raise an edge case only when it is likely, relevant, and worth fixing now.
+Favor simple code. Raise an edge case only when it is likely, relevant, and worth fixing now.
 
 ### security
 
-Question: did the work introduce security risk?
+Question: did the work introduce material security risk?
 
-Use the OWASP Top 10 as the baseline reference: https://owasp.org/www-project-top-ten/
+Use OWASP Top 10 and practical threat modeling as the baseline.
 
 Check relevant areas:
 - broken access control
 - cryptographic failures and sensitive data exposure
-- injection, including SQL, command, template, path, XSS, SSRF, prompt injection
+- injection: SQL, command, template, path, XSS, SSRF, prompt injection
 - insecure design
 - security misconfiguration
 - vulnerable or outdated dependencies
@@ -87,18 +103,11 @@ Check relevant areas:
 - file/shell/network use
 - AI-agent risks from untrusted external input
 
-Security review can be deeper than verify/review because it usually runs near the end. Stay practical. Nothing is 100% secure; report material risk, not theoretical perfection.
+Security review can be deeper than verify/review because it usually runs near the end. Report material risk, not theoretical perfection.
 
-For findings, include:
-- file:line when available
-- severity
-- category
-- impact or exploit path
-- recommendation
+## Simplicity and Chesterton's Fence
 
-## Simplicity check
-
-Prefer small code that fits the existing project.
+Prefer small code that fits existing project patterns.
 
 Look for:
 - duplicated logic where an existing helper exists
@@ -106,6 +115,10 @@ Look for:
 - abstraction without clear payoff
 - broad refactor outside task scope
 - redundant state or cache
+- parameter sprawl
+- copy-paste-with-variation
+- leaky abstractions
+- stringly typed code
 - ignored errors or silent failures
 - public contract rename or behavior change hidden as cleanup
 - comments explaining obvious code
@@ -124,7 +137,8 @@ Conflict priority:
 
 Each review/security finding needs:
 - severity: HIGH / MEDIUM / LOW
-- evidence from code, diff, command output, or project convention
+- file:line when available
+- evidence
 - suggested fix
 
 Severity:
@@ -132,9 +146,7 @@ Severity:
 - MEDIUM: relevant edge case, weak test, maintainability issue, overcomplication
 - LOW: non-blocking cleanup or future improvement
 
-Do not invent issues.
-Do not claim checks ran if they did not.
-If clean, say what was checked briefly.
+Fail closed for security concerns, logic errors, or unparseable diffs.
 
 ## Output for review/security
 
@@ -142,7 +154,7 @@ If clean, say what was checked briefly.
 ## Reviewer Report
 
 Mode: review|security
-Verdict: pass|fail|pass with notes
+Verdict: pass|fail|pass with notes|blocked
 
 ### Blocking Findings
 - HIGH/MEDIUM — `file:line` — issue — evidence — fix
@@ -156,6 +168,9 @@ Verdict: pass|fail|pass with notes
 
 ### Missing Checks
 - check: reason
+
+### Baseline Failures
+- failure: evidence, if known
 
 ### Residual Risk
 - risk or “none identified”

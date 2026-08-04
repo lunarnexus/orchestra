@@ -277,7 +277,7 @@ Possible compact core:
 - `orchestrator` — main-session planning, sequencing, dispatch, and judgment
 - `planner` — planning and research coordination; injects `planner`, uses Pi for MVP, and has `worker_budget: 2` so it can dispatch researchers
 - `researcher` — facts, docs, web, and code research; injects `researcher`
-- `builder` — implementation; prompt_addition only for now, no full builder skill until real use shows it is needed
+- `builder` — focused implementation; injects `builder` with concise TDD, git, debugging, scope, and verification guidance
 - `reviewer` — verify/review/security checking modes
 - `caveman` — style/compression
 

@@ -14,6 +14,7 @@ Example:
 
 ```text
 skills/orchestrator/SKILL.md
+skills/builder/SKILL.md
 skills/reviewer/SKILL.md
 ```
 
@@ -33,6 +34,9 @@ Role config shape:
 
 ```yaml
 roles:
+  builder:
+    skills:
+      - builder
   reviewer:
     skills:
       - reviewer

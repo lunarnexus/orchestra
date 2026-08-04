@@ -138,6 +138,8 @@ roles:
     harness_config: pi
     enabled: true
     model: openai-codex/gpt-5.4
+    skills:
+      - builder
     prompt_addition: Implement the assigned task only. Stay in scope. Return files changed, checks run, results, blockers, and risks.
   reviewer:
     harness_config: hermes
@@ -148,7 +150,7 @@ roles:
         model: openai-codex/gpt-5.4
     skills:
       - reviewer
-    prompt_addition: Check work in the requested mode: verify, review, or security. Read-only unless explicitly asked.
+    prompt_addition: Check work in the requested mode: verify, review, or security. Read-only unless explicitly asked. Return verdict, findings, missing checks, blockers, and risks.
 ```
 
 Notes:
@@ -409,6 +411,7 @@ Use the CLI and host smoke commands above for manual verification.
 .
 ├── AGENTS.md                    # Project rules for AI coding agents
 ├── FOUNDATION.md                # Architecture decisions and domain model
+├── ARCHITECTURE.md              # Evolving technical design
 ├── PLAN.md                      # Current implementation plan
 ├── README.md                    # User-facing overview and usage
 ├── ROADMAP.md                   # TODO and wishlist backlog

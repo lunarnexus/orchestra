@@ -34,6 +34,8 @@ roles:
     - harness_config: hermes
       profile: tori
     model: openai-codex/gpt-5.4
+    skills:
+    - builder
     prompt_addition: Implement the assigned task only. Stay in scope. Return files
       changed, checks run, results, blockers, and risks.
     enabled: true
