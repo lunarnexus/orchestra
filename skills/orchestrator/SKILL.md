@@ -92,14 +92,14 @@ Give each worker:
 
 Research dispatch:
 - read-only by default
-- one question or one tight file cluster
-- split research by independent subject
-- exact files/directories/topic
-- preferred sources: repo, docs, web, or code tools
+- one small question with one expected answer
+- one source page, one file, or one tight file cluster
+- ask for exact fact needed: path, method, signature, yes/no, behavior, or limit
+- do not dispatch broad topics like API support, install behavior, or notification APIs
 - ask for answer, sources, confidence, gaps, blockers, risks
-- after a timeout, retry smaller; after repeated timeout, split further, use main-session tools, or stop
+- If a research worker times out, shrink to one source and one exact question, then re-dispatch once. If the retry times out, record the missing fact as a blocker and stop.
 
-Split research by independent subject. Do not bundle unrelated unknowns into one researcher. Separate subjects include APIs, install paths, command surfaces, return injection, and docs.
+Split research by independent subject. Do not batch related research questions; if one answer can determine the next question, wait before dispatching the next researcher. Do not bundle unrelated unknowns into one researcher. Separate subjects include APIs, install paths, command surfaces, return injection, and docs.
 
 Do not absorb failed worker work. If a tool-using worker fails, times out, or returns incomplete work, do not perform that work yourself. Shrink scope and re-dispatch a smaller slice.
 

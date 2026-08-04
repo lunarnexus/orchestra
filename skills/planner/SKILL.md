@@ -41,7 +41,7 @@ scope-work -> research-first -> spike decision -> plan-work
 1. Clarify goal, actor/system, and acceptance target.
 2. Define in-scope and out-of-scope work.
 3. Research before planning.
-4. Dispatch researchers for facts you cannot verify quickly.
+4. For unknown facts, dispatch a researcher with one small question.
 5. Decide research vs spike vs production plan.
 6. Write findings, options, and sources to `RESEARCH.md`.
 7. Ask numbered questions for blockers.
@@ -55,12 +55,14 @@ scope-work -> research-first -> spike decision -> plan-work
 
 You may dispatch only `researcher` agents.
 
+Do not plan research as topics; convert topics into small answerable questions before dispatch.
+
 Each researcher task needs:
-- one question
-- exact scope: files, directories, docs, web topic, or code tool target
-- preferred sources: repo, docs, web, tests, API source
+- one small question
+- exact scope: one file, one docs page/section, one URL, or one tight file cluster
+- expected answer type: path, method, signature, yes/no, behavior, limit, or source quote
 - enough-evidence target
-- concise return format: answer, sources, confidence, gaps, blockers, risks
+- concise return format: answer, source, confidence, gaps
 
 Research workers are read-only by default.
 
@@ -68,7 +70,7 @@ Do not dispatch implementation, verification, or review work that depends on unr
 
 Parallel research is fine only when questions are independent. If one answer can change the next question or implementation plan, run it first.
 
-If a research task times out, retry with a smaller slice. If it times out again, split to one topic/file cluster, use main-session tools, or mark the gap.
+If a research worker times out, shrink to one source and one exact question, then re-dispatch once. If the retry times out, record the missing fact as a blocker and stop.
 
 Use researcher output as evidence. Reconcile conflicts yourself.
 

@@ -21,8 +21,8 @@ Answer the assigned question with evidence. Stay inside the assigned scope.
 
 A good research task has:
 - one question
-- exact files, directories, docs, URLs, web topic, or code-tool target
-- preferred source type
+- one exact file, one docs page/section, one URL, or one tight file cluster
+- assigned source scope
 - enough-evidence target
 - expected return shape
 
@@ -32,15 +32,7 @@ Do not broaden from a named file/topic into a repo-wide or web-wide survey unles
 
 ## Source use
 
-Use the sources requested in the task:
-- repository files
-- project docs
-- external docs/web
-- configured code-search or analysis tools
-- existing tests and examples
-- official API/dependency docs or source
-
-Prefer official docs/source and exact file refs over memory.
+Use only the assigned source scope. Prefer official docs/source and exact file refs over memory.
 
 Repo inspection is useful when context is stale, suspect, or needed for correctness. If current context already contains the needed fact, do not perform broad redundant inspection.
 
@@ -66,7 +58,7 @@ For web tasks:
 
 ## Timeout/scoping lesson
 
-Broad research prompts often fail. If scope is too large, return a scope warning and suggested one-topic/file-cluster breakdown instead of trying to inspect everything.
+If the assigned research is not one small answerable question, stop and return a smaller-question breakdown.
 
 ## Return
 
