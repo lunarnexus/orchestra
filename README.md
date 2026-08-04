@@ -1,14 +1,22 @@
 # orchestra
 
-Orchestra is an agent-agnostic orchestration control plane for dispatching focused worker agents from a parent session.
+Orchestra is an agent-agnostic orchestration layer for dispatching sub-agents.  Originally designed for pi.dev, but works the same using lots of different harnesses as the orchestrator or sub-agent.  
+
+- Lightweight on context and tokens.
+- Simple, deterministic where possible
+- Turn-key install of harness plugins, easy set it and forget it config
+- Very flexible.  It's like a framework, but the demo works perfectly.
+- Uses common best practice components like your existing agent harnesses, Skills, etc.
 
 It gives a host agent or CLI a small, consistent way to:
 
-- start focused worker runs through configured agent harnesses
+- start focused worker runs through existing agent harnesses
 - keep worker ownership scoped to the invoking session
 - enforce concurrency, cancellation, and timeouts
 - return compact results without flooding the parent context
-- inspect active and completed runs from a CLI or host command surface
+- inspect active and completed runs from a CLI or /slash command surface
+
+Some harnesses are fast and light, some are smart but bloated.  Some burn tokens at break-neck speed, some just don't have the features you want.  Well, with Orchestra, you can use all your favorite agent harnesses for what they're good at.  Big and full featured with lots of UI bells and whistles for the orchestrator, and lightweight for coders, smart with heavy memory systems for researchers, whatever you want.  
 
 ## Concepts
 
