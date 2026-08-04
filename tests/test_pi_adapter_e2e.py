@@ -86,7 +86,7 @@ def _json_events(output: str) -> list[dict[str, object]]:
     return events
 
 
-def test_pi_extension_host_on_loads_skill_once_per_session(
+def test_pi_extension_host_on_refreshes_skill_each_time(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
@@ -110,8 +110,8 @@ def test_pi_extension_host_on_loads_skill_once_per_session(
 
     assert result.returncode == 0
     output = result.stdout + result.stderr
-    assert "Orchestra main-session skill loaded for this session." in output
-    assert "Orchestra main-session skill already loaded for this session." in output
+    assert output.count("Orchestra orchestrator skill refreshed for this session.") == 2
+    assert "already loaded" not in output
 
     events = _json_events(output)
     command_events = [
@@ -139,7 +139,7 @@ def test_pi_extension_host_on_loads_skill_once_per_session(
     ]
 
     assert len(command_events) == 2
-    assert len(skill_messages) == 1
+    assert len(skill_messages) >= 1
 
 
 def test_pi_extension_host_command_path(

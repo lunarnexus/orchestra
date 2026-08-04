@@ -379,7 +379,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   const sessionCompletedRuns = new Map<string, Set<string>>();
   const sessionGenerations = new Map<string, number>();
   const sessionRefreshRequests = new Map<string, number>();
-  const orchestratorSkillSessions = new Set<string>();
   let cachedRoleNames: { expiresAt: number; roles: string[] } | null = null;
   let cachedActiveStatus: { expiresAt: number; sessionId: string; status: ActiveSessionStatus } | null = null;
 
@@ -685,7 +684,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
-    if (currentSessionId) orchestratorSkillSessions.delete(currentSessionId);
     currentSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
     bumpSessionGeneration(currentSessionId);
     await refreshOrchestraWorkerStatus(currentSessionId, (status) => setOrchestraWorkerStatus(ctx, status), { fresh: true });
@@ -694,7 +692,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   pi.on("session_shutdown", async (_event, ctx) => {
     if (currentSessionId) {
       bumpSessionGeneration(currentSessionId);
-      orchestratorSkillSessions.delete(currentSessionId);
     }
     setOrchestraWorkerStatus(ctx, null);
     stopSessionWatchers(currentSessionId);
@@ -756,10 +753,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
   }
 
-  async function injectOrchestratorSkill(sessionId: string): Promise<{ code: number; output: string }> {
-    if (orchestratorSkillSessions.has(sessionId)) {
-      return { code: 0, output: "Orchestra main-session skill already loaded for this session." };
-    }
+  async function injectOrchestratorSkill(_sessionId: string): Promise<{ code: number; output: string }> {
     const result = await runOrchestra(["_orchestrator-skill"]);
     const message = result.stdout.trim();
     if (result.code !== 0 || !message) {
@@ -769,8 +763,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       };
     }
     pi.sendUserMessage(message, { deliverAs: "followUp", triggerTurn: true });
-    orchestratorSkillSessions.add(sessionId);
-    return { code: 0, output: "Orchestra main-session skill loaded for this session." };
+    return { code: 0, output: "Orchestra orchestrator skill refreshed for this session." };
   }
 
   async function getOrchArgumentCompletions(argumentPrefix: string): Promise<Array<{ value: string; label: string; description?: string }> | null> {
