@@ -148,7 +148,7 @@ The main differentiator versus Pi-first packages is that Orchestra is an externa
 
 ## OpenCode Capability Research
 
-Research date: 2026-07-31
+Research date: 2026-07-31; refreshed 2026-08-04
 
 ### Sources inspected
 
@@ -208,14 +208,70 @@ Research date: 2026-07-31
   persistent/interactive modes are not required for parity with current Pi and
   Hermes one-shot support.
 
+### Current repo status for OpenCode
+
+- OpenCode one-shot worker support is implemented in the repository through
+  `src/orchestra/harnesses/opencode.py`, lazy harness registry loading, harness
+  tests, and catalog schema support.
+- OpenCode host/orchestrator support is not implemented yet. There is no
+  `extensions/opencode/orchestra/` source and `orchestra init opencode` currently
+  reports harness-only status rather than installing host integration files.
+- Root catalog currently defines an `opencode` harness config, but the active
+  `appsec` role is still Pi-backed. Do not rely on older notes that describe
+  `appsec` as OpenCode-backed without rechecking the catalog.
+
+### Preserved OpenCode host planning notes
+
+- OpenCode host support should be split into explicit parity layers:
+  1. dispatch parity through an `orch_dispatch` tool;
+  2. command parity through thin command wrappers if OpenCode commands can safely
+     invoke the same core behavior;
+  3. notification/progress parity if OpenCode exposes a suitable host/TUI API;
+  4. auto-return parity only after a safe reinjection path and guardrails are
+     validated.
+- Dispatch parity is the lowest-risk first target because it maps to the Pi and
+  Hermes `orch_dispatch` surfaces and can call the existing Orchestra CLI/core.
+- Session ownership remains the critical boundary: OpenCode host code must use
+  runtime `context.sessionID` and normalize it as `opencode:<sessionID>`. It must
+  reject prompt/model/user-supplied session ids.
+- Do not infer session ownership from prompts, cwd, model output, process tree,
+  or user-provided ids.
+- Do not use shell-string command execution for host dispatch; build tokenized
+  argv and execute without a shell.
+- Do not make OpenCode the default worker harness automatically.
+- Do not add approval pass-through, attach/steer/live session control, ACP, or
+  parallel write-safety as part of the first OpenCode host slice.
+- OpenCode custom commands are useful host UX, but should not become a separate
+  orchestration path. If added, they should wrap the same tool/core behavior.
+- Manual smoke for OpenCode worker/model wiring should run direct OpenCode first,
+  then Orchestra. Example order:
+
+```bash
+opencode run --agent plan --model openai/gpt-5.4 "Reply with exactly OPENCODE_DIRECT_OK"
+orchestra do --session-id manual:opencode-demo --role appsec --goal "Reply with exactly OPENCODE_ORCH_OK"
+```
+
+- Model names are harness-specific; Pi model strings cannot be copied blindly to
+  OpenCode catalogs.
+- Omitting `--dir` remains the shared-catalog default for OpenCode workers so
+  runs use the caller's current working directory instead of a hardcoded path.
+- OpenCode install strategy is not decided. Candidate locations from OpenCode
+  docs are project-local `.opencode/tools/`, `.opencode/plugins/`,
+  `.opencode/commands/` and global `~/.config/opencode/tools/`,
+  `~/.config/opencode/plugins/`, `~/.config/opencode/commands/`.
+- Auto-return remains a research/spike topic. OpenCode `client.session.prompt(...)`
+  appears relevant, but it is a session message path and needs explicit loop,
+  target-session, active-user, and compact-report guardrails before use.
+
 ### Implications for Orchestra
 
-- Build `harness: opencode` first, using tokenized argv templates and the same
-  lean worker prompt format as Pi/Hermes.
-- Add an OpenCode host tool/plugin after the worker harness. It should normalize
-  `context.sessionID` as `opencode:<sessionID>` and call the same Orchestra core
-  operations as Pi/Hermes.
-- Do not make OpenCode the default worker harness automatically.
+- Treat the next OpenCode milestone as research/design first, not builder-ready
+  implementation.
+- Add an OpenCode host tool/plugin after exact APIs, install layout, and return
+  limitations are verified. The host surface should stay thin and call the same
+  Orchestra core operations as Pi/Hermes.
+- Preserve one-shot worker behavior and explicit harness selection while adding
+  any host surface.
 - Do not build parallel-write safety as part of OpenCode parity. For now, the
   orchestrator decides which read-only or file-disjoint tasks are safe to run in
   parallel.

@@ -64,6 +64,10 @@ Each researcher task needs:
 
 Research workers are read-only by default.
 
+Do not dispatch implementation, verification, or review work that depends on unresolved research. Wait for the research result, reconcile it, then plan or dispatch builders.
+
+Parallel research is fine only when questions are independent. If one answer can change the next question or implementation plan, run it first.
+
 If a research task times out, retry with a smaller slice. If it times out again, split to one topic/file cluster, use main-session tools, or mark the gap.
 
 Use researcher output as evidence. Reconcile conflicts yourself.

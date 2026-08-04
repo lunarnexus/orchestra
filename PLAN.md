@@ -1,198 +1,194 @@
-## Plan
+# Plan
 
-### Goal
-Implement the first lean Orchestra skill-system slice: role prompt additions, one-time `/orch on` orchestrator skill injection, harness/model fallback that preserves requested roles, and docs/tests that lock the behavior.
+## Goal
 
-### Acceptance Criteria
-- `agent-catalog.yaml` role `prompt_addition` text matches the approved role behavior.
-- `/orch on` injects `skills/orchestrator/SKILL.md` into the main session once in the Pi host adapter.
-- No `/orch off` is added for MVP.
-- Requested-role failures do not silently become `default_role`; recoverable fallback preserves requested role, prompt additions, and skills while changing only harness/model.
-- Final reports mention any successful harness/model fallback.
-- Disabled roles still fail clearly.
-- Decisions are recorded in `docs/skill-system-research-and-decisions.md` and durable architecture decisions are copied to `FOUNDATION.md` when behavior ships.
-- Tests cover changed behavior.
-- Verification passes: `python3 -m pytest`, `python3 -m ruff check .`, `python3 -m mypy src tests`, `python3 -m build`.
+Prepare a research-backed, builder-ready plan for making OpenCode usable as an Orchestra orchestrator host, with Pi/Hermes-like parity only where OpenCode APIs safely support it.
 
-### Completed Context
-- Baseline verification was green: ruff pass, pytest `210 passed, 1 skipped`, mypy pass, build pass.
-- Bigpowers research is captured in `docs/skill-system-research-and-decisions.md`.
-- New `skills/orchestrator/SKILL.md` exists.
-- Old `skills/dev-orchestra/` was moved to `skills/archive/dev-orchestra/`.
-- Main-session mode decision: main session is the orchestrator brain with short monitor-style updates.
-- Workflow source decision: use `skills/orchestrator/SKILL.md` first; YAML workflow work is tracked in `ROADMAP.md`.
-- Artifact decision: `FOUNDATION.md`, `ARCHITECTURE.md`, `RESEARCH.md`, and `PLAN.md` are standard artifacts; no rigid templates yet.
+## Acceptance Criteria
 
-### Files to Change
-- `agent-catalog.yaml` — role prompt additions.
-- `src/orchestra/assets/agent-catalog.yaml` — packaged catalog mirror if present/needed.
-- `src/orchestra/app.py` — core helpers for orchestrator skill rendering and fallback behavior.
-- `src/orchestra/cli.py` — internal command for host adapter to fetch orchestrator skill text if needed.
-- `extensions/pi/orchestra/index.ts` — `/orch on` command and skill injection.
-- `src/orchestra/assets/pi/orchestra/index.ts` — Pi asset mirror.
-- `tests/test_cli_commands.py` — core fallback and internal command tests.
-- `tests/test_pi_extension_source.py` — Pi extension source assertions.
-- `tests/test_pi_adapter_e2e.py` — host command E2E if practical.
-- `FOUNDATION.md` — durable decisions once behavior is implemented.
-- `README.md` / `skills/README.md` — user docs if command or skill behavior changes need docs.
+- OpenCode host/orchestrator work is gated by focused evidence, not assumptions.
+- `RESEARCH.md` records the preserved useful `OCPLAN.md` content and current repo status.
+- `PLAN.md` separates research/design gates from implementation slices.
+- `OCPLAN.md` is removed after its useful content is preserved elsewhere.
+- Before implementation, the plan answers or explicitly defers:
+  - custom tool API shape;
+  - plugin registration shape;
+  - install/search paths;
+  - command-wrapper limits;
+  - notification/progress API;
+  - auto-return/session reinjection feasibility and guardrails;
+  - recent Pi plugin behavior worth mirroring.
+- No OpenCode host implementation starts until the user approves a builder-ready implementation plan.
 
-### Task Breakdown
+## Context / Assumptions
 
-#### Phase 1: Role prompt additions
+- OpenCode one-shot worker harness support already exists.
+- OpenCode host/orchestrator support does not exist yet.
+- Current `orchestra init opencode` is documented and implemented as a no-op status command for harness-only support.
+- Changing `init opencode` into an installer requires an explicit decision.
+- Runtime identity must come from OpenCode runtime context, expected to be `context.sessionID`, normalized as `opencode:<sessionID>`.
+- Pi has newer host-adapter behavior than Hermes; Hermes should not be blindly mirrored for this work.
+- Auto-return parity may not be possible or may require different UX than Pi/Hermes.
 
-Step 1: Update catalog prompts
-- [x] Slice 1.1 — Update root `agent-catalog.yaml` prompt additions:
-  - `builder`: `Implement the assigned task only. Stay in scope. Return files changed, checks run, results, blockers, and risks.`
-  - `researcher`: `Gather evidence with sources from docs, web, or code. Do not change code. Return concise findings, sources, blockers, and risks.`
-  - `planner`: `Plan the work. Ask numbered questions for unknowns. May dispatch researchers for facts, docs, web, and code evidence. Return concise plan findings and open questions.`
-  - `reviewer`: `Check work in the requested mode: verify, review, or security. Read-only unless explicitly asked. Return verdict, findings, missing checks, blockers, and risks.`
-  - `appsec`: `Use reviewer security mode. Check secrets, injection, auth, data, dependencies, and shell/file/network risks. Return security verdict, findings, blockers, and risks.`
-- [x] Slice 1.2 — Update `src/orchestra/assets/agent-catalog.yaml` if it mirrors root catalog defaults. It is a symlink to root `agent-catalog.yaml`.
-- [x] Slice 1.3 — Update tests that assert catalog role details if output text changes.
+## Current Files / Artifacts
 
-Verify:
-- `python3 -m pytest tests/test_config.py tests/test_cli_commands.py -q`
+Research/design now:
+- `RESEARCH.md` — OpenCode evidence and preserved planning notes.
+- `PLAN.md` — active research/design plan.
+- `OCPLAN.md` — removed after preservation.
 
-#### Phase 2: One-time `/orch on` orchestrator injection
+Likely implementation files later, pending approval:
+- `extensions/opencode/orchestra/` — OpenCode host source if chosen.
+- `src/orchestra/app.py` / `src/orchestra/cli.py` — only if `init opencode` changes.
+- `tests/test_opencode_plugin_source.py` or similar — source/safety tests.
+- `tests/test_init_targets.py` — init behavior tests if needed.
+- `README.md`, `FOUNDATION.md`, `ARCHITECTURE.md`, `ROADMAP.md` — docs/decisions after behavior is chosen or shipped.
 
-Step 1: Core skill rendering
-- [x] Slice 2.1 — Add a core helper in `src/orchestra/app.py` that loads `skills/orchestrator/SKILL.md` from the source root/current project and returns a compact injection message.
-- [x] Slice 2.2 — Add an internal CLI command, likely `_orchestrator-skill`, that prints the injection message for host adapters.
-- [x] Slice 2.3 — Handle missing skill file with a clear error.
+## Design Guardrails
 
-Suggested injection text shape:
+- Research tasks should be single-subject and read-only.
+- Do not implement from broad or timed-out research.
+- Dispatch parity comes before command, notification, or auto-return parity.
+- Host adapters stay thin: runtime identity, host registration/UI, notifications, and host message injection only.
+- Session identity is a security boundary. Reject user/model-supplied identity.
+- Use tokenized argv execution, not shell-string command execution.
+- Keep command wrappers thin if they are added; they must not duplicate orchestration logic.
+- Defer auto-return unless research proves a safe, loop-resistant OpenCode API path.
 
-```text
-Load this Orchestra main-session skill:
+## Task Breakdown
 
-<contents of skills/orchestrator/SKILL.md>
+### Phase 1 — Research and decisions only
+
+- [x] Slice 1.0 — sequential — Preserve useful `OCPLAN.md` content and remove stale plan file.
+  Scope: `RESEARCH.md`, `PLAN.md`, delete `OCPLAN.md`.
+  Stop when: preserved notes cover non-goals, parity breakdown, smoke-order rationale, install framing, and current status.
+  Verify: `git diff -- PLAN.md RESEARCH.md OCPLAN.md`.
+  Risk: P3 — documentation-only, but stale planning can mislead implementation.
+
+- [ ] Slice 1.1 — sequential — Research OpenCode custom tool API shape.
+  Scope: official docs and local type/examples only.
+  Question: what exact file/export/schema/handler/context contract should `orch_dispatch` use as a custom tool?
+  Stop when: `RESEARCH.md` has concrete evidence and confidence/gaps.
+  Verify: source URLs or local file refs recorded.
+  Risk: P1 — wrong handler shape makes the host tool unusable.
+
+- [ ] Slice 1.2 — sequential — Research OpenCode plugin registration shape.
+  Scope: official docs and local type/examples only.
+  Question: should MVP be a standalone custom tool file, plugin-registered tool, or both?
+  Stop when: decision candidates and tradeoffs are recorded.
+  Verify: source URLs or local file refs recorded.
+  Risk: P1 — choosing the wrong surface can complicate install and testing.
+
+- [ ] Slice 1.3 — sequential — Research OpenCode install/search paths.
+  Scope: official docs, local config conventions, and OpenCode CLI help.
+  Question: should `orchestra init opencode` remain status-only, install globally, install project-locally, or support both?
+  Stop when: install options, default recommendation, and compatibility risks are recorded.
+  Verify: source URLs/local path evidence recorded.
+  Risk: P2 — install behavior changes public setup contracts.
+
+- [ ] Slice 1.4 — sequential — Research OpenCode custom command limits.
+  Scope: official command docs and local examples only.
+  Question: can `/orch`-style commands be thin wrappers around core behavior, or are they prompt-only UX unsuitable for MVP?
+  Stop when: command parity is either scoped for later or explicitly excluded.
+  Verify: evidence recorded.
+  Risk: P2 — command wrappers can duplicate logic or rely on model behavior.
+
+- [ ] Slice 1.5 — sequential — Research OpenCode notification/progress APIs.
+  Scope: official plugin/server/SDK/TUI docs and local types only.
+  Question: is there a safe toast/status/progress API for host notifications?
+  Stop when: notification parity is either scoped or deferred.
+  Verify: evidence recorded.
+  Risk: P2 — weak progress UX is acceptable; unsafe injection is not.
+
+- [ ] Slice 1.6 — sequential — Research OpenCode auto-return/session reinjection.
+  Scope: official SDK/server docs and local types only; spike only if docs are insufficient and user approves.
+  Question: can Orchestra safely return worker reports into the owning OpenCode session, and with what guardrails?
+  Stop when: auto-return is implemented-plan-ready or explicitly deferred.
+  Verify: evidence plus guardrails recorded.
+  Risk: P1 — unsafe reinjection can interrupt users or create loops.
+
+- [ ] Slice 1.7 — sequential — Research recent Pi plugin behavior to mirror.
+  Scope: `extensions/pi/orchestra/index.ts`, source tests, and recent docs only.
+  Question: which Pi host behaviors are required for OpenCode MVP, and which are later parity?
+  Stop when: must-have vs defer list is recorded.
+  Verify: file refs recorded.
+  Risk: P2 — copying stale Hermes behavior would miss recent host-adapter improvements.
+
+- [ ] Slice 1.8 — sequential — Make explicit user decisions.
+  Scope: summarize research and ask for decisions on MVP surface, install behavior, command parity, notifications, and auto-return.
+  Stop when: decisions are recorded in `PLAN.md` and durable docs if needed.
+  Verify: user approval in conversation.
+  Risk: P1 — implementation without decisions could cross security/UX boundaries.
+
+### Phase 2 — Builder-ready implementation plan, blocked
+
+Blocked by: Phase 1 research and user decisions.
+
+Potential slices after approval:
+- Add `orch_dispatch` OpenCode host source and source tests.
+- Add/update `orchestra init opencode` only if approved.
+- Add docs and durable architecture decisions.
+- Run focused tests, review, security review, full verification, and package build if assets change.
+
+## Tests to Plan Later
+
+Pending research decisions, likely tests include:
+- source requires `context.sessionID` and normalizes `opencode:<sessionID>`;
+- source rejects user/model-supplied identity fields;
+- source rejects unsupported `timeout` overrides;
+- source builds tokenized `orchestra do` argv;
+- optional role/task-label args are passed only through approved fields;
+- no shell-string execution is used;
+- init behavior installs or reports status exactly as documented;
+- package/source parity if OpenCode assets are packaged.
+
+## Verification
+
+Research/design phase:
+
+```bash
+git diff -- PLAN.md RESEARCH.md OCPLAN.md
 ```
 
-Verify:
-- `python3 -m pytest tests/test_cli_commands.py -q`
+Implementation phase later, after approval:
 
-Step 2: Pi host command
-- [x] Slice 2.4 — Add `/orch on` handling in `extensions/pi/orchestra/index.ts`.
-- [x] Slice 2.5 — In `/orch on`, call the new internal command and inject the returned message into the main session once using Pi host message injection.
-- [x] Slice 2.6 — Do not add `/orch off`.
-- [x] Slice 2.7 — Update command help/completions/source tests for `/orch on`.
-- [x] Slice 2.8 — Mirror the extension change to `src/orchestra/assets/pi/orchestra/index.ts`.
+```bash
+python3 -m pytest <focused opencode tests> -q
+python3 -m pytest
+python3 -m ruff check .
+python3 -m mypy src tests
+python3 -m build
+```
 
-Verify:
-- `python3 -m pytest tests/test_pi_extension_source.py tests/test_pi_adapter_e2e.py -q`
+Manual smoke later, after host support exists:
 
-Notes:
-- Existing docs only define initial worker prompt skill injection. Main-session `/orch on` is MVP one-time injection.
-- Repeated or compaction-aware reinjection is tracked in `ROADMAP.md`.
+```bash
+orchestra init opencode --force
+opencode run --agent plan --model openai/gpt-5.4 "Reply with exactly OPENCODE_DIRECT_OK"
+```
 
-#### Phase 3: Harness/model fallback preserving requested role
+Then from inside OpenCode, use the approved host surface and confirm `orchestra history --session-id opencode:<sessionID>` shows the run.
 
-Step 1: Catalog/config shape
-- [x] Slice 3.1 — Add role-level `harness_fallback` config. Shape: a list of fallback entries, each with `harness_config` plus optional role runtime overrides such as `model`, `profile`, and `agent`. Defer harness-global fallback.
-- [x] Slice 3.2 — Update `src/orchestra/config.py` dataclasses, parsing, and validation for the chosen fallback config field.
-- [x] Slice 3.3 — Update `agent-catalog.yaml` and packaged assets with at least one realistic fallback entry if useful.
+## Risks
 
-Acceptance details:
-- `default_role` means no role was requested.
-- Disabled requested role still fails before fallback.
-- Fallback never swaps `reviewer` to `builder` or any other role.
+- OpenCode may not expose a Pi/Hermes-equivalent non-interrupting auto-return rail.
+- OpenCode commands may be prompt templates rather than reliable host commands.
+- Install behavior may differ between local project config, global config, and `OPENCODE_CONFIG_DIR`.
+- Session identity and shell execution are security boundaries.
+- Parallel write-capable workers still need orchestration discipline or future worktree isolation.
 
-Verify:
-- `python3 -m pytest tests/test_config.py -q`
+## Open Questions
 
-Step 2: Supervisor fallback behavior
-- [x] Slice 3.4 — Replace `_fallback_role_for(...)` behavior in `src/orchestra/app.py` with fallback resolution that keeps `SelectedRole.name` unchanged and creates an effective role config with fallback harness/model/profile/agent/command.
-- [x] Slice 3.5 — Keep role skills, role prompt additions, worker budget, and env from the requested role unless explicitly overridden by the chosen design.
-- [x] Slice 3.6 — Store actual harness used in run state while keeping role as the requested role.
-- [x] Slice 3.7 — Add final-report annotation such as `fallback: reviewer used harness_config pi after hermes failed to start`.
-- [x] Slice 3.8 — Remove or stop using default-role fallback for requested-role startup failures.
+1. Exact custom tool API shape?
+2. Standalone tool file, plugin-registered tool, or both?
+3. Should `init opencode` remain no-op, install globally, install locally, or support both?
+4. Are OpenCode custom commands suitable for `/orch` parity?
+5. What notification/progress API is safe?
+6. Is auto-return safe enough for this milestone, or deferred?
+7. Which recent Pi behaviors are MVP requirements for OpenCode?
 
-Verify:
-- `python3 -m pytest tests/test_cli_commands.py tests/test_harness_pi.py tests/test_harness_hermes.py tests/test_harness_opencode.py -q`
+## Current State
 
-Step 3: Fallback tests
-- [x] Slice 3.9 — Add test: requested role harness fails to load/start; fallback harness starts; resulting run role remains requested role; prompt includes requested role skill.
-- [x] Slice 3.10 — Add test: fallback note appears in history/final report.
-- [x] Slice 3.11 — Add test: disabled role is rejected without fallback.
-- [x] Slice 3.12 — Add test: no role specified still uses `default_role`.
-
-Verify:
-- `python3 -m pytest tests/test_cli_commands.py tests/test_reports.py -q`
-
-#### Phase 4: Documentation and durable decisions
-
-Step 1: Docs
-- [x] Slice 4.1 — Update `FOUNDATION.md` with shipped decisions:
-  - main session is orchestrator brain with concise updates
-  - `/orch on` one-time orchestrator skill injection
-  - workflow source is `skills/orchestrator/SKILL.md`
-  - fallback preserves requested role and changes harness/model only
-  - standard artifacts are `FOUNDATION.md`, `ARCHITECTURE.md`, `RESEARCH.md`, `PLAN.md`
-- [x] Slice 4.2 — Update `README.md` or host help docs for `/orch on` if user-facing help changes.
-- [x] Slice 4.3 — Update `skills/README.md` if main-session skill injection needs explanation separate from worker role skill injection.
-- [x] Slice 4.4 — Update `docs/skill-system-research-and-decisions.md` with final implemented shape if it differs from current decisions.
-
-Verify:
-- `python3 -m pytest tests/test_cli.py tests/test_pi_extension_source.py -q`
-
-#### Phase 5: Review and cleanup
-
-Step 1: Consistency pass
-- [x] Slice 5.1 — Search for stale `worker` default-role wording in docs/config/tests where it should now be `builder`; update only where accurate for current behavior.
-- [x] Slice 5.2 — Archive stale active skill directories that were replaced by `orchestrator` and `reviewer`; remaining references can be cleaned up during docs pass.
-- [x] Slice 5.3 — Check root `agent-catalog.yaml` and packaged asset catalog stay aligned.
-- [x] Slice 5.4 — Check Pi extension and packaged Pi asset stay byte-identical if tests require it.
-
-Verify:
-- `python3 -m ruff check .`
-- `python3 -m pytest tests/test_pi_extension_source.py tests/test_config.py -q`
-
-#### Phase 6: Boolean parsing normalization
-
-Step 1: Core parser
-- [x] Slice 6.1 — Add or reuse one shared boolean parser for user-facing toggles.
-- [x] Slice 6.2 — Accept common true values: `true`, `yes`, `y`, `1`, `on`.
-- [x] Slice 6.3 — Accept common false values: `false`, `no`, `n`, `0`, `off`.
-- [x] Slice 6.4 — Keep invalid values clear and specific in error messages.
-
-Step 2: Apply parser
-- [x] Slice 6.5 — Use shared parser for `/orch roles ROLE enabled VALUE`.
-- [x] Slice 6.6 — Use shared parser for any new `/orch` boolean toggles added in this plan.
-- [x] Slice 6.7 — Check config parsing for existing boolean behavior and decide whether to extend config files or keep normalization user-command-only.
-
-Step 3: Tests
-- [x] Slice 6.8 — Add tests for all accepted true/false spellings.
-- [x] Slice 6.9 — Add tests for invalid values.
-- [x] Slice 6.10 — Add regression test that disabling the default role still fails.
-
-Verify:
-- `python3 -m pytest tests/test_cli_commands.py tests/test_config.py -q`
-
-#### Phase 7: Final verification
-- [x] Slice 7.1 — Run full tests: `python3 -m pytest`.
-- [x] Slice 7.2 — Run lint: `python3 -m ruff check .`.
-- [x] Slice 7.3 — Run types: `python3 -m mypy src tests`.
-- [x] Slice 7.4 — Run packaging: `python3 -m build`.
-- [x] Slice 7.5 — Record final results in this plan and leave only unfinished follow-ups.
-
-Final verification results:
-- `python3 -m pytest` — pass `244 passed, 1 skipped`
-- `python3 -m ruff check .` — pass
-- `python3 -m mypy src tests` — pass
-- `python3 -m build` — pass
-
-### Roadmap
-
-Follow-up TODO and wishlist items moved to `ROADMAP.md`.
-
-### Current State
-- Active phase: Completed.
-- Active step: Plan complete.
-- Next slice: None — backlog lives in `ROADMAP.md`.
-
-### Risks
-- Security/privacy: main-session skill injection may add too much context if the skill grows.
-- Compatibility: `/orch on` host injection is Pi-first unless other host adapters get equivalent support.
-- Fallback: preserving role while changing harness/model needs careful prompt construction so skills remain correct.
-- Migration: tests and fixtures still use `worker` in places; update only where required by behavior.
-- Rollback: revert `/orch on` extension/core changes and fallback config fields; role prompt additions are simple catalog edits.
+- Active phase: Phase 1 — research and decisions only.
+- Active slice: Slice 1.1 — custom tool API research.
+- Implementation status: blocked pending research and approval.

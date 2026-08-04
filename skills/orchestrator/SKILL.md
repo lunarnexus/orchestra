@@ -93,10 +93,15 @@ Give each worker:
 Research dispatch:
 - read-only by default
 - one question or one tight file cluster
+- split research by independent subject
 - exact files/directories/topic
 - preferred sources: repo, docs, web, or code tools
 - ask for answer, sources, confidence, gaps, blockers, risks
 - after a timeout, retry smaller; after repeated timeout, split further, use main-session tools, or stop
+
+Split research by independent subject. Do not bundle unrelated unknowns into one researcher. Separate subjects include APIs, install paths, command surfaces, return injection, and docs.
+
+Do not absorb failed worker work. If a tool-using worker fails, times out, or returns incomplete work, do not perform that work yourself. Shrink scope and re-dispatch a smaller slice.
 
 Nested dispatch:
 - only planner agents may dispatch researcher agents
@@ -139,6 +144,7 @@ Spike code is disposable unless explicitly promoted through a production plan.
 For non-trivial code work:
 - check branch/status before dispatch when practical
 - avoid mixing unrelated dirty changes with assigned work
+- never revert dirty files you did not create in the current task
 - use branch/worktree isolation when available and appropriate
 - inspect diff at verification/review boundaries
 - ask before commit or push unless the user requested it

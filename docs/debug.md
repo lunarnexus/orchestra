@@ -4,7 +4,7 @@ How to trace Orchestra sessions and workers during local debugging.
 
 ## Key ids
 
-- **Orchestrator session id**: the host session that owns workers, e.g. `pi:<id>` or `manual:<id>`.
+- **Orchestrator session id**: normalized owner id for the host session, e.g. `pi:<PI_SESSION_ID>` or `manual:<id>`.
 - **Run id**: Orchestra worker run id, e.g. `623352d3729b`.
 - **Worker session id**: harness session id for the worker. Pi workers use:
 
@@ -25,7 +25,7 @@ Replace `<ORCH_SESSION_ID>` with the orchestrator session id:
 
 ```bash
 sqlite3 state/orchestra.db \
-  "select run_id,status,role,task_label,worker_session_id,log_path,result_artifact_path from runs where session_id='<ORCH_SESSION_ID>' order by created_at;"
+  "select run_id,status,role,task_label,worker_session_id,log_path,result_artifact_path from runs where runs.orchestrator_session_id='<ORCH_SESSION_ID>' order by created_at;"
 ```
 
 ## Inspect one run
@@ -56,7 +56,7 @@ find "${PI_CODING_AGENT_SESSION_DIR:-$HOME/.pi/agent/sessions}" \
 ORCH_SESSION_ID='<orchestrator-session-id>'
 
 sqlite3 -separator $'\t' state/orchestra.db \
-  "select run_id, worker_session_id from runs where session_id='$ORCH_SESSION_ID' order by created_at;" |
+  "select run_id, worker_session_id from runs where runs.orchestrator_session_id='$ORCH_SESSION_ID' order by created_at;" |
 while IFS=$'\t' read -r run_id worker_session_id; do
   echo "run_id=$run_id"
   echo "worker_session_id=$worker_session_id"
@@ -70,9 +70,14 @@ while IFS=$'\t' read -r run_id worker_session_id; do
 ## Useful status checks
 
 ```bash
-orchestra history --session-id '<ORCH_SESSION_ID>'
-orchestra status --session-id '<ORCH_SESSION_ID>'
+OWNER_ID='pi:<PI_SESSION_ID>'  # or manual:<id>
+
+orchestra history --session-id "$OWNER_ID"
+orchestra status --session-id "$OWNER_ID"
+orchestra stop --session-id "$OWNER_ID" --run-id '<run-id>'
 ```
+
+For Pi, the owner id is `pi:<PI_SESSION_ID>`, not the raw Pi session id.
 
 ## Clear local Orchestra runtime state
 

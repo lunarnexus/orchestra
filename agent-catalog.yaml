@@ -32,7 +32,7 @@ roles:
     harness_fallback:
     - harness_config: hermes
       profile: tori
-    model: openai-codex/gpt-5.4
+    model: openai-codex/gpt-5.4-mini
     skills:
     - builder
     prompt_addition: Implement the assigned task only. Stay in scope. Return files
@@ -43,7 +43,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   verifier:
     harness_config: pi
-    model: openai-codex/gpt-5.4
+    model: openai-codex/gpt-5.4-mini
     skills:
     - reviewer
     prompt_addition: Use reviewer verify mode. Check requested behavior and acceptance
@@ -75,7 +75,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   researcher:
     harness_config: pi
-    model: openai-codex/gpt-5.4
+    model: openai-codex/gpt-5.4-mini
     prompt_addition: Gather evidence with sources from docs, web, or code. Do not
       change code. Return concise findings, sources, blockers, and risks.
     enabled: true
@@ -106,7 +106,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   planner:
     harness_config: pi
-    model: openai-codex/gpt-5.4
+    model: openai-codex/gpt-5.5
     skills:
     - planner
     prompt_addition: Plan the work. Ask numbered questions for unknowns. May dispatch
@@ -116,6 +116,4 @@ roles:
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
       HINDSIGHT4PI_AUTO_RECALL: '0'
-      HINDSIGHT4PI_CURATION: '0'
-      HINDSIGHT4PI_RECALL_DEBUG: '0'
     worker_budget: 2

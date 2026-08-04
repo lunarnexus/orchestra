@@ -37,6 +37,7 @@ Do not take unrelated cleanup or refactors unless explicitly included.
 During code work:
 - keep the diff scoped
 - avoid mixing unrelated dirty changes with assigned work
+- never revert dirty files you did not create in the current task
 - inspect changed files before handoff
 - do not commit or push unless explicitly asked
 
