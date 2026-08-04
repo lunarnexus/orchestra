@@ -779,12 +779,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
     const subcommands = [
       { token: "help", description: "Show Orchestra help" },
-      { token: "on", description: "Load the Orchestra main-session skill once" },
+      { token: "on", description: "Load the orchestra orchestrator skill" },
       { token: "doctor", description: "Check Orchestra setup" },
-      { token: "do ", description: "Start a worker for this session" },
+      { token: "do ", description: "Dispatch a subagent" },
       { token: "roles ", description: "Show or update configured roles" },
       { token: "status", description: "Show active workers for this session" },
-      { token: "stop ", description: "Stop an owned active worker" },
+      { token: "stop ", description: "Stop an active worker." },
       { token: "history ", description: "Show recent results for this session" },
     ];
 

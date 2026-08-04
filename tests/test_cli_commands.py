@@ -851,7 +851,7 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert help_exit == 0
     assert tool_exit == 0
     assert (
-        "/orch on                           Load the Orchestra main-session skill once"
+        "/orch on                           Load the orchestra orchestrator skill"
         in help_output
     )
     assert "/orch roles" in help_output

@@ -106,11 +106,11 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
 
 def test_default_host_help_uses_generic_session_wording() -> None:
     assert (
-        "/orch on                           Load the Orchestra main-session skill once"
+        "/orch on                           Load the orchestra orchestrator skill"
         in DEFAULT_HOST_HELP
     )
     assert (
-        "/orch do <request>                 Start a worker for this session"
+        "/orch do <request>                 Dispatch a subagent"
         in DEFAULT_HOST_HELP
     )
     assert "Pi session" not in DEFAULT_HOST_HELP

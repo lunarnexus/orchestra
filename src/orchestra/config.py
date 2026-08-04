@@ -58,9 +58,9 @@ DEFAULT_TOOL_ROLE_DESCRIPTION = "(Optional) specific role; omit for default. {ro
 DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
 DEFAULT_HOST_HELP = """Orchestra commands:
   /orch help                         Show this help
-  /orch on                           Load the Orchestra main-session skill once
+  /orch on                           Load the orchestra orchestrator skill
   /orch doctor                       Check Orchestra setup
-  /orch do <request>                 Start a worker for this session
+  /orch do <request>                 Dispatch a subagent
   /orch do --role ROLE <request>     Start a worker with a role
   /orch do --timeout SEC <request>   Start a worker with a timeout
   /orch roles                        Show configured roles
@@ -69,7 +69,7 @@ DEFAULT_HOST_HELP = """Orchestra commands:
                                      VALUE: true, yes, y, 1, on | false, no, n, 0, off
   /orch roles ROLE model MODEL       Set a role's model
   /orch status                       Show active workers for this session
-  /orch stop <run-id>                Stop an owned active worker
+  /orch stop <run-id>                Stop an active worker.
   /orch history [limit]              Show recent results for this session
 
 Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, ask a worker,

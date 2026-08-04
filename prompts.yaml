@@ -28,16 +28,16 @@ tool_task_label_description: Optional short request label.
 host_help: |-
   Orchestra commands:
     /orch help                         Show this help
-    /orch on                           Load the Orchestra main-session skill once
+    /orch on                           Load the orchestra orchestrator skill
     /orch doctor                       Check Orchestra setup
-    /orch do <request>                 Start a worker for this session
+    /orch do <request>                 Dispatch a subagent
     /orch do --role ROLE <request>     Start a worker with a role
     /orch roles                        Show configured roles
     /orch roles ROLE enabled true|false
                                        Enable or disable a non-default role
     /orch roles ROLE model MODEL       Set a role's model
     /orch status                       Show active workers for this session
-    /orch stop <run-id>                Stop an owned active worker
+    /orch stop <run-id>                Stop an active worker.
     /orch history [limit]              Show recent results for this session
 
   Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, ask a worker,
