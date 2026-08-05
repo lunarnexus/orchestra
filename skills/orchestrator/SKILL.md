@@ -105,6 +105,8 @@ Split research by independent subject. Do not batch related research questions; 
 
 Do not absorb failed worker work. If a tool-using worker fails, times out, or returns incomplete work, do not perform that work yourself. Shrink scope and re-dispatch a smaller slice.
 
+After dispatch, do not wait or poll. Continue independent work or stop; Orchestra will return worker results.
+
 Nested dispatch:
 - only planner agents may dispatch researcher agents
 - planner may dispatch only researchers
