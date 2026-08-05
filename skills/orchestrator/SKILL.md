@@ -23,12 +23,14 @@ When the user gives a plain goal:
 
 1. Restate the goal and current stage.
 2. Use artifacts/context to orient.
-3. Ask only blocking questions.
-4. Dispatch focused research/planning when needed.
-5. Propose or update `PLAN.md`.
-6. Ask before implementation/editing begins.
-7. After each worker return, summarize what changed, state the next recommended action, and ask for any needed decision.
-8. Ask before commit, push, destructive work, broad scope change, or skipping major checks.
+3. Ask only decision-blocking questions. Before asking, answer what can be decided from repo evidence, prior decisions, or worker results. If a clear recommendation exists, state it and proceed to the next needed decision.
+4. Do not ask the user to choose among implementation details you can resolve with evidence. Ask the user only for product intent, risk tolerance, destructive actions, external behavior, or unclear preferences.
+5. When a question is necessary, include the recommended answer and the reason. Do not present option menus without a recommendation.
+6. Dispatch focused research/planning when needed.
+7. Propose or update `PLAN.md`.
+8. Ask before implementation/editing begins.
+9. After each worker return, summarize what changed, state the next recommended action, and ask for any needed decision.
+10. Ask before commit, push, destructive work, broad scope change, or skipping major checks.
 
 Research and planning may proceed after the user gives the goal. Do not add approval gates that do not reduce risk.
 
@@ -136,6 +138,10 @@ Use:
 - **plan** when production work is intended and scope is known
 - **TDD/build** when behavior or bug-fix work is approved
 - **systematic debugging/RCA** when a failure or bug needs root cause
+
+Spike dispatch is sequential: build fixture, run one test command, interpret result. Do not combine build, execution, and interpretation in one worker. Before dispatching spike build work, provide exact scratch path, file contents or pseudocode, and the verifier command.
+
+If a spike slice times out, shrink to one file or one command and re-dispatch once. If the retry times out, record the feasibility question as blocked and stop.
 
 Spike code is disposable unless explicitly promoted through a production plan.
 

@@ -42,14 +42,15 @@ scope-work -> research-first -> spike decision -> plan-work
 2. Define in-scope and out-of-scope work.
 3. Research before planning.
 4. For unknown facts, dispatch a researcher with one small question.
-5. Decide research vs spike vs production plan.
-6. Write findings, options, and sources to `RESEARCH.md`.
-7. Ask numbered questions for blockers.
-8. Propose stable user decisions for `FOUNDATION.md`.
-9. Propose design updates for `ARCHITECTURE.md`.
-10. Put active execution in `PLAN.md`.
-11. Put long-lived follow-ups in `ROADMAP.md`.
-12. Stop before implementation.
+5. Resolve implementation choices from evidence when possible. Turn user questions into decisions only when they affect desired behavior, risk, install scope, or approval.
+6. Decide research vs spike vs production plan.
+7. Write findings, options, and sources to `RESEARCH.md`.
+8. Ask numbered questions only for true blockers. Each question must include why it blocks planning and the recommended answer. Do not ask questions that research, existing patterns, or prior decisions can answer.
+9. Propose stable user decisions for `FOUNDATION.md`.
+10. Propose design updates for `ARCHITECTURE.md`.
+11. Put active execution in `PLAN.md`.
+12. Put long-lived follow-ups in `ROADMAP.md`.
+13. Stop before implementation.
 
 ## Research dispatch
 
@@ -81,11 +82,14 @@ Use researcher output as evidence. Reconcile conflicts yourself.
 - **Plan**: production work is intended and scope/evidence are sufficient.
 
 Spike plan requirements:
-- 2-5 feasibility questions
-- risk order
-- disposable scope
+- one feasibility question
+- exact disposable scratch scope
+- exact fixture files or pseudocode
+- one test command
 - evidence target
-- verdict: VALIDATED / PARTIAL / INVALIDATED
+- promotion rule
+
+If a spike slice times out, shrink to one file or one command and re-dispatch once. If the retry times out, record the feasibility question as blocked and stop.
 
 ## PLAN.md structure
 
@@ -102,6 +106,8 @@ Use:
 - Open Questions
 
 ## Scope and requirements
+
+Questions are for decisions the user must own, not for work the agent should do.
 
 Capture:
 - in scope

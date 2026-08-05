@@ -14,7 +14,9 @@ from orchestra.config import (
     DEFAULT_STATE_DIR,
     DEFAULT_TIMEOUT,
     DEFAULT_TOOL_DESCRIPTION,
+    DEFAULT_TOOL_GOAL_DESCRIPTION,
     DEFAULT_TOOL_PROMPT_GUIDELINES,
+    DEFAULT_TOOL_PROMPT_SNIPPET,
     DEFAULT_TOOL_ROLE_DESCRIPTION,
     ConfigError,
     load_agent_catalog,
@@ -101,6 +103,10 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.concurrency.global_limit == DEFAULT_GLOBAL_CONCURRENCY
     assert config.concurrency.per_session_limit == DEFAULT_PER_SESSION_CONCURRENCY
     assert config.auto_return is DEFAULT_AUTO_RETURN
+    assert config.prompts.tool_description == DEFAULT_TOOL_DESCRIPTION
+    assert config.prompts.tool_prompt_snippet == DEFAULT_TOOL_PROMPT_SNIPPET
+    assert config.prompts.tool_prompt_guidelines == DEFAULT_TOOL_PROMPT_GUIDELINES
+    assert config.prompts.tool_goal_description == DEFAULT_TOOL_GOAL_DESCRIPTION
     assert config.prompts.tool_role_description == DEFAULT_TOOL_ROLE_DESCRIPTION
 
 
@@ -117,14 +123,35 @@ def test_default_host_help_uses_generic_session_wording() -> None:
 
 
 def test_default_tool_guidance_keeps_orchestrator_context_clean() -> None:
-    assert "keep the parent/orchestrator context clean" in DEFAULT_TOOL_DESCRIPTION
-    assert any(
-        guideline.startswith("Prefer orch_dispatch for bounded work")
-        for guideline in DEFAULT_TOOL_PROMPT_GUIDELINES
+    assert DEFAULT_TOOL_DESCRIPTION == (
+        "Dispatch one small scoped worker slice. Each slice has one goal, exact scope, "
+        "one stop condition, and one return shape. Research answers one small question "
+        "against one exact source scope, not a topic. The parent keeps sequencing, "
+        "approvals, and final synthesis. Use an exact configured role; omit role for "
+        "the default. {roles}"
     )
-    assert any(
-        guideline.startswith("After a dispatch error")
-        for guideline in DEFAULT_TOOL_PROMPT_GUIDELINES
+    assert DEFAULT_TOOL_PROMPT_SNIPPET == (
+        "Dispatch one small scoped worker slice. Research is one small answerable "
+        "question, not a topic. {roles}"
+    )
+    assert DEFAULT_TOOL_PROMPT_GUIDELINES == (
+        "Before calling orch_dispatch, reduce the task to one worker slice: one goal, "
+        "one exact scope, one stop condition, and one return shape.",
+        "For research, ask one small answerable question with one exact source scope: "
+        "one file, one docs page/section, one URL, or one tight file cluster.",
+        "Do not dispatch broad topics such as API support, install behavior, "
+        "notification APIs, or overall design. Convert them into small questions "
+        "first.",
+        "Do not dispatch implementation, verification, or review that depends on "
+        "unresolved research. Wait for the research result, then continue.",
+        "If a research worker times out, shrink to one source and one exact question, "
+        "then re-dispatch once. If the retry times out, record the missing fact as a "
+        "blocker and stop.",
+        "Do not perform failed worker work yourself.",
+        "Use exact enabled roles; omit role for the default.",
+    )
+    assert DEFAULT_TOOL_GOAL_DESCRIPTION == (
+        "One small worker slice: goal, exact scope, stop condition, and return shape."
     )
     assert "Return the smallest complete answer" in DEFAULT_RETURN_FORMAT
 

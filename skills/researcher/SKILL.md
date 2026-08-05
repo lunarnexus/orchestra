@@ -28,13 +28,41 @@ A good research task has:
 
 If the task is too broad, say so and propose smaller slices.
 
-Do not broaden from a named file/topic into a repo-wide or web-wide survey unless the task explicitly asks for that expansion.
+Do not broaden from the assigned source scope.
 
 ## Source use
 
 Use only the assigned source scope. Prefer official docs/source and exact file refs over memory.
 
 Repo inspection is useful when context is stale, suspect, or needed for correctness. If current context already contains the needed fact, do not perform broad redundant inspection.
+
+## Effort gate
+
+Before researching, decide whether the assignment is small enough to answer in one pass. Proceed only if it has:
+- one small answerable question
+- one exact source scope
+- one expected answer type
+- one clear stop condition
+
+If it is not small enough, do not research. Return immediately:
+
+```md
+## Research Scope Blocker
+
+Blocker:
+- assigned research is too broad
+
+Why:
+- <brief reason>
+
+Redispatch sequence:
+1. <one small question + exact source>
+2. <one small question + exact source>
+
+Instruction to caller:
+- Do not do this research in the main session.
+- Dispatch item 1 only, wait for the result, then decide the next dispatch.
+```
 
 ## Method
 
@@ -51,10 +79,10 @@ Repo inspection is useful when context is stale, suspect, or needed for correctn
 ## Web research
 
 For web tasks:
-- keep to the named topic
+- use only the assigned URL or docs page/section
 - prefer official/primary sources
 - include source URLs
-- do not turn one topic into a multi-topic survey
+- do not broaden beyond the assigned URL or docs page/section
 
 ## Timeout/scoping lesson
 

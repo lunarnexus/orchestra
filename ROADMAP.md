@@ -9,27 +9,6 @@ Orchestra roadmap items are split into:
 
 ### Skill system and development methodology
 
-- [x] Update active skills with dispatch-scoping lessons from real Orchestra use.
-  - Research workers should be **read-only** by default.
-  - Use **one topic or one tight file cluster per researcher**.
-  - Name **exact files, directories, or one exact topic** instead of asking workers to inspect broadly relevant context.
-  - Prefer focused local scans over broad repo scans when the orchestrator already has current context.
-  - Re-inspect repo state only when context is stale, suspected changed, or needed for correctness.
-  - Set an expected shape and rough size for returns, e.g. concise findings, sources, blockers, risks; use a word/section limit when the task is lookup or triage.
-  - After the first timeout, retry with a smaller slice. After repeated timeout on the same topic, switch strategy: split to one topic, use main-session web tools, or stop.
-
-- [x] Add industry-standard development terminology to active skills without bundling full methodology manuals.
-  - Use terms such as Agile, Lean, Kanban/WIP, XP, TDD, BDD, spike, CI/CD, feature branch, trunk-based development, code review, DevSecOps, RCA, risk-based testing, refactoring, acceptance criteria, vertical slice, tracer bullet, and systematic debugging.
-  - Let harness-native skills load when available; otherwise the terminology should guide the model without bloating prompts.
-  - Keep full method skills optional and project/harness-local.
-
-- [x] Improve role-level skill injection ergonomics.
-  - Role `skills` lists are in the catalog, including active builder/planner/researcher/reviewer wiring.
-  - Local project skills resolve from `skills/<name>/SKILL.md` or recursive skill directories.
-  - When a local skill is absent, the worker is asked to load the named native skill if available.
-  - Injected local skills stay concise and avoid bundling generic methodology manuals by default.
-  - Existing prompt-rendering tests cover local skill injection and native-load fallback instructions.
-
 - [ ] Refine the concise active `builder` skill after real use.
   - Active `builder` skill now exists and is wired into the catalog.
   - Keep TDD, Red -> Green -> Refactor, systematic debugging/RCA, git discipline, minimal-change rules, and verification handoff concise.
@@ -45,11 +24,6 @@ Orchestra roadmap items are split into:
   - Verify mode: commands/results/missing checks.
   - Review mode: quality, scope, maintainability, simplification opportunities.
   - Security mode: secrets, injection, auth, data, dependencies, shell/file/network risks.
-
-- [x] Add `ROADMAP.md` to active skills.
-  - Standard artifact docs and repository layout now name `ROADMAP.md`.
-  - Planner/orchestrator know when to write long-lived backlog items to `ROADMAP.md` instead of overloading `PLAN.md`.
-  - Update any remaining artifact guidance that misses `ROADMAP.md` if found later.
 
 ### Dispatch, scheduling, and limits
 
@@ -79,6 +53,12 @@ Orchestra roadmap items are split into:
   - Add an OpenCode `orch_dispatch` custom tool/plugin using runtime session identity.
   - Map Orchestra roles to OpenCode agents intentionally.
   - Keep nested subagent spawning bounded.
+
+- [ ] Add a minimal runtime dependency/setup validation check.
+  - Verify PyYAML imports cleanly.
+  - Verify `orchestra` is on `PATH` for host extensions.
+  - Keep configured harness executable checks as current behavior.
+  - Consider changing Pi init verify command to `/orch doctor`.
 
 - [ ] Add a real Hermes plugin integration test.
   - Load the plugin through Hermes.
@@ -111,12 +91,6 @@ Orchestra roadmap items are split into:
   - Prefer live Pi/Hermes/OpenCode runs.
   - Use fake workers only for focused unit tests where isolation is necessary.
   - Start with a small scenario runner and human-readable reports before automated scoring.
-
-### Documentation cleanup
-
-- [x] Retire `TODO.md` after establishing `ROADMAP.md`.
-  - Existing `TODO.md` items have been consolidated here.
-  - README layout now points to `ROADMAP.md`.
 
 ## Wishlist
 

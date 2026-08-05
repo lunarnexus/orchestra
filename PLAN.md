@@ -2,193 +2,232 @@
 
 ## Goal
 
-Prepare a research-backed, builder-ready plan for making OpenCode usable as an Orchestra orchestrator host, with Pi/Hermes-like parity only where OpenCode APIs safely support it.
+Build a complete OpenCode host plugin for Orchestra so an OpenCode main session can dispatch, supervise, and receive results from Orchestra workers with as much Pi/Hermes parity as OpenCode safely supports.
 
 ## Acceptance Criteria
 
-- OpenCode host/orchestrator work is gated by focused evidence, not assumptions.
-- `RESEARCH.md` records the preserved useful `OCPLAN.md` content and current repo status.
-- `PLAN.md` separates research/design gates from implementation slices.
-- `OCPLAN.md` is removed after its useful content is preserved elsewhere.
-- Before implementation, the plan answers or explicitly defers:
-  - custom tool API shape;
-  - plugin registration shape;
-  - install/search paths;
-  - command-wrapper limits;
-  - notification/progress API;
-  - auto-return/session reinjection feasibility and guardrails;
-  - recent Pi plugin behavior worth mirroring.
-- No OpenCode host implementation starts until the user approves a builder-ready implementation plan.
+- OpenCode host support is implemented as a real plugin-oriented host surface, not only a harness note or standalone experiment.
+- OpenCode exposes `orch_dispatch` as a callable tool using OpenCode runtime context for ownership: `opencode:<context.sessionID>`.
+- The tool rejects model/user-supplied session identity and unsupported timeout overrides.
+- Host calls to `orchestra` use tokenized argv execution, not shell-string execution.
+- OpenCode host install behavior defaults to global install and is documented clearly.
+- OpenCode plugin support includes sparse toast notifications for important dispatch/return/failure events.
+- OpenCode auto-return preserves the existing Orchestra behavior: notify on individual worker returns, then send the response prompt to the calling agent when all workers for the session finish.
+- `/orch` command parity is implemented only if a spike proves executable host behavior; prompt-template commands are not treated as equivalent host commands.
+- Tests cover source safety, command construction, identity handling, install behavior, and source-checkout install behavior.
+- Docs describe supported parity, limitations, install paths, and smoke verification.
+- No implementation starts until this plan is reviewed and approved after research is recorded.
 
-## Context / Assumptions
+## Current Evidence Summary
 
-- OpenCode one-shot worker harness support already exists.
-- OpenCode host/orchestrator support does not exist yet.
-- Current `orchestra init opencode` is documented and implemented as a no-op status command for harness-only support.
-- Changing `init opencode` into an installer requires an explicit decision.
-- Runtime identity must come from OpenCode runtime context, expected to be `context.sessionID`, normalized as `opencode:<sessionID>`.
-- Pi has newer host-adapter behavior than Hermes; Hermes should not be blindly mirrored for this work.
-- Auto-return parity may not be possible or may require different UX than Pi/Hermes.
+- OpenCode one-shot worker harness support already exists in the repo.
+- OpenCode host/orchestrator source does not exist yet.
+- Current `orchestra init opencode` is documented and implemented as a no-op status command for harness-only support; changing it into a global plugin installer is a public behavior change.
+- Custom tools can live in `.opencode/tools/` or `~/.config/opencode/tools/`; filename determines tool name.
+- Plugins can register tools by returning a `tool` map and have access to `client`, `$`, `directory`, and `worktree`.
+- Plugin-registered `orch_dispatch` is the best fit for complete plugin behavior because plugin code can also use SDK APIs for toasts and return delivery.
+- OpenCode custom commands are prompt templates, not proven executable host command hooks.
+- Plugin event types include `command.executed` and `tui.command.execute`, but local types show observation events with no output/mutation channel for implementing commands.
+- Toast support exists through `client.tui.showToast({ body: { message, variant } })`.
+- Session reinjection exists through `client.session.prompt({ path: { id }, body })`; `noReply: true` injects a user/context message without assistant response, while the default prompt path triggers an assistant turn.
+- Pi host parity targets include `orch_dispatch`, runtime session identity, `/orch` management commands, status UI, auto-return delivery bookkeeping, timeout rejection, and source/asset parity tests.
 
-## Current Files / Artifacts
+## Scope
 
-Research/design now:
-- `RESEARCH.md` — OpenCode evidence and preserved planning notes.
-- `PLAN.md` — active research/design plan.
-- `OCPLAN.md` — removed after preservation.
+In scope:
+- OpenCode plugin source layout under `extensions/opencode/orchestra/`.
+- Plugin-registered `orch_dispatch` tool.
+- Runtime identity normalization as `opencode:<context.sessionID>`.
+- Tokenized Orchestra CLI invocation.
+- Sparse toast behavior using documented OpenCode SDK APIs.
+- Auto-return behavior using documented session APIs: interim non-turn notifications/context where useful, plus final all-workers response prompt.
+- `orchestra init opencode` global install/update behavior.
+- Tests and docs for the shipped host surface.
 
-Likely implementation files later, pending approval:
-- `extensions/opencode/orchestra/` — OpenCode host source if chosen.
-- `src/orchestra/app.py` / `src/orchestra/cli.py` — only if `init opencode` changes.
-- `tests/test_opencode_plugin_source.py` or similar — source/safety tests.
-- `tests/test_init_targets.py` — init behavior tests if needed.
-- `README.md`, `FOUNDATION.md`, `ARCHITECTURE.md`, `ROADMAP.md` — docs/decisions after behavior is chosen or shipped.
+Out of scope unless separately approved:
+- Approval pass-through for OpenCode workers.
+- ACP or long-lived interactive worker protocol.
+- Parallel write-safety/worktree isolation.
+- Treating OpenCode prompt-template custom commands as equivalent to real host commands.
+- Reworking the Hermes plugin to match recent Pi changes.
 
-## Design Guardrails
+## Decisions
 
-- Research tasks should be single-subject and read-only.
-- Do not implement from broad or timed-out research.
-- Dispatch parity comes before command, notification, or auto-return parity.
-- Host adapters stay thin: runtime identity, host registration/UI, notifications, and host message injection only.
-- Session identity is a security boundary. Reject user/model-supplied identity.
-- Use tokenized argv execution, not shell-string command execution.
-- Keep command wrappers thin if they are added; they must not duplicate orchestration logic.
-- Defer auto-return unless research proves a safe, loop-resistant OpenCode API path.
+1. **Install target:** global install is the default for `orchestra init opencode`.
+2. **Source shape:** use the full plugin path with plugin-registered `orch_dispatch`; no standalone tool fallback unless testing proves it is needed.
+3. **Auto-return mode:** preserve Orchestra auto-return semantics. Notify on individual worker returns, then send the final response prompt to the calling OpenCode agent when all workers for the session finish. Use `noReply:true` only for non-turn interim context/visibility when useful.
+4. **Command surface:** run a spike for true executable `/orch` command parity. Do not present prompt-template commands as equivalent host commands.
+5. **Packaging:** for the supported install flow, users clone the repo and run editable `pipx install`; install can use source-checkout files from `extensions/opencode/orchestra/`. Do not add Python package asset mirrors in this slice.
+6. **Notifications:** try sparse OpenCode toasts for important dispatch, completion, and failure events.
+
+## Proposed Complete Plugin Shape
+
+- Add OpenCode host source under `extensions/opencode/orchestra/`.
+- Register `orch_dispatch` from a plugin using `tool({ description, args, execute })`.
+- Tool args:
+  - `goal` required;
+  - `role` optional;
+  - `taskLabel` optional;
+  - reject `timeout`, `session_id`, `sessionId`, `orchestrator_session_id`, or similar identity fields.
+- Tool execution:
+  - require `context.sessionID`;
+  - normalize to `opencode:<context.sessionID>`;
+  - call `orchestra do --session-id <normalized> --goal <goal>` with optional approved args;
+  - return compact JSON/text ack or error.
+- Notifications:
+  - use `client.tui.showToast({ body: { message, variant } })` for dispatch/start/failure/completion where plugin context has `client`.
+- Auto-return:
+  - watch/report using existing Orchestra return mechanisms if host-side waiting is feasible;
+  - use sparse toasts and optional `noReply:true` session injection for interim worker-return visibility;
+  - when all workers for the OpenCode session finish, send the final response prompt to the calling agent so it can continue orchestration.
+- Command parity:
+  - do not claim full `/orch` parity from OpenCode custom commands yet;
+  - if included, label commands as prompt helpers unless a true executable command path is proven.
 
 ## Task Breakdown
 
-### Phase 1 — Research and decisions only
+### Phase 1 — Finish decisions and spike only where evidence is insufficient
 
-- [x] Slice 1.0 — sequential — Preserve useful `OCPLAN.md` content and remove stale plan file.
-  Scope: `RESEARCH.md`, `PLAN.md`, delete `OCPLAN.md`.
-  Stop when: preserved notes cover non-goals, parity breakdown, smoke-order rationale, install framing, and current status.
-  Verify: `git diff -- PLAN.md RESEARCH.md OCPLAN.md`.
-  Risk: P3 — documentation-only, but stale planning can mislead implementation.
+- [x] Slice 1.1 — sequential — Research OpenCode custom tool API shape.
+  Result: completed; evidence recorded in `RESEARCH.md`.
 
-- [ ] Slice 1.1 — sequential — Research OpenCode custom tool API shape.
-  Scope: official docs and local type/examples only.
-  Question: what exact file/export/schema/handler/context contract should `orch_dispatch` use as a custom tool?
-  Stop when: `RESEARCH.md` has concrete evidence and confidence/gaps.
-  Verify: source URLs or local file refs recorded.
-  Risk: P1 — wrong handler shape makes the host tool unusable.
+- [x] Slice 1.2 — sequential — Research OpenCode plugin registration shape.
+  Result: completed; plugins can register tools and expose SDK client.
 
-- [ ] Slice 1.2 — sequential — Research OpenCode plugin registration shape.
-  Scope: official docs and local type/examples only.
-  Question: should MVP be a standalone custom tool file, plugin-registered tool, or both?
-  Stop when: decision candidates and tradeoffs are recorded.
-  Verify: source URLs or local file refs recorded.
-  Risk: P1 — choosing the wrong surface can complicate install and testing.
+- [x] Slice 1.3 — sequential — Research OpenCode install/search paths.
+  Result: completed; project/global paths and config layering recorded.
 
-- [ ] Slice 1.3 — sequential — Research OpenCode install/search paths.
-  Scope: official docs, local config conventions, and OpenCode CLI help.
-  Question: should `orchestra init opencode` remain status-only, install globally, install project-locally, or support both?
-  Stop when: install options, default recommendation, and compatibility risks are recorded.
-  Verify: source URLs/local path evidence recorded.
-  Risk: P2 — install behavior changes public setup contracts.
+- [x] Slice 1.4 — sequential — Research OpenCode custom command limits.
+  Result: completed; prompt-template commands are not equivalent host commands.
 
-- [ ] Slice 1.4 — sequential — Research OpenCode custom command limits.
-  Scope: official command docs and local examples only.
-  Question: can `/orch`-style commands be thin wrappers around core behavior, or are they prompt-only UX unsuitable for MVP?
-  Stop when: command parity is either scoped for later or explicitly excluded.
-  Verify: evidence recorded.
-  Risk: P2 — command wrappers can duplicate logic or rely on model behavior.
+- [x] Slice 1.5 — sequential — Research OpenCode notification/progress APIs.
+  Result: completed for toast support; full progress/status UI beyond toasts not proven.
 
-- [ ] Slice 1.5 — sequential — Research OpenCode notification/progress APIs.
-  Scope: official plugin/server/SDK/TUI docs and local types only.
-  Question: is there a safe toast/status/progress API for host notifications?
-  Stop when: notification parity is either scoped or deferred.
-  Verify: evidence recorded.
-  Risk: P2 — weak progress UX is acceptable; unsafe injection is not.
+- [x] Slice 1.6 — sequential — Research OpenCode auto-return/session reinjection.
+  Result: completed for documented APIs; `noReply:true` is the safe non-turn candidate.
 
-- [ ] Slice 1.6 — sequential — Research OpenCode auto-return/session reinjection.
-  Scope: official SDK/server docs and local types only; spike only if docs are insufficient and user approves.
-  Question: can Orchestra safely return worker reports into the owning OpenCode session, and with what guardrails?
-  Stop when: auto-return is implemented-plan-ready or explicitly deferred.
-  Verify: evidence plus guardrails recorded.
-  Risk: P1 — unsafe reinjection can interrupt users or create loops.
+- [x] Slice 1.7 — sequential — Research recent Pi plugin behavior to mirror.
+  Result: completed; must-mirror and likely-defer list recorded in worker artifact and summarized in `RESEARCH.md`.
 
-- [ ] Slice 1.7 — sequential — Research recent Pi plugin behavior to mirror.
-  Scope: `extensions/pi/orchestra/index.ts`, source tests, and recent docs only.
-  Question: which Pi host behaviors are required for OpenCode MVP, and which are later parity?
-  Stop when: must-have vs defer list is recorded.
-  Verify: file refs recorded.
-  Risk: P2 — copying stale Hermes behavior would miss recent host-adapter improvements.
+- [x] Slice 1.8 — sequential — Decide complete-plugin behavior.
+  Result: completed; decisions recorded above.
 
-- [ ] Slice 1.8 — sequential — Make explicit user decisions.
-  Scope: summarize research and ask for decisions on MVP surface, install behavior, command parity, notifications, and auto-return.
-  Stop when: decisions are recorded in `PLAN.md` and durable docs if needed.
-  Verify: user approval in conversation.
-  Risk: P1 — implementation without decisions could cross security/UX boundaries.
+- [ ] Slice 1.9 — blocked — Spike executable OpenCode command parity only if requested.
+  Blocked by: user decision that true `/orch` command parity is required enough to test beyond docs/types.
+  Scope: throwaway local OpenCode plugin/config experiment to determine if plugin events or server TUI APIs can implement executable `/orch` commands.
+  Stop when: feasible/infeasible verdict is recorded; discard spike code unless promoted.
+  Verify: isolated OpenCode config smoke.
+  Risk: P2 — command parity may not be natively supported.
 
-### Phase 2 — Builder-ready implementation plan, blocked
+### Phase 2 — Implementation after approval
 
-Blocked by: Phase 1 research and user decisions.
+- [ ] Slice 2.1 — sequential — Add OpenCode plugin source and source tests.
+  Scope: `extensions/opencode/orchestra/`, tests for identity rejection, timeout rejection, tool args, and tokenized argv.
+  Stop when: focused source tests pass.
+  Verify: `python3 -m pytest <opencode source tests> -q`.
+  Risk: P1 — session identity and shell execution are security boundaries.
 
-Potential slices after approval:
-- Add `orch_dispatch` OpenCode host source and source tests.
-- Add/update `orchestra init opencode` only if approved.
-- Add docs and durable architecture decisions.
-- Run focused tests, review, security review, full verification, and package build if assets change.
+- [ ] Slice 2.2 — sequential — Add `orchestra init opencode` global installer behavior.
+  Scope: `src/orchestra/app.py`, `src/orchestra/cli.py`, install tests, and source-checkout install paths.
+  Stop when: init output and installed files match documented behavior.
+  Verify: `python3 -m pytest tests/test_init_targets.py <opencode source tests> -q`.
+  Risk: P2 — install paths affect user environments.
 
-## Tests to Plan Later
+- [ ] Slice 2.3 — sequential — Add host notification and auto-return behavior.
+  Scope: OpenCode plugin watcher/report logic, sparse toast calls, interim non-turn context if useful, and final all-workers response prompt.
+  Stop when: tests cover delivery guardrails or deferral is documented.
+  Verify: focused source tests plus manual isolated smoke if feasible.
+  Risk: P1 — return injection can create loops or poor UX if wrong.
 
-Pending research decisions, likely tests include:
-- source requires `context.sessionID` and normalizes `opencode:<sessionID>`;
-- source rejects user/model-supplied identity fields;
-- source rejects unsupported `timeout` overrides;
-- source builds tokenized `orchestra do` argv;
-- optional role/task-label args are passed only through approved fields;
-- no shell-string execution is used;
-- init behavior installs or reports status exactly as documented;
-- package/source parity if OpenCode assets are packaged.
+- [ ] Slice 2.4 — sequential — Spike and add command helpers only if true executable command parity is feasible.
+  Scope: isolated OpenCode spike for executable `/orch` behavior, then implementation only if feasible; docs must label limitations accurately.
+  Stop when: command behavior is tested or explicitly deferred.
+  Verify: source tests or isolated smoke.
+  Risk: P2 — prompt-template commands can mislead users if presented as host commands.
+
+- [ ] Slice 2.5 — sequential — Update docs and durable architecture decisions.
+  Scope: `README.md`, `FOUNDATION.md`, `ARCHITECTURE.md`, `ROADMAP.md` as needed.
+  Stop when: docs match shipped behavior and limitations.
+  Verify: docs consistency search.
+  Risk: P3 — stale docs cause setup confusion.
+
+- [ ] Slice 2.6 — sequential — Final verification, review, and security review.
+  Scope: focused tests, full test suite, lint, types, build if assets/package data changed, code review, security review.
+  Stop when: results and residual risks are recorded.
+  Verify: project verification commands.
+  Risk: P2 — host adapter changes touch security-sensitive boundaries.
+
+## Tests to Add or Update
+
+- OpenCode source tests:
+  - plugin registers `orch_dispatch`;
+  - requires `context.sessionID`;
+  - normalizes owner id as `opencode:<sessionID>`;
+  - rejects user/model-supplied identity fields;
+  - rejects `timeout`;
+  - builds tokenized `orchestra do` argv;
+  - passes only approved optional args;
+  - does not use shell-string execution;
+  - emits compact success/error output.
+- Init tests:
+  - global install path;
+  - source-checkout install path from `extensions/opencode/orchestra/`;
+  - force/copy/link behavior as decided;
+  - no accidental overwrite without `--force`.
+- Return/notification tests:
+  - toast call shape;
+  - report delivery marking/release behavior;
+  - `noReply:true` use only for non-turn interim injection if used;
+  - final all-workers response prompt behavior;
+  - loop-prevention guardrails.
 
 ## Verification
 
-Research/design phase:
+Focused checks during implementation:
 
 ```bash
-git diff -- PLAN.md RESEARCH.md OCPLAN.md
+python3 -m pytest <opencode source tests> -q
+python3 -m pytest tests/test_init_targets.py -q
 ```
 
-Implementation phase later, after approval:
+Final checks:
 
 ```bash
-python3 -m pytest <focused opencode tests> -q
 python3 -m pytest
 python3 -m ruff check .
 python3 -m mypy src tests
 python3 -m build
 ```
 
-Manual smoke later, after host support exists:
+Manual smoke after install support exists:
 
 ```bash
 orchestra init opencode --force
 opencode run --agent plan --model openai/gpt-5.4 "Reply with exactly OPENCODE_DIRECT_OK"
 ```
 
-Then from inside OpenCode, use the approved host surface and confirm `orchestra history --session-id opencode:<sessionID>` shows the run.
+Then from inside OpenCode, call `orch_dispatch` and confirm:
+
+```bash
+orchestra history --session-id opencode:<sessionID> --limit 5
+```
 
 ## Risks
 
-- OpenCode may not expose a Pi/Hermes-equivalent non-interrupting auto-return rail.
-- OpenCode commands may be prompt templates rather than reliable host commands.
-- Install behavior may differ between local project config, global config, and `OPENCODE_CONFIG_DIR`.
-- Session identity and shell execution are security boundaries.
+- OpenCode may not support true executable `/orch` command parity.
+- Final auto-return that triggers the calling agent needs loop-prevention and active-session guardrails.
+- Global install can surprise users if overwrite behavior is not conservative.
+- `OPENCODE_CONFIG_DIR` tool behavior is not explicitly documented.
+- Session identity and command execution are security boundaries.
 - Parallel write-capable workers still need orchestration discipline or future worktree isolation.
 
-## Open Questions
+## Remaining Open Questions
 
-1. Exact custom tool API shape?
-2. Standalone tool file, plugin-registered tool, or both?
-3. Should `init opencode` remain no-op, install globally, install locally, or support both?
-4. Are OpenCode custom commands suitable for `/orch` parity?
-5. What notification/progress API is safe?
-6. Is auto-return safe enough for this milestone, or deferred?
-7. Which recent Pi behaviors are MVP requirements for OpenCode?
+1. What exact guardrails should final auto-return use to prevent loops or ill-timed interruption?
+2. Does the executable `/orch` command parity spike prove feasible?
 
 ## Current State
 
-- Active phase: Phase 1 — research and decisions only.
-- Active slice: Slice 1.1 — custom tool API research.
-- Implementation status: blocked pending research and approval.
+- Active phase: implementation planning / command spike.
+- Active slice: Slice 1.9 — spike executable OpenCode command parity if still required before build.
+- Implementation status: blocked pending approval to start spike or implementation.

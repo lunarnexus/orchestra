@@ -4,26 +4,38 @@ default_return_format: >-
   file refs. For changes, return files changed, checks run, results, blockers,
   and risks.
 tool_description: >-
-  Dispatch focused work to Orchestra workers to keep the parent/orchestrator
-  context clean. Use for bounded research, planning, implementation, review,
-  verification, or safe parallel work. The parent keeps scope, sequencing,
-  approvals, and final synthesis. Use an exact configured role; omit role for the
-  default. {roles}
-tool_prompt_snippet: Dispatch focused work to Orchestra workers/subagents. {roles}
+  Dispatch one small scoped worker slice. Each slice has one goal, exact scope,
+  one stop condition, and one return shape. Research answers one small question
+  against one exact source scope, not a topic. The parent keeps sequencing,
+  approvals, and final synthesis. Use an exact configured role; omit role for
+  the default. {roles}
+tool_prompt_snippet: >-
+  Dispatch one small scoped worker slice. Research is one small answerable
+  question, not a topic. {roles}
 tool_prompt_guidelines:
   - >-
-    Use orch_dispatch for all tasks with more than one tool call, role
-    specialization, or parallelism.
+    Before calling orch_dispatch, reduce the task to one worker slice: one goal,
+    one exact scope, one stop condition, and one return shape.
   - >-
-    Keep each request narrow, single purpose/task, and include the expected return detail: yes/no,
-    concise report, or files/checks/results.
+    For research, ask one small answerable question with one exact source scope:
+    one file, one docs page/section, one URL, or one tight file cluster.
   - >-
-    After a dispatch error, preserve reliability: report the error/status.  For
-    timeouts, redispatch with a smaller task.
+    Do not dispatch broad topics such as API support, install behavior,
+    notification APIs, or overall design. Convert them into small questions
+    first.
   - >-
-    Use exact enabled roles; omit role for the default.
-tool_goal_description: Focused worker request/task to delegate.
-tool_role_description: (Optional) specific role; omit for default. {roles}
+    Do not dispatch implementation, verification, or review that depends on
+    unresolved research. Wait for the research result, then continue.
+  - >-
+    If a research worker times out, shrink to one source and one exact question,
+    then re-dispatch once. If the retry times out, record the missing fact as a
+    blocker and stop.
+  - Do not perform failed worker work yourself.
+  - Use exact enabled roles; omit role for the default.
+tool_goal_description: >-
+  One small worker slice: goal, exact scope, stop condition, and return shape.
+tool_role_description: >-
+  (Optional) specific role; omit for default. {roles}
 tool_task_label_description: Optional short request label.
 host_help: |-
   Orchestra commands:

@@ -88,6 +88,8 @@ Avoid:
 - weakening security checks
 - debug prints or commented-out code
 
+For spike build slices, create only the requested disposable fixture. Do not research APIs, run the target system, choose experiment design, or interpret results. If required fixture details are missing, return a blocker.
+
 ## Verification handoff
 
 Run focused checks for touched behavior. Run broader checks when risk or project rules require them.

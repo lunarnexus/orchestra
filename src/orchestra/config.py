@@ -32,28 +32,36 @@ DEFAULT_RETURN_FORMAT = (
     "file refs. For changes, return files changed, checks run, results, blockers, "
     "and risks."
 )
-DEFAULT_TOOL_DESCRIPTION = " ".join(
-    [
-        "Dispatch focused work to Orchestra workers to keep the parent/orchestrator "
-        "context clean.",
-        "Use for bounded research, planning, implementation, review, verification, "
-        "or safe parallel work.",
-        "The parent keeps scope, sequencing, approvals, and final synthesis.",
-        "Use an exact configured role; omit role for the default.",
-        "{roles}",
-    ]
+DEFAULT_TOOL_DESCRIPTION = (
+    "Dispatch one small scoped worker slice. Each slice has one goal, exact scope, "
+    "one stop condition, and one return shape. Research answers one small question "
+    "against one exact source scope, not a topic. The parent keeps sequencing, "
+    "approvals, and final synthesis. Use an exact configured role; omit role for "
+    "the default. {roles}"
 )
-DEFAULT_TOOL_PROMPT_SNIPPET = "Dispatch focused work to Orchestra workers/subagents. {roles}"
+DEFAULT_TOOL_PROMPT_SNIPPET = (
+    "Dispatch one small scoped worker slice. Research is one small answerable "
+    "question, not a topic. {roles}"
+)
 DEFAULT_TOOL_PROMPT_GUIDELINES = (
-    "Prefer orch_dispatch for bounded work that benefits from worker context, role "
-    "specialization, or parallelism.",
-    "Keep each request narrow and include the expected return detail: yes/no, concise "
-    "report, or files/checks/results.",
-    "After a dispatch error, preserve reliability: report the error/status and resume "
-    "dispatch only when capacity/setup is clear.",
-    "Use exact configured roles; omit role for the default.",
+    "Before calling orch_dispatch, reduce the task to one worker slice: one goal, "
+    "one exact scope, one stop condition, and one return shape.",
+    "For research, ask one small answerable question with one exact source scope: "
+    "one file, one docs page/section, one URL, or one tight file cluster.",
+    "Do not dispatch broad topics such as API support, install behavior, "
+    "notification APIs, or overall design. Convert them into small questions "
+    "first.",
+    "Do not dispatch implementation, verification, or review that depends on "
+    "unresolved research. Wait for the research result, then continue.",
+    "If a research worker times out, shrink to one source and one exact question, "
+    "then re-dispatch once. If the retry times out, record the missing fact as a "
+    "blocker and stop.",
+    "Do not perform failed worker work yourself.",
+    "Use exact enabled roles; omit role for the default.",
 )
-DEFAULT_TOOL_GOAL_DESCRIPTION = "Focused worker request/task to delegate."
+DEFAULT_TOOL_GOAL_DESCRIPTION = (
+    "One small worker slice: goal, exact scope, stop condition, and return shape."
+)
 DEFAULT_TOOL_ROLE_DESCRIPTION = "(Optional) specific role; omit for default. {roles}"
 DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
 DEFAULT_HOST_HELP = """Orchestra commands:

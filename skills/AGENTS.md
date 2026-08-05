@@ -2,6 +2,8 @@
 
 These rules apply to skills in this directory.
 
+For substantial skill creation or refactoring, use `skills/skill-author/SKILL.md`.
+
 - Keep skills concise. Add only guidance that changes agent behavior.
 - Ask: what behavior should change when this skill loads? If a line does not change behavior, cut it.
 - Tell the agent what to do. Avoid menus of options and fallback paths.

@@ -180,7 +180,8 @@ Research date: 2026-07-31; refreshed 2026-08-04
   `--continue`, `--attach`, `--title`, `--file`, `--variant`, and permission
   toggles.
 - `opencode run --attach <server>` can reuse a running `opencode serve` backend,
-  but this should be a later optimization, not the MVP path.
+  but this should remain a later optimization rather than part of the first
+  complete-plugin implementation path.
 - OpenCode plugins and custom tools are JavaScript/TypeScript. Custom tools can
   call any language and receive a context object containing `sessionID`,
   `messageID`, `directory`, `worktree`, and `agent`. This matches the existing
@@ -201,9 +202,10 @@ Research date: 2026-07-31; refreshed 2026-08-04
   subagent launches. Orchestra-launched OpenCode workers should avoid unbounded
   nested delegation by using an appropriate agent and, where needed, configuring
   `permission.task` or `subagent_depth`.
-- OpenCode permission defaults are permissive. The MVP should not use
-  `--auto`/`--dangerously-skip-permissions` by default; write-capable runs should
-  be explicitly approved by the orchestrator before dispatch.
+- OpenCode permission defaults are permissive. The OpenCode implementation
+  should not use `--auto`/`--dangerously-skip-permissions` by default;
+  write-capable runs should be explicitly approved by the orchestrator before
+  dispatch.
 - OpenCode exposes a server/OpenAPI surface and ACP server, but ACP and
   persistent/interactive modes are not required for parity with current Pi and
   Hermes one-shot support.
@@ -255,29 +257,102 @@ orchestra do --session-id manual:opencode-demo --role appsec --goal "Reply with 
   OpenCode catalogs.
 - Omitting `--dir` remains the shared-catalog default for OpenCode workers so
   runs use the caller's current working directory instead of a hardcoded path.
-- OpenCode install strategy is not decided. Candidate locations from OpenCode
-  docs are project-local `.opencode/tools/`, `.opencode/plugins/`,
-  `.opencode/commands/` and global `~/.config/opencode/tools/`,
-  `~/.config/opencode/plugins/`, `~/.config/opencode/commands/`.
-- Auto-return remains a research/spike topic. OpenCode `client.session.prompt(...)`
-  appears relevant, but it is a session message path and needs explicit loop,
-  target-session, active-user, and compact-report guardrails before use.
+- OpenCode install should default to global host-plugin installation under
+  `~/.config/opencode/`, matching the desired shared-tooling behavior. Project
+  local install can remain a later option if needed.
+- The supported install flow is clone the repo and run editable `pipx install`,
+  so `orchestra init opencode` can install from source-checkout files under
+  `extensions/opencode/orchestra/`. Python package asset mirrors are not needed
+  for this slice.
+- Auto-return remains required for OpenCode parity. OpenCode
+  `client.session.prompt(...)` provides both non-turn injection with
+  `noReply:true` and normal prompt submission that triggers an assistant turn;
+  the final all-workers return should preserve Orchestra auto-return behavior
+  while using explicit loop, target-session, active-user, and compact-report
+  guardrails.
+
+### Focused OpenCode host API findings
+
+- Custom tools can be installed project-locally in `.opencode/tools/` or
+  globally in `~/.config/opencode/tools/`. The filename becomes the tool name, so
+  `orch_dispatch.ts` defines an `orch_dispatch` tool. Multiple exports from one
+  file are named `<filename>_<exportname>`.
+- A single custom tool can use `export default tool({...})`. Arguments use
+  `tool.schema`/Zod. The handler shape is `async execute(args, context)`, and
+  local `@opencode-ai/plugin` types define the return as a string or
+  `{ output: string; metadata?: ... }`.
+- Custom-tool context includes `sessionID`, `messageID`, `agent`, `directory`,
+  `worktree`, `abort`, `metadata(...)`, and `ask(...)`. `sessionID` is the host
+  identity source for Orchestra ownership.
+- Plugins are JavaScript/TypeScript modules exporting one or more async plugin
+  functions. The documented plugin context includes `project`, `client`, `$`,
+  `directory`, and `worktree`; `client` is an OpenCode SDK client.
+- Plugins can register tools by returning a `tool` map, for example
+  `return { tool: { mytool: tool({ description, args, execute }) } }`. This makes
+  a plugin-registered `orch_dispatch` tool the better fit for complete host
+  parity than a standalone tool file alone, because plugin code can also use the
+  SDK client for toast and return behavior.
+- OpenCode config is layered and merged. Standard paths include global
+  `~/.config/opencode/opencode.json`, project `opencode.json`, project
+  `.opencode/` directories, and global `.config/opencode/` directories.
+  `OPENCODE_CONFIG` points to a custom config file. `OPENCODE_CONFIG_DIR` points
+  to a config directory searched like a standard `.opencode` directory for at
+  least agents, commands, modes, and plugins; tool support there is implied by
+  directory shape but not separately documented.
+- Official host-file locations are:
+  - tools: `.opencode/tools/`, `~/.config/opencode/tools/`;
+  - plugins: `.opencode/plugins/`, `~/.config/opencode/plugins/`;
+  - commands: `.opencode/commands/`, `~/.config/opencode/commands/`.
+- OpenCode custom commands are prompt templates, not executable host command
+  hooks. They support `$ARGUMENTS` and positional `$1`, `$2`, `$3`, etc., but the
+  documented `template` is the prompt sent to the LLM.
+- Plugin event names include `command.executed` and `tui.command.execute`, but
+  local types show event handlers as observation hooks returning `void`, not a
+  command implementation/mutation path. `command.executed` carries `name`,
+  `sessionID`, `arguments`, and `messageID`. `tui.command.execute` carries a
+  `command` string. No output channel for implementing `/orch` commands was
+  found.
+- Toast/progress support exists through the SDK method
+  `client.tui.showToast({ body })`; docs show body fields `message` and
+  `variant`. Because plugin context includes `client`, plugin code can call this
+  API.
+- Session reinjection exists through `client.session.prompt({ path: { id }, body
+  })` / `POST /session/:id/message`. With `noReply: true`, docs say it returns a
+  `UserMessage` and does not trigger an assistant response. Without `noReply`, it
+  returns an assistant response. `prompt_async` is non-blocking but its assistant
+  turn behavior is not explicitly documented. `session.command` executes slash
+  commands and returns assistant output.
+- Current Pi host behavior to evaluate for OpenCode parity includes `/orch help`,
+  `/orch on`, `/orch do`, `/orch roles`, `/orch status`, `/orch stop`,
+  `/orch doctor`, `/orch history`, `orch_dispatch` with `goal` plus optional
+  `role`/`taskLabel` and no timeout, runtime session identity from host context,
+  status UI updates, auto-return delivery bookkeeping, and source/packaged asset
+  parity tests.
 
 ### Implications for Orchestra
 
-- Treat the next OpenCode milestone as research/design first, not builder-ready
-  implementation.
-- Add an OpenCode host tool/plugin after exact APIs, install layout, and return
-  limitations are verified. The host surface should stay thin and call the same
-  Orchestra core operations as Pi/Hermes.
+- Target a complete OpenCode plugin, not a minimal standalone-tool slice.
+- The recommended host architecture is a plugin-registered `orch_dispatch` tool
+  plus plugin-managed notifications and return delivery. A standalone tool file
+  should not be part of the initial implementation unless testing proves the
+  plugin-registered tool path is insufficient.
+- OpenCode slash command parity is limited by available evidence. Prompt-template
+  commands can provide convenience prompts, but true executable `/orch` command
+  parity should be treated as unsupported unless a command mutation/execution API
+  is proven in a spike.
+- OpenCode auto-return should preserve existing Orchestra semantics: individual
+  worker returns can notify the UI and optionally add non-turn context with
+  `noReply:true`; once all workers for the owning session finish, the plugin
+  should send the response prompt to the calling OpenCode agent so it can resume
+  orchestration. This needs loop-prevention and active-session guardrails.
+- `orchestra init opencode` should be planned as a global installer using the
+  source checkout under `extensions/opencode/orchestra/`; package asset mirrors
+  are deferred for non-editable/wheel installs.
 - Preserve one-shot worker behavior and explicit harness selection while adding
-  any host surface.
+  the host plugin surface.
 - Do not build parallel-write safety as part of OpenCode parity. For now, the
   orchestrator decides which read-only or file-disjoint tasks are safe to run in
   parallel.
-- Improve worker return guidance before adding more storage machinery: workers
-  should return yes/no when yes/no is sufficient, and provide a complete compact
-  report only when the request asks for options, evidence, or a plan.
 
 ## Professional Development Methodology Research
 

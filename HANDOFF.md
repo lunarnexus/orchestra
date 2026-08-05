@@ -1,144 +1,145 @@
 # Handoff
 
 ## Goal
-Continue Orchestra skill-system/workflow work: refine active skills with standard development methodology terms, implement `/orch on` one-time orchestrator injection, implement role-level `harness_fallback`, normalize boolean parsing, then verify and ship.
+Build a complete OpenCode host plugin for Orchestra so OpenCode can act as an Orchestra orchestrator host: dispatch workers, notify/return results, and get as close to Pi/Hermes parity as OpenCode APIs allow.
 
 ## Constraints & Preferences
-- User prefers concise responses; avoid overexplaining.
-- Use positive instructions over “don’t” rules where possible.
-- Keep skills lean but explicit enough for weaker builder models.
-- Do not alter `/Users/james/workspace/bigpowers`; user will delete it when done.
-- Hermes skills under `skills/hermes/` are considered archived/foreign; leave them alone unless researching.
-- Prefer real-agent evals; fake workers acceptable only for focused/unit tests.
-- Main session = orchestrator brain with monitor-style concise updates.
-- `/orch on` injects `orchestrator` skill once; no `/orch off` MVP.
-- Workflow source = `skills/orchestrator/SKILL.md`; YAML workflows deferred.
-- Planner may dispatch researchers only, one nesting level via `worker_budget: 2`.
-- Builder has only `prompt_addition` for now; no builder skill until needed.
-- Standard artifacts: `FOUNDATION.md`, `ARCHITECTURE.md`, `RESEARCH.md`, `PLAN.md`; no templates yet.
+- Use orchestrator workflow.
+- Ask only decision-blocking questions; answer implementation details from evidence when possible.
+- Research must be one exact fact/source at a time.
+- Do not absorb failed worker work.
+- Spike only when docs/types cannot answer a production-blocking uncertainty.
+- Spike dispatch is sequential: build fixture → run one command → interpret.
+- Never revert dirty files not created by this task.
+- User was upset by accidental reverts; be very careful with dirty files.
+- Do not touch user-owned dirty files unless explicitly approved.
+- Target complete plugin, not MVP.
+- Install default should be global.
+- Current intended install flow: clone repo + editable `pipx install`; no package asset mirrors needed now.
+- Sparse OpenCode toasts are acceptable.
+- `/orch` executable command parity should be documented as deferred/unsupported by current docs/types, not spiked further.
 
 ## Progress
 ### Done
-- [x] Replaced `PLAN.md` with builder-executable implementation plan.
-- [x] Created `docs/skill-system-research-and-decisions.md`.
-- [x] Created active skills:
-  - `skills/orchestrator/SKILL.md`
-  - `skills/planner/SKILL.md`
-  - `skills/researcher/SKILL.md`
-  - `skills/reviewer/SKILL.md`
-- [x] Archived superseded skills:
-  - `skills/archive/dev-orchestra/`
-  - `skills/archive/dev-lifecycle/`
-  - `skills/archive/code-reviewer/`
-  - `skills/archive/security-reviewer/`
-  - `skills/archive/test-and-quality/`
-  - `skills/archive/commit-pr-prep/`
-  - `skills/archive/code-planner/` *(uncommitted after last push)*
-- [x] Updated `agent-catalog.yaml`:
-  - `default_role: builder`
-  - added enabled `verifier`
-  - enabled `appsec`
-  - enabled `planner`
-  - `planner`: Pi, `openai-codex/gpt-5.4`, `worker_budget: 2`, `skills: [planner]`
-  - `researcher`: `skills: [researcher]`
-  - `verifier`/`reviewer`/`appsec`: `skills: [reviewer]`
-- [x] Added dependency markers to planner/orchestrator skills:
-  - `sequential`
-  - `parallel-safe`
-  - `blocked`
-- [x] Committed and pushed main skill-set work:
-  - commit `e5e7fdf feat(skills): define lean orchestration skill set`
-  - branch `feat/return-artifacts`
+- [x] Read old `OCPLAN.md` and summarized/preserved relevant content.
+- [x] Deleted `OCPLAN.md` earlier, but later git status no longer showed it dirty; verify current repo state before assuming deletion.
+- [x] Updated `PLAN.md` toward complete OpenCode plugin plan.
+- [x] Updated `RESEARCH.md` with OpenCode host findings.
+- [x] Researched OpenCode custom tool API.
+- [x] Researched OpenCode plugin registration/tool map.
+- [x] Researched OpenCode install/search paths.
+- [x] Researched OpenCode custom commands.
+- [x] Researched OpenCode toast API and plugin `client` context.
+- [x] Researched OpenCode session reinjection/auto-return API.
+- [x] Researched recent Pi plugin parity behaviors.
+- [x] Verified package asset mirrors are not needed for clone + editable `pipx install`.
+- [x] Attempted command parity spike; concluded it was unnecessary because docs/types were sufficient.
 
 ### In Progress
-- [ ] Add methodology terms to `skills/planner/SKILL.md` and `skills/orchestrator/SKILL.md`:
-  - TDD
-  - spike
-  - systematic debugging / RCA
-  - feature branch
-  - refactoring
-  - CI/checks
-  - risk-based testing
-  - DevSecOps/security review
-  - Lean/small slices
-- [ ] Decide whether to create a future `builder` skill after core works.
+- [ ] Document final decision that executable `/orch` command parity is unsupported/deferred based on docs/types.
+- [ ] Refine implementation plan for plugin-registered `orch_dispatch`, global init, sparse toasts, and auto-return guardrails.
 
 ### Blocked
-- No blockers. Some methodology research workers timed out, but enough manual/local/web research exists to continue.
+- Exact final auto-return guardrails still need design.
+- True executable `/orch` parity is blocked on future OpenCode API support; current docs/types do not show a viable output/mutation hook.
 
 ## Key Decisions
-- **One-time `/orch on`**: Inject `skills/orchestrator/SKILL.md` once into main session; no `/orch off` for MVP.
-- **Role fallback**: Use role-level `harness_fallback`; fallback changes harness/model/profile/agent only, preserves requested role/skills/prompt/env.
-- **No global harness fallback yet**: Role-level is clearer because each role may need different runtime fields.
-- **Planner nesting**: `planner` can dispatch `researcher`; researchers/builders/reviewers/appsec cannot dispatch.
-- **Skills vs methodology manuals**: Active Orchestra skills should use industry-standard terminology but not inject full TDD/spike/debugging manuals.
-- **Codegraph placement**: Mention codegraph in `agent-catalog.yaml` `prompt_addition`, not generic skill files.
-- **No templates yet**: Artifact expectations live in skills for now.
+- **Complete plugin, not MVP**: User explicitly rejected MVP framing.
+- **Global install default**: `orchestra init opencode` should install globally under OpenCode config.
+- **Plugin path**: Use full OpenCode plugin with plugin-registered `orch_dispatch` because it gives `client` access for toasts/return behavior.
+- **No standalone tool fallback initially**: Only add if plugin tool registration fails.
+- **Auto-return parity desired**: Notify on individual worker returns, then when all workers finish send final response prompt to the calling OpenCode agent.
+- **`noReply:true` role**: Use only for interim non-turn context/visibility; final auto-return should prompt the calling agent to continue.
+- **Toasts**: Try sparse toasts for dispatch started/completed/failed.
+- **No package asset mirrors now**: Clone + editable `pipx install` can use source checkout paths.
+- **Command parity deferred**: OpenCode custom commands are prompt templates, plugin command events appear observational/void; no executable command/output path found.
 
 ## Next Steps
-1. Check `git status`; note uncommitted archive of `skills/code-planner/` plus docs/orchestrator metadata updates.
-2. Update `skills/planner/SKILL.md` with methodology section:
-   - TDD-ready slices
-   - spikes for uncertainty
-   - feature branch planning
-   - CI/check commands
-   - risk-based verification
-   - security-sensitive phase marking
-   - refactoring only when scoped
-3. Update `skills/orchestrator/SKILL.md` with concise execution vocabulary:
-   - dispatch research/spike before build if uncertainty remains
-   - keep WIP small
-   - feature branch/commit awareness
-   - verifier/reviewer/security timing
-4. Run focused tests: `python3 -m pytest tests/test_config.py tests/test_harness_pi.py -q`.
-5. Commit/push the code-planner archive + methodology edits.
-6. Continue `PLAN.md` implementation:
-   - Phase 2 `/orch on`
-   - Phase 3 `harness_fallback`
-   - Phase 6 boolean parsing normalization.
+1. Check git status and identify which dirty files are user-owned vs current task docs.
+2. Do not modify user-owned dirty files.
+3. Update `PLAN.md` and `RESEARCH.md` to record:
+   - stop spiking command parity;
+   - executable `/orch` parity deferred/blocked by OpenCode APIs;
+   - production scope is plugin tool + global init + toasts + auto-return.
+4. Specify auto-return guardrails in plan:
+   - session ownership from `context.sessionID`;
+   - loop prevention/delivery marking;
+   - only final all-workers prompt triggers calling agent;
+   - interim worker returns can toast/optionally `noReply:true`;
+   - avoid forged session ids.
+5. Ask for approval before implementation.
+6. If approved, start production implementation with small slices:
+   - OpenCode plugin source and tests;
+   - `orchestra init opencode` global installer;
+   - toast/auto-return behavior;
+   - docs/tests/verification.
 
 ## Critical Context
-- Current branch/upstream: `feat/return-artifacts` / `origin/feat/return-artifacts`.
-- Last pushed commit: `e5e7fdf feat(skills): define lean orchestration skill set`.
-- Verification before commit:
-  - `python3 -m pytest` → `213 passed, 1 skipped`
-  - `python3 -m ruff check .` → pass
-  - `python3 -m mypy src tests` → pass
-  - `python3 -m build` → pass
-- After archiving `code-planner`, focused check:
-  - `python3 -m pytest tests/test_config.py tests/test_harness_pi.py -q` → `52 passed`
-- Pi model format confirmed: `openai-codex/gpt-5.4`.
-- OpenCode model/agent confirmed for later: `openai/gpt-5.4`, `agent: plan`.
-- `src/orchestra/assets/agent-catalog.yaml` is symlink to root `agent-catalog.yaml`.
+- Current Pi session id: `019fca3e-3960-76af-8340-3e7c7eef2228`
+- Normalized owner id: `pi:019fca3e-3960-76af-8340-3e7c7eef2228`
+- Important OpenCode facts:
+  - Custom tools: `.opencode/tools/`, `~/.config/opencode/tools/`; filename becomes tool name.
+  - Tool shape: `export default tool({...})`; handler `async execute(args, context)`.
+  - Tool context: `sessionID`, `messageID`, `agent`, `directory`, `worktree`, `abort`, `metadata(...)`, `ask(...)`.
+  - Plugin context includes `project`, `client`, `$`, `directory`, `worktree`.
+  - Plugins register tools via `return { tool: { name: tool({...}) } }`.
+  - Commands are prompt templates with `$ARGUMENTS`, `$1`, etc.
+  - Plugin event hook is observational: `event?: (input: { event: Event }) => Promise<void>`.
+  - `command.executed` properties: `name`, `sessionID`, `arguments`, `messageID`.
+  - `tui.command.execute` properties include `command`.
+  - Toast: `client.tui.showToast({ body: { message, variant } })`.
+  - Session prompt: `client.session.prompt({ path: { id }, body })`.
+  - `noReply:true` injects context/user message without assistant response.
+  - Default `session.prompt` triggers assistant response.
+- Spike temp dir: `/tmp/opencode-plugin-spike.Xaz5sQ`
+  - Plugin loaded, but command events not observed.
+  - Treat as non-decisive; docs/types are decisive enough to defer command parity.
+- Worker artifacts:
+  - `state/return-artifacts/5ffa518919a6.md` — custom tool API.
+  - `state/return-artifacts/2b5c4bf96fd6.md` — plugin registration.
+  - `state/return-artifacts/03fe76eb7d7b.md` — tool paths.
+  - `state/return-artifacts/a569a83b0947.md` — command templates.
+  - `state/return-artifacts/6559218a0689.md` — install/config paths.
+  - `state/return-artifacts/c040c76960cf.md` — session reinjection.
+  - `state/return-artifacts/b6a83ebe4531.md` — toast method.
+  - `state/return-artifacts/0a97b3b7f422.md` — plugin client context.
+  - `state/return-artifacts/a8ba39349114.md` — Pi parity.
+  - `state/return-artifacts/1e6446e2d02d.md` — `tui.command.execute` type shape.
+  - `state/return-artifacts/4ff6ca11f4bd.md`, `f1adbc5b14ba.md` — `command.executed` fields.
+  - `state/return-artifacts/894c44feac06.md` — package asset verification.
+  - `state/return-artifacts/73cc69866371.md`, `e76d60fd945b.md` — spike build/test.
 
 ## Files
 ### Read
+- `OCPLAN.md`
 - `PLAN.md`
-- `README.md`
+- `RESEARCH.md`
 - `FOUNDATION.md`
+- `README.md`
+- `ARCHITECTURE.md`
+- `ROADMAP.md`
 - `agent-catalog.yaml`
-- `docs/skill-system-research-and-decisions.md`
-- `skills/orchestrator/SKILL.md`
-- `skills/planner/SKILL.md`
-- `skills/researcher/SKILL.md`
-- `skills/reviewer/SKILL.md`
-- `skills/hermes/*`
-- `/Users/james/workspace/bigpowers/skills/*`
+- `extensions/pi/orchestra/index.ts`
+- `tests/test_pi_extension_source.py`
 - `src/orchestra/app.py`
 - `src/orchestra/cli.py`
-- `src/orchestra/config.py`
-- `src/orchestra/state.py`
-- `extensions/pi/orchestra/index.ts`
+- `pyproject.toml`
+- `/Users/james/node_modules/@opencode-ai/plugin/dist/tool.d.ts`
+- `/Users/james/node_modules/@opencode-ai/plugin/dist/index.d.ts`
+- `/Users/james/node_modules/@opencode-ai/plugin/dist/tui.d.ts`
+- `/Users/james/node_modules/@opencode-ai/sdk/dist/v2/gen/types.gen.d.ts`
+- Worker return artifacts listed above.
 
 ### Modified
 - `PLAN.md`
-- `README.md`
-- `agent-catalog.yaml`
-- `docs/skill-system-research-and-decisions.md`
-- `skills/README.md`
-- `skills/orchestrator/SKILL.md`
-- `skills/planner/SKILL.md`
-- `skills/researcher/SKILL.md`
-- `skills/reviewer/SKILL.md`
-- `skills/archive/*`
-- `HANDOFF.md` was included in commit `e5e7fdf` earlier.
+- `RESEARCH.md`
+- Earlier accidental edits to user files were reverted by user; do not touch:
+  - `ROADMAP.md`
+  - `prompts.yaml`
+  - `skills/AGENTS.md`
+  - `skills/orchestrator/SKILL.md`
+  - `skills/planner/SKILL.md`
+  - `skills/researcher/SKILL.md`
+  - `src/orchestra/config.py`
+  - `tests/test_config.py`
+  - `skills/skill-author/`
