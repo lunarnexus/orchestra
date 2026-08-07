@@ -10,8 +10,8 @@ from tests.helpers import write_runtime_files
 
 
 @pytest.fixture(autouse=True)
-def clear_orchestra_worker_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ORCHESTRA_WORKER", raising=False)
+def clear_orchestra_dispatch_budget_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ORCHESTRA_DISPATCH_BUDGET", raising=False)
 
 
 @pytest.fixture

@@ -11,9 +11,17 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert extension_source == asset_source
     assert 'name: "orch_dispatch"' in extension_source
     assert "_tool-info" in extension_source
-    assert 'const ORCHESTRA_WORKER_ENV = "ORCHESTRA_WORKER"' in extension_source
+    assert 'const ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET"' in extension_source
+    assert 'const ORCHESTRA_TURN_BUDGET_ENV = "ORCHESTRA_TURN_BUDGET"' in extension_source
+    assert (
+        'const ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV = "ORCHESTRA_SOFT_TIMEOUT_SECONDS"'
+        in extension_source
+    )
+    assert 'pi.on("turn_end"' in extension_source
+    assert 'pi.on("tool_call"' in extension_source
+    assert 'pi.sendUserMessage(`${prompt}' in extension_source
     assert "function canDispatchOrchestraWorker(): boolean" in extension_source
-    assert "return orchestraWorkerBudget() !== 1;" in extension_source
+    assert "return orchestraDispatchBudget() !== 1;" in extension_source
     assert "const registerDispatchTool = canDispatchOrchestraWorker();" in extension_source
     assert "function registerOrchDispatchTool(toolInfo: ToolInfoPayload): void" in extension_source
     assert "async function refreshOrchDispatchToolRegistration(): Promise<void>" in extension_source

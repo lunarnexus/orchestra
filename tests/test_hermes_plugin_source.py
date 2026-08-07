@@ -94,8 +94,8 @@ def completed(
 
 
 @pytest.fixture(autouse=True)
-def _clear_orchestra_worker_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ORCHESTRA_WORKER", raising=False)
+def _clear_orchestra_dispatch_budget_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ORCHESTRA_DISPATCH_BUDGET", raising=False)
 
 
 def test_hermes_plugin_source_does_not_import_orchestra_package() -> None:
@@ -167,7 +167,7 @@ def test_hermes_plugin_gates_dispatch_tool_by_worker_budget(
 ) -> None:
     plugin = load_plugin()
     if budget is not None:
-        monkeypatch.setenv("ORCHESTRA_WORKER", budget)
+        monkeypatch.setenv("ORCHESTRA_DISPATCH_BUDGET", budget)
     monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, code=1))
     ctx = FakeHermesPluginContext()
 

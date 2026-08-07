@@ -6,7 +6,10 @@ import { Type } from "typebox";
 
 const execFileAsync = promisify(execFile);
 const TOOL_TIMEOUT_ERROR = "timeout is not accepted by orch_dispatch; configured default_timeout applies.";
-const ORCHESTRA_WORKER_ENV = "ORCHESTRA_WORKER";
+const ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET";
+const ORCHESTRA_TURN_BUDGET_ENV = "ORCHESTRA_TURN_BUDGET";
+const ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV = "ORCHESTRA_SOFT_TIMEOUT_SECONDS";
+const ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV = "ORCHESTRA_BUDGET_EXCEEDED_PROMPT";
 const WATCHER_TIMEOUT_MARGIN_SECONDS = 30;
 
 interface OrchestraFooterTheme {
@@ -49,15 +52,22 @@ function setOrchestraWorkerStatus(
   );
 }
 
-function orchestraWorkerBudget(): number {
-  const raw = process.env[ORCHESTRA_WORKER_ENV]?.trim();
+function orchestraDispatchBudget(): number {
+  const raw = process.env[ORCHESTRA_DISPATCH_BUDGET_ENV]?.trim();
   if (!raw) return 0;
   const parsed = Number(raw);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : 1;
 }
 
 function canDispatchOrchestraWorker(): boolean {
-  return orchestraWorkerBudget() !== 1;
+  return orchestraDispatchBudget() !== 1;
+}
+
+function parseBudgetEnv(name: string): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return 0;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 1;
 }
 
 function normalizePiSessionId(raw: string): string {
@@ -408,6 +418,43 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   const sessionRefreshRequests = new Map<string, number>();
   let cachedRoleNames: { expiresAt: number; roles: string[]; harnessConfigs: string[] } | null = null;
   let cachedActiveStatus: { expiresAt: number; sessionId: string; status: ActiveSessionStatus } | null = null;
+  let turnBudget = parseBudgetEnv(ORCHESTRA_TURN_BUDGET_ENV);
+  let softTimeoutSeconds = parseBudgetEnv(ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV);
+  let sessionStartedAt = Date.now();
+  let budgetPromptInjected = false;
+
+  function injectBudgetExceededPrompt(reason: "turn_limit" | "soft_timeout"): void {
+    if (budgetPromptInjected) return;
+    const prompt = process.env[ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV]?.trim();
+    if (!prompt) return;
+    budgetPromptInjected = true;
+    pi.sendUserMessage(`${prompt}\n\nBudget trigger: ${reason}`, { deliverAs: "steer" });
+  }
+
+  function softTimeoutExceeded(): boolean {
+    return softTimeoutSeconds > 0 && Date.now() - sessionStartedAt >= softTimeoutSeconds * 1000;
+  }
+
+  pi.on("turn_end", async () => {
+    if (budgetPromptInjected) return;
+    if (turnBudget > 1) {
+      turnBudget -= 1;
+      process.env[ORCHESTRA_TURN_BUDGET_ENV] = String(turnBudget);
+    }
+    if (turnBudget === 1) {
+      injectBudgetExceededPrompt("turn_limit");
+      return;
+    }
+    if (softTimeoutExceeded()) {
+      injectBudgetExceededPrompt("soft_timeout");
+    }
+  });
+
+  pi.on("tool_call", async () => {
+    if (budgetPromptInjected || !softTimeoutExceeded()) return;
+    injectBudgetExceededPrompt("soft_timeout");
+    return { block: true, reason: "Orchestra soft timeout reached; return budget handoff" };
+  });
 
   pi.registerEntryRenderer<OrchestraCommandEntry>("orchestra-command", (entry) => {
     const text = entry.data?.text ?? "/orch";
@@ -757,6 +804,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    turnBudget = parseBudgetEnv(ORCHESTRA_TURN_BUDGET_ENV);
+    softTimeoutSeconds = parseBudgetEnv(ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV);
+    sessionStartedAt = Date.now();
+    budgetPromptInjected = false;
     currentSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
     bumpSessionGeneration(currentSessionId);
     await refreshOrchestraWorkerStatus(currentSessionId, (status) => setOrchestraWorkerStatus(ctx, status), { fresh: true });

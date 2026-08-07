@@ -559,5 +559,10 @@ def _handle_await_run(args: argparse.Namespace) -> int:
         print(f"error: {record.error_text}")
     if record.blocker_text:
         print(f"blocker: {record.blocker_text}")
+    if record.status == "incomplete":
+        print(
+            "next: redispatch a smaller continuation task from this handoff; "
+            "do not redo completed work"
+        )
     print(f"active_runs_remaining: {active_remaining}")
     return 0

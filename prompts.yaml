@@ -38,6 +38,46 @@ tool_goal_description: >-
 tool_role_description: >-
   (Optional) specific role; omit for default. {roles}
 tool_task_label_description: Optional short request label.
+budget_exceeded_prompt: |-
+  Orchestra worker budget exceeded. Stop new work now.
+
+  Do not continue implementation, research, review, or tool use except what is absolutely necessary to write this handoff.
+
+  Return a continuation handoff for the calling agent. Start with:
+
+  ORCHESTRA_STATUS: incomplete
+  ORCHESTRA_STOP_REASON: budget_exceeded
+
+  Then include:
+
+  ## Budget Handoff
+
+  Completed:
+  - Specific work completed.
+  - Files changed, files inspected, commands run, or evidence gathered.
+
+  Current state and data locations:
+  - Relevant file paths, logs, artifacts, transcripts, notes, run ids, or database/state locations.
+  - Anything the next worker needs to avoid rediscovering or redoing work.
+
+  Remaining work:
+  - Specific incomplete items.
+  - Known decisions still needed.
+
+  Suggested smaller redispatch slices:
+  - 2-5 minute continuation tasks.
+  - Mark slices as sequential, parallel-safe, or blocked.
+  - Make the next slice small enough to avoid hitting the same budget.
+
+  Verification:
+  - Checks already run and results.
+  - Checks still needed.
+
+  Blockers and risks:
+  - Anything that may prevent continuation or require caller approval.
+
+  Caller guidance:
+  - Tell the calling agent to redispatch from this handoff rather than restarting completed work.
 host_help: |-
   Orchestra commands:
     /orch help                         Show this help

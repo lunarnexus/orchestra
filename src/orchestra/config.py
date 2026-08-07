@@ -84,6 +84,47 @@ or ask another agent.
 auto_return: prompt orchestrator upon return of workers
 
 {roles}"""
+DEFAULT_BUDGET_EXCEEDED_PROMPT = """Orchestra worker budget exceeded. Stop new work now.
+
+Do not continue implementation, research, review, or tool use except what is absolutely
+necessary to write this handoff.
+
+Return a continuation handoff for the calling agent. Start with:
+
+ORCHESTRA_STATUS: incomplete
+ORCHESTRA_STOP_REASON: budget_exceeded
+
+Then include:
+
+## Budget Handoff
+
+Completed:
+- Specific work completed.
+- Files changed, files inspected, commands run, or evidence gathered.
+
+Current state and data locations:
+- Relevant file paths, logs, artifacts, transcripts, notes, run ids, or database/state locations.
+- Anything the next worker needs to avoid rediscovering or redoing work.
+
+Remaining work:
+- Specific incomplete items.
+- Known decisions still needed.
+
+Suggested smaller redispatch slices:
+- 2-5 minute continuation tasks.
+- Mark slices as sequential, parallel-safe, or blocked.
+- Make the next slice small enough to avoid hitting the same budget.
+
+Verification:
+- Checks already run and results.
+- Checks still needed.
+
+Blockers and risks:
+- Anything that may prevent continuation or require caller approval.
+
+Caller guidance:
+- Tell the calling agent to redispatch from this handoff rather than restarting completed work.
+"""
 
 
 class ConfigError(ValueError):
@@ -106,11 +147,14 @@ class PromptConfig:
     tool_role_description: str = DEFAULT_TOOL_ROLE_DESCRIPTION
     tool_task_label_description: str = DEFAULT_TOOL_TASK_LABEL_DESCRIPTION
     host_help: str = DEFAULT_HOST_HELP
+    budget_exceeded_prompt: str = DEFAULT_BUDGET_EXCEEDED_PROMPT
 
 
 @dataclass(frozen=True)
 class AppConfig:
     default_timeout: int
+    turn_limit: int | None = None
+    soft_timeout: int | None = None
     state_dir: Path = DEFAULT_STATE_DIR
     log_dir: Path = DEFAULT_LOG_DIR
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
@@ -143,6 +187,8 @@ class RoleConfig:
     profile: str | None = None
     agent: str | None = None
     worker_budget: int | None = None
+    turn_limit: int | None = None
+    soft_timeout: int | None = None
     enabled: bool = True
     skills: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
@@ -190,6 +236,10 @@ def load_app_config(path: str | Path) -> AppConfig:
     state_dir = Path(_get_optional_string(raw, "state_dir") or DEFAULT_STATE_DIR)
     log_dir = Path(_get_optional_string(raw, "log_dir") or DEFAULT_LOG_DIR)
     default_timeout = _get_required_positive_int(raw, "default_timeout")
+    turn_limit = _get_optional_positive_int_or_none(raw, "turn_limit")
+    soft_timeout = _get_optional_positive_int_or_none(raw, "soft_timeout")
+    if soft_timeout is not None and soft_timeout >= default_timeout:
+        raise ConfigError("'soft_timeout' must be less than 'default_timeout'")
     auto_return = _get_optional_bool(raw, "auto_return", DEFAULT_AUTO_RETURN)
 
     concurrency_raw = raw.get("concurrency", {})
@@ -234,12 +284,17 @@ def load_app_config(path: str | Path) -> AppConfig:
             prompts_raw, "tool_task_label_description"
         ) or DEFAULT_TOOL_TASK_LABEL_DESCRIPTION,
         host_help=_get_optional_string(prompts_raw, "host_help") or DEFAULT_HOST_HELP,
+        budget_exceeded_prompt=_get_optional_string(
+            prompts_raw, "budget_exceeded_prompt"
+        ) or DEFAULT_BUDGET_EXCEEDED_PROMPT,
     )
 
     return AppConfig(
         state_dir=state_dir,
         log_dir=log_dir,
         default_timeout=default_timeout,
+        turn_limit=turn_limit,
+        soft_timeout=soft_timeout,
         concurrency=concurrency,
         auto_return=auto_return,
         prompts=prompts,
@@ -317,6 +372,8 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                 profile=_get_optional_string(role_raw, "profile"),
                 agent=_get_optional_string(role_raw, "agent"),
                 worker_budget=_get_optional_positive_int_or_none(role_raw, "worker_budget"),
+                turn_limit=_get_optional_positive_int_or_none(role_raw, "turn_limit"),
+                soft_timeout=_get_optional_positive_int_or_none(role_raw, "soft_timeout"),
                 enabled=_get_optional_bool(role_raw, "enabled", True),
                 skills=tuple(
                     _get_optional_skill_names(
@@ -352,6 +409,8 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
             profile=_get_optional_string(role_raw, "profile"),
             agent=_get_optional_string(role_raw, "agent"),
             worker_budget=_get_optional_positive_int_or_none(role_raw, "worker_budget"),
+            turn_limit=_get_optional_positive_int_or_none(role_raw, "turn_limit"),
+            soft_timeout=_get_optional_positive_int_or_none(role_raw, "soft_timeout"),
             enabled=_get_optional_bool(role_raw, "enabled", True),
             skills=tuple(
                 _get_optional_skill_names(

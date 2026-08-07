@@ -9,11 +9,14 @@ import pytest
 from orchestra.config import PromptConfig, RoleConfig
 from orchestra.harnesses import HarnessRegistry, PiHarness, WorkerRequest
 from orchestra.harnesses.common import (
-    ORCHESTRA_WORKER_ENV,
+    ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV,
+    ORCHESTRA_DISPATCH_BUDGET_ENV,
+    ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV,
+    ORCHESTRA_TURN_BUDGET_ENV,
     compact_summary,
     expand_command_template,
     orchestra_can_dispatch,
-    orchestra_worker_budget,
+    orchestra_dispatch_budget,
     render_worker_prompt,
     summary_was_truncated,
     worker_subprocess_env,
@@ -291,7 +294,7 @@ def test_pi_harness_start_removes_no_session_when_assigning_session_id(
         ("3", 2, True, "2"),
     ],
 )
-def test_worker_subprocess_env_decrements_orchestra_worker_budget(
+def test_worker_subprocess_env_decrements_orchestra_dispatch_budget(
     monkeypatch: pytest.MonkeyPatch,
     current: str | None,
     configured: int | None,
@@ -299,17 +302,17 @@ def test_worker_subprocess_env_decrements_orchestra_worker_budget(
     child: str,
 ) -> None:
     if current is None:
-        monkeypatch.delenv(ORCHESTRA_WORKER_ENV, raising=False)
+        monkeypatch.delenv(ORCHESTRA_DISPATCH_BUDGET_ENV, raising=False)
     else:
-        monkeypatch.setenv(ORCHESTRA_WORKER_ENV, current)
+        monkeypatch.setenv(ORCHESTRA_DISPATCH_BUDGET_ENV, current)
 
     env = worker_subprocess_env(worker_budget=configured)
 
     assert orchestra_can_dispatch() is can_dispatch
-    assert env[ORCHESTRA_WORKER_ENV] == child
-    assert orchestra_worker_budget(env) == int(child)
+    assert env[ORCHESTRA_DISPATCH_BUDGET_ENV] == child
+    assert orchestra_dispatch_budget(env) == int(child)
     if current is not None:
-        assert os.environ[ORCHESTRA_WORKER_ENV] == current
+        assert os.environ[ORCHESTRA_DISPATCH_BUDGET_ENV] == current
 
 
 def test_compact_summary_normalizes_and_truncates_output() -> None:
@@ -317,6 +320,18 @@ def test_compact_summary_normalizes_and_truncates_output() -> None:
     assert compact_summary("x" * 12, limit=10) == "xxxxxxx..."
     assert summary_was_truncated("x" * 12, limit=10) is True
     assert summary_was_truncated("line one", limit=10) is False
+
+
+def test_worker_subprocess_env_sets_budget_handoff_env() -> None:
+    env = worker_subprocess_env(
+        turn_limit=30,
+        soft_timeout=840,
+        budget_exceeded_prompt="handoff now",
+    )
+
+    assert env[ORCHESTRA_TURN_BUDGET_ENV] == "30"
+    assert env[ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV] == "840"
+    assert env[ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV] == "handoff now"
 
 
 def test_worker_subprocess_env_applies_role_env_without_mutating_parent(
@@ -328,26 +343,26 @@ def test_worker_subprocess_env_applies_role_env_without_mutating_parent(
 
     assert env["ROLE_ONLY"] == "role"
     assert env["NEW_VALUE"] == "set"
-    assert env[ORCHESTRA_WORKER_ENV] == "1"
+    assert env[ORCHESTRA_DISPATCH_BUDGET_ENV] == "1"
     assert os.environ["ROLE_ONLY"] == "parent"
 
 
-def test_worker_subprocess_env_preserves_orchestra_worker_budget_over_role_env(
+def test_worker_subprocess_env_preserves_orchestra_dispatch_budget_over_role_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv(ORCHESTRA_WORKER_ENV, raising=False)
+    monkeypatch.delenv(ORCHESTRA_DISPATCH_BUDGET_ENV, raising=False)
 
-    env = worker_subprocess_env(role_env={ORCHESTRA_WORKER_ENV: "99"})
+    env = worker_subprocess_env(role_env={ORCHESTRA_DISPATCH_BUDGET_ENV: "99"})
 
-    assert env[ORCHESTRA_WORKER_ENV] == "1"
+    assert env[ORCHESTRA_DISPATCH_BUDGET_ENV] == "1"
 
 
-def test_pi_harness_start_sets_orchestra_worker_env_budget(
+def test_pi_harness_start_sets_orchestra_dispatch_budget_env_budget(
     worker_request: WorkerRequest,
     python_executable: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv(ORCHESTRA_WORKER_ENV, raising=False)
+    monkeypatch.delenv(ORCHESTRA_DISPATCH_BUDGET_ENV, raising=False)
     worker_request = WorkerRequest(
         role_name=worker_request.role_name,
         goal=worker_request.goal,
@@ -364,7 +379,7 @@ def test_pi_harness_start_sets_orchestra_worker_env_budget(
         command=[
             python_executable,
             "-c",
-            "import os; print(os.environ.get('ORCHESTRA_WORKER'))",
+            "import os; print(os.environ.get('ORCHESTRA_DISPATCH_BUDGET'))",
         ],
     )
 
@@ -373,7 +388,7 @@ def test_pi_harness_start_sets_orchestra_worker_env_budget(
 
     assert stdout.strip() == "2"
     assert stderr.strip() == ""
-    assert ORCHESTRA_WORKER_ENV not in os.environ
+    assert ORCHESTRA_DISPATCH_BUDGET_ENV not in os.environ
 
 
 def test_pi_harness_start_passes_role_env(

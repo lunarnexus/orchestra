@@ -51,6 +51,7 @@ from orchestra.state import (
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_FAILED,
+    STATUS_INCOMPLETE,
     STATUS_RUNNING,
     ConcurrencyLimitError,
     RunRecord,
@@ -61,6 +62,9 @@ from orchestra.state import (
 REPORT_HEADER = "Orchestra session report"
 WORKER_EMPTY_RESULT_ERROR = "Worker exited successfully without a meaningful result"
 WORKER_EMPTY_RESULT_BLOCKER = "Worker protocol error: empty result"
+WORKER_BUDGET_EXCEEDED_BLOCKER = (
+    "Worker budget exceeded; redispatch from continuation handoff"
+)
 ROLE_USAGE = """Usage:
   /orch roles
   /orch roles ROLE SETTING VALUE
@@ -237,6 +241,11 @@ def start_run(
     request_dir = context.config.state_dir / "requests"
     request_dir.mkdir(parents=True, exist_ok=True)
     request_file = request_dir / f"{run_id}.json"
+    effective_timeout = timeout_seconds or context.config.default_timeout
+    effective_soft_timeout = role.soft_timeout or context.config.soft_timeout
+    if effective_soft_timeout is not None and effective_soft_timeout >= effective_timeout:
+        raise AppError("soft_timeout must be less than effective worker timeout")
+
     pending_request = PendingRunRequest(
         run_id=run_id,
         role_name=selected_role.name,
@@ -245,7 +254,7 @@ def start_run(
         boundaries=boundaries,
         acceptance_target=acceptance_target,
         return_format=return_format,
-        timeout_seconds=timeout_seconds or context.config.default_timeout,
+        timeout_seconds=effective_timeout,
         task_label=effective_task_label,
         request_file=request_file,
     )
@@ -453,6 +462,11 @@ def format_run_report(record: RunRecord) -> str:
         lines.append(f"error: {record.error_text}")
     if record.blocker_text:
         lines.append(f"blocker: {record.blocker_text}")
+    if record.status == STATUS_INCOMPLETE:
+        lines.append(
+            "next: redispatch a smaller continuation task from this handoff; "
+            "do not redo completed work"
+        )
     if record.worker_session_id:
         lines.append(f"worker_session_id: {record.worker_session_id}")
     if record.transcript_path:
@@ -858,6 +872,10 @@ def _format_role_lines(
             lines.append(f"      agent: {role.agent}")
         if role.worker_budget is not None:
             lines.append(f"      worker_budget: {role.worker_budget}")
+        if role.turn_limit is not None:
+            lines.append(f"      turn_limit: {role.turn_limit}")
+        if role.soft_timeout is not None:
+            lines.append(f"      soft_timeout: {role.soft_timeout}")
         if role.skills:
             lines.append(f"      skills: {', '.join(role.skills)}")
         if role.env:
@@ -1160,7 +1178,7 @@ def init_pi(
     ]
     return InitPiResult(
         files=files,
-        verification_command='pi --no-approve -p "/orch help"',
+        verification_command='pi --no-approve -p "/orch doctor"',
     )
 
 
@@ -1321,6 +1339,8 @@ def run_doctor(
     except ConfigError as exc:
         return [DoctorCheck(name="config", ok=False, detail=str(exc))]
 
+    checks.append(_doctor_pyyaml_check())
+    checks.append(_doctor_executable_check("orchestra"))
     checks.append(DoctorCheck("config", True, str(context.paths.config_path)))
     checks.append(DoctorCheck("agent_catalog", True, str(context.paths.catalog_path)))
     checks.append(DoctorCheck("database", True, str(context.store.database_path)))
@@ -1363,6 +1383,26 @@ def run_doctor(
             continue
         checks.append(DoctorCheck(f"harness:{role_name}", True, resolved))
     return checks
+
+
+def _doctor_pyyaml_check() -> DoctorCheck:
+    try:
+        import yaml as pyyaml
+    except Exception as exc:  # pragma: no cover - dependency import failure path
+        return DoctorCheck("dependency:PyYAML", False, f"import failed: {exc}")
+    version = getattr(pyyaml, "__version__", "unknown")
+    return DoctorCheck("dependency:PyYAML", True, f"version {version}")
+
+
+def _doctor_executable_check(executable: str) -> DoctorCheck:
+    resolved = shutil.which(executable)
+    if resolved is None:
+        return DoctorCheck(
+            f"executable:{executable}",
+            False,
+            f"executable not found: {executable}",
+        )
+    return DoctorCheck(f"executable:{executable}", True, resolved)
 
 
 def format_doctor_checks(checks: list[DoctorCheck]) -> str:
@@ -1626,6 +1666,9 @@ def _start_worker_process(
         timeout_seconds=pending_request.timeout_seconds,
         task_label=pending_request.task_label,
         worker_budget=role.worker_budget,
+        turn_limit=role.turn_limit or context.config.turn_limit,
+        soft_timeout=role.soft_timeout or context.config.soft_timeout,
+        budget_exceeded_prompt=context.config.prompts.budget_exceeded_prompt,
         log_path=log_path,
         skill_roots=_worker_skill_roots(context.paths.catalog_path),
         prompts=context.config.prompts,
@@ -1689,6 +1732,13 @@ def _meaningful_worker_output(stdout: str) -> str:
     return "\n".join(lines)
 
 
+def _is_incomplete_worker_result(stdout: str) -> bool:
+    return any(
+        line.strip().lower() == "orchestra_status: incomplete"
+        for line in stdout.splitlines()
+    )
+
+
 def _result_from_completed_worker(
     worker: WorkerProcess,
     stdout: str,
@@ -1696,6 +1746,22 @@ def _result_from_completed_worker(
 ) -> WorkerResult:
     result_summary = _meaningful_worker_summary(stdout)
     if worker.process.returncode == 0:
+        if _is_incomplete_worker_result(stdout):
+            return WorkerResult(
+                status=STATUS_INCOMPLETE,
+                command=worker.command,
+                prompt=worker.prompt,
+                exit_code=worker.process.returncode,
+                stdout=stdout,
+                stderr=stderr,
+                result_summary=result_summary,
+                error_text=None,
+                blocker_text=WORKER_BUDGET_EXCEEDED_BLOCKER,
+                result_summary_truncated=summary_was_truncated(_meaningful_worker_output(stdout)),
+                worker_session_id=worker.worker_session_id,
+                transcript_path=worker.transcript_path,
+                approval_needed=worker.approval_needed,
+            )
         if not result_summary:
             return WorkerResult(
                 status=STATUS_FAILED,
@@ -1751,7 +1817,7 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
 
     terminal_status = (
         result.status
-        if result.status in {STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED}
+        if result.status in {STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}
         else STATUS_FAILED
     )
     artifact_path: Path | None = None

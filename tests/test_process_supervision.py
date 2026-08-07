@@ -4,7 +4,13 @@ from pathlib import Path
 
 import yaml
 
-from orchestra.state import STATUS_CANCELLED, STATUS_DONE, STATUS_FAILED, StateStore
+from orchestra.state import (
+    STATUS_CANCELLED,
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_INCOMPLETE,
+    StateStore,
+)
 from tests.helpers import extract_run_id, run_cli, wait_for_condition
 from tests.types import RuntimeFilesFactory
 
@@ -173,6 +179,59 @@ def test_zero_exit_empty_output_marks_run_failed_for_pi_hermes_and_opencode(
         assert store.list_active_runs(f"manual:empty-output-{harness}") == []
 
 
+def test_budget_handoff_marker_marks_run_incomplete(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    output = (
+        "ORCHESTRA_STATUS: incomplete\n"
+        "ORCHESTRA_STOP_REASON: budget_exceeded\n"
+        "## Budget Handoff\nCompleted:\n- one slice\nRemaining:\n- next slice\n"
+    )
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", output],
+    )
+
+    result = run_cli(
+        "--config",
+        str(config_path),
+        "--agent-catalog",
+        str(catalog_path),
+        "do",
+        "--session-id",
+        "manual:incomplete",
+        "--goal",
+        "Run a budget handoff worker.",
+    )
+    assert result.returncode == 0
+    run_id = extract_run_id(result.stdout)
+
+    store = StateStore(db_path)
+    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_INCOMPLETE, timeout=5)
+
+    record = store.get_run(run_id)
+    assert record.result_summary is not None
+    assert "Budget Handoff" in record.result_summary
+    assert record.blocker_text == "Worker budget exceeded; redispatch from continuation handoff"
+
+    await_run = run_cli(
+        "--config",
+        str(config_path),
+        "--agent-catalog",
+        str(catalog_path),
+        "_await-run",
+        "--session-id",
+        "manual:incomplete",
+        "--run-id",
+        run_id,
+    )
+    assert "status: incomplete" in await_run.stdout
+    assert "redispatch a smaller continuation task" in await_run.stdout
+
+
 def test_zero_exit_bootstrap_only_output_marks_run_failed(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
@@ -211,6 +270,57 @@ def test_zero_exit_bootstrap_only_output_marks_run_failed(
     assert record.result_summary is None
     assert record.error_text == "Worker exited successfully without a meaningful result"
     assert record.blocker_text == "Worker protocol error: empty result"
+
+
+def test_soft_timeout_must_be_less_than_effective_worker_timeout(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    config_path, catalog_path, _db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "unused"],
+    )
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "worker",
+                "roles": {
+                    "worker": {
+                        "harness": "pi",
+                        "command": [
+                            python_executable,
+                            str(fake_worker_script),
+                            "success",
+                            "--output",
+                            "unused",
+                        ],
+                        "soft_timeout": 5,
+                    }
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = run_cli(
+        "--config",
+        str(config_path),
+        "--agent-catalog",
+        str(catalog_path),
+        "do",
+        "--session-id",
+        "manual:bad-soft-timeout",
+        "--goal",
+        "Run with invalid soft timeout.",
+        "--timeout",
+        "5",
+    )
+
+    assert result.returncode == 1
+    assert "soft_timeout must be less than effective worker timeout" in result.stdout
 
 
 def test_unknown_harness_marks_run_failed_and_clears_active_queue(

@@ -30,6 +30,33 @@ harness_configs:
     - '{model}'
     - '{prompt}'
 roles:
+  # example_all_options:
+  #   harness_config: pi        # Named harness config from harness_configs.
+  #   harness_fallback:         # Optional startup fallback configs, tried in order.
+  #   - harness_config: hermes
+  #     profile: tori           # Fallback-specific profile override.
+  #     model: gpt-5-mini       # Fallback-specific model override.
+  #     agent: build            # Fallback-specific agent override.
+  #   model: provider/model     # Model passed into harness command templates.
+  #   profile: default          # Harness profile passed into command templates.
+  #   agent: build              # Harness agent passed into command templates.
+  #   prompt_addition: >-       # Extra role instructions appended to worker prompt.
+  #     Keep the task focused and return concise evidence.
+  #   worker_budget: 2          # Nested Orchestra dispatch budget for this worker.
+  #   turn_limit: 30            # Cooperative turn budget before handoff prompt.
+  #   soft_timeout: 840         # Cooperative timeout seconds before handoff prompt.
+  #   skills:                   # Skills loaded or requested for this role.
+  #   - builder
+  #   enabled: true             # Whether the role is selectable for dispatch.
+  #   env:                      # Extra environment variables for worker process.
+  #     EXAMPLE_FLAG: '1'
+  #
+  # Inline role alternative when not using harness_configs:
+  # example_inline_role:
+  #   harness: pi               # Harness plugin name.
+  #   command: [pi, --model, '{model}', -p, '{prompt}']
+  #   model: provider/model
+  #   enabled: false
   builder:
     harness_config: pi
     harness_fallback:
@@ -79,14 +106,12 @@ roles:
   researcher:
     harness_config: pi
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
-    prompt_addition: Gather evidence with sources from docs, web, or code. Do not
-      change code. Return concise findings, sources, blockers, and risks.
+    prompt_addition: Execute the evaluation method supplied in the task. Stay read-only
+      and return evidence-backed findings.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
-      HINDSIGHT4PI_AUTO_RECALL: '1'
-    skills:
-    - researcher
+      HINDSIGHT4PI_AUTO_RECALL: '0'
   intern:
     harness_config: pi
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved

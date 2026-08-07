@@ -6,7 +6,7 @@ import pytest
 
 from orchestra.config import RoleConfig
 from orchestra.harnesses import WorkerRequest
-from orchestra.harnesses.common import ORCHESTRA_WORKER_ENV
+from orchestra.harnesses.common import ORCHESTRA_DISPATCH_BUDGET_ENV
 from orchestra.harnesses.hermes import HermesHarness
 
 
@@ -89,19 +89,19 @@ def test_hermes_harness_drops_unset_optional_model_and_profile(
     assert "--model" not in command
 
 
-def test_hermes_harness_start_sets_orchestra_worker_env_counter(
+def test_hermes_harness_start_sets_orchestra_dispatch_budget_env_counter(
     tmp_path: Path,
     python_executable: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv(ORCHESTRA_WORKER_ENV, raising=False)
+    monkeypatch.delenv(ORCHESTRA_DISPATCH_BUDGET_ENV, raising=False)
     harness = HermesHarness()
     role = RoleConfig(
         harness="hermes",
         command=[
             python_executable,
             "-c",
-            "import os; print(os.environ.get('ORCHESTRA_WORKER'))",
+            "import os; print(os.environ.get('ORCHESTRA_DISPATCH_BUDGET'))",
         ],
     )
 

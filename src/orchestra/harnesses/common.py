@@ -9,13 +9,16 @@ from pathlib import Path
 from orchestra.config import RoleConfig
 from orchestra.harnesses.base import WorkerRequest
 
-ORCHESTRA_WORKER_ENV = "ORCHESTRA_WORKER"
+ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET"
+ORCHESTRA_TURN_BUDGET_ENV = "ORCHESTRA_TURN_BUDGET"
+ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV = "ORCHESTRA_SOFT_TIMEOUT_SECONDS"
+ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV = "ORCHESTRA_BUDGET_EXCEEDED_PROMPT"
 SKILL_LIBRARY_DIR = "skills"
 SKILL_FILENAME = "SKILL.md"
 
 
-def orchestra_worker_budget(env: Mapping[str, str] | None = None) -> int:
-    raw = (env or os.environ).get(ORCHESTRA_WORKER_ENV)
+def orchestra_dispatch_budget(env: Mapping[str, str] | None = None) -> int:
+    raw = (env or os.environ).get(ORCHESTRA_DISPATCH_BUDGET_ENV)
     if raw is None or not raw.strip():
         return 0
     try:
@@ -26,24 +29,33 @@ def orchestra_worker_budget(env: Mapping[str, str] | None = None) -> int:
 
 
 def orchestra_can_dispatch(env: Mapping[str, str] | None = None) -> bool:
-    return orchestra_worker_budget(env) != 1
+    return orchestra_dispatch_budget(env) != 1
 
 
 def worker_subprocess_env(
     *,
     worker_budget: int | None = None,
+    turn_limit: int | None = None,
+    soft_timeout: int | None = None,
+    budget_exceeded_prompt: str = "",
     role_env: Mapping[str, str] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     worker_env = dict(env or os.environ)
     worker_env.update(role_env or {})
-    current_budget = orchestra_worker_budget(worker_env)
+    current_budget = orchestra_dispatch_budget(worker_env)
     configured_budget = worker_budget or 1
     if current_budget > 1:
         child_budget = min(current_budget - 1, configured_budget)
     else:
         child_budget = configured_budget
-    worker_env[ORCHESTRA_WORKER_ENV] = str(child_budget)
+    worker_env[ORCHESTRA_DISPATCH_BUDGET_ENV] = str(child_budget)
+    if turn_limit is not None:
+        worker_env[ORCHESTRA_TURN_BUDGET_ENV] = str(turn_limit)
+    if soft_timeout is not None:
+        worker_env[ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV] = str(soft_timeout)
+    if turn_limit is not None or soft_timeout is not None:
+        worker_env[ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV] = budget_exceeded_prompt
     return worker_env
 
 

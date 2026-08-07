@@ -83,6 +83,8 @@ def test_load_app_config_reads_values_from_fixture(fixture_dir: Path) -> None:
     assert config.state_dir == Path("state")
     assert config.log_dir == Path("logs")
     assert config.default_timeout == 600
+    assert config.turn_limit is None
+    assert config.soft_timeout is None
     assert config.concurrency.global_limit == 4
     assert config.concurrency.per_session_limit == 3
     assert config.auto_return is True
@@ -101,6 +103,8 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.concurrency.global_limit == DEFAULT_GLOBAL_CONCURRENCY
     assert config.concurrency.per_session_limit == DEFAULT_PER_SESSION_CONCURRENCY
     assert config.auto_return is DEFAULT_AUTO_RETURN
+    assert config.turn_limit is None
+    assert config.soft_timeout is None
     assert config.prompts.tool_description == DEFAULT_TOOL_DESCRIPTION
     assert config.prompts.tool_prompt_snippet == DEFAULT_TOOL_PROMPT_SNIPPET
     assert config.prompts.tool_prompt_guidelines == DEFAULT_TOOL_PROMPT_GUIDELINES
@@ -231,6 +235,8 @@ def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
         ("default_timeout: 0\n", "'default_timeout' must be a positive integer"),
         ("default_timeout: 30\nconcurrency: 3\n", "'concurrency' must be a mapping"),
         ("default_timeout: 30\nauto_return: maybe\n", "'auto_return' must be a boolean"),
+        ("default_timeout: 30\nturn_limit: 0\n", "'turn_limit' must be a positive integer"),
+        ("default_timeout: 30\nsoft_timeout: 30\n", "'soft_timeout' must be less than 'default_timeout'"),
         ("default_timeout: 30\nstate_dir: ''\n", "'state_dir' must be a non-empty string when provided"),
     ],
 )
@@ -327,22 +333,26 @@ def test_root_agent_catalog_phase_1_role_prompt_additions_match_plan(
 def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
     path = tmp_path / "explicit-config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 30\n", encoding="utf-8")
+    path.write_text("default_timeout: 30\nturn_limit: 7\nsoft_timeout: 20\n", encoding="utf-8")
     prompts_path.write_text(
         """
 default_return_format: Custom return.
 tool_prompt_guidelines:
   - Custom guideline.
 host_help: Custom help {roles}
+budget_exceeded_prompt: Custom budget handoff.
 """.lstrip(),
         encoding="utf-8",
     )
 
     config = load_app_config(path)
 
+    assert config.turn_limit == 7
+    assert config.soft_timeout == 20
     assert config.prompts.default_return_format == "Custom return."
     assert config.prompts.tool_prompt_guidelines == ("Custom guideline.",)
     assert config.prompts.host_help == "Custom help {roles}"
+    assert config.prompts.budget_exceeded_prompt == "Custom budget handoff."
 
 
 def test_load_agent_catalog_supports_optional_fields(tmp_path: Path) -> None:
@@ -380,6 +390,8 @@ roles:
     model: gpt-5
     profile: reviewer
     worker_budget: 2
+    turn_limit: 30
+    soft_timeout: 840
     skills:
       - code-reviewer
     env:
@@ -403,6 +415,8 @@ roles:
     assert reviewer.model == "gpt-5"
     assert reviewer.profile == "reviewer"
     assert reviewer.worker_budget == 2
+    assert reviewer.turn_limit == 30
+    assert reviewer.soft_timeout == 840
     assert reviewer.command == ["hermes", "--profile", "{profile}", "-z", "{prompt}"]
     assert reviewer.enabled is True
     assert reviewer.skills == ("code-reviewer",)

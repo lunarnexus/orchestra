@@ -23,6 +23,9 @@ class WorkerRequest:
     return_format: str = ""
     task_label: str = ""
     worker_budget: int | None = None
+    turn_limit: int | None = None
+    soft_timeout: int | None = None
+    budget_exceeded_prompt: str = ""
     log_path: Path | None = None
     skill_roots: tuple[Path, ...] = ()
     prompts: PromptConfig = PromptConfig()

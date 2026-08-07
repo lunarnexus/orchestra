@@ -8,7 +8,7 @@ import pytest
 from orchestra.config import RoleConfig
 from orchestra.harnesses import OpenCodeHarness, WorkerProcess, WorkerRequest
 from orchestra.harnesses.common import (
-    ORCHESTRA_WORKER_ENV,
+    ORCHESTRA_DISPATCH_BUDGET_ENV,
     expand_command_template,
     render_worker_prompt,
 )
@@ -160,7 +160,7 @@ def test_opencode_harness_start_passes_process_group_flag(
     mock_popen: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv(ORCHESTRA_WORKER_ENV, "1")
+    monkeypatch.setenv(ORCHESTRA_DISPATCH_BUDGET_ENV, "1")
     harness = OpenCodeHarness(starter=mock_popen)
     role = RoleConfig(
         harness="opencode",
@@ -188,7 +188,7 @@ def test_opencode_harness_start_passes_process_group_flag(
     mock_popen.assert_called_once()
     call_kwargs = mock_popen.call_args[1]
     assert "start_new_session" in call_kwargs
-    assert call_kwargs["env"][ORCHESTRA_WORKER_ENV] == "1"
+    assert call_kwargs["env"][ORCHESTRA_DISPATCH_BUDGET_ENV] == "1"
     assert call_kwargs["env"]["OPENCODE_ROLE_ENV"] == "configured"
     assert worker.command[-1] == worker.prompt
 

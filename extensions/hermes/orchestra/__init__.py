@@ -35,11 +35,11 @@ _FALLBACK_TOOL_INFO = {
 _TOOL_TIMEOUT_ERROR = (
     "timeout is not accepted by orch_dispatch; configured default_timeout applies."
 )
-_ORCHESTRA_WORKER_ENV = "ORCHESTRA_WORKER"
+_ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET"
 
 
-def _orchestra_worker_budget() -> int:
-    raw = os.environ.get(_ORCHESTRA_WORKER_ENV, "").strip()
+def _orchestra_dispatch_budget() -> int:
+    raw = os.environ.get(_ORCHESTRA_DISPATCH_BUDGET_ENV, "").strip()
     if not raw:
         return 0
     try:
@@ -50,7 +50,7 @@ def _orchestra_worker_budget() -> int:
 
 
 def _can_dispatch_orchestra_worker() -> bool:
-    return _orchestra_worker_budget() != 1
+    return _orchestra_dispatch_budget() != 1
 
 
 def normalize_hermes_session_id(raw_session_id: str) -> str:
