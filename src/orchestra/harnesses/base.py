@@ -24,6 +24,7 @@ class WorkerRequest:
     task_label: str = ""
     worker_budget: int | None = None
     log_path: Path | None = None
+    skill_roots: tuple[Path, ...] = ()
     prompts: PromptConfig = PromptConfig()
 
 

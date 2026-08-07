@@ -1,6 +1,6 @@
 # Commit Handoff
 
-Use only when commit preparation is explicitly assigned.
+Trigger: the assigned slice explicitly requires creating a commit.
 
 1. Run the required focused and project checks.
 2. Inspect status and the complete intended diff.

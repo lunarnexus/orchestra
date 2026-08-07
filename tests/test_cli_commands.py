@@ -1042,6 +1042,8 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
     assert payload["role_env"] == "configured"
     assert "Role: reviewer" in payload["prompt"]
     assert "Role skill: reviewer" in payload["prompt"]
+    assert f"Skill directory: {skill_dir}" in payload["prompt"]
+    assert "Resolve relative resource paths against this directory." in payload["prompt"]
     assert "# Reviewer Skill" in payload["prompt"]
     assert "Role instructions: Review only." in payload["prompt"]
 

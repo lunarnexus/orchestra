@@ -115,8 +115,41 @@ def test_pi_harness_injects_local_role_skill_before_goal(
 
     assert "Role skill: code-reviewer" in prompt
     assert "# Code Reviewer" in prompt
-    assert "Loaded from:" not in prompt
+    assert f"Skill directory: {skill_dir}" in prompt
+    assert "Resolve relative resource paths against this directory." in prompt
     assert prompt.index("Role skill: code-reviewer") < prompt.index("Goal:")
+
+
+def test_pi_harness_resolves_role_skill_from_catalog_relative_root(
+    worker_request: WorkerRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog_root = tmp_path / "orchestra-root"
+    skill_dir = catalog_root / "skills" / "builder"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "# Builder\n\nRead `resources/spikes.md`.", encoding="utf-8"
+    )
+    child_dir = tmp_path / "project"
+    child_dir.mkdir()
+    monkeypatch.chdir(child_dir)
+    request = WorkerRequest(
+        role_name=worker_request.role_name,
+        goal=worker_request.goal,
+        skill_roots=(child_dir / "skills", catalog_root / "skills"),
+    )
+    role = RoleConfig(
+        harness="pi",
+        skills=("builder",),
+        command=["pi", "-p", "{prompt}"],
+    )
+
+    prompt = PiHarness().build_prompt(request, role)
+
+    assert "# Builder" in prompt
+    assert f"Skill directory: {skill_dir}" in prompt
+    assert "Resolve relative resource paths against this directory." in prompt
 
 
 def test_pi_harness_falls_back_to_native_skill_instruction(

@@ -1602,6 +1602,7 @@ def _start_worker_process(
         task_label=pending_request.task_label,
         worker_budget=role.worker_budget,
         log_path=log_path,
+        skill_roots=_worker_skill_roots(context.paths.catalog_path),
         prompts=context.config.prompts,
     )
 
@@ -1609,6 +1610,11 @@ def _start_worker_process(
         return selected_role, harness.start(request, role)
     except Exception as exc:
         raise AppError(f"failed to start harness: {role.harness}: {exc}") from exc
+
+
+def _worker_skill_roots(catalog_path: Path) -> tuple[Path, ...]:
+    roots = (Path.cwd() / SKILL_LIBRARY_DIR, catalog_path.resolve().parent / SKILL_LIBRARY_DIR)
+    return tuple(dict.fromkeys(root.resolve() for root in roots))
 
 
 def _annotate_result_with_fallback(result: WorkerResult, note: str) -> WorkerResult:
