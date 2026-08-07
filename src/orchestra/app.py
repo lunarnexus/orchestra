@@ -856,7 +856,10 @@ def _format_role_lines(
         if role.skills:
             lines.append(f"      skills: {', '.join(role.skills)}")
         if role.env:
-            lines.append(f"      env: {', '.join(sorted(role.env))}")
+            env_values = ", ".join(
+                f"{key}={value}" for key, value in sorted(role.env.items())
+            )
+            lines.append(f"      env: {env_values}")
     return lines
 
 
