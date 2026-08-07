@@ -737,37 +737,11 @@ def format_roles(context: AppContext, *, include_disabled: bool = False) -> str:
     ]
 
     visible_roles = [*enabled_roles, *(disabled_roles if include_disabled else [])]
-    name_width = max((len(role_name) for role_name, _role in visible_roles), default=4)
-    harness_width = max((len(role.harness) for _role_name, role in visible_roles), default=7)
-
-    lines = ["Configured roles", f"Default: {context.catalog.default_role}", "", "Enabled:"]
-    if enabled_roles:
-        lines.extend(
-            _format_role_lines(
-                context,
-                enabled_roles,
-                marker="✓",
-                name_width=name_width,
-                harness_width=harness_width,
-            )
-        )
+    lines = ["Configured roles", f"Default: {context.catalog.default_role}", ""]
+    if visible_roles:
+        lines.extend(_format_role_lines(context, visible_roles))
     else:
         lines.append("  - none")
-
-    if include_disabled:
-        lines.extend(["", "Disabled:"])
-        if disabled_roles:
-            lines.extend(
-                _format_role_lines(
-                    context,
-                    disabled_roles,
-                    marker="✗",
-                    name_width=name_width,
-                    harness_width=harness_width,
-                )
-            )
-        else:
-            lines.append("  - none")
     return "\n".join(lines)
 
 
@@ -859,34 +833,30 @@ def _parse_user_toggle_bool(value: str, *, setting_name: str) -> bool:
 def _format_role_lines(
     context: AppContext,
     roles: list[tuple[str, RoleConfig]],
-    *,
-    marker: str,
-    name_width: int,
-    harness_width: int,
 ) -> list[str]:
     lines: list[str] = []
-    for role_name, role in roles:
-        details: list[str] = []
+    for index, (role_name, role) in enumerate(roles):
+        if index:
+            lines.append("")
+        if role_name == context.catalog.default_role:
+            role_marker = "D"
+        else:
+            role_marker = "✓" if role.enabled else "✗"
+        lines.append(f"  {role_marker}  {role_name} [{role.harness}]")
         if role.harness_config:
-            details.append(f"cfg={role.harness_config}")
+            lines.append(f"      harness: {role.harness_config}")
         if role.model:
-            details.append(role.model)
+            lines.append(f"      model: {role.model}")
         if role.profile:
-            details.append(f"profile={role.profile}")
+            lines.append(f"      profile: {role.profile}")
         if role.agent:
-            details.append(f"agent={role.agent}")
+            lines.append(f"      agent: {role.agent}")
         if role.worker_budget is not None:
-            details.append(f"worker_budget={role.worker_budget}")
+            lines.append(f"      worker_budget: {role.worker_budget}")
         if role.skills:
-            details.append(f"skills={','.join(role.skills)}")
+            lines.append(f"      skills: {', '.join(role.skills)}")
         if role.env:
-            details.append(f"env={','.join(sorted(role.env))}")
-        suffix = f"  {' '.join(details)}" if details else ""
-        role_marker = "D" if role_name == context.catalog.default_role else marker
-        lines.append(
-            f"  {role_marker} {role_name.ljust(name_width)}  "
-            f"{role.harness.ljust(harness_width)}{suffix}".rstrip()
-        )
+            lines.append(f"      env: {', '.join(sorted(role.env))}")
     return lines
 
 

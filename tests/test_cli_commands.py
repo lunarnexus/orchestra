@@ -215,9 +215,8 @@ def test_roles_lists_configured_worker_roles(
     assert exit_code == 0
     assert "Configured roles" in output
     assert "Default: builder" in output
-    assert "Enabled:" in output
-    assert "D builder" in output
-    assert "pi" in output
+    assert "  D  builder [pi]" in output
+    assert "      harness: pi" in output
 
 
 def test_status_reports_active_run(
@@ -543,16 +542,13 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
     assert default_exit_code == 0
     assert "Configured roles" in default_output
     assert "Default: reviewer" in default_output
-    assert "Enabled:" in default_output
-    assert "D reviewer  hermes" in default_output
-    assert "Disabled:" not in default_output
-    assert "✗ worker" not in default_output
+    assert "  D  reviewer [hermes]" in default_output
+    assert "  ✗  worker [pi]" not in default_output
 
     assert all_exit_code == 0
     assert "Default: reviewer" in all_output
-    assert "D reviewer  hermes" in all_output
-    assert "Disabled:" in all_output
-    assert "✗ worker" in all_output
+    assert "  D  reviewer [hermes]" in all_output
+    assert "  ✗  worker [pi]" in all_output
 
 
 @pytest.mark.parametrize("value", ["true", "yes", "y", "1", "on"])
@@ -605,7 +601,7 @@ def test_roles_command_accepts_common_true_enabled_values(
 
     assert exit_code == 0
     assert "Updated role reviewer: enabled=true" in output
-    assert "Enabled:" in output
+    assert "  ✓  reviewer [pi]" in output
     assert catalog["roles"]["reviewer"]["enabled"] is True
 
 
@@ -659,8 +655,7 @@ def test_roles_command_accepts_common_false_enabled_values(
 
     assert exit_code == 0
     assert "Updated role reviewer: enabled=false" in output
-    assert "Disabled:" in output
-    assert "✗ reviewer" in output
+    assert "  ✗  reviewer [pi]" in output
     assert catalog["roles"]["reviewer"]["enabled"] is False
 
 
@@ -971,16 +966,18 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert "harness-config" not in help_output
     assert "Configured roles" in help_output
     assert "Default: reviewer" in help_output
-    assert "✓ worker    pi" in help_output
-    assert "D reviewer  hermes  cfg=hermes gpt-5" in help_output
-    assert "✗ critic" not in help_output
-    assert "✓ worker    pi" in tool_info["description"]
-    assert "D reviewer  hermes  cfg=hermes gpt-5" in tool_info["description"]
+    assert "  ✓  worker [pi]" in help_output
+    assert "  D  reviewer [hermes]" in help_output
+    assert "      model: gpt-5" in help_output
+    assert "  ✗  critic" not in help_output
+    assert "  ✓  worker [pi]" in tool_info["description"]
+    assert "  D  reviewer [hermes]" in tool_info["description"]
+    assert "      model: gpt-5" in tool_info["description"]
     assert tool_info["roleDescription"].startswith("(Optional) specific role; omit for default.")
-    assert "✓ worker    pi" in tool_info["roleDescription"]
-    assert "D reviewer  hermes  cfg=hermes gpt-5" in tool_info["roleDescription"]
-    assert "✗ critic" not in tool_info["description"]
-    assert "✗ critic" not in tool_info["roleDescription"]
+    assert "  ✓  worker [pi]" in tool_info["roleDescription"]
+    assert "  D  reviewer [hermes]" in tool_info["roleDescription"]
+    assert "  ✗  critic" not in tool_info["description"]
+    assert "  ✗  critic" not in tool_info["roleDescription"]
     assert "timeoutDescription" not in tool_info
 
 
