@@ -32,6 +32,16 @@ def test_parser_exposes_mvp_subcommands(capsys: pytest.CaptureFixture[str]) -> N
     assert "local/manual session id" in do_help
 
 
+def test_roles_parser_exposes_supported_settings_only() -> None:
+    parser = build_parser()
+
+    args = parser.parse_args(["roles", "worker", "harness", "pi"])
+    assert args.setting == "harness"
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["roles", "worker", "harness-config", "pi"])
+
+
 def test_public_help_hides_internal_subcommands() -> None:
     parser = build_parser()
 

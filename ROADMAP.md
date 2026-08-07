@@ -9,23 +9,29 @@ Orchestra roadmap items are split into:
 
 ### Skill system and development methodology
 
-- [ ] Refine the concise active `builder` skill after real use.
-  - Active `builder` skill now exists and is wired into the catalog.
-  - Keep TDD, Red -> Green -> Refactor, systematic debugging/RCA, git discipline, minimal-change rules, and verification handoff concise.
-  - Adjust only when real worker behavior shows missing or bloated guidance.
-
-- [ ] Refine `planner` and `researcher` skills after real use.
+- [ ] Refine `planner` skill after real use.
   - Planner should produce executable 2-5 minute slices.
   - Planner should mark dependencies precisely: sequential, parallel-safe, blocked.
   - Planner should decide research vs spike vs implementation.
-  - Researcher should return evidence, sources, confidence, blockers, and risks without changing code.
-
-- [ ] Refine `reviewer` skill after real use if verify/review/security modes are unclear or too broad.
-  - Verify mode: commands/results/missing checks.
-  - Review mode: quality, scope, maintainability, simplification opportunities.
-  - Security mode: secrets, injection, auth, data, dependencies, shell/file/network risks.
 
 ### Dispatch, scheduling, and limits
+
+- [ ] Require a meaningful worker result before marking a run successful.
+  - Mark a run `done` only when the process exits successfully and the harness returns a non-empty normalized result summary; do not require raw stdout or role-specific headings.
+  - Treat whitespace, bootstrap messages, and warnings as empty output.
+  - When a process exits zero without a result, mark the run `failed` with a clear worker-protocol error instead of grading it as completed work.
+  - Preserve logs, transcripts, session identity, return artifacts, and possible worktree changes for diagnosis.
+  - Do not start a fallback worker after an empty runtime result because the first worker may already have produced side effects.
+  - Ensure no-op, blocker, and research runs can succeed when they return a meaningful explanation.
+  - Make evaluations classify empty-result runs as infrastructure/runtime failures and skip behavioral grading.
+  - Add result-extraction and empty-result regression coverage for Pi, Hermes, and OpenCode.
+
+- [ ] Add turn-limit controls alongside or instead of global dispatch timeout.
+  - Support bounded worker turns as an execution budget, not only wall-clock timeout.
+  - Allow config/policy to choose timeout-only, turn-limit-only, or both.
+  - Keep defaults simple and fail clearly when a limit is hit.
+  - Document whether limits apply per worker run, per orchestrator request, or both.
+  - Include tests for enforcement and clear final status/reporting when a turn limit stops a run.
 
 - [ ] Add per-model/API concurrency limits.
   - Current limits are global and per-session.
@@ -34,12 +40,6 @@ Orchestra roadmap items are split into:
   - Consider config such as `limits.global`, `limits.per_session`, `limits.per_harness`, `limits.per_provider`, and `limits.per_model`.
   - Include tests for atomic enforcement and clear over-limit errors.
 
-- [ ] Add model-callable worker stop/cancel support.
-  - Expose an `orch_stop` host tool for Pi and Hermes.
-  - Use runtime session identity from host context; never accept model/user-supplied session identity.
-  - If no run id is provided, stop only when exactly one owned active run exists; otherwise return active run ids and ask for a specific one.
-  - Reuse existing core `stop_run(...)` and ownership checks.
-
 - [ ] Add a session-level heading for consolidated multi-worker reports, e.g. `[orchestra: 3 workers returned]`.
 
 - [ ] Add a simple live operator view.
@@ -47,12 +47,6 @@ Orchestra roadmap items are split into:
   - Prefer this before any dashboard/widget UI.
 
 ### Harness and host parity
-
-- [ ] Add OpenCode parity with Pi/Hermes.
-  - Add OpenCode one-shot worker support.
-  - Add an OpenCode `orch_dispatch` custom tool/plugin using runtime session identity.
-  - Map Orchestra roles to OpenCode agents intentionally.
-  - Keep nested subagent spawning bounded.
 
 - [ ] Add a minimal runtime dependency/setup validation check.
   - Verify PyYAML imports cleanly.
@@ -87,12 +81,19 @@ Orchestra roadmap items are split into:
   - Preserve useful full worker output in return artifacts.
   - Use reviewer/critic passes for important findings instead of retaining full sessions by default.
 
-- [ ] Add real-agent eval/reporting harness for prompt-flow quality.
-  - Prefer live Pi/Hermes/OpenCode runs.
-  - Use fake workers only for focused unit tests where isolation is necessary.
-  - Start with a small scenario runner and human-readable reports before automated scoring.
+- [ ] Expand behavioral evaluation coverage.
+  - Run at least three trials per builder case and add prior-skill/no-skill controls.
+  - Add language-diverse fixtures.
+  - Document stable Hermes and OpenCode native trace locations, then add adapters.
+  - Build equivalent natural-dispatch eval suites for planner, researcher, reviewer, verifier, appsec, and orchestrator behavior.
 
 ## Wishlist
+
+### Harness and host parity
+
+- [ ] OpenCode executable `/orch` command parity if OpenCode exposes a supported command implementation/output API.
+  - Current shipped `orch_dispatch` plugin remains the supported host surface.
+  - Prompt-template commands are not equivalent host commands.
 
 ### Future orchestration modes
 

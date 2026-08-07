@@ -109,14 +109,14 @@ Default config shape:
 ```yaml
 state_dir: /Users/james/workspace/orchestra/state
 log_dir: /Users/james/workspace/orchestra/logs
-default_timeout: 600
+default_timeout: <positive-integer-seconds>
 concurrency:
   global: 4
   per_session: 3
 auto_return: true
 ```
 
-`default_timeout` is the worker execution timeout in seconds. Manual per-run timeouts can be supplied with `orchestra do --timeout SEC` or host `/orch do --timeout SEC`. The LLM-callable `orch_dispatch` tool intentionally does not expose a timeout parameter; tool dispatches use the configured default.
+`default_timeout` is the worker execution timeout in seconds and must be a positive integer in `config.yaml`. Manual per-run timeouts can be supplied with `orchestra do --timeout SEC` or host `/orch do --timeout SEC`. The LLM-callable `orch_dispatch` tool intentionally does not expose a timeout parameter; tool dispatches use the configured value.
 
 Example role catalog entry:
 
@@ -298,10 +298,10 @@ Hermes runtime session identity comes from the runtime `session_id` provided to 
 
 OpenCode is supported as a one-shot worker harness via `harness: opencode` in a harness config referenced by any role.
 
-No Orchestra host-plugin install step is required for harness-only use. `orchestra init opencode` simply reports that no install action is needed. Users only need:
+Users need:
 
 1. The `opencode` CLI available on PATH (`which opencode`).
-2. A configured role that points at an OpenCode harness config and uses a valid model string for OpenCode.
+2. A configured role that points at an OpenCode harness config and uses a valid OpenCode model string.
 
 The current repo catalog uses OpenCode for the `appsec` role.
 
@@ -337,19 +337,46 @@ Recommended `--agent` choices by use case:
 - Read-only planning or security review: `--agent plan`
 - External research: `--agent scout` (if available)
 
-One-shot init/setup helper for configured environments:
+## OpenCode Host Plugin
+
+OpenCode host support ships as a real plugin under `extensions/opencode/orchestra/index.ts`.
+
+Install or update it with:
 
 ```bash
-orchestra init all
+orchestra init opencode [--force] [--copy]
 ```
 
-This detects configured harnesses from the resolved catalog and runs the relevant init actions for `pi`, `hermes`, and `opencode` without duplicating work.
+That installs the plugin globally under the active OpenCode config directory, typically:
 
-Smoke test when the role is enabled and a model is configured:
+```text
+~/.config/opencode/plugins/orchestra/
+```
+
+If `OPENCODE_CONFIG_DIR` is set, Orchestra installs there instead. `orchestra init all` includes OpenCode when the catalog references an OpenCode harness.
+
+Supported host surface:
+
+- `orch_dispatch` is the callable OpenCode tool.
+- It uses runtime `context.sessionID`, normalized as `opencode:<sessionID>`.
+- It rejects model/user-supplied identity fields and timeout overrides.
+- Dispatch uses tokenized `orchestra do` argv via Node `execFile`, not shell-string execution.
+- Sparse toasts cover dispatch and failure events.
+- Final session reports are reinjected into the owning OpenCode session after all workers for that session finish.
+
+OpenCode does not currently expose executable `/orch` command parity here; prompt-template commands are not equivalent to real host commands.
+
+Smoke verification:
 
 ```bash
+orchestra init opencode --force
 opencode run --agent plan --model openai/gpt-5.4 "Reply with exactly OPENCODE_DIRECT_OK"
-orchestra do --session-id manual:opencode-demo --role appsec --goal "Inspect this repo for obvious security issues and return a concise report"
+```
+
+Then, inside the OpenCode session, call `orch_dispatch` with a small goal and confirm the return is owned by `opencode:<sessionID>`.
+
+```bash
+orchestra history --session-id opencode:<sessionID> --limit 5
 ```
 
 Orchestra does not currently provide a `{workdir}` placeholder for OpenCode command templates. Omitting `--dir` lets OpenCode run in the current working directory, which is the safer default for a shared catalog.

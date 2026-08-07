@@ -12,6 +12,42 @@ from tests.helpers import extract_run_id, wait_for_condition
 from tests.types import RuntimeFilesFactory
 
 
+def test_do_output_exposes_effective_timeout_seconds(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, catalog_path, _ = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "worker done"],
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "do",
+            "--session-id",
+            "manual:test-session",
+            "--goal",
+            "Summarize repository status.",
+            "--timeout",
+            "17",
+        ]
+    )
+    do_output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "timeout_seconds: 17" in do_output
+    assert "dispatch: queued for supervision" in do_output
+
+
 def test_do_status_history_flow(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
@@ -454,7 +490,10 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        yaml.safe_dump(
+            {"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600},
+            sort_keys=False,
+        ),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -526,7 +565,7 @@ def test_roles_command_accepts_common_true_enabled_values(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -580,7 +619,7 @@ def test_roles_command_accepts_common_false_enabled_values(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -633,7 +672,7 @@ def test_roles_command_rejects_disabling_default_role(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -673,7 +712,7 @@ def test_roles_command_rejects_disabling_default_role(
     assert "enabled" not in catalog["roles"]["builder"]
 
 
-def test_roles_command_updates_role_model(
+def test_roles_command_updates_role_routing_settings(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -681,7 +720,13 @@ def test_roles_command_updates_role_model(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        yaml.safe_dump(
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            }
+        ),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -691,6 +736,7 @@ def test_roles_command_updates_role_model(
                 "default_role": "worker",
                 "harness_configs": {
                     "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                    "hermes": {"harness": "hermes", "command": ["hermes", "-z", "{prompt}"]},
                 },
                 "roles": {"worker": {"harness_config": "pi", "model": "old-model"}},
             },
@@ -701,25 +747,35 @@ def test_roles_command_updates_role_model(
 
     from orchestra.cli import main
 
-    exit_code = main(
-        [
-            "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
-            "roles",
-            "worker",
-            "model",
-            "new/model",
-        ]
-    )
-    output = capsys.readouterr().out
-    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    updates = [
+        ("harness", "hermes", "harness_config", "hermes"),
+        ("model", "new/model", "model", "new/model"),
+        ("profile", "tori", "profile", "tori"),
+        ("agent", "plan", "agent", "plan"),
+    ]
+    for setting, value, yaml_key, expected_value in updates:
+        exit_code = main(
+            [
+                "--config",
+                str(config_path),
+                "--agent-catalog",
+                str(catalog_path),
+                "roles",
+                "worker",
+                setting,
+                value,
+            ]
+        )
+        output = capsys.readouterr().out
 
-    assert exit_code == 0
-    assert "Updated role worker: model=new/model" in output
-    assert "new/model" in output
+        assert exit_code == 0
+        assert f"Updated role worker: {yaml_key}={expected_value}" in output
+
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    assert catalog["roles"]["worker"]["harness_config"] == "hermes"
     assert catalog["roles"]["worker"]["model"] == "new/model"
+    assert catalog["roles"]["worker"]["profile"] == "tori"
+    assert catalog["roles"]["worker"]["agent"] == "plan"
 
 
 def test_roles_command_rejects_invalid_role_mutations(
@@ -730,7 +786,7 @@ def test_roles_command_rejects_invalid_role_mutations(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -764,6 +820,8 @@ def test_roles_command_rejects_invalid_role_mutations(
             "error: enabled must be one of true/yes/y/1/on or false/no/n/0/off; got '2'",
         ),
         (["reviewer", "model", ""], "error: model must be a non-empty string"),
+        (["reviewer", "harness", "missing"], "error: unknown harness config: missing"),
+        (["reviewer", "harness", ""], "error: harness must be a non-empty string"),
         (["reviewer", "enabled"], "error: missing value for role setting"),
     ]
     incomplete_usage_output = ""
@@ -785,11 +843,63 @@ def test_roles_command_rejects_invalid_role_mutations(
         if role_args == ["reviewer", "enabled"]:
             incomplete_usage_output = output
 
-    assert "/orch roles ROLE model MODEL" in incomplete_usage_output
+    assert "/orch roles ROLE SETTING VALUE" in incomplete_usage_output
+    assert "harness   selected harness config name" in incomplete_usage_output
+    assert "profile   optional harness profile, when supported" in incomplete_usage_output
 
     catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
     assert catalog["roles"]["reviewer"]["model"] == "old-model"
     assert "enabled" not in catalog["roles"]["reviewer"]
+
+
+def test_role_metadata_lists_unused_harness_configs(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            }
+        ),
+        encoding="utf-8",
+    )
+    prompts_path.write_text("{}\n", encoding="utf-8")
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "worker",
+                "harness_configs": {
+                    "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                    "unused": {"harness": "hermes", "command": ["hermes", "-z", "{prompt}"]},
+                },
+                "roles": {"worker": {"harness_config": "pi"}},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "_role-metadata",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload == {"roles": ["worker"], "harnessConfigs": ["pi", "unused"]}
 
 
 def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
@@ -800,7 +910,7 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -855,9 +965,10 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
         in help_output
     )
     assert "/orch roles" in help_output
-    assert "/orch roles ROLE enabled VALUE" in help_output
-    assert "VALUE: true, yes, y, 1, on | false, no, n, 0, off" in help_output
-    assert "/orch roles ROLE model MODEL" in help_output
+    assert "/orch roles ROLE SETTING VALUE" in help_output
+    assert "Settings: harness, enabled, model, profile, agent" in help_output
+    assert "VALUE for enabled: true, yes, y, 1, on | false, no, n, 0, off" in help_output
+    assert "harness-config" not in help_output
     assert "Configured roles" in help_output
     assert "Default: reviewer" in help_output
     assert "✓ worker    pi" in help_output
@@ -881,7 +992,7 @@ def test_disabled_role_is_rejected_without_fallback(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")}),
+        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -946,7 +1057,7 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
         yaml.safe_dump(
-            {"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")},
+            {"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600},
             sort_keys=False,
         ),
         encoding="utf-8",
@@ -1075,7 +1186,7 @@ def test_do_without_role_uses_default_role(
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
         yaml.safe_dump(
-            {"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs")},
+            {"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600},
             sort_keys=False,
         ),
         encoding="utf-8",

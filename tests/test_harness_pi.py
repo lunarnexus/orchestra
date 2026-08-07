@@ -137,6 +137,7 @@ def test_pi_harness_resolves_role_skill_from_catalog_relative_root(
     request = WorkerRequest(
         role_name=worker_request.role_name,
         goal=worker_request.goal,
+        timeout_seconds=worker_request.timeout_seconds,
         skill_roots=(child_dir / "skills", catalog_root / "skills"),
     )
     role = RoleConfig(

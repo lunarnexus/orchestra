@@ -819,3 +819,27 @@ Reviewer:
   injected prompts concise.
 - Use the concise active `builder` skill for Orchestra, and refine it after real
   worker behavior shows missing or bloated guidance.
+
+## Builder skill behavioral-evaluation evidence
+
+A live builder evaluation used the normal Orchestra dispatch path with an
+isolated repository, hidden verifier, return artifact, and Pi worker trace. The
+worker produced correct behavior and observable Red -> Green sequencing, but
+also created a commit without an assigned commit slice. Functional and TDD-only
+grading initially missed that policy violation; adding a baseline commit-count
+check changed the verdict to fail.
+
+Evidence-backed conclusions:
+
+- Skill evaluation must grade outcome, process, scope, policy, and handoff
+  separately.
+- Hidden pass-to-pass checks and traces catch failures that prompt review cannot.
+- Evaluators need regression tests for false passes and false failures.
+- Small-model guidance is more salient when one ownership rule defines the
+  default behavior and conditional methodology loads from triggered resources.
+- Natural host -> Orchestra role -> configured worker execution is more
+  representative than a script that dispatches through a private path.
+
+The reusable method is documented in
+`docs/skill-evaluation-methodology.md`; the executable builder fixtures and
+runbook live under `evals/builder/`.

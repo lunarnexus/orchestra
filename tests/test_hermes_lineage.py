@@ -15,7 +15,7 @@ def make_context(tmp_path: Path) -> AppContext:
     store = StateStore(tmp_path / "state" / "orchestra.db")
     store.initialize()
     return AppContext(
-        config=AppConfig(state_dir=tmp_path / "state", log_dir=tmp_path / "logs"),
+        config=AppConfig(default_timeout=600, state_dir=tmp_path / "state", log_dir=tmp_path / "logs"),
         catalog=AgentCatalog(roles={"worker": RoleConfig(harness="pi")}),
         store=store,
         registry=HarnessRegistry(),

@@ -16,7 +16,6 @@ from typing import Any
 _IDENTITY_ARG_NAMES = frozenset({"session_id", "identity", "orchestrator_session_id"})
 _RUN_ID_RE = re.compile(r"^run_id:\s*(?P<run_id>\S+)\s*$")
 _SUBPROCESS_TIMEOUT_SECONDS = 300
-_PLUGIN_DEFAULT_WORKER_TIMEOUT_SECONDS = 600
 _WATCHER_TIMEOUT_MARGIN_SECONDS = 30
 _REPORT_WATCHER_ATTEMPTS = 8
 _REPORT_WATCHER_RETRY_BASE_DELAY_SECONDS = 0.25
@@ -98,13 +97,8 @@ def _orchestra_base_args() -> list[str]:
     return args
 
 
-def _watcher_wait_budget_seconds(worker_timeout_seconds: int | None) -> int:
-    observed_timeout_seconds = (
-        worker_timeout_seconds
-        if worker_timeout_seconds is not None
-        else _PLUGIN_DEFAULT_WORKER_TIMEOUT_SECONDS
-    )
-    return observed_timeout_seconds + _WATCHER_TIMEOUT_MARGIN_SECONDS
+def _watcher_wait_budget_seconds(timeout_seconds: int) -> int:
+    return timeout_seconds + _WATCHER_TIMEOUT_MARGIN_SECONDS
 
 
 def _watcher_subprocess_timeout_seconds(wait_budget_seconds: int) -> int:
@@ -171,6 +165,15 @@ def _schema(tool_info: dict[str, Any]) -> dict[str, Any]:
             "required": ["goal"],
         },
     }
+
+
+def _extract_dispatch_timeout_seconds(output: str) -> int:
+    timeout_text = _extract_field(output, "timeout_seconds")
+    if not timeout_text:
+        raise ValueError("orchestra do output did not include timeout_seconds")
+    if not timeout_text.isdigit() or int(timeout_text) <= 0:
+        raise ValueError("timeout_seconds must be a positive integer")
+    return int(timeout_text)
 
 
 def _extract_run_id(output: str) -> str | None:
@@ -442,7 +445,6 @@ def _dispatch_orchestra_run(
             return _error("timeout must be a positive integer")
 
     requested_role = str(payload.get("role") or "").strip()
-    wait_budget_seconds = _watcher_wait_budget_seconds(timeout)
     command = [
         "do",
         "--session-id",
@@ -466,6 +468,8 @@ def _dispatch_orchestra_run(
     if not run_id:
         return _error("orchestra dispatch did not return a run_id")
 
+    dispatch_timeout = _extract_dispatch_timeout_seconds(result.stdout)
+    wait_budget_seconds = _watcher_wait_budget_seconds(dispatch_timeout)
     _start_session_report_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
 
     effective_role = _extract_field(result.stdout, "role") or requested_role or "worker"

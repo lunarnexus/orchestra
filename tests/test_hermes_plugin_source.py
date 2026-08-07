@@ -304,7 +304,15 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_injects_when_
         if args[0] == "_tool-info":
             return completed(args, code=1)
         if args[0] == "do":
-            return completed(args, "run_id: cli-run\nstatus: queued\n")
+            # Extract the --timeout value from args to return matching timeout_seconds
+            timeout_value = "600"
+            for i, arg in enumerate(args):
+                if arg == "--timeout" and i + 1 < len(args):
+                    timeout_value = args[i + 1]
+                    break
+            return completed(
+                args, f"run_id: cli-run\ntimeout_seconds: {timeout_value}\nstatus: queued\n"
+            )
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: reviewer cli-run\n")
         if args[0] == "_await-session-report":
@@ -465,7 +473,7 @@ def test_orch_slash_cli_private_session_fallback_dispatches_hermes_escaped_quote
         if args[0] == "_tool-info":
             return completed(args, code=1)
         if args[0] == "do":
-            return completed(args, "run_id: cli-run\nstatus: queued\n")
+            return completed(args, "run_id: cli-run\ntimeout_seconds: 600\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: researcher cli-run\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -536,7 +544,7 @@ def test_orch_dispatch_builds_cli_args_from_runtime_kwargs_and_returns_ack(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "do":
-            return completed(args, "run_id: abc123\nstatus: queued\n")
+            return completed(args, "run_id: abc123\ntimeout_seconds: 600\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: reviewer abc123\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -578,7 +586,13 @@ def test_orch_dispatch_uses_effective_default_role_from_cli_output(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "do":
-            return completed(args, "run_id: abc123\nrole: reviewer\nstatus: queued\n")
+            output = (
+                "run_id: abc123\n"
+                "timeout_seconds: 600\n"
+                "role: reviewer\n"
+                "status: queued\n"
+            )
+            return completed(args, output)
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: reviewer abc123\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -621,7 +635,7 @@ def test_registered_orch_dispatch_injects_when_idle_and_marks_report_delivered(
         if args[0] == "_tool-info":
             return completed(args, code=1)
         if args[0] == "do":
-            return completed(args, "run_id: abc123\nstatus: queued\n")
+            return completed(args, "run_id: abc123\ntimeout_seconds: 600\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: worker abc123\n")
         if args[0] == "_await-session-report":
@@ -674,7 +688,7 @@ def test_registered_orch_dispatch_prefers_runtime_tool_context_for_report(
         if args[0] == "_tool-info":
             return completed(args, code=1)
         if args[0] == "do":
-            return completed(args, "run_id: abc123\nstatus: queued\n")
+            return completed(args, "run_id: abc123\ntimeout_seconds: 600\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: worker abc123\n")
         if args[0] == "_await-session-report":
@@ -711,7 +725,7 @@ def test_final_report_injects_when_idle_without_using_steer(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "do":
-            return completed(args, "run_id: abc123\nstatus: queued\n")
+            return completed(args, "run_id: abc123\ntimeout_seconds: 600\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: worker abc123\n")
         if args[0] == "_await-session-report":
@@ -790,6 +804,35 @@ def test_watcher_wait_budget_uses_payload_timeout_not_default() -> None:
     assert plugin._watcher_wait_budget_seconds(5) == 35
 
 
+def test_extract_dispatch_timeout_seconds_parses_output() -> None:
+    plugin = load_plugin()
+
+    assert plugin._extract_dispatch_timeout_seconds(
+        "run_id: abc123\ntimeout_seconds: 120\nstatus: queued\n"
+    ) == 120
+
+
+def test_extract_dispatch_timeout_seconds_raises_on_missing_output() -> None:
+    plugin = load_plugin()
+
+    with pytest.raises(ValueError, match="did not include timeout_seconds"):
+        plugin._extract_dispatch_timeout_seconds("run_id: abc123\nstatus: queued\n")
+
+
+def test_extract_dispatch_timeout_seconds_raises_on_non_numeric_output() -> None:
+    plugin = load_plugin()
+
+    with pytest.raises(ValueError, match="must be a positive integer"):
+        plugin._extract_dispatch_timeout_seconds("timeout_seconds: abc\n")
+
+
+def test_extract_dispatch_timeout_seconds_raises_on_zero() -> None:
+    plugin = load_plugin()
+
+    with pytest.raises(ValueError, match="must be a positive integer"):
+        plugin._extract_dispatch_timeout_seconds("timeout_seconds: 0\n")
+
+
 def test_session_report_watcher_retries_after_transient_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -815,6 +858,26 @@ def test_session_report_watcher_retries_after_transient_failure(
     ctx = FakeHermesPluginContext()
 
     plugin._watch_session_report(ctx, "hermes:runtime", "abc123", 630)
+    assert ctx.steered == []
+    assert ctx.injected == [("worker done", "user")]
+    assert [call[0] for call in calls].count("_await-session-report") == 2
+    assert [
+        "_await-session-report",
+        "--session-id",
+        "hermes:runtime",
+        "--run-id",
+        "abc123",
+        "--timeout",
+        "630",
+        "--json",
+    ] in calls
+    assert [
+        "_mark-session-report-delivered",
+        "--session-id",
+        "hermes:runtime",
+        "--run-id",
+        "abc123",
+    ] in calls
 
     assert ctx.steered == []
     assert ctx.injected == [("worker done", "user")]

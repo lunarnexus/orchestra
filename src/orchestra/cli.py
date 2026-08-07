@@ -33,6 +33,7 @@ from orchestra.app import (
     mark_session_report_delivered,
     release_session_report,
     render_orchestrator_skill_message,
+    role_metadata,
     run_doctor,
     run_supervisor,
     set_role_setting,
@@ -56,6 +57,7 @@ INTERNAL_COMMANDS = frozenset(
         "_progress-message",
         "_command-echo",
         "_tool-info",
+        "_role-metadata",
         "_orchestrator-skill",
     }
 )
@@ -104,7 +106,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     do_parser.add_argument("--boundaries", default="", help="out-of-scope boundaries")
     do_parser.add_argument("--acceptance-target", default="", help="acceptance target")
     do_parser.add_argument("--return-format", default="", help="explicit return format")
-    do_parser.add_argument("--timeout", type=int, default=None, help="timeout in seconds")
+    do_parser.add_argument("--timeout", type=_positive_int, default=None, help="timeout in seconds")
     do_parser.add_argument("--task-label", default="", help="short task label")
     do_parser.add_argument("--batch-id", default=None, help="optional batch id")
     do_parser.set_defaults(handler=_handle_do)
@@ -139,7 +141,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     roles_parser.add_argument(
         "setting",
         nargs="?",
-        choices=("enabled", "model"),
+        choices=("harness", "enabled", "model", "profile", "agent"),
         help="role setting to update",
     )
     roles_parser.add_argument("value", nargs="?", help="new role setting value")
@@ -185,17 +187,17 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
 
     init_opencode_parser = init_subparsers.add_parser(
         "opencode",
-        help="report OpenCode init status",
+        help="install OpenCode plugin",
     )
     init_opencode_parser.add_argument(
         "--force",
         action="store_true",
-        help="accepted for CLI compatibility",
+        help="overwrite existing plugin file",
     )
     init_opencode_parser.add_argument(
         "--copy",
         action="store_true",
-        help="accepted for CLI compatibility",
+        help="copy plugin file from source checkout",
     )
     init_opencode_parser.set_defaults(handler=_handle_init_opencode)
 
@@ -270,6 +272,9 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         tool_info_parser = subparsers.add_parser("_tool-info", help=argparse.SUPPRESS)
         tool_info_parser.set_defaults(handler=_handle_tool_info)
 
+        role_metadata_parser = subparsers.add_parser("_role-metadata", help=argparse.SUPPRESS)
+        role_metadata_parser.set_defaults(handler=_handle_role_metadata)
+
         orchestrator_skill_parser = subparsers.add_parser(
             "_orchestrator-skill",
             help=argparse.SUPPRESS,
@@ -300,6 +305,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _uses_internal_command(argv: Sequence[str]) -> bool:
     return any(token in INTERNAL_COMMANDS for token in argv)
+
+
+def _positive_int(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
 
 
 def _handle_do(args: argparse.Namespace) -> int:
@@ -386,10 +401,9 @@ def _handle_init_hermes(args: argparse.Namespace) -> int:
 
 
 def _handle_init_opencode(args: argparse.Namespace) -> int:
-    if args.force or args.copy:
-        del args
-    result = init_opencode()
-    print(result.message)
+    result = init_opencode(force=bool(args.force), copy=bool(args.copy))
+    _print_init_files(result.files)
+    print(f"verify: {result.verification_command}")
     return 0
 
 
@@ -414,7 +428,8 @@ def _handle_init_all(args: argparse.Namespace) -> int:
         print(f"verify: {hermes_result.verification_command}")
     if result.opencode is not None:
         print("[opencode]")
-        print(result.opencode.message)
+        _print_init_files(result.opencode.files)
+        print(f"verify: {result.opencode.verification_command}")
     return 0
 
 
@@ -448,6 +463,12 @@ def _handle_tool_info(args: argparse.Namespace) -> int:
             }
         )
     )
+    return 0
+
+
+def _handle_role_metadata(args: argparse.Namespace) -> int:
+    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    print(json.dumps(role_metadata(context)))
     return 0
 
 

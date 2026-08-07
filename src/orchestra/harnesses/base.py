@@ -15,12 +15,12 @@ from orchestra.config import PromptConfig, RoleConfig
 class WorkerRequest:
     role_name: str
     goal: str
+    timeout_seconds: int
     run_id: str = ""
     approved_context: str = ""
     boundaries: str = ""
     acceptance_target: str = ""
     return_format: str = ""
-    timeout_seconds: int = 600
     task_label: str = ""
     worker_budget: int | None = None
     log_path: Path | None = None

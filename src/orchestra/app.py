@@ -63,17 +63,19 @@ WORKER_EMPTY_RESULT_ERROR = "Worker exited successfully without a meaningful res
 WORKER_EMPTY_RESULT_BLOCKER = "Worker protocol error: empty result"
 ROLE_USAGE = """Usage:
   /orch roles
-  /orch roles ROLE harness-config CONFIG
-  /orch roles ROLE enabled VALUE
-  /orch roles ROLE model MODEL
-  /orch roles ROLE profile PROFILE
-  /orch roles ROLE agent AGENT
+  /orch roles ROLE SETTING VALUE
+
+Settings:
+  harness   selected harness config name
+  enabled   true/false
+  model     model name for the selected harness
+  profile   optional harness profile, when supported
+  agent     optional harness agent, when supported
 
 Examples:
+  /orch roles reviewer harness pi
   /orch roles appsec enabled false
   /orch roles reviewer model openai-codex/gpt-5.4
-  /orch roles critic profile tori
-  /orch roles appsec agent plan
 
 Enabled values:
   true, yes, y, 1, on
@@ -130,7 +132,8 @@ class InitHermesResult:
 
 @dataclass(frozen=True)
 class InitOpencodeResult:
-    message: str
+    files: list[InitFileResult]
+    verification_command: str
 
 
 @dataclass(frozen=True)
@@ -174,6 +177,7 @@ class SessionReport:
 class StartedRun:
     record: RunRecord
     request_file: Path
+    timeout_seconds: int
 
 
 @dataclass(frozen=True)
@@ -283,7 +287,11 @@ def start_run(
         encoding="utf-8",
     )
     _spawn_supervisor(context, request_file, run_id)
-    return StartedRun(record=record, request_file=request_file)
+    return StartedRun(
+        record=record,
+        request_file=request_file,
+        timeout_seconds=pending_request.timeout_seconds,
+    )
 
 
 def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path) -> RunRecord:
@@ -450,6 +458,7 @@ def format_run_report(record: RunRecord) -> str:
 def format_started_run(started: StartedRun) -> str:
     lines = [
         format_run_report(started.record),
+        f"timeout_seconds: {started.timeout_seconds}",
         f"request_file: {started.request_file}",
         "dispatch: queued for supervision",
     ]
@@ -712,6 +721,13 @@ def format_status(context: AppContext, session_id: str) -> str:
     return "\n".join(lines)
 
 
+def role_metadata(context: AppContext) -> dict[str, list[str]]:
+    return {
+        "roles": sorted(context.catalog.roles),
+        "harnessConfigs": sorted(context.catalog.harness_configs),
+    }
+
+
 def format_roles(context: AppContext, *, include_disabled: bool = False) -> str:
     enabled_roles = _enabled_roles(context.catalog)
     disabled_roles = [
@@ -792,10 +808,10 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
             raise AppError("agent must be a non-empty string")
         role_raw["agent"] = agent
         changed = f"agent={agent}"
-    elif setting == "harness-config":
+    elif setting == "harness":
         harness_config = value.strip()
         if not harness_config:
-            raise AppError("harness-config must be a non-empty string")
+            raise AppError("harness must be a non-empty string")
         harness_configs_raw = raw_catalog.get("harness_configs")
         if not isinstance(harness_configs_raw, dict):
             raise AppError("agent catalog harness_configs must be a mapping")
@@ -805,7 +821,7 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
         changed = f"harness_config={harness_config}"
     else:
         raise AppError(
-            "role setting must be one of: harness-config, enabled, model, profile, agent"
+            "role setting must be one of: harness, enabled, model, profile, agent"
         )
 
     _write_catalog_mapping(context.paths.catalog_path, raw_catalog)
@@ -1228,10 +1244,24 @@ def init_hermes(
     )
 
 
-def init_opencode() -> InitOpencodeResult:
-    return InitOpencodeResult(
-        message="opencode: no Orchestra host/plugin install action required"
-    )
+def init_opencode(
+    *,
+    force: bool = False,
+    copy: bool = False,
+    source_root: str | Path | None = None,
+) -> InitOpencodeResult:
+    root = _find_source_root(source_root)
+    if root is None:
+        raise AppError("opencode init source root not found; rerun from a source checkout")
+
+    files = [
+        _copy_init_file(
+            root / "extensions" / "opencode" / "orchestra" / "index.ts",
+            default_opencode_orchestra_dir() / "index.ts",
+            force=force,
+        )
+    ]
+    return InitOpencodeResult(files=files, verification_command="opencode --help")
 
 
 def init_all(
@@ -1289,7 +1319,11 @@ def init_all(
         for hermes_profile in hermes_profiles
     )
 
-    opencode_result = init_opencode() if "opencode" in harnesses else None
+    opencode_result = (
+        init_opencode(force=force, copy=copy, source_root=source_root)
+        if "opencode" in harnesses
+        else None
+    )
     return InitAllResult(pi=pi_result, hermes=hermes_results, opencode=opencode_result)
 
 
@@ -1508,6 +1542,17 @@ def default_hermes_orchestra_dir(profile: str | None = None) -> Path:
     if selected_profile and selected_profile != "default":
         return root_home / "profiles" / selected_profile / "orchestra"
     return root_home / "orchestra"
+
+
+def default_opencode_home() -> Path:
+    explicit_home = os.environ.get("OPENCODE_CONFIG_DIR", "").strip()
+    if explicit_home:
+        return Path(explicit_home).expanduser()
+    return Path.home() / ".config" / "opencode"
+
+
+def default_opencode_orchestra_dir() -> Path:
+    return default_opencode_home() / "plugins" / "orchestra"
 
 
 def _normalized_optional_profile(profile: str | None) -> str | None:

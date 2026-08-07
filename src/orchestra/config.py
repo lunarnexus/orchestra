@@ -18,7 +18,6 @@ DEFAULT_CATALOG_FILENAME = "agent-catalog.yaml"
 ORCHESTRA_CONFIG_ENV = "ORCHESTRA_CONFIG"
 ORCHESTRA_AGENT_CATALOG_ENV = "ORCHESTRA_AGENT_CATALOG"
 PI_CODING_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
-DEFAULT_TIMEOUT = 600
 DEFAULT_GLOBAL_CONCURRENCY = 4
 DEFAULT_PER_SESSION_CONCURRENCY = 3
 DEFAULT_AUTO_RETURN = True
@@ -73,10 +72,9 @@ DEFAULT_HOST_HELP = """Orchestra commands:
   /orch do --role ROLE <request>     Start a worker with a role
   /orch do --timeout SEC <request>   Start a worker with a timeout
   /orch roles                        Show configured roles
-  /orch roles ROLE enabled VALUE
-                                     Enable or disable a non-default role
-                                     VALUE: true, yes, y, 1, on | false, no, n, 0, off
-  /orch roles ROLE model MODEL       Set a role's model
+  /orch roles ROLE SETTING VALUE     Update a role setting
+                                     Settings: harness, enabled, model, profile, agent
+                                     VALUE for enabled: true, yes, y, 1, on | false, no, n, 0, off
   /orch status                       Show active workers for this session
   /orch stop <run-id>                Stop an active worker.
   /orch history [limit]              Show recent results for this session
@@ -112,9 +110,9 @@ class PromptConfig:
 
 @dataclass(frozen=True)
 class AppConfig:
+    default_timeout: int
     state_dir: Path = DEFAULT_STATE_DIR
     log_dir: Path = DEFAULT_LOG_DIR
-    default_timeout: int = DEFAULT_TIMEOUT
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
     auto_return: bool = DEFAULT_AUTO_RETURN
     prompts: PromptConfig = field(default_factory=PromptConfig)
@@ -185,7 +183,7 @@ def load_app_config(path: str | Path) -> AppConfig:
 
     state_dir = Path(_get_optional_string(raw, "state_dir") or DEFAULT_STATE_DIR)
     log_dir = Path(_get_optional_string(raw, "log_dir") or DEFAULT_LOG_DIR)
-    default_timeout = _get_optional_positive_int(raw, "default_timeout", DEFAULT_TIMEOUT)
+    default_timeout = _get_required_positive_int(raw, "default_timeout")
     auto_return = _get_optional_bool(raw, "auto_return", DEFAULT_AUTO_RETURN)
 
     concurrency_raw = raw.get("concurrency", {})
@@ -433,6 +431,15 @@ def _get_optional_bool(data: dict[str, Any], key: str, default: bool) -> bool:
         return default
     if not isinstance(value, bool):
         raise ConfigError(f"'{key}' must be a boolean")
+    return value
+
+
+def _get_required_positive_int(data: dict[str, Any], key: str) -> int:
+    value = data.get(key)
+    if value is None:
+        raise ConfigError(f"'{key}' is required and must be a positive integer")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigError(f"'{key}' must be a positive integer")
     return value
 
 

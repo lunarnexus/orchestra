@@ -258,10 +258,10 @@ re-entering as one new host/orchestrator turn with the consolidated session
 report when the host supports it. Auto-prodding/`auto_return` is enabled by
 default, with a simple config toggle to disable it for hosts or users that prefer
 explicit `/orch status` or `/orch history` checks. MVP loop controls should stay
-small: global and per-session concurrency limits, default 600s worker timeout,
-`/orch stop`, and session-scoped consolidated returns. Do not add max-turn,
-max-run, max-time, or compatibility-flag machinery until there is a demonstrated
-need.
+small: global and per-session concurrency limits, required configured worker
+timeout, `/orch stop`, and session-scoped consolidated returns. Do not add
+max-turn, max-run, max-time, or compatibility-flag machinery until there is a
+demonstrated need.
 
 ### Multi-Orchestrator Ownership
 
@@ -292,7 +292,8 @@ LLM must never provide, remember, echo, or infer this id.
 - **Pi extension:** use `ctx.sessionManager.getSessionId()` and normalize it as
   `pi:<session_id>`.
 - **OpenCode plugin/tool:** use `context.sessionID` as the runtime adapter session
-  id source.
+  id source, normalize it as `opencode:<sessionID>`, and expose the host tool
+  `orch_dispatch`.
 - **ACP adapter:** use the protocol `sessionId` as the runtime adapter session id
   source.
 - **Generic MCP:** MCP's session id is a transport identity, not an orchestrator
@@ -314,15 +315,16 @@ Orchestra tracks lean operational state and result summaries.
 
 ### Configuration Defaults
 
-Default worker timeout is 600s. Default concurrency limits are global `4` and
-per-session `3`. `auto_return` is enabled by default. These must be configurable
-through `config.yaml` and runtime options.
+`default_timeout` is required in `config.yaml` and must be a positive integer.
+Default concurrency limits are global `4` and per-session `3`. `auto_return` is
+enabled by default. These must be configurable through `config.yaml` and runtime
+options.
 
-The worker timeout is the authoritative execution budget for a worker process.
-Host watcher subprocesses, auto-return waiters, progress waiters, or other host
-adapter waits must not use a shorter hard stop than the worker timeout they are
-observing. If a host-side wait needs a timeout, derive it from the worker timeout
-plus a small margin or make the host wait budget explicitly configurable.
+The effective worker timeout is the authoritative execution budget for a worker
+process: explicit per-run timeout when provided, otherwise configured
+`default_timeout`. Host watcher subprocesses, auto-return waiters, progress
+waiters, or other host adapter waits must derive their wait budget from that
+effective worker timeout plus the documented host margin.
 
 ### Agent Catalog
 
@@ -365,13 +367,17 @@ Current worker roles are `builder`, `planner`, `researcher`, `reviewer`,
 `verifier`, and `appsec`; `critic` remains optional/disabled. The main session
 uses the `orchestrator` skill when Orchestra mode is manually enabled in Pi.
 Worker prompts should stay minimal: load configured role skills first, then
-pass a normal delegation prompt. Orchestra searches recursively under `skills/`
+pass a normal delegation prompt. Role skills optimize for smaller worker models:
+keep the default workflow and role boundary in `SKILL.md`, put conditional
+methodology in resources with exact triggers, and fix behavioral failures at the
+governing instruction instead of accumulating incident-specific prohibitions.
+Orchestra searches recursively under `skills/`
 for `<skill-name>/SKILL.md` relative to the current working directory and
 injects the local content when present. If no local skill file exists, the
 prompt tells the worker to load the named native skill before doing the task.
-`verifier` uses its own acceptance-evidence skill. `reviewer` and `appsec` may
-share the `reviewer` skill with different requested modes until their role
-skills are separated. Role `env` values are applied only to worker
+`verifier` uses its own acceptance-evidence skill. `reviewer` uses a dedicated
+implementation-quality skill, and `appsec` uses a dedicated application-security
+skill. Role `env` values are applied only to worker
 subprocess environments; env keys must be valid environment variable names and
 cannot use the reserved `ORCHESTRA_` prefix. User-facing role listings show env
 keys, not values. Avoid hard-coding planning, coding, reviewing, or other work
@@ -435,7 +441,7 @@ session id retrieval. For Hermes, this includes runtime `session_id` retrieval,
 slash/tool registration, and non-interrupting `agent.steer(...)` delivery for
 consolidated reports.
 
-Future OpenCode, ACP, and MCP wrappers should call the same core operations and
+OpenCode, ACP, and MCP wrappers should call the same core operations and
 reuse core formatting. Adapter-specific code should handle only runtime identity,
 host UI/rendering, and host-specific message delivery. Generic MCP alone is not
 runtime for ownership or auto-return unless wrapped by a runtime host adapter.
@@ -614,8 +620,8 @@ Target responsibilities:
   repo-root defaults
 - `orchestra init hermes --profile <profile>` keeps working as an explicit
   profile override
-- `orchestra init opencode` reports that no Orchestra host/plugin install step
-  is required for the OpenCode harness
+- `orchestra init opencode` installs or updates the OpenCode plugin globally
+  under the active OpenCode config directory from the source checkout
 - `orchestra init all` detects configured harnesses and runs the relevant init
   actions without duplicating work
 

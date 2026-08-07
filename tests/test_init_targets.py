@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from orchestra.app import AppError, init_all, init_opencode, init_pi
+from orchestra.cli import main
 
 
 def completed(
@@ -19,18 +20,141 @@ def completed(
 
 
 def _write_source_tree(root: Path, catalog_text: str) -> None:
-    extension = root / "extensions" / "pi" / "orchestra" / "index.ts"
-    extension.parent.mkdir(parents=True)
-    extension.write_text("extension", encoding="utf-8")
+    pi_extension = root / "extensions" / "pi" / "orchestra" / "index.ts"
+    pi_extension.parent.mkdir(parents=True)
+    pi_extension.write_text("extension", encoding="utf-8")
+    opencode_extension = root / "extensions" / "opencode" / "orchestra" / "index.ts"
+    opencode_extension.parent.mkdir(parents=True)
+    opencode_extension.write_text("opencode extension", encoding="utf-8")
     (root / "config.yaml").write_text("state_dir: state\n", encoding="utf-8")
     (root / "prompts.yaml").write_text("{}\n", encoding="utf-8")
     (root / "agent-catalog.yaml").write_text(catalog_text, encoding="utf-8")
 
 
-def test_init_opencode_reports_no_action_required() -> None:
-    result = init_opencode()
+def test_init_opencode_installs_global_plugin_from_source_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    opencode_config = tmp_path / "opencode-config"
+    source.mkdir()
+    _write_source_tree(
+        source,
+        """
+default_role: builder
+harness_configs:
+  opencode:
+    harness: opencode
+    command: ["opencode", "run", "{prompt}"]
+roles:
+  builder:
+    harness_config: opencode
+""".lstrip(),
+    )
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(opencode_config))
 
-    assert result.message == "opencode: no Orchestra host/plugin install action required"
+    result = init_opencode(source_root=source, copy=True)
+
+    assert [item.action for item in result.files] == ["created"]
+    assert [item.mode for item in result.files] == ["copy"]
+    installed_extension = opencode_config / "plugins" / "orchestra" / "index.ts"
+    assert installed_extension.read_text(encoding="utf-8") == "opencode extension"
+    assert result.verification_command == "opencode --help"
+
+
+def test_init_opencode_does_not_overwrite_without_force(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    opencode_config = tmp_path / "opencode-config"
+    source.mkdir()
+    _write_source_tree(
+        source,
+        """
+default_role: builder
+harness_configs:
+  opencode:
+    harness: opencode
+    command: ["opencode", "run", "{prompt}"]
+roles:
+  builder:
+    harness_config: opencode
+""".lstrip(),
+    )
+    installed_extension = opencode_config / "plugins" / "orchestra" / "index.ts"
+    installed_extension.parent.mkdir(parents=True)
+    installed_extension.write_text("existing", encoding="utf-8")
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(opencode_config))
+
+    result = init_opencode(source_root=source)
+
+    assert result.files[0].action == "exists"
+    assert installed_extension.read_text(encoding="utf-8") == "existing"
+
+
+def test_init_opencode_force_overwrites(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    opencode_config = tmp_path / "opencode-config"
+    source.mkdir()
+    _write_source_tree(
+        source,
+        """
+default_role: builder
+harness_configs:
+  opencode:
+    harness: opencode
+    command: ["opencode", "run", "{prompt}"]
+roles:
+  builder:
+    harness_config: opencode
+""".lstrip(),
+    )
+    installed_extension = opencode_config / "plugins" / "orchestra" / "index.ts"
+    installed_extension.parent.mkdir(parents=True)
+    installed_extension.write_text("existing", encoding="utf-8")
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(opencode_config))
+
+    result = init_opencode(source_root=source, force=True, copy=True)
+
+    assert result.files[0].action == "updated"
+    assert installed_extension.read_text(encoding="utf-8") == "opencode extension"
+
+
+def test_cli_init_opencode_uses_current_source_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "source"
+    opencode_config = tmp_path / "opencode-config"
+    source.mkdir()
+    _write_source_tree(
+        source,
+        """
+default_role: builder
+harness_configs:
+  opencode:
+    harness: opencode
+    command: ["opencode", "run", "{prompt}"]
+roles:
+  builder:
+    harness_config: opencode
+""".lstrip(),
+    )
+    monkeypatch.chdir(source)
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(opencode_config))
+
+    exit_code = main(["init", "opencode"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "created:copy:" in captured.out
+    assert "verify: opencode --help" in captured.out
+    assert (opencode_config / "plugins" / "orchestra" / "index.ts").exists()
 
 
 def test_init_all_detects_harnesses_and_deduplicates_targets(
@@ -40,6 +164,7 @@ def test_init_all_detects_harnesses_and_deduplicates_targets(
     source = tmp_path / "source"
     pi_dir = tmp_path / "pi-agent"
     hermes_home = tmp_path / "hermes-home"
+    opencode_config = tmp_path / "opencode-config"
     source.mkdir()
     _write_source_tree(
         source,
@@ -69,6 +194,7 @@ roles:
     )
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(opencode_config))
 
     calls: list[list[str]] = []
 
@@ -81,6 +207,8 @@ roles:
     assert result.pi is not None
     assert len(result.hermes) == 2
     assert result.opencode is not None
+    assert [item.action for item in result.opencode.files] == ["created"]
+    assert result.opencode.files[0].target == opencode_config / "plugins" / "orchestra" / "index.ts"
     assert calls == [
         [
             "hermes",

@@ -7,6 +7,7 @@ import { Type } from "typebox";
 const execFileAsync = promisify(execFile);
 const TOOL_TIMEOUT_ERROR = "timeout is not accepted by orch_dispatch; configured default_timeout applies.";
 const ORCHESTRA_WORKER_ENV = "ORCHESTRA_WORKER";
+const WATCHER_TIMEOUT_MARGIN_SECONDS = 30;
 
 interface OrchestraFooterTheme {
   bold(text: string): string;
@@ -230,6 +231,21 @@ function extractRunId(output: string): string | null {
   return extractField(output, "run_id");
 }
 
+function extractDispatchTimeoutSeconds(output: string): number {
+  const timeoutText = extractField(output, "timeout_seconds");
+  if (!timeoutText) {
+    throw new Error("orchestra do output did not include timeout_seconds.");
+  }
+  if (!/^\d+$/.test(timeoutText)) {
+    throw new Error("orchestra do timeout_seconds must be a positive integer.");
+  }
+  const timeoutSeconds = Number.parseInt(timeoutText, 10);
+  if (timeoutSeconds <= 0) {
+    throw new Error("orchestra do timeout_seconds must be a positive integer.");
+  }
+  return timeoutSeconds;
+}
+
 interface OrchestraCommandEntry {
   text: string;
 }
@@ -296,6 +312,17 @@ function parseRoleNames(output: string): string[] {
     if (match) roles.add(match[1]);
   }
   return [...roles];
+}
+
+function parseRoleMetadata(output: string): { roles: string[]; harnessConfigs: string[] } {
+  const payload = JSON.parse(output) as { roles?: unknown; harnessConfigs?: unknown };
+  const roles = Array.isArray(payload.roles)
+    ? payload.roles.filter((role): role is string => typeof role === "string" && role.trim().length > 0)
+    : [];
+  const harnessConfigs = Array.isArray(payload.harnessConfigs)
+    ? payload.harnessConfigs.filter((cfg): cfg is string => typeof cfg === "string" && cfg.trim().length > 0)
+    : [];
+  return { roles, harnessConfigs };
 }
 
 function parseActiveSessionStatus(output: string): ActiveSessionStatus {
@@ -379,7 +406,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   const sessionCompletedRuns = new Map<string, Set<string>>();
   const sessionGenerations = new Map<string, number>();
   const sessionRefreshRequests = new Map<string, number>();
-  let cachedRoleNames: { expiresAt: number; roles: string[] } | null = null;
+  let cachedRoleNames: { expiresAt: number; roles: string[]; harnessConfigs: string[] } | null = null;
   let cachedActiveStatus: { expiresAt: number; sessionId: string; status: ActiveSessionStatus } | null = null;
 
   pi.registerEntryRenderer<OrchestraCommandEntry>("orchestra-command", (entry) => {
@@ -490,8 +517,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     runId: string,
     notifier: ProgressNotifier,
     updateStatus?: (status: ActiveSessionStatus | null) => void,
+    effectiveTimeout?: number,
   ): void {
     const sessionGeneration = ensureSessionGeneration(sessionId);
+    const timeout = effectiveTimeout !== undefined
+      ? effectiveTimeout + WATCHER_TIMEOUT_MARGIN_SECONDS
+      : undefined;
     const child = spawn(
       "orchestra",
       [
@@ -501,6 +532,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         sessionId,
         "--run-id",
         runId,
+        ...(timeout !== undefined ? ["--timeout", String(timeout)] : []),
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -508,6 +540,17 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     const watchers = awaitRunWatchers.get(sessionId) ?? new Set<ChildProcessWithoutNullStreams>();
     watchers.add(child);
     awaitRunWatchers.set(sessionId, watchers);
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    if (timeout !== undefined) {
+      timeoutId = setTimeout(() => {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          // ignore if already closed
+        }
+      }, timeout * 1000);
+    }
 
     let stdout = "";
     let refreshedFailureStatus = false;
@@ -526,6 +569,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     });
 
     child.on("close", (code) => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
       watchers.delete(child);
       if (watchers.size === 0) awaitRunWatchers.delete(sessionId);
 
@@ -596,8 +643,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     const runId = result.code === 0 ? extractRunId(result.stdout) : null;
     if (runId) {
       trackRun(sessionId, runId);
-      watchRunProgress(sessionId, runId, notifier, updateStatus);
-      watchSessionReport(sessionId, runId);
+      const effectiveTimeout = result.code === 0
+        ? extractDispatchTimeoutSeconds(result.stdout)
+        : undefined;
+      watchRunProgress(sessionId, runId, notifier, updateStatus, effectiveTimeout);
+      watchSessionReport(sessionId, runId, effectiveTimeout);
       const role = extractField(result.stdout, "role") || requestedRole || "worker";
       const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId, "--role", role]);
       await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true });
@@ -606,10 +656,17 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     return { code: result.code, runId: null, output: result.stdout || result.stderr };
   }
 
-  function watchSessionReport(sessionId: string, runId: string): void {
+  function watchSessionReport(
+    sessionId: string,
+    runId: string,
+    effectiveTimeout?: number,
+  ): void {
     if (reportWatchers.has(sessionId)) return;
 
     const sessionGeneration = ensureSessionGeneration(sessionId);
+    const timeout = effectiveTimeout !== undefined
+      ? effectiveTimeout + WATCHER_TIMEOUT_MARGIN_SECONDS
+      : undefined;
     const child = spawn(
       "orchestra",
       [
@@ -619,6 +676,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         sessionId,
         "--run-id",
         runId,
+        ...(timeout !== undefined ? ["--timeout", String(timeout)] : []),
         "--json",
       ],
       {
@@ -639,7 +697,22 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     watchers.add(child);
     reportWatchers.set(sessionId, watchers);
 
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    if (timeout !== undefined) {
+      timeoutId = setTimeout(() => {
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          // ignore if already closed
+        }
+      }, timeout * 1000);
+    }
+
     child.on("close", (code) => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
       watchers.delete(child);
       if (watchers.size === 0) reportWatchers.delete(sessionId);
       if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
@@ -700,15 +773,21 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   const registerDispatchTool = canDispatchOrchestraWorker();
 
-  async function getRoleNames(): Promise<string[]> {
+  async function getRoleMetadata(): Promise<{ roles: string[]; harnessConfigs: string[] }> {
     const now = Date.now();
     if (cachedRoleNames && cachedRoleNames.expiresAt > now) {
-      return cachedRoleNames.roles;
+      return { roles: cachedRoleNames.roles, harnessConfigs: cachedRoleNames.harnessConfigs };
     }
-    const result = await runOrchestra(["roles", "--all"]);
-    const roles = result.code === 0 ? parseRoleNames(result.stdout) : [];
-    cachedRoleNames = { expiresAt: now + 5_000, roles };
-    return roles;
+    const result = await runOrchestra(["_role-metadata"]);
+    const metadata = result.code === 0
+      ? parseRoleMetadata(result.stdout)
+      : { roles: [], harnessConfigs: [] };
+    cachedRoleNames = { expiresAt: now + 5_000, ...metadata };
+    return metadata;
+  }
+
+  async function getRoleNames(): Promise<string[]> {
+    return (await getRoleMetadata()).roles;
   }
 
   async function getActiveSessionStatus(sessionId: string): Promise<ActiveSessionStatus> {
@@ -819,10 +898,14 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
 
     if (subcommand === "roles") {
-      const roleNames = await getRoleNames();
+      const roleMetadata = await getRoleMetadata();
+      const roleNames = roleMetadata.roles;
       const roleSettings = [
+        { token: "harness ", description: "Set selected harness config" },
         { token: "enabled ", description: "Enable or disable a role" },
-        { token: "model ", description: "Set a role model" },
+        { token: "model ", description: "Set model for selected harness" },
+        { token: "profile ", description: "Set harness profile when supported" },
+        { token: "agent ", description: "Set harness agent when supported" },
       ];
       const boolValues = ["true", "false"];
 
@@ -845,6 +928,14 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }
       if (parsed.tokens.length === 4 && !parsed.trailingSpace && parsed.tokens[2] === "enabled") {
         return boolValues
+          .filter((value) => value.startsWith(parsed.tokens[3]))
+          .map((value) => buildCompletionItem(replaceCurrentToken(argumentPrefix, parsed.tokens[3], value), value));
+      }
+      if (parsed.tokens.length === 3 && parsed.trailingSpace && parsed.tokens[2] === "harness") {
+        return roleMetadata.harnessConfigs.map((value) => buildCompletionItem(appendCompletion(argumentPrefix, value), value));
+      }
+      if (parsed.tokens.length === 4 && !parsed.trailingSpace && parsed.tokens[2] === "harness") {
+        return roleMetadata.harnessConfigs
           .filter((value) => value.startsWith(parsed.tokens[3]))
           .map((value) => buildCompletionItem(replaceCurrentToken(argumentPrefix, parsed.tokens[3], value), value));
       }

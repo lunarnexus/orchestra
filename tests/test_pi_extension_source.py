@@ -28,6 +28,23 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert 'already loaded' not in extension_source
     assert 'cachedRoleNames = null;' in extension_source
     assert 'getArgumentCompletions: getOrchArgumentCompletions' in extension_source
+    assert (
+        "function parseRoleMetadata(output: string): "
+        "{ roles: string[]; harnessConfigs: string[] }"
+        in extension_source
+    )
+    assert 'const result = await runOrchestra(["_role-metadata"]);' in extension_source
+    assert '{ token: "harness ", description: "Set selected harness config" }' in extension_source
+    assert (
+        '{ token: "profile ", description: "Set harness profile when supported" }'
+        in extension_source
+    )
+    assert (
+        '{ token: "agent ", description: "Set harness agent when supported" }'
+        in extension_source
+    )
+    assert 'parsed.tokens[2] === "harness"' in extension_source
+    assert 'parsed.tokens[2] === "enabled"' in extension_source
     assert 'function tokenizeArgs(input: string): TokenizeArgsResult' in extension_source
     assert 'Malformed quoted string in /orch do arguments' in extension_source
     expected_roles_block = (

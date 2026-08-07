@@ -46,9 +46,9 @@ host_help: |-
     /orch do <request>                 Dispatch a subagent
     /orch do --role ROLE <request>     Start a worker with a role
     /orch roles                        Show configured roles
-    /orch roles ROLE enabled true|false
-                                       Enable or disable a non-default role
-    /orch roles ROLE model MODEL       Set a role's model
+    /orch roles ROLE SETTING VALUE     Update a role setting
+                                       Settings: harness, enabled, model, profile, agent
+                                       VALUE for enabled: true, yes, y, 1, on | false, no, n, 0, off
     /orch status                       Show active workers for this session
     /orch stop <run-id>                Stop an active worker.
     /orch history [limit]              Show recent results for this session

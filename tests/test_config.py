@@ -12,7 +12,6 @@ from orchestra.config import (
     DEFAULT_PER_SESSION_CONCURRENCY,
     DEFAULT_RETURN_FORMAT,
     DEFAULT_STATE_DIR,
-    DEFAULT_TIMEOUT,
     DEFAULT_TOOL_DESCRIPTION,
     DEFAULT_TOOL_GOAL_DESCRIPTION,
     DEFAULT_TOOL_PROMPT_GUIDELINES,
@@ -92,14 +91,13 @@ def test_load_app_config_reads_values_from_fixture(fixture_dir: Path) -> None:
 def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("{}\n", encoding="utf-8")
+    path.write_text("default_timeout: 600\n", encoding="utf-8")
     prompts_path.write_text("{}\n", encoding="utf-8")
 
     config = load_app_config(path)
 
     assert config.state_dir == DEFAULT_STATE_DIR
     assert config.log_dir == DEFAULT_LOG_DIR
-    assert config.default_timeout == DEFAULT_TIMEOUT
     assert config.concurrency.global_limit == DEFAULT_GLOBAL_CONCURRENCY
     assert config.concurrency.per_session_limit == DEFAULT_PER_SESSION_CONCURRENCY
     assert config.auto_return is DEFAULT_AUTO_RETURN
@@ -175,7 +173,7 @@ def test_load_app_config_keeps_yaml_native_boolean_parsing(
 ) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text(f"auto_return: {raw_value}\n", encoding="utf-8")
+    path.write_text(f"default_timeout: 30\nauto_return: {raw_value}\n", encoding="utf-8")
     prompts_path.write_text("{}\n", encoding="utf-8")
 
     config = load_app_config(path)
@@ -183,13 +181,57 @@ def test_load_app_config_keeps_yaml_native_boolean_parsing(
     assert config.auto_return is expected
 
 
+def test_load_app_config_missing_default_timeout_raises_config_error(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="'default_timeout' is required"):
+        load_app_config(path)
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    [
+        0,
+        -1,
+        -100,
+    ],
+)
+def test_load_app_config_rejects_zero_and_negative_default_timeout(
+    tmp_path: Path,
+    raw_value: int,
+) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text(f"default_timeout: {raw_value}\n", encoding="utf-8")
+    prompts_path.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="'default_timeout' must be a positive integer"):
+        load_app_config(path)
+
+
+def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text("default_timeout: 120\n", encoding="utf-8")
+    prompts_path.write_text("{}\n", encoding="utf-8")
+
+    config = load_app_config(path)
+
+    assert config.default_timeout == 120
+
+
 @pytest.mark.parametrize(
     ("content", "expected_message"),
     [
         ("default_timeout: 0\n", "'default_timeout' must be a positive integer"),
-        ("concurrency: 3\n", "'concurrency' must be a mapping"),
-        ("auto_return: maybe\n", "'auto_return' must be a boolean"),
-        ("state_dir: ''\n", "'state_dir' must be a non-empty string when provided"),
+        ("default_timeout: 30\nconcurrency: 3\n", "'concurrency' must be a mapping"),
+        ("default_timeout: 30\nauto_return: maybe\n", "'auto_return' must be a boolean"),
+        ("default_timeout: 30\nstate_dir: ''\n", "'state_dir' must be a non-empty string when provided"),
     ],
 )
 def test_load_app_config_rejects_invalid_values(
@@ -266,8 +308,9 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
         (
             "appsec",
             (
-                "Check secrets, injection, auth, data, dependencies, and shell/file/network "
-                "risks. Return security verdict, findings, blockers, and risks."
+                "Independently identify realistic vulnerabilities across changed trust "
+                "boundaries. Stay read-only. Return only evidence-backed material findings "
+                "and security readiness."
             ),
         ),
     ],
@@ -284,7 +327,7 @@ def test_root_agent_catalog_phase_1_role_prompt_additions_match_plan(
 def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
     path = tmp_path / "explicit-config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("{}\n", encoding="utf-8")
+    path.write_text("default_timeout: 30\n", encoding="utf-8")
     prompts_path.write_text(
         """
 default_return_format: Custom return.
@@ -611,7 +654,12 @@ def test_root_agent_catalog_assigns_dedicated_reviewer_skill() -> None:
     catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
 
     assert catalog.roles["reviewer"].skills == ("reviewer",)
-    assert catalog.roles["appsec"].skills == ()
+
+
+def test_root_agent_catalog_assigns_dedicated_appsec_skill() -> None:
+    catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
+
+    assert catalog.roles["appsec"].skills == ("appsec",)
 
 
 def test_root_agent_catalog_includes_builder_harness_fallback() -> None:
@@ -677,7 +725,7 @@ roles:
 
 def test_missing_prompts_file_raises_clear_error(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
-    path.write_text("{}\n", encoding="utf-8")
+    path.write_text("default_timeout: 30\n", encoding="utf-8")
 
     with pytest.raises(ConfigError, match="configuration file not found"):
         load_app_config(path)

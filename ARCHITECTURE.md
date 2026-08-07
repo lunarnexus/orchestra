@@ -9,7 +9,7 @@ Orchestra is a local coding-agent orchestration layer. A host session or CLI sta
 Core properties:
 
 - Python core with host adapters around it.
-- Thin host extensions/plugins for Pi and Hermes.
+- Thin host extensions/plugins for Pi, Hermes, and OpenCode.
 - Config-driven role and harness selection.
 - Session-scoped ownership for all worker runs.
 - Lean SQLite runtime state plus JSONL logs and return artifacts.
@@ -56,6 +56,7 @@ Current host surfaces:
 - Pi extension: `extensions/pi/orchestra/index.ts`
 - packaged Pi asset mirror: `src/orchestra/assets/pi/orchestra/index.ts`
 - Hermes plugin: `extensions/hermes/orchestra/__init__.py`
+- OpenCode plugin: `extensions/opencode/orchestra/index.ts`
 
 Adapters retrieve runtime session identity from host context and pass it to core. The model or user prompt must not provide session identity.
 
@@ -108,8 +109,8 @@ Current active worker roles:
 - `planner` — scope, research coordination, spike decisions, plans
 - `researcher` — read-only evidence gathering
 - `verifier` — independent acceptance verification
-- `reviewer` — quality review mode
-- `appsec` — reviewer skill in security mode
+- `reviewer` — implementation quality and merge-readiness review
+- `appsec` — application-security and abuse-path review
 
 Current active skills:
 
@@ -169,6 +170,7 @@ Examples:
 - Pi parent sessions: `pi:<session_id>` from `ctx.sessionManager.getSessionId()`
 - Pi worker sessions: deterministic `orchestra-worker-<run-id>` ids stored as `worker_session_id`
 - Hermes: `hermes:<session_id>` from plugin runtime context
+- OpenCode: `opencode:<session_id>` from `context.sessionID`
 - CLI/manual mode: explicit `--session-id`
 
 Session id is an ownership boundary. Control operations such as stop and auto-return must use the stored owner id.
