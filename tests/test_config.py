@@ -248,6 +248,14 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
             ),
         ),
         (
+            "verifier",
+            (
+                "Independently prove whether the work satisfies its scope and acceptance "
+                "criteria using fresh evidence. Stay read-only. Return verdict, evidence, "
+                "missing checks, blockers, and risks."
+            ),
+        ),
+        (
             "reviewer",
             (
                 "Check work in the requested mode: verify, review, or security. Read-only "
@@ -592,6 +600,12 @@ roles:
         match="role 'worker' requires top-level 'harness_configs' when using 'harness_fallback'",
     ):
         load_agent_catalog(path)
+
+
+def test_root_agent_catalog_assigns_dedicated_verifier_skill() -> None:
+    catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
+
+    assert catalog.roles["verifier"].skills == ("verifier",)
 
 
 def test_root_agent_catalog_includes_builder_harness_fallback() -> None:

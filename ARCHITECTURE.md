@@ -107,7 +107,7 @@ Current active worker roles:
 - `builder` — focused implementation
 - `planner` — scope, research coordination, spike decisions, plans
 - `researcher` — read-only evidence gathering
-- `verifier` — reviewer skill in verify mode
+- `verifier` — independent acceptance verification
 - `reviewer` — quality review mode
 - `appsec` — reviewer skill in security mode
 
@@ -117,6 +117,7 @@ Current active skills:
 - `skills/builder/SKILL.md`
 - `skills/planner/SKILL.md`
 - `skills/researcher/SKILL.md`
+- `skills/verifier/SKILL.md`
 - `skills/reviewer/SKILL.md`
 - `skills/caveman/SKILL.md`
 

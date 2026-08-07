@@ -369,12 +369,18 @@ pass a normal delegation prompt. Orchestra searches recursively under `skills/`
 for `<skill-name>/SKILL.md` relative to the current working directory and
 injects the local content when present. If no local skill file exists, the
 prompt tells the worker to load the named native skill before doing the task.
-`reviewer`, `verifier`, and `appsec` may share the same `reviewer` skill with
-different requested modes. Role `env` values are applied only to worker
+`verifier` uses its own acceptance-evidence skill. `reviewer` and `appsec` may
+share the `reviewer` skill with different requested modes until their role
+skills are separated. Role `env` values are applied only to worker
 subprocess environments; env keys must be valid environment variable names and
 cannot use the reserved `ORCHESTRA_` prefix. User-facing role listings show env
 keys, not values. Avoid hard-coding planning, coding, reviewing, or other work
 methods into core.
+
+Role-skill readiness requires live behavioral evaluation through the normal
+host -> Orchestra role -> configured worker path. Grade outcome, process, scope,
+policy, and handoff separately; retain trace gaps as unknown rather than
+inferring compliance from a successful result.
 
 ### Dispatch Prompt Shape
 

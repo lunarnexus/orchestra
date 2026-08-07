@@ -45,9 +45,9 @@ roles:
     harness_config: pi
     model: openai-codex/gpt-5.4-mini
     skills:
-    - reviewer
-    prompt_addition: Use reviewer verify mode. Check requested behavior and acceptance
-      target. Read-only unless explicitly asked. Return verdict, missing behavior,
+    - verifier
+    prompt_addition: Independently prove whether the work satisfies its scope and
+      acceptance criteria using fresh evidence. Stay read-only. Return verdict, evidence,
       missing checks, blockers, and risks.
     enabled: true
     env:
