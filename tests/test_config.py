@@ -258,17 +258,16 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
         (
             "reviewer",
             (
-                "Check work in the requested mode: verify, review, or security. Read-only "
-                "unless explicitly asked. Return verdict, findings, missing checks, blockers, "
-                "and risks."
+                "Independently review whether the change is correct, maintainable, "
+                "appropriately scoped, and ready to merge. Stay read-only. Return only "
+                "evidence-backed material findings and readiness."
             ),
         ),
         (
             "appsec",
             (
-                "Use reviewer security mode. Check secrets, injection, auth, data, "
-                "dependencies, and shell/file/network risks. Return security verdict, "
-                "findings, blockers, and risks."
+                "Check secrets, injection, auth, data, dependencies, and shell/file/network "
+                "risks. Return security verdict, findings, blockers, and risks."
             ),
         ),
     ],
@@ -606,6 +605,13 @@ def test_root_agent_catalog_assigns_dedicated_verifier_skill() -> None:
     catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
 
     assert catalog.roles["verifier"].skills == ("verifier",)
+
+
+def test_root_agent_catalog_assigns_dedicated_reviewer_skill() -> None:
+    catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
+
+    assert catalog.roles["reviewer"].skills == ("reviewer",)
+    assert catalog.roles["appsec"].skills == ()
 
 
 def test_root_agent_catalog_includes_builder_harness_fallback() -> None:
