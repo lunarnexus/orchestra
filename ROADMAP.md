@@ -7,118 +7,53 @@ Orchestra roadmap items are split into:
 
 ## TODO
 
-### Skill system and development methodology
+1. [x] Add worker execution budget controls.
+   - Supports global and per-role cooperative turn limits and soft timeouts.
+   - Pi extension steers a core budget handoff prompt when a budget is reached.
+   - Budget handoffs are recorded as `incomplete` with redispatch guidance.
+   - Hard timeout remains the final kill switch.
 
-- [ ] Refine `planner` skill after real use.
-  - Planner should produce executable 2-5 minute slices.
-  - Planner should mark dependencies precisely: sequential, parallel-safe, blocked.
-  - Planner should decide research vs spike vs implementation.
+2. [ ] Add a simple live operator view.
+   - Start with `orchestra watch` or `/orch status --watch`.
+   - Prefer this before any dashboard/widget UI.
 
-### Dispatch, scheduling, and limits
+4. [ ] Add real host plugin parity tests for Hermes and OpenCode.
+   - Treat the Pi plugin as the source model for host features.
+   - Verify Hermes and OpenCode parity for supported dispatch, help/status/history, roles, doctor, auto-return, identity, and safety behavior.
+   - Load the Hermes plugin through Hermes and exercise `/orch help` and `/orch do` against Orchestra state.
+   - Keep credential/provider requirements out of default unit tests.
 
-- [x] Require a meaningful worker result before marking a run successful.
-  - Mark a run `done` only when the process exits successfully and the harness returns a non-empty normalized result summary; do not require raw stdout or role-specific headings.
-  - Treat whitespace, bootstrap messages, and warnings as empty output.
-  - When a process exits zero without a result, mark the run `failed` with a clear worker-protocol error instead of grading it as completed work.
-  - Preserve logs, transcripts, session identity, return artifacts, and possible worktree changes for diagnosis.
-  - Do not start a fallback worker after an empty runtime result because the first worker may already have produced side effects.
-  - Ensure no-op, blocker, and research runs can succeed when they return a meaningful explanation.
-  - Make evaluations classify empty-result runs as infrastructure/runtime failures and skip behavioral grading.
-  - Add result-extraction and empty-result regression coverage for Pi, Hermes, and OpenCode.
+5. [ ] Add lightweight workflow/git coordination docs.
+   - Start with reusable workflow recipes in docs/config before building a workflow engine.
+   - Keep workflow source in skills first.
+   - Include simple status/commit guidance and conventional commit conventions.
+   - Leave PR helpers and filesystem isolation for later evidence-backed work.
 
-- [ ] Add turn-limit controls alongside or instead of global dispatch timeout.
-  - Support bounded worker turns as an execution budget, not only wall-clock timeout.
-  - Allow config/policy to choose timeout-only, turn-limit-only, or both.
-  - Keep defaults simple and fail clearly when a limit is hit.
-  - Document whether limits apply per worker run, per orchestrator request, or both.
-  - Include tests for enforcement and clear final status/reporting when a turn limit stops a run.
-
-- [ ] Add a session-level heading for consolidated multi-worker reports, e.g. `[orchestra: 3 workers returned]`.
-
-- [ ] Add a simple live operator view.
-  - Start with `orchestra watch` or `/orch status --watch`.
-  - Prefer this before any dashboard/widget UI.
-
-### Harness and host parity
-
-- [ ] Add a minimal runtime dependency/setup validation check.
-  - Verify PyYAML imports cleanly.
-  - Verify `orchestra` is on `PATH` for host extensions.
-  - Keep configured harness executable checks as current behavior.
-  - Consider changing Pi init verify command to `/orch doctor`.
-
-- [ ] Add a real Hermes plugin integration test.
-  - Load the plugin through Hermes.
-  - Exercise `/orch help` and `/orch do` against Orchestra state.
-  - Keep credential/provider requirements out of default unit tests.
-
-### Workflow and git support
-
-- [ ] Add lightweight reusable workflow recipes in docs/config before building a full workflow engine.
-  - Keep workflow source in skills first.
-  - Add YAML workflows only when repeated practice shows the need.
-
-- [ ] Add git integration plan.
-  - Start with simple status/commit support.
-  - Use conventional commit guidance.
-  - Add PR/report helpers only after commit/status basics work.
-
-- [ ] Prototype opt-in worktree isolation for edit-capable workers.
-  - Use explicit cleanup policy.
-  - Add only when parallel builders need file-system isolation.
-
-### Worker returns and evaluation
-
-- [ ] Improve worker return contracts before heavier transcript/artifact storage.
-  - Keep auto-return compact.
-  - Preserve useful full worker output in return artifacts.
-  - Use reviewer/critic passes for important findings instead of retaining full sessions by default.
-
-- [ ] Expand behavioral evaluation coverage.
-  - Run at least three trials per builder case and add prior-skill/no-skill controls.
-  - Add language-diverse fixtures.
-  - Document stable Hermes and OpenCode native trace locations, then add adapters.
-  - Build equivalent natural-dispatch eval suites for planner, researcher, reviewer, verifier, appsec, and orchestrator behavior.
+6. [ ] Expand behavioral evaluation coverage.
+   - Run multi-trial role evaluations with controls where practical.
+   - Add planner, reviewer, verifier, appsec, and orchestrator behavior coverage.
+   - Add language-diverse fixtures.
+   - Document stable Hermes and OpenCode native trace locations, then add adapters.
 
 ## Wishlist
 
-### Harness and host parity
+1. [ ] OpenCode executable `/orch` command parity if OpenCode exposes a supported command implementation/output API.
+   - Current shipped `orch_dispatch` plugin remains the supported host surface.
+   - Prompt-template commands are not equivalent host commands.
 
-- [ ] OpenCode executable `/orch` command parity if OpenCode exposes a supported command implementation/output API.
-  - Current shipped `orch_dispatch` plugin remains the supported host surface.
-  - Prompt-template commands are not equivalent host commands.
+2. [ ] Queued worker requests instead of MVP fail-fast over-limit behavior.
+   - Keep timeout semantics clean: worker timeout starts when worker execution starts, not while queued.
+   - Include clear queue status, cancellation, and retry behavior before enabling by default.
 
-### Future orchestration modes
+3. [ ] Interactive/streaming harness modes.
+   - Covers Pi RPC, ACP, other streaming protocols, attach/steer, and approval pass-through.
+   - Keep optional until a harness exposes a reliable interactive protocol.
 
-- [ ] Queued worker requests instead of MVP fail-fast over-limit behavior.
-- [ ] Provider/API concurrency limits if model-level limits prove too narrow.
-- [ ] Review loops and watchdogs.
-- [ ] Scheduled/background orchestration jobs.
-- [ ] Attach/steer running workers through persistent sessions or terminal panes.
-- [ ] Approval pass-through from workers to parent session after choosing an interactive worker protocol.
-- [ ] `/orch goal` standing objectives and completion contracts.
-- [ ] Goal loops / autonomous judge loops.
-- [ ] Optional max-turn, max-run, or max-time controls if real failures show a need.
+4. [ ] Workflow orchestration UX.
+   - Covers `/orch workflow` or `/orch wf`, status/retry/steer commands, kanban/blackboard coordination, DAG representation, and workflow YAML if skills become repetitive.
 
-### Workflow UX and coordination
+5. [ ] Goal and automation loops.
+   - Covers `/orch goal`, standing objectives, review loops, watchdogs, autonomous judge loops, and other recurring orchestration patterns.
 
-- [ ] `/orch workflow` or `/orch wf` commands: start, stop, status, retry, steer.
-- [ ] Kanban/blackboard coordination if lightweight PLAN.md updates are not enough.
-- [ ] Dependency/DAG workflow representation if simple markers become insufficient.
-- [ ] Workflow YAML only if skill-based workflow instructions become repetitive or ambiguous.
-
-### Skill and artifact ergonomics
-
-- [ ] Repeated or compaction-aware `/orch on` reinjection if one-time injection proves fragile.
-- [ ] Artifact templates if artifact quality becomes inconsistent.
-- [ ] Native skill-loading ergonomics across harnesses.
-- [ ] Model fallback recursion guards.
-- [ ] Optional project-local methodology skill packs for TDD, spikes, systematic debugging, review, and release prep.
-
-### Runtime, state, and integrations
-
-- [ ] Pi RPC, ACP, or other streaming/interactive harness modes.
-- [ ] Metrics/exporters and import/export bundles.
-- [ ] Dashboard/widget UI after watch/status tooling proves insufficient.
-- [ ] Richer transcript/session handles where harnesses expose them, kept optional and debug-oriented.
-- [ ] Retention/prune command for Orchestra DB rows, JSONL logs, return artifacts, and harness session logs after development-time session capture proves useful.
+6. [ ] Operational maintenance tooling.
+   - Covers metrics/exporters, import/export bundles, richer transcript/session handles, and retention/prune commands for DB rows, JSONL logs, return artifacts, and harness session logs.

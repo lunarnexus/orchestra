@@ -110,13 +110,17 @@ Default config shape:
 state_dir: /Users/james/workspace/orchestra/state
 log_dir: /Users/james/workspace/orchestra/logs
 default_timeout: <positive-integer-seconds>
+# turn_limit: 30
+# soft_timeout: 840
 concurrency:
   global: 4
   per_session: 3
 auto_return: true
 ```
 
-`default_timeout` is the worker execution timeout in seconds and must be a positive integer in `config.yaml`. Manual per-run timeouts can be supplied with `orchestra do --timeout SEC` or host `/orch do --timeout SEC`. The LLM-callable `orch_dispatch` tool intentionally does not expose a timeout parameter; tool dispatches use the configured value.
+`default_timeout` is the hard worker execution timeout in seconds and must be a positive integer in `config.yaml`. Manual per-run timeouts can be supplied with `orchestra do --timeout SEC` or host `/orch do --timeout SEC`. The LLM-callable `orch_dispatch` tool intentionally does not expose a timeout parameter; tool dispatches use the configured value.
+
+Optional `turn_limit` and `soft_timeout` are cooperative worker budgets. They can be set globally in `config.yaml` or per role in `agent-catalog.yaml`; role values override global values. When a Pi worker reaches the turn budget or soft-time budget, the Pi extension steers the core `budget_exceeded_prompt` into the worker. The worker should stop new work and return a continuation handoff. Orchestra records that as `status: incomplete`, preserves the return artifact, and tells the caller to redispatch a smaller continuation task instead of redoing completed work. `soft_timeout` must be less than the effective hard timeout.
 
 Example role catalog entry:
 
@@ -145,6 +149,8 @@ roles:
     harness_config: pi
     enabled: true
     model: openai-codex/gpt-5.4
+    turn_limit: 30
+    soft_timeout: 840
     skills:
       - builder
     prompt_addition: Implement the assigned task only. Stay in scope. Return files changed, checks run, results, blockers, and risks.
@@ -174,6 +180,8 @@ Notes:
 - If `profile` is omitted, harnesses that support profiles use their runtime default.
 - If `agent` is omitted, harnesses that support agent selection use their runtime default.
 - `skills` is optional. For each skill, Orchestra searches recursively under `skills/` for `<skill-name>/SKILL.md` relative to the current working directory and injects that content near the start of the worker prompt. If no local skill file exists, the worker prompt tells the harness agent to load the named native skill before doing the task.
+- `turn_limit` is optional. It is a cooperative per-worker turn budget. When reached, budget-aware host extensions ask the worker to return a continuation handoff.
+- `soft_timeout` is optional. It is a cooperative per-worker timeout in seconds and must be below the hard timeout. Hard timeout remains the final kill switch.
 - `env` is optional. Values are added to the worker subprocess environment for that role. Role env overrides the parent process environment. Keys must be valid environment variable names and cannot use the reserved `ORCHESTRA_` prefix. Avoid committing secrets in catalogs; prefer external environment or secret management for sensitive values.
 - `state_dir` and `log_dir` should be stable absolute paths for installed host integrations so state does not drift with host cwd.
 
@@ -192,6 +200,8 @@ orchestra stop --session-id manual:demo --run-id <run-id>
 orchestra history --session-id manual:demo --limit 10
 ```
 
+`orchestra doctor` checks config/catalog loading, PyYAML availability, the `orchestra` executable on `PATH` for host extensions, database/log paths, and configured harness executables.
+
 ## Pi Host Extension
 
 The Pi host extension provides `/orch ...` commands, including one-time main-session `/orch on`, and the LLM-callable `orch_dispatch` tool.
@@ -202,11 +212,12 @@ Install or update the global Pi extension and materialize Pi runtime config:
 orchestra init pi
 ```
 
-Use `--force` to overwrite existing installed files, or `--copy` to copy config instead of linking it:
+Use `--force` to overwrite existing installed files, or `--copy` to copy config instead of linking it. After install, verify Pi integration with `/orch doctor`:
 
 ```bash
 orchestra init pi --force
 orchestra init pi --copy
+pi --no-approve -p "/orch doctor"
 ```
 
 Installed/runtime paths:
