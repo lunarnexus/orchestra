@@ -115,6 +115,81 @@ def test_timeout_marks_run_failed_and_keeps_terminal_state(
     assert "Worker exceeded timeout" in history.stdout
 
 
+def test_zero_exit_empty_output_marks_run_failed(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, "-c", "import sys"],
+    )
+
+    result = run_cli(
+        "--config",
+        str(config_path),
+        "--agent-catalog",
+        str(catalog_path),
+        "do",
+        "--session-id",
+        "manual:empty-output",
+        "--goal",
+        "Run an empty-output worker.",
+    )
+    assert result.returncode == 0
+    run_id = extract_run_id(result.stdout)
+
+    store = StateStore(db_path)
+    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_FAILED, timeout=5)
+
+    record = store.get_run(run_id)
+    assert record.result_summary is None
+    assert record.error_text == "Worker exited successfully without a meaningful result"
+    assert record.blocker_text == "Worker protocol error: empty result"
+    assert store.list_active_runs("manual:empty-output") == []
+
+
+def test_zero_exit_bootstrap_only_output_marks_run_failed(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [
+            python_executable,
+            str(fake_worker_script),
+            "success",
+            "--output",
+            "Bootstrapping worker runtime...\nWARNING: model cache missing\n",
+        ],
+    )
+
+    result = run_cli(
+        "--config",
+        str(config_path),
+        "--agent-catalog",
+        str(catalog_path),
+        "do",
+        "--session-id",
+        "manual:bootstrap-output",
+        "--goal",
+        "Run a bootstrap-only worker.",
+    )
+    assert result.returncode == 0
+    run_id = extract_run_id(result.stdout)
+
+    store = StateStore(db_path)
+    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_FAILED, timeout=5)
+
+    record = store.get_run(run_id)
+    assert record.result_summary is None
+    assert record.error_text == "Worker exited successfully without a meaningful result"
+    assert record.blocker_text == "Worker protocol error: empty result"
+
+
 def test_unknown_harness_marks_run_failed_and_clears_active_queue(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,

@@ -59,6 +59,8 @@ from orchestra.state import (
 )
 
 REPORT_HEADER = "Orchestra session report"
+WORKER_EMPTY_RESULT_ERROR = "Worker exited successfully without a meaningful result"
+WORKER_EMPTY_RESULT_BLOCKER = "Worker protocol error: empty result"
 ROLE_USAGE = """Usage:
   /orch roles
   /orch roles ROLE harness-config CONFIG
@@ -1647,13 +1649,46 @@ def _setup_failure_blocker(error_text: str) -> str:
     return "Worker harness could not start"
 
 
+def _meaningful_worker_summary(stdout: str) -> str | None:
+    return compact_summary(_meaningful_worker_output(stdout))
+
+
+def _meaningful_worker_output(stdout: str) -> str:
+    lines = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if lowered.startswith("bootstrapping") or lowered.startswith("warning"):
+            continue
+        lines.append(stripped)
+    return "\n".join(lines)
+
+
 def _result_from_completed_worker(
     worker: WorkerProcess,
     stdout: str,
     stderr: str,
 ) -> WorkerResult:
-    result_summary = compact_summary(stdout)
+    result_summary = _meaningful_worker_summary(stdout)
     if worker.process.returncode == 0:
+        if not result_summary:
+            return WorkerResult(
+                status=STATUS_FAILED,
+                command=worker.command,
+                prompt=worker.prompt,
+                exit_code=worker.process.returncode,
+                stdout=stdout,
+                stderr=stderr,
+                result_summary=None,
+                error_text=WORKER_EMPTY_RESULT_ERROR,
+                blocker_text=WORKER_EMPTY_RESULT_BLOCKER,
+                result_summary_truncated=False,
+                worker_session_id=worker.worker_session_id,
+                transcript_path=worker.transcript_path,
+                approval_needed=worker.approval_needed,
+            )
         return WorkerResult(
             status=STATUS_DONE,
             command=worker.command,
@@ -1664,7 +1699,7 @@ def _result_from_completed_worker(
             result_summary=result_summary,
             error_text=None,
             blocker_text=None,
-            result_summary_truncated=summary_was_truncated(stdout),
+            result_summary_truncated=summary_was_truncated(_meaningful_worker_output(stdout)),
             worker_session_id=worker.worker_session_id,
             transcript_path=worker.transcript_path,
             approval_needed=worker.approval_needed,
