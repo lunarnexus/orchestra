@@ -166,6 +166,7 @@ Notes:
 - `harness_configs` define reusable launch/runtime templates.
 - `harness` and `command` live in `harness_configs`, not in roles.
 - `roles` select a `harness_config` and own worker-selection fields such as `model`, `profile`, `agent`, `skills`, `env`, `prompt_addition`, and `enabled`.
+- `model_limits` is optional. Use it to cap active runs for a specific resolved role `model`, for example when a local model server can run only one worker at a time. Over-limit requests fail fast instead of queueing.
 - `harness_fallback` is optional. On startup failure, Orchestra preserves the requested role and its skills, `prompt_addition`, env, and worker budget, and changes only `harness_config` plus optional runtime overrides such as `model`, `profile`, or `agent`.
 - Disabled roles fail clearly; Orchestra does not silently switch to the default role.
 - `command` is a tokenized argv template, not a shell string.
@@ -173,7 +174,7 @@ Notes:
 - If `profile` is omitted, harnesses that support profiles use their runtime default.
 - If `agent` is omitted, harnesses that support agent selection use their runtime default.
 - `skills` is optional. For each skill, Orchestra searches recursively under `skills/` for `<skill-name>/SKILL.md` relative to the current working directory and injects that content near the start of the worker prompt. If no local skill file exists, the worker prompt tells the harness agent to load the named native skill before doing the task.
-- `env` is optional. Values are added to the worker subprocess environment for that role. Role env overrides the parent process environment. Keys must be valid environment variable names and cannot use the reserved `ORCHESTRA_` prefix. `/orch roles` shows env keys only, not values. Avoid committing secrets in catalogs; prefer external environment or secret management for sensitive values.
+- `env` is optional. Values are added to the worker subprocess environment for that role. Role env overrides the parent process environment. Keys must be valid environment variable names and cannot use the reserved `ORCHESTRA_` prefix. Avoid committing secrets in catalogs; prefer external environment or secret management for sensitive values.
 - `state_dir` and `log_dir` should be stable absolute paths for installed host integrations so state does not drift with host cwd.
 
 ## CLI Usage

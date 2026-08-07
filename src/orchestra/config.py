@@ -149,9 +149,15 @@ class RoleConfig:
 
 
 @dataclass(frozen=True)
+class ModelLimitConfig:
+    concurrency: int
+
+
+@dataclass(frozen=True)
 class AgentCatalog:
     roles: dict[str, RoleConfig]
     harness_configs: dict[str, HarnessConfig] = field(default_factory=dict)
+    model_limits: dict[str, ModelLimitConfig] = field(default_factory=dict)
     default_role: str = DEFAULT_ROLE_NAME
 
 
@@ -244,6 +250,7 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
     raw = _load_yaml_mapping(path)
     default_role = _get_optional_string(raw, "default_role") or DEFAULT_ROLE_NAME
     harness_configs_raw = raw.get("harness_configs")
+    model_limits_raw = raw.get("model_limits", {})
     roles_raw = raw.get("roles")
     if not isinstance(roles_raw, dict) or not roles_raw:
         raise ConfigError("'roles' must be a non-empty mapping")
@@ -269,6 +276,8 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                     context=f"harness config '{config_name}'",
                 ),
             )
+
+    model_limits = _load_model_limits(model_limits_raw)
 
     roles: dict[str, RoleConfig] = {}
     for role_name, role_raw in roles_raw.items():
@@ -368,8 +377,34 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
     return AgentCatalog(
         roles=roles,
         harness_configs=harness_configs,
+        model_limits=model_limits,
         default_role=default_role,
     )
+
+
+def _load_model_limits(raw: object) -> dict[str, ModelLimitConfig]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ConfigError("'model_limits' must be a mapping")
+    model_limits: dict[str, ModelLimitConfig] = {}
+    for model_name, limit_raw in raw.items():
+        if not isinstance(model_name, str) or not model_name.strip():
+            raise ConfigError("model limit names must be non-empty strings")
+        if isinstance(limit_raw, int) and not isinstance(limit_raw, bool):
+            model_limits[model_name] = ModelLimitConfig(
+                concurrency=_validate_positive_int(
+                    limit_raw,
+                    key=f"model limit '{model_name}' concurrency",
+                )
+            )
+            continue
+        if not isinstance(limit_raw, dict):
+            raise ConfigError(f"model limit '{model_name}' must be a mapping")
+        model_limits[model_name] = ModelLimitConfig(
+            concurrency=_get_required_positive_int(limit_raw, "concurrency")
+        )
+    return model_limits
 
 
 def _resolve_path(
@@ -438,8 +473,12 @@ def _get_required_positive_int(data: dict[str, Any], key: str) -> int:
     value = data.get(key)
     if value is None:
         raise ConfigError(f"'{key}' is required and must be a positive integer")
+    return _validate_positive_int(value, key=f"'{key}'")
+
+
+def _validate_positive_int(value: object, *, key: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ConfigError(f"'{key}' must be a positive integer")
+        raise ConfigError(f"{key} must be a positive integer")
     return value
 
 

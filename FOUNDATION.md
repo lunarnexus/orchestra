@@ -247,21 +247,20 @@ as truncated and includes the return artifact path for the full worker return.
 ### Scheduling and Workflows
 
 Parallelism is scheduler-driven under configured concurrency limits, not a
-separate command. Enforce both a global concurrency limit and a per-orchestrator
-session concurrency limit. MVP defaults are `global=4` and `per_session=3`.
-If a `/orch do` request would exceed either limit, return an error for MVP.
-Queued worker requests, review loops, and watchdogs are tracked in
-`ROADMAP.md`.
+separate command. Enforce global, per-orchestrator-session, and configured
+per-model concurrency limits. MVP defaults are `global=4` and `per_session=3`.
+If a `/orch do` request would exceed a limit, return an error for MVP. Queued
+worker requests, review loops, and watchdogs are tracked in `ROADMAP.md`.
 
 Worker completions should prod only the owning orchestrator session by
 re-entering as one new host/orchestrator turn with the consolidated session
 report when the host supports it. Auto-prodding/`auto_return` is enabled by
 default, with a simple config toggle to disable it for hosts or users that prefer
 explicit `/orch status` or `/orch history` checks. MVP loop controls should stay
-small: global and per-session concurrency limits, required configured worker
-timeout, `/orch stop`, and session-scoped consolidated returns. Do not add
-max-turn, max-run, max-time, or compatibility-flag machinery until there is a
-demonstrated need.
+small: global, per-session, and per-model concurrency limits, required
+configured worker timeout, `/orch stop`, and session-scoped consolidated
+returns. Do not add max-turn, max-run, max-time, or compatibility-flag machinery
+until there is a demonstrated need.
 
 ### Multi-Orchestrator Ownership
 

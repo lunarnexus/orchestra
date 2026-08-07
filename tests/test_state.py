@@ -4,6 +4,7 @@ import json
 import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -52,7 +53,7 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == 5
+    assert row[0] == 6
 
 
 def test_connect_retries_transient_sqlite_open_failure(
@@ -244,6 +245,43 @@ def test_reserve_run_enforces_limits_atomically(state_store: StateStore, tmp_pat
             global_limit=1,
             per_session_limit=1,
         )
+
+
+def test_reserve_run_enforces_model_limit_atomically(
+    state_store: StateStore,
+    tmp_path: Path,
+) -> None:
+    first = make_run(tmp_path, "run-model-1", "pi:session-a")
+    second = make_run(tmp_path, "run-model-2", "pi:session-b")
+    unlimited = make_run(tmp_path, "run-model-3", "pi:session-c")
+    first = replace(first, model="lmstudio/qwen")
+    second = replace(second, model="lmstudio/qwen")
+    unlimited = replace(unlimited, model="openai/gpt")
+
+    state_store.reserve_run(
+        first,
+        global_limit=10,
+        per_session_limit=10,
+        per_model_limits={"lmstudio/qwen": 1},
+    )
+
+    with pytest.raises(
+        ConcurrencyLimitError,
+        match="model concurrency limit exceeded: lmstudio/qwen active=1 limit=1",
+    ):
+        state_store.reserve_run(
+            second,
+            global_limit=10,
+            per_session_limit=10,
+            per_model_limits={"lmstudio/qwen": 1},
+        )
+
+    state_store.reserve_run(
+        unlimited,
+        global_limit=10,
+        per_session_limit=10,
+        per_model_limits={"lmstudio/qwen": 1},
+    )
 
 
 def test_pending_report_runs_are_not_marked_until_delivered(

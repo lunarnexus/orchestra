@@ -33,13 +33,6 @@ Orchestra roadmap items are split into:
   - Document whether limits apply per worker run, per orchestrator request, or both.
   - Include tests for enforcement and clear final status/reporting when a turn limit stops a run.
 
-- [ ] Add per-model/API concurrency limits.
-  - Current limits are global and per-session.
-  - Add limits keyed by provider/API, harness, and/or model so one backend is not overloaded while unrelated models remain available.
-  - Preserve session ownership and fail-fast semantics unless queueing is explicitly added later.
-  - Consider config such as `limits.global`, `limits.per_session`, `limits.per_harness`, `limits.per_provider`, and `limits.per_model`.
-  - Include tests for atomic enforcement and clear over-limit errors.
-
 - [ ] Add a session-level heading for consolidated multi-worker reports, e.g. `[orchestra: 3 workers returned]`.
 
 - [ ] Add a simple live operator view.
@@ -98,6 +91,7 @@ Orchestra roadmap items are split into:
 ### Future orchestration modes
 
 - [ ] Queued worker requests instead of MVP fail-fast over-limit behavior.
+- [ ] Provider/API concurrency limits if model-level limits prove too narrow.
 - [ ] Review loops and watchdogs.
 - [ ] Scheduled/background orchestration jobs.
 - [ ] Attach/steer running workers through persistent sessions or terminal panes.

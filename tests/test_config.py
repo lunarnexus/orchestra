@@ -350,6 +350,9 @@ def test_load_agent_catalog_supports_optional_fields(tmp_path: Path) -> None:
     path.write_text(
         """
 default_role: reviewer
+model_limits:
+  gpt-5:
+    concurrency: 1
 harness_configs:
   pi:
     harness: pi
@@ -389,6 +392,7 @@ roles:
     catalog = load_agent_catalog(path)
 
     assert catalog.default_role == "reviewer"
+    assert catalog.model_limits["gpt-5"].concurrency == 1
     reviewer = catalog.roles["reviewer"]
     assert reviewer.harness_config == "hermes"
     assert reviewer.harness == "hermes"
@@ -418,6 +422,24 @@ roles:
             "roles:\n"
             "  worker: nope\n",
             "role 'worker' must be a mapping",
+        ),
+        (
+            "model_limits: nope\nroles:\n  worker:\n    harness: pi\n    command: [pi]\n",
+            "'model_limits' must be a mapping",
+        ),
+        (
+            "model_limits:\n  gpt: nope\nroles:\n  worker:\n    harness: pi\n    command: [pi]\n",
+            "model limit 'gpt' must be a mapping",
+        ),
+        (
+            "model_limits:\n"
+            "  gpt:\n"
+            "    concurrency: 0\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness: pi\n"
+            "    command: [pi]\n",
+            "'concurrency' must be a positive integer",
         ),
         (
             "harness_configs:\n  pi: nope\nroles:\n  worker:\n    harness_config: pi\n",
@@ -565,7 +587,7 @@ roles:
             "  worker:\n"
             "    harness_config: pi\n"
             "    env:\n"
-            "      ORCHESTRA_WORKER: '99'\n",
+            "      ORCHESTRA_DISPATCH_BUDGET: '99'\n",
             "role 'worker' requires 'env' keys not to use reserved ORCHESTRA_ names",
         ),
         (

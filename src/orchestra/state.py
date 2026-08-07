@@ -20,7 +20,7 @@ STATUS_CANCELLED = "cancelled"
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 _CONNECT_ATTEMPTS = 8
 _CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
 _CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
@@ -50,6 +50,7 @@ class RunRecord:
     task_label: str
     log_path: Path
     created_at: str
+    model: str | None = None
     status: str = STATUS_QUEUED
     batch_id: str | None = None
     started_at: str | None = None
@@ -125,6 +126,7 @@ class StateStore:
                     batch_id TEXT,
                     harness TEXT NOT NULL,
                     role TEXT NOT NULL,
+                    model TEXT,
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     started_at TEXT,
@@ -146,6 +148,7 @@ class StateStore:
                 )
                 """
             )
+            self._ensure_column(connection, "runs", "model", "TEXT")
             self._ensure_column(connection, "runs", "process_group_id", "INTEGER")
             self._ensure_column(connection, "runs", "result_artifact_path", "TEXT")
             self._ensure_column(
@@ -173,6 +176,7 @@ class StateStore:
         *,
         global_limit: int,
         per_session_limit: int,
+        per_model_limits: dict[str, int] | None = None,
     ) -> RunRecord:
         _validate_status(record.status)
         if record.status != STATUS_QUEUED:
@@ -209,6 +213,27 @@ class StateStore:
                 connection.rollback()
                 raise ConcurrencyLimitError("per-session concurrency limit exceeded")
 
+            model = record.model
+            model_limit = (per_model_limits or {}).get(model or "")
+            if model and model_limit is not None:
+                model_active = int(
+                    connection.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM runs
+                        WHERE model = ?
+                          AND status IN (?, ?)
+                        """,
+                        (model, STATUS_QUEUED, STATUS_RUNNING),
+                    ).fetchone()[0]
+                )
+                if model_active >= model_limit:
+                    connection.rollback()
+                    raise ConcurrencyLimitError(
+                        f"model concurrency limit exceeded: {model} "
+                        f"active={model_active} limit={model_limit}"
+                    )
+
             connection.execute(
                 """
                 INSERT INTO runs (
@@ -217,6 +242,7 @@ class StateStore:
                     batch_id,
                     harness,
                     role,
+                    model,
                     status,
                     created_at,
                     started_at,
@@ -235,7 +261,7 @@ class StateStore:
                     approval_needed,
                     report_claimed_at,
                     reported_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._serialize_record(record),
             )
@@ -248,12 +274,17 @@ class StateStore:
                 "task_label": record.task_label,
                 "harness": record.harness,
                 "role": record.role,
+                "model": record.model,
             },
         )
         return record
 
     def create_run(self, record: RunRecord) -> RunRecord:
-        return self.reserve_run(record, global_limit=10_000_000, per_session_limit=10_000_000)
+        return self.reserve_run(
+            record,
+            global_limit=10_000_000,
+            per_session_limit=10_000_000,
+        )
 
     def get_run(self, run_id: str) -> RunRecord:
         with self._connect() as connection:
@@ -684,6 +715,7 @@ class StateStore:
             record.batch_id,
             record.harness,
             record.role,
+            record.model,
             record.status,
             record.created_at,
             record.started_at,
@@ -711,6 +743,7 @@ class StateStore:
             batch_id=_optional_text(row["batch_id"]),
             harness=str(row["harness"]),
             role=str(row["role"]),
+            model=_optional_text(row["model"]),
             status=str(row["status"]),
             created_at=str(row["created_at"]),
             started_at=_optional_text(row["started_at"]),

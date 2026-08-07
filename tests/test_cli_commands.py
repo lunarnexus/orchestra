@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestra.harnesses.common import ORCHESTRA_WORKER_ENV
+from orchestra.harnesses.common import ORCHESTRA_DISPATCH_BUDGET_ENV
 from orchestra.state import STATUS_DONE, StateStore
 from tests.helpers import extract_run_id, wait_for_condition
 from tests.types import RuntimeFilesFactory
@@ -104,6 +104,63 @@ def test_do_status_history_flow(
     assert "worker done" in history_output
 
 
+def test_do_rejects_over_model_limit(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, "-c", "import time; time.sleep(2); print('done')"],
+    )
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    catalog["model_limits"] = {"lmstudio/qwen": {"concurrency": 1}}
+    catalog["roles"]["worker"]["model"] = "lmstudio/qwen"
+    catalog_path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
+
+    from orchestra.cli import main
+
+    first_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "do",
+            "--session-id",
+            "manual:model-limit-a",
+            "--goal",
+            "hold model slot",
+        ]
+    )
+    first_output = capsys.readouterr().out
+    run_id = extract_run_id(first_output)
+    store = StateStore(db_path)
+    assert wait_for_condition(lambda: bool(store.list_active_runs()))
+
+    second_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "do",
+            "--session-id",
+            "manual:model-limit-b",
+            "--goal",
+            "should fail fast",
+        ]
+    )
+    second_output = capsys.readouterr().out
+
+    assert first_exit == 0
+    assert second_exit == 1
+    assert "model concurrency limit exceeded: lmstudio/qwen" in second_output
+    assert "active=1 limit=1" in second_output
+    assert store.get_run(run_id).model == "lmstudio/qwen"
+
+
 def test_do_uses_role_worker_budget_for_worker_env(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
@@ -115,7 +172,7 @@ def test_do_uses_role_worker_budget_for_worker_env(
         [
             python_executable,
             "-c",
-            "import os; print(os.environ.get('ORCHESTRA_WORKER', 'missing'))",
+            "import os; print(os.environ.get('ORCHESTRA_DISPATCH_BUDGET', 'missing'))",
         ],
     )
     catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
@@ -148,7 +205,7 @@ def test_do_uses_role_worker_budget_for_worker_env(
     assert StateStore(db_path).get_run(run_id).result_summary == "2"
 
 
-def test_do_rejects_when_orchestra_worker_budget_is_exhausted(
+def test_do_rejects_when_orchestra_dispatch_budget_is_exhausted(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
@@ -160,7 +217,7 @@ def test_do_rejects_when_orchestra_worker_budget_is_exhausted(
         tmp_path,
         [python_executable, str(fake_worker_script), "success", "--output", "should not run"],
     )
-    monkeypatch.setenv(ORCHESTRA_WORKER_ENV, "1")
+    monkeypatch.setenv(ORCHESTRA_DISPATCH_BUDGET_ENV, "1")
 
     from orchestra.cli import main
 
@@ -180,7 +237,7 @@ def test_do_rejects_when_orchestra_worker_budget_is_exhausted(
     output = capsys.readouterr().out
 
     assert exit_code == 1
-    assert "ORCHESTRA_WORKER dispatch budget exhausted" in output
+    assert "ORCHESTRA_DISPATCH_BUDGET dispatch budget exhausted" in output
 
 
 def test_roles_lists_configured_worker_roles(
@@ -1075,7 +1132,7 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
                                 "print(json.dumps({"
                                 "'argv': sys.argv[1:-1], "
                                 "'prompt': sys.argv[-1], "
-                                "'worker_budget': os.environ.get('ORCHESTRA_WORKER'), "
+                                "'worker_budget': os.environ.get('ORCHESTRA_DISPATCH_BUDGET'), "
                                 "'role_env': os.environ.get('ROLE_ENV_TEST')"
                                 "}))"
                             ),

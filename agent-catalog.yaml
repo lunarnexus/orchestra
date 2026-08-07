@@ -1,4 +1,7 @@
 default_role: builder
+model_limits:
+  lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved:
+    concurrency: 1
 harness_configs:
   pi:
     harness: pi
@@ -43,7 +46,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   verifier:
     harness_config: pi
-    model: openai-codex/gpt-5.4-mini
+    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
     skills:
     - verifier
     prompt_addition: Independently prove whether the work satisfies its scope and

@@ -227,7 +227,7 @@ def start_run(
 ) -> StartedRun:
     _require_session_id(session_id)
     if not orchestra_can_dispatch():
-        raise AppError("ORCHESTRA_WORKER dispatch budget exhausted")
+        raise AppError("ORCHESTRA_DISPATCH_BUDGET dispatch budget exhausted")
     selected_role = _select_role(context.catalog, role_name)
     role = selected_role.config
 
@@ -256,6 +256,7 @@ def start_run(
         batch_id=batch_id,
         harness=role.harness,
         role=selected_role.name,
+        model=role.model,
         task_label=effective_task_label,
         log_path=log_path,
         created_at=utc_now(),
@@ -266,6 +267,10 @@ def start_run(
             record,
             global_limit=context.config.concurrency.global_limit,
             per_session_limit=context.config.concurrency.per_session_limit,
+            per_model_limits={
+                model: limit.concurrency
+                for model, limit in context.catalog.model_limits.items()
+            },
         )
     except ConcurrencyLimitError as exc:
         raise AppError(str(exc)) from exc
