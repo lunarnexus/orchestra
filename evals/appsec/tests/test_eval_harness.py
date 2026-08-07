@@ -105,6 +105,21 @@ def test_empty_result_is_runtime_failure_and_skips_behavioral_grading(tmp_path: 
     assert grade["handoff_pass"] is None
 
 
+def test_fail_handoff_accepts_line_ranges_and_verification_remediation(tmp_path: Path) -> None:
+    case_dir = create_workspace("dependency-integrity-fail", tmp_path)
+    (case_dir / "result.txt").write_text(
+        "Mode: appsec\nVerdict: fail\nIntent: preserve plugin integrity\n"
+        "Attack surface:\n- downloaded plugin\nFindings:\n"
+        "- HIGH `plugins.py:3-6` — unauthenticated plugin — verify the artifact before loading\n"
+        "Security evidence:\n- hash input is unused\nResidual risk:\n- code execution\n"
+        "Readiness: not security-ready\nintegrity\n"
+    )
+
+    grade = grade_workspace(case_dir)
+
+    assert grade["handoff_pass"] is True
+
+
 def test_fail_verdict_requires_security_contract_and_finding_evidence(tmp_path: Path) -> None:
     case_dir = create_workspace("authorization-fail", tmp_path)
     (case_dir / "result.txt").write_text(

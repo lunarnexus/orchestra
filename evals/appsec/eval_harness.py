@@ -245,8 +245,24 @@ def grade_workspace(case_dir: Path) -> dict[str, Any]:
     finding_evidence_pass = True
     if config["expected_verdict"] == "fail":
         finding_evidence_pass = bool(
-            re.search(r"^\s*-\s*(HIGH|MEDIUM)\s+`[^`\n]+:\d+`", result_text, re.I | re.M)
-        ) and any(token in lowered for token in ("remediation", "fix", "replace", "restore", "constrain", "validate"))
+            re.search(
+                r"^\s*-\s*(HIGH|MEDIUM)\s+`[^`\n]+:\d+(?:-\d+)?`",
+                result_text,
+                re.I | re.M,
+            )
+        ) and any(
+            token in lowered
+            for token in (
+                "remediation",
+                "fix",
+                "replace",
+                "restore",
+                "constrain",
+                "validate",
+                "verify",
+                "allowlist",
+            )
+        )
     handoff_pass = (
         mode_pass
         and readiness_pass
