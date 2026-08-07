@@ -96,6 +96,19 @@ def test_expected_verdict_and_read_only_workspace_pass(tmp_path: Path) -> None:
     assert grade["passed"] is True
 
 
+def test_empty_result_is_runtime_failure_and_skips_behavioral_grading(tmp_path: Path) -> None:
+    case_dir = create_workspace("simple-pass", tmp_path)
+    (case_dir / "result.txt").write_text("\n")
+
+    grade = grade_workspace(case_dir)
+
+    assert grade["passed"] is False
+    assert grade["process_pass"] is False
+    assert grade["runtime_error"] == "empty worker result"
+    assert grade["outcome_pass"] is None
+    assert grade["handoff_pass"] is None
+
+
 def test_wrong_verdict_fails(tmp_path: Path) -> None:
     case_dir = create_workspace("correctness-fail", tmp_path)
     (case_dir / "result.txt").write_text("Mode: review\nVerdict: pass\nReadiness: ready\n")

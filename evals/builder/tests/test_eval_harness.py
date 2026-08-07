@@ -65,6 +65,19 @@ def test_grade_workspace_runs_hidden_verifier_without_leaving_it_in_run(tmp_path
     assert not list(case_dir.rglob("verify.py"))
 
 
+def test_empty_result_is_runtime_failure_and_skips_behavioral_grading(tmp_path: Path) -> None:
+    case_dir = create_workspace("feature-tdd", tmp_path)
+    (case_dir / "result.txt").write_text("   \n")
+
+    grade = grade_workspace(case_dir)
+
+    assert grade["passed"] is False
+    assert grade["process_pass"] is False
+    assert grade["runtime_error"] == "empty worker result"
+    assert grade["functional_pass"] is None
+    assert grade["result_pass"] is None
+
+
 def test_unauthorized_commit_fails_policy_grade(tmp_path: Path) -> None:
     case_dir = create_workspace("feature-tdd", tmp_path)
     workspace = case_dir / "workspace"

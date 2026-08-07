@@ -115,7 +115,7 @@ def test_timeout_marks_run_failed_and_keeps_terminal_state(
     assert "Worker exceeded timeout" in history.stdout
 
 
-def test_zero_exit_empty_output_marks_run_failed(
+def test_zero_exit_empty_output_marks_run_failed_for_pi_hermes_and_opencode(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
@@ -125,29 +125,52 @@ def test_zero_exit_empty_output_marks_run_failed(
         tmp_path,
         [python_executable, "-c", "import sys"],
     )
-
-    result = run_cli(
-        "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
-        "do",
-        "--session-id",
-        "manual:empty-output",
-        "--goal",
-        "Run an empty-output worker.",
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "pi",
+                "roles": {
+                    harness: {
+                        "harness": harness,
+                        "command": [python_executable, "-c", "import sys"],
+                    }
+                    for harness in ("pi", "hermes", "opencode")
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
     )
-    assert result.returncode == 0
-    run_id = extract_run_id(result.stdout)
 
-    store = StateStore(db_path)
-    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_FAILED, timeout=5)
+    for harness in ("pi", "hermes", "opencode"):
+        result = run_cli(
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "do",
+            "--session-id",
+            f"manual:empty-output-{harness}",
+            "--role",
+            harness,
+            "--goal",
+            f"Run an empty-output {harness} worker.",
+        )
+        assert result.returncode == 0
+        run_id = extract_run_id(result.stdout)
 
-    record = store.get_run(run_id)
-    assert record.result_summary is None
-    assert record.error_text == "Worker exited successfully without a meaningful result"
-    assert record.blocker_text == "Worker protocol error: empty result"
-    assert store.list_active_runs("manual:empty-output") == []
+        store = StateStore(db_path)
+        def run_failed(run_id: str = run_id, store: StateStore = store) -> bool:
+            return store.get_run(run_id).status == STATUS_FAILED
+
+        assert wait_for_condition(run_failed, timeout=5)
+
+        record = store.get_run(run_id)
+        assert record.harness == harness
+        assert record.result_summary is None
+        assert record.error_text == "Worker exited successfully without a meaningful result"
+        assert record.blocker_text == "Worker protocol error: empty result"
+        assert store.list_active_runs(f"manual:empty-output-{harness}") == []
 
 
 def test_zero_exit_bootstrap_only_output_marks_run_failed(

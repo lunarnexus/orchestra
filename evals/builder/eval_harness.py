@@ -204,6 +204,22 @@ def grade_workspace(case_dir: Path) -> dict[str, Any]:
             timeout=60,
         )
     result_text = result_path.read_text() if result_path.exists() else ""
+    if result_path.exists() and not result_text.strip():
+        return {
+            "case": case_id,
+            "passed": False,
+            "process_pass": False,
+            "runtime_error": "empty worker result",
+            "functional_pass": None,
+            "result_pass": None,
+            "git_policy_pass": None,
+            "commit_count": None,
+            "expected_commits": None,
+            "scope_policy_pass": None,
+            "unexpected_untracked": [],
+            "verifier_stdout": completed.stdout,
+            "verifier_stderr": completed.stderr,
+        }
     result_pass = all(token.lower() in result_text.lower() for token in case.result_contains)
     functional_pass = completed.returncode == 0
     commit_count = int(

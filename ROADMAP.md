@@ -16,7 +16,7 @@ Orchestra roadmap items are split into:
 
 ### Dispatch, scheduling, and limits
 
-- [ ] Require a meaningful worker result before marking a run successful.
+- [x] Require a meaningful worker result before marking a run successful.
   - Mark a run `done` only when the process exits successfully and the harness returns a non-empty normalized result summary; do not require raw stdout or role-specific headings.
   - Treat whitespace, bootstrap messages, and warnings as empty output.
   - When a process exits zero without a result, mark the run `failed` with a clear worker-protocol error instead of grading it as completed work.

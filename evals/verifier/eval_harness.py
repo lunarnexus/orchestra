@@ -219,6 +219,22 @@ def grade_workspace(case_dir: Path) -> dict[str, Any]:
     config = json.loads((case_dir / "hidden" / "grade_config.json").read_text())
     result_path = case_dir / "result.txt"
     result = result_path.read_text() if result_path.exists() else ""
+    if not result.strip():
+        return {
+            "case": case_dir.name,
+            "passed": False,
+            "process_pass": False,
+            "runtime_error": "empty worker result",
+            "outcome_pass": None,
+            "verdict_pass": None,
+            "expected_verdict": config["expected_verdict"],
+            "actual_verdict": None,
+            "handoff_pass": None,
+            "result_pass": None,
+            "scope_pass": None,
+            "policy_pass": None,
+            "workspace_changed": None,
+        }
     actual_verdict = _parse_verdict(result)
     verdict_pass = actual_verdict == config["expected_verdict"]
     lowered_result = result.lower()
