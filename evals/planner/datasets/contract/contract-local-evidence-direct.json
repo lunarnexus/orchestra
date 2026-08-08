@@ -1,0 +1,37 @@
+{
+  "id": "contract-local-evidence-direct",
+  "suite": "contract",
+  "suite_type": "contract",
+  "benchmark_pattern": "Orchestra planner contract",
+  "task_unit": "repository issue to implementation plan",
+  "task": "Named file contains the needed fact; inspect directly, do not dispatch.",
+  "files": {
+    "app.py": "def existing():\n    return True\n",
+    "test_app.py": "def test_existing():\n    assert True\n"
+  },
+  "expected_verdict": "ready",
+  "oracle": {
+    "truth_source": "hidden planner oracle adapted from benchmark pattern",
+    "required_plan_concepts": [
+      "Research used",
+      "local",
+      "PLAN"
+    ],
+    "multiple_valid_solutions": true
+  },
+  "required_tokens": [
+    "Research used",
+    "local",
+    "PLAN"
+  ],
+  "forbidden_tokens": [],
+  "expected_resources": [
+    "resources/scope-and-decisions.md",
+    "resources/slices-and-dependencies.md",
+    "resources/tests-and-verification.md",
+    "resources/plan-validation.md"
+  ],
+  "requires_dispatch": false,
+  "requires_no_dispatch": true,
+  "requires_semantic": false
+}

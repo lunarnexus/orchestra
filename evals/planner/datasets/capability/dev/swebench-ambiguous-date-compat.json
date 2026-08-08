@@ -1,0 +1,40 @@
+{
+  "id": "swebench-ambiguous-date-compat",
+  "suite_type": "capability",
+  "benchmark_pattern": "SWE-bench Verified ambiguity",
+  "task_unit": "repository issue to implementation plan",
+  "task": "Issue report asks for `parse_date('2024/01/02')`, but docs say ISO `YYYY-MM-DD`. Plan safely: separate evidence, user-owned compatibility decision, and independent safe work. Do not invent support approval.",
+  "files": {
+    "dates.py": "from datetime import datetime\n\ndef parse_date(value):\n    return datetime.strptime(value, '%Y-%m-%d').date()\n",
+    "test_dates.py": "from dates import parse_date\n\ndef test_parse_iso_date():\n    assert str(parse_date('2024-01-02')) == '2024-01-02'\n",
+    "README.md": "Dates are documented as ISO-8601 strings (`YYYY-MM-DD`).\n"
+  },
+  "expected_verdict": "blocked",
+  "oracle": {
+    "truth_source": "hidden planner oracle adapted from benchmark pattern",
+    "required_plan_concepts": [
+      "Open questions",
+      "compatibility",
+      "ISO",
+      "blocked"
+    ],
+    "multiple_valid_solutions": true
+  },
+  "required_tokens": [
+    "Open questions",
+    "compatibility",
+    "ISO",
+    "blocked"
+  ],
+  "forbidden_tokens": [
+    "support slash dates",
+    "ready"
+  ],
+  "expected_resources": [
+    "resources/scope-and-decisions.md",
+    "resources/plan-validation.md"
+  ],
+  "requires_dispatch": false,
+  "requires_no_dispatch": true,
+  "requires_semantic": false
+}

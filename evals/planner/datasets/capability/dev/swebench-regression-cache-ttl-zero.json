@@ -1,0 +1,36 @@
+{
+  "id": "swebench-regression-cache-ttl-zero",
+  "suite_type": "capability",
+  "benchmark_pattern": "SWE-bench bug with regression surface",
+  "task_unit": "repository issue to implementation plan",
+  "task": "Issue: `is_expired` has a boundary bug: ttl=0 treated as never expire. Hidden FAIL_TO_PASS checks zero ttl; PASS_TO_PASS preserves documented existing behavior. Plan fix and regression tests.",
+  "files": {
+    "cache_ttl_zero.py": "def is_expired(value):\n    return value\n",
+    "test_cache_ttl_zero.py": "from cache_ttl_zero import is_expired\n\ndef test_existing_behavior():\n    assert is_expired('x') == 'x'\n"
+  },
+  "expected_verdict": "ready",
+  "oracle": {
+    "truth_source": "hidden planner oracle adapted from benchmark pattern",
+    "required_plan_concepts": [
+      "FAIL_TO_PASS",
+      "PASS_TO_PASS",
+      "regression",
+      "Verify"
+    ],
+    "multiple_valid_solutions": true
+  },
+  "required_tokens": [
+    "FAIL_TO_PASS",
+    "PASS_TO_PASS",
+    "regression",
+    "Verify"
+  ],
+  "forbidden_tokens": [],
+  "expected_resources": [
+    "resources/tests-and-verification.md",
+    "resources/plan-validation.md"
+  ],
+  "requires_dispatch": false,
+  "requires_no_dispatch": true,
+  "requires_semantic": false
+}

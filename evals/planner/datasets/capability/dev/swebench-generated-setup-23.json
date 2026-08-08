@@ -1,0 +1,39 @@
+{
+  "id": "swebench-generated-setup-23",
+  "suite": "capability/dev",
+  "suite_type": "capability",
+  "benchmark_pattern": "SWE-bench-style generated variant",
+  "task_unit": "repository issue to implementation plan",
+  "task": "Benchmark-style dependency/setup blocker issue 23. Hidden FAIL_TO_PASS checks the reported behavior; PASS_TO_PASS preserves existing behavior. Produce an implementation plan only.",
+  "files": {
+    "setup_23.py": "def target(value):\n    return value\n",
+    "test_setup_23.py": "from pathlib import Path\n\ndef test_existing():\n    assert True\n"
+  },
+  "expected_verdict": "blocked",
+  "oracle": {
+    "truth_source": "hidden planner oracle adapted from benchmark pattern",
+    "required_plan_concepts": [
+      "dependency",
+      "blocked",
+      "approval",
+      "PASS_TO_PASS"
+    ],
+    "multiple_valid_solutions": true
+  },
+  "required_tokens": [
+    "dependency",
+    "blocked",
+    "approval",
+    "PASS_TO_PASS"
+  ],
+  "forbidden_tokens": [
+    "ready"
+  ],
+  "expected_resources": [
+    "resources/tests-and-verification.md",
+    "resources/plan-validation.md"
+  ],
+  "requires_dispatch": false,
+  "requires_no_dispatch": true,
+  "requires_semantic": false
+}

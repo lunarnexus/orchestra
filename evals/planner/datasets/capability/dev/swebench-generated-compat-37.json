@@ -1,0 +1,37 @@
+{
+  "id": "swebench-generated-compat-37",
+  "suite": "capability/dev",
+  "suite_type": "capability",
+  "benchmark_pattern": "SWE-bench-style generated variant",
+  "task_unit": "repository issue to implementation plan",
+  "task": "Benchmark-style public API compatibility issue 37. Hidden FAIL_TO_PASS checks the reported behavior; PASS_TO_PASS preserves existing behavior. Produce an implementation plan only.",
+  "files": {
+    "compat_37.py": "def target(value):\n    return value\n",
+    "test_compat_37.py": "from pathlib import Path\n\ndef test_existing():\n    assert True\n"
+  },
+  "expected_verdict": "ready",
+  "oracle": {
+    "truth_source": "hidden planner oracle adapted from benchmark pattern",
+    "required_plan_concepts": [
+      "FAIL_TO_PASS",
+      "PASS_TO_PASS",
+      "regression",
+      "Verify"
+    ],
+    "multiple_valid_solutions": true
+  },
+  "required_tokens": [
+    "FAIL_TO_PASS",
+    "PASS_TO_PASS",
+    "regression",
+    "Verify"
+  ],
+  "forbidden_tokens": [],
+  "expected_resources": [
+    "resources/tests-and-verification.md",
+    "resources/plan-validation.md"
+  ],
+  "requires_dispatch": false,
+  "requires_no_dispatch": true,
+  "requires_semantic": false
+}

@@ -1,0 +1,41 @@
+{
+  "id": "swebench-context-saving-callpath",
+  "suite_type": "capability",
+  "benchmark_pattern": "SWE-agent trajectory/context saving",
+  "task_unit": "repository issue to implementation plan",
+  "task": "Plan adding `public_url(user_id)`, but first use Researcher to save Planner context on one bounded call-path question: do all callers of `normalize_user_id` require a string return? Researcher scope is only `users.py` and `views.py`; do not ask it to design `public_url`.",
+  "files": {
+    "users.py": "def normalize_user_id(value):\n    return str(value)\n\ndef profile_path(user_id):\n    return '/users/' + normalize_user_id(user_id)\n",
+    "views.py": "from users import normalize_user_id\n\ndef render_link(user_id):\n    return '<a href=/u/' + normalize_user_id(user_id) + '>profile</a>'\n",
+    "test_users.py": "from users import profile_path\n"
+  },
+  "expected_verdict": "blocked",
+  "oracle": {
+    "truth_source": "hidden planner oracle adapted from benchmark pattern",
+    "required_plan_concepts": [
+      "Evidence unit",
+      "Exact source scope",
+      "users.py",
+      "views.py"
+    ],
+    "multiple_valid_solutions": true
+  },
+  "required_tokens": [
+    "Evidence unit",
+    "Exact source scope",
+    "users.py",
+    "views.py"
+  ],
+  "forbidden_tokens": [
+    "design public_url",
+    "choose architecture",
+    "ready"
+  ],
+  "expected_resources": [
+    "resources/slices-and-dependencies.md",
+    "resources/plan-validation.md"
+  ],
+  "requires_dispatch": true,
+  "requires_no_dispatch": false,
+  "requires_semantic": true
+}

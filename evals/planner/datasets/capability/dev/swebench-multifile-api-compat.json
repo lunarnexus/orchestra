@@ -1,0 +1,40 @@
+{
+  "id": "swebench-multifile-api-compat",
+  "suite_type": "capability",
+  "benchmark_pattern": "SWE-bench multi-file compatibility",
+  "task_unit": "repository issue to implementation plan",
+  "task": "Issue: move JSON config loading from `cli.py` into `config.py` while preserving public `cli.load(path)`. Hidden FAIL_TO_PASS checks `config.load`; PASS_TO_PASS checks `cli.load`. Plan sequencing, compatibility tests, and rollback.",
+  "files": {
+    "cli.py": "import json\n\ndef load(path):\n    return json.loads(open(path).read())\n",
+    "config.py": "# config helpers live here\n",
+    "test_cli.py": "from cli import load\n"
+  },
+  "expected_verdict": "ready",
+  "oracle": {
+    "truth_source": "hidden planner oracle adapted from benchmark pattern",
+    "required_plan_concepts": [
+      "FAIL_TO_PASS",
+      "PASS_TO_PASS",
+      "compat",
+      "rollback",
+      "cli.load"
+    ],
+    "multiple_valid_solutions": true
+  },
+  "required_tokens": [
+    "FAIL_TO_PASS",
+    "PASS_TO_PASS",
+    "compat",
+    "rollback",
+    "cli.load"
+  ],
+  "forbidden_tokens": [],
+  "expected_resources": [
+    "resources/refactors-migrations-and-rollbacks.md",
+    "resources/tests-and-verification.md",
+    "resources/plan-validation.md"
+  ],
+  "requires_dispatch": false,
+  "requires_no_dispatch": true,
+  "requires_semantic": true
+}

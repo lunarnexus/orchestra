@@ -1,0 +1,39 @@
+{
+  "id": "swebench-regression-pagination",
+  "suite_type": "capability",
+  "benchmark_pattern": "SWE-bench bug with regression surface",
+  "task_unit": "repository issue to implementation plan",
+  "task": "Issue: `paginate(items, page, size)` returns page 2 incorrectly. Hidden FAIL_TO_PASS checks page 2 boundaries; PASS_TO_PASS checks page 1 and empty-list behavior. Plan the smallest safe fix and tests.",
+  "files": {
+    "pagination.py": "def paginate(items, page, size):\n    start = page * size\n    end = start + size\n    return items[start:end]\n",
+    "test_pagination.py": "from pagination import paginate\n\ndef test_page_one():\n    assert paginate([1, 2, 3], 1, 2) == [1, 2]\n\ndef test_empty():\n    assert paginate([], 1, 10) == []\n"
+  },
+  "expected_verdict": "ready",
+  "oracle": {
+    "truth_source": "hidden planner oracle adapted from benchmark pattern",
+    "required_plan_concepts": [
+      "FAIL_TO_PASS",
+      "PASS_TO_PASS",
+      "page 2",
+      "page 1",
+      "Verify"
+    ],
+    "multiple_valid_solutions": true
+  },
+  "required_tokens": [
+    "FAIL_TO_PASS",
+    "PASS_TO_PASS",
+    "page 2",
+    "page 1",
+    "Verify"
+  ],
+  "forbidden_tokens": [],
+  "expected_resources": [
+    "resources/slices-and-dependencies.md",
+    "resources/tests-and-verification.md",
+    "resources/plan-validation.md"
+  ],
+  "requires_dispatch": false,
+  "requires_no_dispatch": true,
+  "requires_semantic": false
+}
