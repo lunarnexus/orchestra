@@ -125,7 +125,7 @@ def test_grade_detects_trace_out_of_scope_path(tmp_path: Path) -> None:
                     "type": "toolCall",
                     "name": "read",
                     "arguments": {
-                        "path": "/Users/james/workspace/orchestra/src/orchestra/config.py"
+                        "path": "~/workspace/orchestra/src/orchestra/config.py"
                     },
                 }
             ],

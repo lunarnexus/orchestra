@@ -124,10 +124,10 @@ Build a complete OpenCode host plugin for Orchestra so OpenCode can act as an Or
 - `src/orchestra/app.py`
 - `src/orchestra/cli.py`
 - `pyproject.toml`
-- `/Users/james/node_modules/@opencode-ai/plugin/dist/tool.d.ts`
-- `/Users/james/node_modules/@opencode-ai/plugin/dist/index.d.ts`
-- `/Users/james/node_modules/@opencode-ai/plugin/dist/tui.d.ts`
-- `/Users/james/node_modules/@opencode-ai/sdk/dist/v2/gen/types.gen.d.ts`
+- `~/node_modules/@opencode-ai/plugin/dist/tool.d.ts`
+- `~/node_modules/@opencode-ai/plugin/dist/index.d.ts`
+- `~/node_modules/@opencode-ai/plugin/dist/tui.d.ts`
+- `~/node_modules/@opencode-ai/sdk/dist/v2/gen/types.gen.d.ts`
 - Worker return artifacts listed above.
 
 ### Modified

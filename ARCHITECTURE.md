@@ -249,7 +249,7 @@ intake -> scope -> research -> spike if needed -> plan -> branch/status ->
 build/TDD -> verify -> review -> security -> commit/PR -> roadmap follow-up
 ```
 
-The full rationale lives in `docs/professional-development-methodology.md`. Standalone manual skill packs for methodology live outside this repo under `/Users/james/workspace/ai-skills/orchestra/`.
+The full rationale lives in `docs/professional-development-methodology.md`. Standalone manual skill packs for methodology live outside this repo under `~/workspace/ai-skills/orchestra/`.
 
 ## Verification targets
 

@@ -382,7 +382,7 @@ Local and adjacent skill sources inspected through worker slices:
   - `skills/archive/dev-lifecycle/SKILL.md`
   - `skills/archive/test-and-quality/SKILL.md`
   - `skills/archive/commit-pr-prep/SKILL.md`
-- Bigpowers methodology skills under `/Users/james/workspace/bigpowers/skills/`:
+- Bigpowers methodology skills under `~/workspace/bigpowers/skills/`:
   - `scope-work/SKILL.md`
   - `slice-tasks/SKILL.md`
   - `plan-work/SKILL.md`

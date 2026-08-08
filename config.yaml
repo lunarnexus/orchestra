@@ -1,5 +1,5 @@
-state_dir: /Users/james/workspace/orchestra/state
-log_dir: /Users/james/workspace/orchestra/logs
+state_dir: ~/workspace/orchestra/state
+log_dir: ~/workspace/orchestra/logs
 default_timeout: 900
 # turn_limit: 30        # Global cooperative worker turn budget before handoff.
 # soft_timeout: 840     # Global cooperative timeout seconds before handoff; must be below default_timeout.

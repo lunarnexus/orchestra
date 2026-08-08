@@ -68,10 +68,10 @@ Current gaps relative to the new plan:
 
 Key files reviewed:
 
-- `/Users/james/workspace/ai-skills/bigpowers/README.md`
-- `/Users/james/workspace/ai-skills/bigpowers/scripts/sync-skills.sh`
-- `/Users/james/workspace/ai-skills/bigpowers/scripts/mcp-server.js`
-- `/Users/james/workspace/ai-skills/bigpowers/skills/using-bigpowers/SKILL.md`
+- `~/workspace/ai-skills/bigpowers/README.md`
+- `~/workspace/ai-skills/bigpowers/scripts/sync-skills.sh`
+- `~/workspace/ai-skills/bigpowers/scripts/mcp-server.js`
+- `~/workspace/ai-skills/bigpowers/skills/using-bigpowers/SKILL.md`
 - critical-path `skills/*/SKILL.md`
 
 How bigpowers works:

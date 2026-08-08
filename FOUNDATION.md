@@ -352,7 +352,7 @@ A role entry should own worker-selection fields such as:
 Dispatch resolution is role -> harness config -> render command with role
 fields -> apply explicit runtime args. For example, Hermes can use a profile
 one-shot such as `hermes --profile <profile> -z "<prompt>"`; Pi can use a
-one-shot such as `PI_CODING_AGENT_DIR=/home/james/.pi/agent pi -p
+one-shot such as `PI_CODING_AGENT_DIR=~/.pi/agent pi -p
 "<prompt>"`; OpenCode can use a one-shot such as `opencode run --agent <agent>
 --model <model> "<prompt>"`.
 
