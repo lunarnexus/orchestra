@@ -4,7 +4,15 @@ import argparse
 import json
 from pathlib import Path
 
-from .eval_harness import CASES, Case, collect_trace, create_workspace, grade_case, suite_summary
+from .eval_harness import (
+    CASES,
+    Case,
+    append_result_row,
+    collect_trace,
+    create_workspace,
+    grade_case,
+    suite_summary,
+)
 
 
 def _filtered_cases(suite: str | None) -> dict[str, Case]:
@@ -33,6 +41,12 @@ def main() -> int:
     grade = sub.add_parser("grade")
     grade.add_argument("case_dir", type=Path)
 
+    record = sub.add_parser("record-result")
+    record.add_argument("case_dir", type=Path)
+    record.add_argument("--run-root", type=Path, required=True)
+    record.add_argument("--run-id")
+    record.add_argument("--worker-session-id")
+
     report = sub.add_parser("report")
     report.add_argument("run_root", type=Path)
 
@@ -58,6 +72,15 @@ def main() -> int:
         grade_result = grade_case(case_dir)
         (case_dir / "grade.json").write_text(json.dumps(grade_result, indent=2) + "\n")
         print(json.dumps(grade_result, indent=2))
+        return 0
+    if args.command == "record-result":
+        row = append_result_row(
+            args.case_dir.resolve(),
+            args.run_root.resolve(),
+            run_id=args.run_id,
+            worker_session_id=args.worker_session_id,
+        )
+        print(json.dumps(row, indent=2))
         return 0
     summary = suite_summary(args.run_root.resolve())
     (args.run_root.resolve() / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")

@@ -394,7 +394,74 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
         return False
 
 
+def compact_result_row(
+    case_dir: Path,
+    *,
+    run_id: str | None = None,
+    worker_session_id: str | None = None,
+) -> dict[str, Any]:
+    config = json.loads((case_dir / "hidden" / "grade_config.json").read_text())
+    grade = json.loads((case_dir / "grade.json").read_text())
+    effective_run_id = run_id or _read_run_id(case_dir)
+    effective_worker_session = worker_session_id or (
+        f"orchestra-worker-{effective_run_id}" if effective_run_id else None
+    )
+    refs = {
+        "debug": f"orchestra debug --run-id {effective_run_id}" if effective_run_id else None,
+        "log": f"logs/{effective_run_id}.jsonl" if effective_run_id else None,
+        "artifact": f"state/return-artifacts/{effective_run_id}.md" if effective_run_id else None,
+    }
+    return {
+        "case": config["case"],
+        "suite": config["suite"],
+        "run_id": effective_run_id,
+        "worker_session_id": effective_worker_session,
+        "status": "done" if grade.get("result_present") else "failed",
+        "grade": {
+            "passed": grade.get("passed"),
+            "outcome_pass": grade.get("expected_pass") and grade.get("citation_pass"),
+            "process_pass": grade.get("trace", {}).get("available"),
+            "scope_pass": grade.get("scope_pass"),
+            "policy_pass": grade.get("policy_pass"),
+            "handoff_pass": grade.get("result_present"),
+        },
+        "refs": refs,
+    }
+
+
+def append_result_row(
+    case_dir: Path,
+    run_root: Path,
+    *,
+    run_id: str | None = None,
+    worker_session_id: str | None = None,
+) -> dict[str, Any]:
+    row = compact_result_row(
+        case_dir,
+        run_id=run_id,
+        worker_session_id=worker_session_id,
+    )
+    with (run_root / "results.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row, sort_keys=True) + "\n")
+    return row
+
+
 def suite_summary(run_root: Path) -> dict[str, Any]:
+    results_path = run_root / "results.jsonl"
+    if results_path.exists():
+        rows = [json.loads(line) for line in results_path.read_text().splitlines() if line.strip()]
+        passed = sum(bool(row.get("grade", {}).get("passed")) for row in rows)
+        return {
+            "total": len(rows),
+            "passed": passed,
+            "failed": len(rows) - passed,
+            "process_failed": sum(
+                row.get("grade", {}).get("scope_pass") is False
+                or row.get("grade", {}).get("policy_pass") is False
+                for row in rows
+            ),
+            "results": rows,
+        }
     grades = [json.loads(path.read_text()) for path in sorted(run_root.glob("*/grade.json"))]
     passed = sum(bool(grade.get("passed")) for grade in grades)
     return {
@@ -407,6 +474,14 @@ def suite_summary(run_root: Path) -> dict[str, Any]:
         ),
         "cases": grades,
     }
+
+
+def _read_run_id(case_dir: Path) -> str | None:
+    run_id_path = case_dir / "run_id.txt"
+    if run_id_path.exists():
+        value = run_id_path.read_text().strip()
+        return value or None
+    return None
 
 
 def run_timings(case_dir: Path) -> dict[str, float | None]:

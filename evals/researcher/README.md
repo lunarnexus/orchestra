@@ -14,6 +14,20 @@ Do not combine the suites into one leaderboard score. Report outcome, process, s
 
 A single run is smoke evidence only. Capability claims require repeated trials and a baseline/control.
 
+## Layout
+
+```text
+evals/researcher/
+  README.md
+  RUNBOOK.md
+  cli.py
+  eval_harness.py
+  tests/
+  runs/              # ignored compact results
+```
+
+Default run records are compact: `results.jsonl` plus `summary.json` under a timestamped `runs/` root. Full trace copies are opt-in for debugging/adjudication.
+
 ## CLI
 
 ```bash

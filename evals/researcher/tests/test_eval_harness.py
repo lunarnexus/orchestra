@@ -8,6 +8,7 @@ import pytest
 from evals.researcher.contract.cli import _filtered_cases
 from evals.researcher.contract.eval_harness import (
     CASES,
+    append_result_row,
     collect_trace,
     create_workspace,
     grade_case,
@@ -154,6 +155,24 @@ def test_collect_trace_copies_available_artifacts(
     copied = collect_trace("abc", case_dir, state_dir, log_dir)
 
     assert sorted(copied) == ["orchestra.jsonl", "result-artifact.md"]
+
+
+def test_record_result_writes_compact_jsonl_summary(tmp_path: Path) -> None:
+    case_dir = create_workspace("symbol-lookup", tmp_path)
+    (case_dir / "result.txt").write_text("returns default 10 Evidence config.py:1-4")
+    (case_dir / "grade.json").write_text(json.dumps(grade_case(case_dir)) + "\n")
+
+    row = append_result_row(case_dir, tmp_path, run_id="abc123")
+    summary = suite_summary(tmp_path)
+
+    assert (tmp_path / "results.jsonl").exists()
+    assert row["run_id"] == "abc123"
+    assert row["worker_session_id"] == "orchestra-worker-abc123"
+    assert row["refs"]["debug"] == "orchestra debug --run-id abc123"
+    assert summary["total"] == 1
+    assert summary["passed"] == 1
+    assert "results" in summary
+
 
 
 def test_suite_summary_counts_passes_and_process_failures(tmp_path: Path) -> None:
