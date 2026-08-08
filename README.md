@@ -18,42 +18,43 @@ It gives a host agent or CLI a small, consistent way to:
 
 Some harnesses are fast and light, some are smart but bloated.  Some burn tokens at break-neck speed, some just don't have the features you want.  Well, with Orchestra, you can use all your favorite agent harnesses for what they're good at.  Big and full featured with lots of UI bells and whistles for the orchestrator, and lightweight for coders, smart with heavy memory systems for researchers, whatever you want.  
 
-## Concepts
+## Why Orchestra?
 
-- **Orchestrator session** — the main CLI/host session, the orchestrator brain that starts workers and owns their results.
-- **Worker run** — one focused task launched through a configured harness.
-- **Harness** — a runtime connector such as Pi, Hermes, or future OpenCode one-shot execution.
-- **Role** — a named catalog entry, such as `builder`, `verifier`, `reviewer`, `researcher`, `appsec`, or `planner`, that selects a harness, optional skills, and prompt addition.
-- **Auto-return** — host integration behavior that reinjects one consolidated completion report after all active workers for the owning session finish.
+LLM coding agents work best when tasks are small, bounded, and matched to the right tool. Orchestra helps the main agent stay focused while specialized workers handle research, implementation, verification, review, or security checks.
 
-## Operating Model
+Common LLM coding obstacles Orchestra is designed around:
 
-Orchestra is meant to keep the parent/orchestrator context clean. The
-orchestrator session is the main-session brain: it owns decomposition,
-approvals, sequencing, and final judgment, but bounded work should be
-delegated to appropriate worker roles when a role exists. In Pi, `/orch on`
-loads `skills/orchestrator/SKILL.md` into that main session once for
-orchestrator mode. MVP does not include `/orch off`.
+- **Context bloat** — workers return compact summaries while full output stays in artifacts.
+- **Unclear delegation** — roles make worker selection repeatable instead of improvised.
+- **Harness mismatch** — use different agent harnesses for different strengths.
+- **Runaway work** — timeouts, cancellation, and cooperative budgets keep runs bounded.
+- **Parallel confusion** — session ownership and concurrency limits keep results attached to the right parent session.
+- **Prompt identity mistakes** — host integrations derive session identity from runtime context, not model output.
 
-Worker requests should say how much answer detail is needed:
+## Key Features
 
-- If yes/no answers the question, ask for yes/no plus only a blocker if one
-  exists.
-- If the task asks for options, tradeoffs, research findings, or a plan, ask for
-  a concise but complete report with sources or file references.
-- If the task changes code, ask for files changed, checks run, results, blockers,
-  and risks.
+- Dispatch focused sub-agents from the CLI or supported host integrations.
+- Configure reusable worker roles with harness, model/profile, skills, environment, and prompt additions.
+- Use multiple harnesses from one catalog.
+- Scope worker ownership to the invoking session.
+- Limit concurrent work globally and per session.
+- Cancel active runs and inspect run history.
+- Return compact summaries automatically while preserving full artifacts.
+- Keep configuration YAML-first and editable.
+- Install host integrations with `orchestra init ...`.
 
-Orchestra enforces runtime ownership, timeouts, cancellation, and concurrency. It
-does not decide whether two write-capable tasks are semantically safe to run in
-parallel; the orchestrator must make that call until worktree/file-ownership
-features exist.
+## Requirements
 
-## Install
+- Python 3.11+
+- PyYAML
+- At least one supported agent harness installed for worker execution
+- `pipx` recommended for a stable user-facing `orchestra` command
 
-Use Python 3.11+.
+Development extras are installed with `.[dev]`.
 
-For development, keep an editable install in a local virtualenv:
+## Installation
+
+For development, use an editable install in a local virtual environment:
 
 ```bash
 python3 -m venv .venv
@@ -62,11 +63,10 @@ python3 -m pip install --upgrade pip
 python3 -m pip install -e ".[dev]"
 ```
 
-For a stable user-facing `orchestra` CLI command, install this checkout with
-`pipx`:
+For a stable local CLI command, install this checkout with `pipx`:
 
 ```bash
-pipx install -e /Users/james/workspace/orchestra
+pipx install -e ~/orchestra
 ```
 
 After local changes, refresh the pipx command with:
@@ -75,176 +75,96 @@ After local changes, refresh the pipx command with:
 pipx reinstall orchestra
 ```
 
-## Configuration
+## Quick Start
 
-Orchestra uses three YAML files:
-
-```text
-config.yaml
-prompts.yaml
-agent-catalog.yaml
-```
-
-Resolution order for the generic CLI/core is:
-
-1. CLI flags: `--config`, `--agent-catalog`
-2. env vars: `ORCHESTRA_CONFIG`, `ORCHESTRA_AGENT_CATALOG`
-3. Pi-user defaults: `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`
-4. cwd fallback for dev/manual mode: `./config.yaml`, `./agent-catalog.yaml`
-
-`prompts.yaml` is always loaded from the same directory as the resolved `config.yaml`.
-
-Canonical editable defaults for this checkout live in the repo root:
-
-```text
-config.yaml
-prompts.yaml
-agent-catalog.yaml
-```
-
-Init commands materialize host runtime config from those root files. Pi uses `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`. Hermes uses a Hermes-local Orchestra config directory for the selected/default profile.
-
-Default config shape:
-
-```yaml
-state_dir: /Users/james/workspace/orchestra/state
-log_dir: /Users/james/workspace/orchestra/logs
-default_timeout: <positive-integer-seconds>
-# turn_limit: 30
-# soft_timeout: 840
-concurrency:
-  global: 4
-  per_session: 3
-auto_return: true
-```
-
-`default_timeout` is the hard worker execution timeout in seconds and must be a positive integer in `config.yaml`. Manual per-run timeouts can be supplied with `orchestra do --timeout SEC` or host `/orch do --timeout SEC`. The LLM-callable `orch_dispatch` tool intentionally does not expose a timeout parameter; tool dispatches use the configured value.
-
-Optional `turn_limit` and `soft_timeout` are cooperative worker budgets. They can be set globally in `config.yaml` or per role in `agent-catalog.yaml`; role values override global values. When a Pi worker reaches the turn budget or soft-time budget, the Pi extension steers the core `budget_exceeded_prompt` into the worker. The worker should stop new work and return a continuation handoff. Orchestra records that as `status: incomplete`, preserves the return artifact, and tells the caller to redispatch a smaller continuation task instead of redoing completed work. `soft_timeout` must be less than the effective hard timeout.
-
-Example role catalog entry:
-
-```yaml
-default_role: builder
-harness_configs:
-  pi:
-    harness: pi
-    command:
-      - pi
-      - --model
-      - "{model}"
-      - -p
-      - "{prompt}"
-  hermes:
-    harness: hermes
-    command:
-      - hermes
-      - --profile
-      - "{profile}"
-      - -z
-      - "{prompt}"
-
-roles:
-  builder:
-    harness_config: pi
-    enabled: true
-    model: openai-codex/gpt-5.4
-    turn_limit: 30
-    soft_timeout: 840
-    skills:
-      - builder
-    prompt_addition: Implement the assigned task only. Stay in scope. Return files changed, checks run, results, blockers, and risks.
-  reviewer:
-    harness_config: hermes
-    enabled: true
-    profile: tori
-    harness_fallback:
-      - harness_config: pi
-        model: openai-codex/gpt-5.4
-    skills:
-      - reviewer
-    prompt_addition: Check work in the requested mode: verify, review, or security. Read-only unless explicitly asked. Return verdict, findings, missing checks, blockers, and risks.
-```
-
-Notes:
-
-- `default_role` is optional; when omitted it uses the configured default role.
-- `harness_configs` define reusable launch/runtime templates.
-- `harness` and `command` live in `harness_configs`, not in roles.
-- `roles` select a `harness_config` and own worker-selection fields such as `model`, `profile`, `agent`, `skills`, `env`, `prompt_addition`, and `enabled`.
-- `model_limits` is optional. Use it to cap active runs for a specific resolved role `model`, for example when a local model server can run only one worker at a time. Over-limit requests fail fast instead of queueing.
-- `harness_fallback` is optional. On startup failure, Orchestra preserves the requested role and its skills, `prompt_addition`, env, and worker budget, and changes only `harness_config` plus optional runtime overrides such as `model`, `profile`, or `agent`.
-- Disabled roles fail clearly; Orchestra does not silently switch to the default role.
-- `command` is a tokenized argv template, not a shell string.
-- If `model` is omitted, harnesses that support model selection use their runtime default.
-- If `profile` is omitted, harnesses that support profiles use their runtime default.
-- If `agent` is omitted, harnesses that support agent selection use their runtime default.
-- `skills` is optional. For each skill, Orchestra searches recursively under `skills/` for `<skill-name>/SKILL.md` relative to the current working directory and injects that content near the start of the worker prompt. If no local skill file exists, the worker prompt tells the harness agent to load the named native skill before doing the task.
-- `turn_limit` is optional. It is a cooperative per-worker turn budget. When reached, budget-aware host extensions ask the worker to return a continuation handoff.
-- `soft_timeout` is optional. It is a cooperative per-worker timeout in seconds and must be below the hard timeout. Hard timeout remains the final kill switch.
-- `env` is optional. Values are added to the worker subprocess environment for that role. Role env overrides the parent process environment. Keys must be valid environment variable names and cannot use the reserved `ORCHESTRA_` prefix. Avoid committing secrets in catalogs; prefer external environment or secret management for sensitive values.
-- `state_dir` and `log_dir` should be stable absolute paths for installed host integrations so state does not drift with host cwd.
-
-## CLI Usage
-
-CLI mode is useful for local/manual orchestration and testing.
-
-`--session-id` in CLI mode is caller-supplied and is not a runtime host identity boundary. Host adapters supply their session identity from runtime context.
+Check the installation:
 
 ```bash
 orchestra doctor
 orchestra roles
+```
+
+Run a manual worker task from the CLI:
+
+```bash
 orchestra do --session-id manual:demo --goal "Summarize the repository status"
+orchestra history --session-id manual:demo --limit 10
+```
+
+Install a host integration, then use Orchestra from inside that host:
+
+```bash
+orchestra init pi
+# or
+orchestra init hermes
+# or
+orchestra init opencode
+```
+
+## Basic Usage
+
+CLI mode is useful for manual orchestration, testing, and debugging:
+
+```bash
+orchestra doctor
+orchestra roles
+orchestra do --session-id manual:demo --goal "Smoke test"
+orchestra do --session-id manual:demo --role reviewer --goal "Review the current diff"
 orchestra status --session-id manual:demo
 orchestra stop --session-id manual:demo --run-id <run-id>
 orchestra history --session-id manual:demo --limit 10
 orchestra debug --run-id <run-id>
-orchestra debug --session-id manual:demo --limit 20
 ```
 
-`orchestra doctor` checks config/catalog loading, PyYAML availability, the `orchestra` executable on `PATH` for host extensions, database/log paths, and configured harness executables.
+Host integrations expose the same basic workflow through slash commands or callable tools, depending on what the host supports.
 
-## Pi Host Extension
+## Configuration
 
-The Pi host extension provides `/orch ...` commands, including one-time main-session `/orch on`, and the LLM-callable `orch_dispatch` tool.
+Orchestra is configured with YAML files:
 
-Install or update the global Pi extension and materialize Pi runtime config:
+```text
+config.yaml
+prompts.yaml
+agent-catalog.yaml
+```
+
+The repository root contains editable defaults for local development and manual CLI use. Host install commands materialize runtime config for the selected host.
+
+Most user customization happens in:
+
+- `agent-catalog.yaml` for roles, harness choices, models/profiles, skills, and prompt additions
+- `config.yaml` for runtime paths, timeouts, and concurrency
+- `prompts.yaml` for shared prompt text
+
+See the config files and `ARCHITECTURE.md` for detailed behavior.
+
+## Compatible Harnesses
+
+Current support includes:
+
+- **Pi** — host integration and worker harness
+- **Hermes** — host integration and worker harness
+- **OpenCode** — host integration and one-shot worker harness
+
+Harness-specific model names, profiles, agents, and command templates belong in `agent-catalog.yaml`.
+
+## Host Integrations
+
+### Pi
+
+Install or update the Pi extension:
 
 ```bash
 orchestra init pi
 ```
 
-Use `--force` to overwrite existing installed files, or `--copy` to copy config instead of linking it. After install, verify Pi integration with `/orch doctor`:
-
-```bash
-orchestra init pi --force
-orchestra init pi --copy
-pi --no-approve -p "/orch doctor"
-```
-
-Installed/runtime paths:
-
-```text
-~/.pi/agent/extensions/orchestra/index.ts
-~/.pi/agent/orchestra/config.yaml
-~/.pi/agent/orchestra/prompts.yaml
-~/.pi/agent/orchestra/agent-catalog.yaml
-```
-
-Repo source copy:
-
-```text
-extensions/pi/orchestra/index.ts
-```
-
-Inside a Pi session with the extension installed:
+Common Pi commands:
 
 ```text
 /orch on
 /orch help
 /orch do <goal>
 /orch do --role reviewer <goal>
-/orch do --timeout 120 <goal>
 /orch roles
 /orch status
 /orch stop <run-id>
@@ -252,51 +172,22 @@ Inside a Pi session with the extension installed:
 /orch history [limit]
 ```
 
-`/orch on` loads `skills/orchestrator/SKILL.md` into the current Pi main session once. MVP does not include `/orch off`.
+The Pi extension also registers the `orch_dispatch` tool.
 
-Pi runtime session identity comes from `ctx.sessionManager.getSessionId()` and is normalized as `pi:<session_id>`.
+### Hermes
 
-The extension also registers `orch_dispatch`, so natural-language requests using words like “delegate”, “dispatch”, “subagent”, “worker”, “ask another agent”, or “parallelize” can launch focused workers.
-
-## Hermes Host Plugin
-
-The Hermes plugin provides the same worker-management `/orch ...` command surface as Pi, except for Pi-specific main-session `/orch on`, plus the `orch_dispatch` tool for Hermes sessions that support plugins and slash commands.
-
-Install or update the Hermes plugin using the current/default Hermes profile:
+Install or update the Hermes plugin:
 
 ```bash
 orchestra init hermes
 ```
 
-Optional explicit profile override remains supported:
-
-```bash
-orchestra init hermes --profile <profile>
-```
-
-Use `--force` to reinstall, or `--copy` to copy config instead of linking it:
-
-```bash
-orchestra init hermes --force
-orchestra init hermes --profile <profile> --force
-orchestra init hermes --copy
-```
-
-Hermes runtime config is materialized into a Hermes-local Orchestra directory for the selected/default profile rather than `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`.
-
-Repo source copy:
-
-```text
-extensions/hermes/orchestra/
-```
-
-Inside a Hermes session with the plugin loaded:
+Common Hermes commands:
 
 ```text
 /orch help
 /orch do <goal>
 /orch do --role reviewer <goal>
-/orch do --timeout 120 <goal>
 /orch roles
 /orch status
 /orch stop <run-id>
@@ -304,143 +195,21 @@ Inside a Hermes session with the plugin loaded:
 /orch history [limit]
 ```
 
-Hermes does not currently provide main-session `/orch on`; that orchestrator-skill injection is Pi-specific in MVP.
+Hermes also exposes `orch_dispatch` where plugin tools are supported.
 
-Hermes runtime session identity comes from the runtime `session_id` provided to the plugin tool handler and is normalized as `hermes:<session_id>`. The model or user prompt must not provide this identity. Hermes may rotate runtime ids during context compression; read-only `status` and `history` aggregate the Hermes compression lineage so an older parent session can still show runs owned by the current child session.
+### OpenCode
 
-## OpenCode Worker Harness
-
-OpenCode is supported as a one-shot worker harness via `harness: opencode` in a harness config referenced by any role.
-
-Users need:
-
-1. The `opencode` CLI available on PATH (`which opencode`).
-2. A configured role that points at an OpenCode harness config and uses a valid OpenCode model string.
-
-The current repo catalog uses OpenCode for the `appsec` role.
-
-Example role + harness config:
-
-```yaml
-harness_configs:
-  opencode:
-    harness: opencode
-    command:
-      - opencode
-      - run
-      - --agent
-      - "{agent}"
-      - --model
-      - "{model}"
-      - "{prompt}"
-
-roles:
-  appsec:
-    harness_config: opencode
-    enabled: true
-    model: openai/gpt-5.4
-    agent: plan
-    prompt_addition: Focus on the assigned task and return a compact result.
-```
-
-Model naming is harness-specific. For example, Pi may use `openai-codex/gpt-5.4` while OpenCode expects `openai/gpt-5.4`.
-
-Recommended `--agent` choices by use case:
-- Implementation/writing: `--agent build`
-- Planning/review: `--agent plan`
-- Read-only planning or security review: `--agent plan`
-- External research: `--agent scout` (if available)
-
-## OpenCode Host Plugin
-
-OpenCode host support ships as a real plugin under `extensions/opencode/orchestra/index.ts`.
-
-Install or update it with:
+Install or update the OpenCode plugin:
 
 ```bash
-orchestra init opencode [--force] [--copy]
+orchestra init opencode
 ```
 
-That installs the plugin globally under the active OpenCode config directory, typically:
+OpenCode support includes the `orch_dispatch` callable tool. Worker execution is also supported through configured OpenCode roles.
 
-```text
-~/.config/opencode/plugins/orchestra/
-```
+## Development
 
-If `OPENCODE_CONFIG_DIR` is set, Orchestra installs there instead. `orchestra init all` includes OpenCode when the catalog references an OpenCode harness.
-
-Supported host surface:
-
-- `orch_dispatch` is the callable OpenCode tool.
-- It uses runtime `context.sessionID`, normalized as `opencode:<sessionID>`.
-- It rejects model/user-supplied identity fields and timeout overrides.
-- Dispatch uses tokenized `orchestra do` argv via Node `execFile`, not shell-string execution.
-- Sparse toasts cover dispatch and failure events.
-- Final session reports are reinjected into the owning OpenCode session after all workers for that session finish.
-
-OpenCode does not currently expose executable `/orch` command parity here; prompt-template commands are not equivalent to real host commands.
-
-Smoke verification:
-
-```bash
-orchestra init opencode --force
-opencode run --agent plan --model openai/gpt-5.4 "Reply with exactly OPENCODE_DIRECT_OK"
-```
-
-Then, inside the OpenCode session, call `orch_dispatch` with a small goal and confirm the return is owned by `opencode:<sessionID>`.
-
-```bash
-orchestra history --session-id opencode:<sessionID> --limit 5
-```
-
-Orchestra does not currently provide a `{workdir}` placeholder for OpenCode command templates. Omitting `--dir` lets OpenCode run in the current working directory, which is the safer default for a shared catalog.
-
-## Returns and Logs
-
-Common user-visible messages:
-
-```text
-orchestra dispatched: <run-id>
-orchestra: <run-id> returned <status> (<done>/<total>)  # Pi notification-capable hosts only
-
-[orchestra: Worker <run-id> success|fail]
-Request: <original request>
-Result: <summary> [truncated]
-Full result: <return artifact path>
-Log: <absolute-or-configured log path>
-```
-
-Hermes does not currently emit per-worker progress notifications. It only
-returns the consolidated report when all active workers for the session have
-finished. The Hermes plugin delivers that report with busy-aware behavior:
-while Hermes is actively running it uses non-interrupting `agent.steer(...)`;
-when Hermes is idle it uses `inject_message(...)` to start the next turn with
-the consolidated report.
-
-Failures use `Summary: <summary>` instead of `Result: <summary>`. The `[truncated]`
-marker and `Full result:` line appear only when the compact summary was cut.
-
-Default runtime files for this checkout:
-
-```text
-/Users/james/workspace/orchestra/state/orchestra.db
-/Users/james/workspace/orchestra/state/return-artifacts/<run-id>.md
-/Users/james/workspace/orchestra/logs/<run-id>.jsonl
-```
-
-State stays lean:
-
-- run/session metadata
-- process ids / process group ids when available
-- status transitions
-- compact result / error / blocker text
-- return artifact path and truncated-summary marker
-- optional transcript refs
-- report watermarking for consolidated returns
-
-Logs are sparse JSONL lifecycle records. Return artifacts hold the full final worker stdout/stderr. Reports may include log paths for debugging, but normal use should not require reading logs.
-
-## Verification
+Useful checks:
 
 ```bash
 python3 -m pytest
@@ -451,29 +220,19 @@ orchestra --help
 orchestra doctor
 ```
 
-Use the CLI and host smoke commands above for manual verification.
+CLI smoke commands:
 
-## Repository Layout
-
-```text
-.
-├── AGENTS.md                    # Project rules for AI coding agents
-├── FOUNDATION.md                # Architecture decisions and domain model
-├── ARCHITECTURE.md              # Evolving technical design
-├── PLAN.md                      # Current implementation plan
-├── README.md                    # User-facing overview and usage
-├── ROADMAP.md                   # TODO and wishlist backlog
-├── agent-catalog.yaml           # Dev/manual fallback role definitions
-├── config.yaml                  # Dev/manual fallback runtime configuration
-├── prompts.yaml                 # Dev/manual fallback prompt text configuration
-├── extensions/hermes/orchestra/ # Source copy of Hermes host plugin
-├── extensions/pi/orchestra/     # Source copy of global Pi host extension
-├── src/orchestra/               # Python core
-└── tests/                       # Verification coverage
+```bash
+orchestra do --session-id manual:demo --goal "smoke test"
+orchestra history --session-id manual:demo
 ```
 
-## Notes
+## Further Reading
 
-- Keep secrets out of the repository.
-- Host adapters must get runtime session identity from host context, not from user prompts or model output.
-- Default behavior keeps Orchestra logs lean. Pi workers save normal Pi sessions with ids like `orchestra-worker-<run-id>` for debugging while this project is under active development.
+- `ARCHITECTURE.md` — technical design and adapter behavior
+- `FOUNDATION.md` — domain model and durable decisions
+- `PLAN.md` — current implementation plan
+- `ROADMAP.md` — backlog and future work
+- `config.yaml` — runtime configuration
+- `agent-catalog.yaml` — harness and role catalog
+- `prompts.yaml` — shared prompt text
