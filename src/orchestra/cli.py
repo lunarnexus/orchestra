@@ -17,6 +17,8 @@ from orchestra.app import (
     consume_pending_session_report,
     format_command_echo,
     format_dispatch_ack,
+    format_debug_run,
+    format_debug_session,
     format_doctor_checks,
     format_history,
     format_host_help,
@@ -35,7 +37,7 @@ from orchestra.app import (
     render_orchestrator_skill_message,
     role_metadata,
     run_doctor,
-    run_supervisor,
+    run_supervisor_guarded,
     set_role_setting,
     start_run,
     stop_run,
@@ -159,6 +161,13 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     )
     history_parser.add_argument("--limit", type=int, default=10, help="maximum number of runs")
     history_parser.set_defaults(handler=_handle_history)
+
+    debug_parser = subparsers.add_parser("debug", help="print run/session debug bundle")
+    debug_target = debug_parser.add_mutually_exclusive_group(required=True)
+    debug_target.add_argument("--run-id", help="run id to inspect")
+    debug_target.add_argument("--session-id", help="session id to inspect")
+    debug_parser.add_argument("--limit", type=int, default=20, help="maximum session runs")
+    debug_parser.set_defaults(handler=_handle_debug)
 
     init_parser = subparsers.add_parser("init", help="initialize host integrations")
     init_subparsers = init_parser.add_subparsers(dest="init_target", metavar="TARGET")
@@ -381,6 +390,17 @@ def _handle_history(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_debug(args: argparse.Namespace) -> int:
+    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    if args.run_id:
+        print(format_debug_run(context, args.run_id))
+    else:
+        if args.limit < 1:
+            raise AppError("limit must be a positive integer")
+        print(format_debug_session(context, args.session_id, limit=args.limit))
+    return 0
+
+
 def _handle_init_pi(args: argparse.Namespace) -> int:
     result = init_pi(force=bool(args.force), copy=bool(args.copy))
     _print_init_files(result.files)
@@ -493,7 +513,7 @@ def _handle_progress_message(args: argparse.Namespace) -> int:
 
 def _handle_run_supervisor(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
-    run_supervisor(context, run_id=args.run_id, request_file=args.request_file)
+    run_supervisor_guarded(context, run_id=args.run_id, request_file=args.request_file)
     return 0
 
 

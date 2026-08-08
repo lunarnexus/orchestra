@@ -4,11 +4,13 @@ from pathlib import Path
 
 import yaml
 
+from orchestra.app import load_context
 from orchestra.state import (
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_FAILED,
     STATUS_INCOMPLETE,
+    RunRecord,
     StateStore,
 )
 from tests.helpers import extract_run_id, run_cli, wait_for_condition
@@ -121,6 +123,47 @@ def test_timeout_marks_run_failed_and_keeps_terminal_state(
     assert "Worker exceeded timeout" in history.stdout
 
 
+def test_status_reconciles_stale_queued_run_without_supervisor_owner(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "unused"],
+    )
+    context = load_context(config_path=config_path, catalog_path=catalog_path)
+    context.store.create_run(
+        RunRecord(
+            run_id="stalequeued1",
+            orchestrator_session_id="manual:stale",
+            harness="pi",
+            role="worker",
+            task_label="stale queued",
+            log_path=tmp_path / "logs" / "stalequeued1.jsonl",
+            created_at="2000-01-01T00:00:00Z",
+        )
+    )
+
+    status = run_cli(
+        "--config",
+        str(config_path),
+        "--agent-catalog",
+        str(catalog_path),
+        "status",
+        "--session-id",
+        "manual:stale",
+    )
+
+    assert status.returncode == 0
+    record = StateStore(db_path).get_run("stalequeued1")
+    assert record.status == STATUS_FAILED
+    assert record.error_text == "Worker supervisor ownership was not recorded"
+    assert "active_runs: 0" in status.stdout
+    assert "supervisor.reconciled" in (tmp_path / "logs" / "stalequeued1.jsonl").read_text()
+
+
 def test_zero_exit_empty_output_marks_run_failed_for_pi_hermes_and_opencode(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
@@ -230,6 +273,23 @@ def test_budget_handoff_marker_marks_run_incomplete(
     )
     assert "status: incomplete" in await_run.stdout
     assert "redispatch a smaller continuation task" in await_run.stdout
+
+    debug = run_cli(
+        "--config",
+        str(config_path),
+        "--agent-catalog",
+        str(catalog_path),
+        "debug",
+        "--run-id",
+        run_id,
+    )
+    assert debug.returncode == 0
+    assert "# Orchestra debug bundle" in debug.stdout
+    assert "## Lifecycle log" in debug.stdout
+    assert "supervisor.spawned" in debug.stdout
+    assert "worker.started" in debug.stdout
+    assert "## Return artifact" in debug.stdout
+    assert "## Harness transcript" in debug.stdout
 
 
 def test_zero_exit_bootstrap_only_output_marks_run_failed(
@@ -377,7 +437,7 @@ def test_unknown_harness_marks_run_failed_and_clears_active_queue(
     assert record.blocker_text == "Worker harness is not configured"
     assert store.list_active_runs("manual:missing-harness") == []
     assert store.list_active_runs() == []
-    assert (tmp_path / "state" / "requests" / f"{run_id}.json").exists() is False
+    assert (tmp_path / "state" / "requests" / f"{run_id}.json").exists() is True
 
     status = run_cli(
         "--config",

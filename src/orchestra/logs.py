@@ -8,6 +8,16 @@ from pathlib import Path
 from typing import Any
 
 
+def append_run_event(
+    path: str | Path,
+    *,
+    run_id: str,
+    event: str,
+    details: dict[str, Any] | None = None,
+) -> None:
+    append_jsonl_event(path, {"run_id": run_id, "event": event, **(details or {})})
+
+
 def append_jsonl_event(path: str | Path, event: dict[str, Any]) -> None:
     log_path = Path(path)
     log_path.parent.mkdir(parents=True, exist_ok=True)

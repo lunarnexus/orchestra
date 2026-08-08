@@ -53,7 +53,7 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == 6
+    assert row[0] == 7
 
 
 def test_connect_retries_transient_sqlite_open_failure(

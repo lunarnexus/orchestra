@@ -198,6 +198,8 @@ orchestra do --session-id manual:demo --goal "Summarize the repository status"
 orchestra status --session-id manual:demo
 orchestra stop --session-id manual:demo --run-id <run-id>
 orchestra history --session-id manual:demo --limit 10
+orchestra debug --run-id <run-id>
+orchestra debug --session-id manual:demo --limit 20
 ```
 
 `orchestra doctor` checks config/catalog loading, PyYAML availability, the `orchestra` executable on `PATH` for host extensions, database/log paths, and configured harness executables.

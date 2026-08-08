@@ -21,7 +21,7 @@ STATUS_INCOMPLETE = "incomplete"
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 _CONNECT_ATTEMPTS = 8
 _CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
 _CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
@@ -29,7 +29,7 @@ _SQLITE_CONNECT_TIMEOUT_SECONDS = 1.0
 _BEGIN_IMMEDIATE_SLOW_LOG_SECONDS = 0.1
 _REPORT_CLAIM_LEASE_SECONDS = 300
 ALLOWED_TRANSITIONS = {
-    STATUS_QUEUED: frozenset({STATUS_RUNNING, STATUS_FAILED, STATUS_CANCELLED}),
+    STATUS_QUEUED: frozenset({STATUS_QUEUED, STATUS_RUNNING, STATUS_FAILED, STATUS_CANCELLED}),
     STATUS_RUNNING: frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}),
 }
 
@@ -56,6 +56,9 @@ class RunRecord:
     batch_id: str | None = None
     started_at: str | None = None
     ended_at: str | None = None
+    supervisor_pid: int | None = None
+    supervisor_started_at: str | None = None
+    supervisor_output_path: Path | None = None
     process_id: int | None = None
     process_group_id: int | None = None
     result_summary: str | None = None
@@ -77,6 +80,9 @@ class RunUpdate:
     role: str | None = None
     started_at: str | None = None
     ended_at: str | None = None
+    supervisor_pid: int | None = None
+    supervisor_started_at: str | None = None
+    supervisor_output_path: Path | None = None
     process_id: int | None = None
     process_group_id: int | None = None
     result_summary: str | None = None
@@ -132,6 +138,9 @@ class StateStore:
                     created_at TEXT NOT NULL,
                     started_at TEXT,
                     ended_at TEXT,
+                    supervisor_pid INTEGER,
+                    supervisor_started_at TEXT,
+                    supervisor_output_path TEXT,
                     process_id INTEGER,
                     process_group_id INTEGER,
                     task_label TEXT NOT NULL,
@@ -150,6 +159,9 @@ class StateStore:
                 """
             )
             self._ensure_column(connection, "runs", "model", "TEXT")
+            self._ensure_column(connection, "runs", "supervisor_pid", "INTEGER")
+            self._ensure_column(connection, "runs", "supervisor_started_at", "TEXT")
+            self._ensure_column(connection, "runs", "supervisor_output_path", "TEXT")
             self._ensure_column(connection, "runs", "process_group_id", "INTEGER")
             self._ensure_column(connection, "runs", "result_artifact_path", "TEXT")
             self._ensure_column(
@@ -248,6 +260,9 @@ class StateStore:
                     created_at,
                     started_at,
                     ended_at,
+                    supervisor_pid,
+                    supervisor_started_at,
+                    supervisor_output_path,
                     process_id,
                     process_group_id,
                     task_label,
@@ -262,7 +277,7 @@ class StateStore:
                     approval_needed,
                     report_claimed_at,
                     reported_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 self._serialize_record(record),
             )
@@ -322,6 +337,10 @@ class StateStore:
                 "previous_status": current.status,
                 "harness": next_record.harness,
                 "role": next_record.role,
+                "supervisor_pid": next_record.supervisor_pid,
+                "supervisor_output_path": str(next_record.supervisor_output_path)
+                if next_record.supervisor_output_path
+                else None,
                 "process_id": next_record.process_id,
                 "process_group_id": next_record.process_group_id,
                 "result_summary": next_record.result_summary,
@@ -396,7 +415,7 @@ class StateStore:
                 SELECT *
                 FROM runs
                 WHERE orchestrator_session_id = ?
-                  AND status IN (?, ?, ?)
+                  AND status IN (?, ?, ?, ?)
                   AND reported_at IS NULL
                   AND (report_claimed_at IS NULL OR report_claimed_at < ?)
                 ORDER BY created_at, run_id
@@ -406,6 +425,7 @@ class StateStore:
                     STATUS_DONE,
                     STATUS_FAILED,
                     STATUS_CANCELLED,
+                    STATUS_INCOMPLETE,
                     claim_stale_before,
                 ),
             ).fetchall()
@@ -435,7 +455,7 @@ class StateStore:
                 SELECT *
                 FROM runs
                 WHERE orchestrator_session_id = ?
-                  AND status IN (?, ?, ?)
+                  AND status IN (?, ?, ?, ?)
                   AND reported_at IS NULL
                   AND (report_claimed_at IS NULL OR report_claimed_at < ?)
                 ORDER BY created_at, run_id
@@ -445,6 +465,7 @@ class StateStore:
                     STATUS_DONE,
                     STATUS_FAILED,
                     STATUS_CANCELLED,
+                    STATUS_INCOMPLETE,
                     claim_stale_before,
                 ),
             ).fetchall()
@@ -601,6 +622,21 @@ class StateStore:
             role=update.role if update.role is not None else current.role,
             started_at=update.started_at if update.started_at is not None else current.started_at,
             ended_at=update.ended_at if update.ended_at is not None else current.ended_at,
+            supervisor_pid=(
+                update.supervisor_pid
+                if update.supervisor_pid is not None
+                else current.supervisor_pid
+            ),
+            supervisor_started_at=(
+                update.supervisor_started_at
+                if update.supervisor_started_at is not None
+                else current.supervisor_started_at
+            ),
+            supervisor_output_path=(
+                update.supervisor_output_path
+                if update.supervisor_output_path is not None
+                else current.supervisor_output_path
+            ),
             process_id=update.process_id if update.process_id is not None else current.process_id,
             process_group_id=(
                 update.process_group_id
@@ -670,6 +706,9 @@ class StateStore:
                 status = ?,
                 started_at = ?,
                 ended_at = ?,
+                supervisor_pid = ?,
+                supervisor_started_at = ?,
+                supervisor_output_path = ?,
                 process_id = ?,
                 process_group_id = ?,
                 result_summary = ?,
@@ -691,6 +730,9 @@ class StateStore:
                 record.status,
                 record.started_at,
                 record.ended_at,
+                record.supervisor_pid,
+                record.supervisor_started_at,
+                str(record.supervisor_output_path) if record.supervisor_output_path else None,
                 record.process_id,
                 record.process_group_id,
                 record.result_summary,
@@ -721,6 +763,9 @@ class StateStore:
             record.created_at,
             record.started_at,
             record.ended_at,
+            record.supervisor_pid,
+            record.supervisor_started_at,
+            str(record.supervisor_output_path) if record.supervisor_output_path else None,
             record.process_id,
             record.process_group_id,
             record.task_label,
@@ -749,6 +794,15 @@ class StateStore:
             created_at=str(row["created_at"]),
             started_at=_optional_text(row["started_at"]),
             ended_at=_optional_text(row["ended_at"]),
+            supervisor_pid=(
+                int(row["supervisor_pid"]) if row["supervisor_pid"] is not None else None
+            ),
+            supervisor_started_at=_optional_text(row["supervisor_started_at"]),
+            supervisor_output_path=(
+                Path(str(row["supervisor_output_path"]))
+                if row["supervisor_output_path"] is not None
+                else None
+            ),
             process_id=int(row["process_id"]) if row["process_id"] is not None else None,
             process_group_id=(
                 int(row["process_group_id"]) if row["process_group_id"] is not None else None

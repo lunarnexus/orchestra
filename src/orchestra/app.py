@@ -14,6 +14,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -45,13 +46,14 @@ from orchestra.harnesses.common import (
     summary_was_truncated,
 )
 from orchestra.harnesses.processes import process_group_id
-from orchestra.logs import utc_now
+from orchestra.logs import append_run_event, utc_now
 from orchestra.state import (
     ACTIVE_STATUSES,
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_FAILED,
     STATUS_INCOMPLETE,
+    STATUS_QUEUED,
     STATUS_RUNNING,
     ConcurrencyLimitError,
     RunRecord,
@@ -65,6 +67,7 @@ WORKER_EMPTY_RESULT_BLOCKER = "Worker protocol error: empty result"
 WORKER_BUDGET_EXCEEDED_BLOCKER = (
     "Worker budget exceeded; redispatch from continuation handoff"
 )
+SUPERVISOR_STARTUP_TIMEOUT_SECONDS = 30
 ROLE_USAGE = """Usage:
   /orch roles
   /orch roles ROLE SETTING VALUE
@@ -271,6 +274,8 @@ def start_run(
         created_at=utc_now(),
     )
 
+    reconcile_stale_queued_runs(context)
+
     try:
         context.store.reserve_run(
             record,
@@ -308,6 +313,34 @@ def start_run(
     )
 
 
+def run_supervisor_guarded(context: AppContext, *, run_id: str, request_file: str | Path) -> RunRecord:
+    _append_run_event(context, run_id, "supervisor.started", {"pid": os.getpid()})
+    try:
+        context.store.update_run(
+            run_id,
+            RunUpdate(status=STATUS_QUEUED, supervisor_started_at=utc_now()),
+        )
+        return run_supervisor(context, run_id=run_id, request_file=request_file)
+    except Exception as exc:
+        _append_run_event(
+            context,
+            run_id,
+            "supervisor.failed",
+            {"error_type": type(exc).__name__, "error": str(exc)},
+        )
+        try:
+            return context.store.update_run(
+                run_id,
+                RunUpdate(
+                    status=STATUS_FAILED,
+                    error_text="Worker supervisor failed before completing run",
+                    blocker_text="Worker supervisor failure",
+                ),
+            )
+        except Exception:
+            raise exc
+
+
 def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path) -> RunRecord:
     record = context.store.get_run(run_id)
     if record.status not in ACTIVE_STATUSES:
@@ -317,6 +350,12 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
     selected_role = _select_role(context.catalog, record.role)
     fallback_note: str | None = None
 
+    _append_run_event(
+        context,
+        run_id,
+        "worker.start_requested",
+        {"harness": selected_role.config.harness, "role": selected_role.name},
+    )
     try:
         started_role, worker = _start_worker_process(
             context,
@@ -355,7 +394,6 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
                 attempted_role = fallback_role
 
         if started_role is None or worker is None:
-            _safe_unlink(pending_request.request_file)
             return _finalize_supervisor_setup_failure(
                 context,
                 run_id,
@@ -366,6 +404,19 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
     assert started_role is not None
     assert worker is not None
     pgid = process_group_id(worker.process.pid)
+    _append_run_event(
+        context,
+        run_id,
+        "worker.started",
+        {
+            "harness": started_role.config.harness,
+            "role": started_role.name,
+            "process_id": worker.process.pid,
+            "process_group_id": pgid,
+            "worker_session_id": worker.worker_session_id,
+            "transcript_path": str(worker.transcript_path) if worker.transcript_path else None,
+        },
+    )
     updated = context.store.update_run(
         run_id,
         RunUpdate(
@@ -382,7 +433,6 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
     )
     if updated.status != STATUS_RUNNING:
         _terminate_worker(worker.process, pgid)
-        _safe_unlink(pending_request.request_file)
         return updated
 
     try:
@@ -408,10 +458,21 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
     else:
         result = _result_from_completed_worker(worker, stdout, stderr)
 
+    _append_run_event(
+        context,
+        run_id,
+        "worker.exited",
+        {
+            "exit_code": worker.process.returncode,
+            "stdout_bytes": len(stdout.encode()),
+            "stderr_bytes": len(stderr.encode()),
+            "timed_out": result.timed_out,
+        },
+    )
+
     if fallback_note:
         result = _annotate_result_with_fallback(result, fallback_note)
 
-    _safe_unlink(pending_request.request_file)
     return _finalize_run(context, record.run_id, result)
 
 
@@ -447,6 +508,12 @@ def format_run_report(record: RunRecord) -> str:
         lines.append(f"started_at: {record.started_at}")
     if record.ended_at:
         lines.append(f"ended_at: {record.ended_at}")
+    if record.supervisor_pid is not None:
+        lines.append(f"supervisor_pid: {record.supervisor_pid}")
+    if record.supervisor_started_at:
+        lines.append(f"supervisor_started_at: {record.supervisor_started_at}")
+    if record.supervisor_output_path:
+        lines.append(f"supervisor_output_path: {record.supervisor_output_path}")
     if record.process_id is not None:
         lines.append(f"process_id: {record.process_id}")
     if record.process_group_id is not None:
@@ -520,7 +587,7 @@ def format_orchestrator_return(runs: list[RunRecord]) -> str:
         summary = _format_run_summary(run)
         label = "Result" if outcome == "success" else "Summary"
         lines = [
-            f"[orchestra: Worker {run.run_id} {outcome}]",
+            f"[orchestra: {run.role} {run.run_id} {outcome}]",
             f"Request: {run.task_label}",
             f"{label}: {summary}",
         ]
@@ -627,6 +694,7 @@ def await_run_terminal_status(
     deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
 
     while True:
+        reconcile_stale_queued_runs(context)
         record = context.store.get_run(run_id)
         if record.orchestrator_session_id != session_id:
             raise AppError("run does not belong to the provided session_id")
@@ -655,6 +723,7 @@ def await_session_report_payload(
 
     while True:
         try:
+            reconcile_stale_queued_runs(context)
             record = context.store.get_run(run_id)
             if record.orchestrator_session_id != session_id:
                 raise AppError("run does not belong to the provided session_id")
@@ -709,7 +778,88 @@ def await_session_report(
     return report.text if report else None
 
 
+def reconcile_stale_queued_runs(
+    context: AppContext,
+    *,
+    startup_timeout_seconds: int = SUPERVISOR_STARTUP_TIMEOUT_SECONDS,
+) -> list[RunRecord]:
+    reconciled: list[RunRecord] = []
+    now = datetime.now(UTC)
+    for run in context.store.list_active_runs():
+        if run.status != STATUS_QUEUED:
+            continue
+        age = _record_age_seconds(run.created_at, now)
+        if run.supervisor_pid is not None and not _process_exists(run.supervisor_pid):
+            reconciled.append(
+                _reconcile_queued_run(
+                    context,
+                    run,
+                    reason="supervisor process exited before starting worker",
+                    error_text="Worker supervisor exited before starting worker",
+                    blocker_text="Worker supervisor launch failed",
+                    queued_age_seconds=age,
+                )
+            )
+            continue
+        if age < startup_timeout_seconds:
+            continue
+        if run.supervisor_pid is not None and _process_exists(run.supervisor_pid):
+            error_text = "Worker supervisor did not start worker before startup deadline"
+            blocker_text = "Worker supervisor startup timed out"
+        else:
+            error_text = "Worker supervisor ownership was not recorded"
+            blocker_text = "Worker supervisor launch state missing"
+        reconciled.append(
+            _reconcile_queued_run(
+                context,
+                run,
+                reason=error_text,
+                error_text=error_text,
+                blocker_text=blocker_text,
+                queued_age_seconds=age,
+            )
+        )
+    return reconciled
+
+
+def _record_age_seconds(created_at: str, now: datetime) -> float:
+    try:
+        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    return max((now - created).total_seconds(), 0.0)
+
+
+def _reconcile_queued_run(
+    context: AppContext,
+    run: RunRecord,
+    *,
+    reason: str,
+    error_text: str,
+    blocker_text: str,
+    queued_age_seconds: float,
+) -> RunRecord:
+    _append_run_event(
+        context,
+        run.run_id,
+        "supervisor.reconciled",
+        {
+            "reason": reason,
+            "supervisor_pid": run.supervisor_pid,
+            "queued_age_seconds": round(queued_age_seconds, 3),
+            "supervisor_output_path": str(run.supervisor_output_path)
+            if run.supervisor_output_path
+            else None,
+        },
+    )
+    return context.store.update_run(
+        run.run_id,
+        RunUpdate(status=STATUS_FAILED, error_text=error_text, blocker_text=blocker_text),
+    )
+
+
 def format_status(context: AppContext, session_id: str) -> str:
+    reconcile_stale_queued_runs(context)
     _require_session_id(session_id)
     lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
     runs = _list_active_runs_for_session_ids(context, lineage_session_ids)
@@ -964,7 +1114,71 @@ def _orchestrator_skill_candidates(
     return candidates
 
 
+def format_debug_run(context: AppContext, run_id: str) -> str:
+    reconcile_stale_queued_runs(context)
+    record = context.store.get_run(run_id)
+    return _format_debug_bundle(context, record)
+
+
+def format_debug_session(context: AppContext, session_id: str, limit: int = 20) -> str:
+    reconcile_stale_queued_runs(context)
+    _require_session_id(session_id)
+    lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
+    runs = _list_runs_for_session_ids(context, lineage_session_ids, limit=limit)
+    lines = ["# Orchestra debug session", "", f"session_id: {session_id}", f"runs: {len(runs)}"]
+    for run in runs:
+        lines.extend(["", _format_debug_bundle(context, run)])
+    return "\n".join(lines)
+
+
+def _format_debug_bundle(context: AppContext, record: RunRecord) -> str:
+    sections = ["# Orchestra debug bundle", "", "## Run state", format_run_report(record)]
+    request_path = context.config.state_dir / "requests" / f"{record.run_id}.json"
+    sections.append(_debug_file_section("Request", request_path))
+    sections.append(_debug_file_section("Lifecycle log", record.log_path))
+    supervisor_output_path = record.supervisor_output_path or (
+        record.log_path.parent / f"{record.run_id}.supervisor.log"
+    )
+    sections.append(_debug_file_section("Supervisor output", supervisor_output_path))
+    if record.result_artifact_path:
+        sections.append(_debug_file_section("Return artifact", record.result_artifact_path))
+    else:
+        sections.append("## Return artifact\npath: missing")
+    sections.append(_debug_transcript_section(record))
+    return "\n\n".join(sections)
+
+
+def _debug_file_section(title: str, path: Path) -> str:
+    lines = [f"## {title}", f"path: {path}"]
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        lines.append("missing")
+    else:
+        lines.extend(["", text.rstrip()])
+    return "\n".join(lines)
+
+
+def _debug_transcript_section(record: RunRecord) -> str:
+    lines = ["## Harness transcript"]
+    if record.worker_session_id:
+        lines.append(f"worker_session_id: {record.worker_session_id}")
+    if record.transcript_path:
+        lines.append(_debug_file_section("Transcript content", record.transcript_path))
+        return "\n".join(lines)
+    if record.worker_session_id and record.harness == "pi":
+        lines.append("transcript_path: not recorded")
+        lines.append(
+            "fallback_search: find \"${PI_CODING_AGENT_SESSION_DIR:-$HOME/.pi/agent/sessions}\" "
+            f"-type f -name '*_{record.worker_session_id}.jsonl'"
+        )
+    else:
+        lines.append("transcript_path: not available")
+    return "\n".join(lines)
+
+
 def format_history(context: AppContext, session_id: str, limit: int) -> str:
+    reconcile_stale_queued_runs(context)
     _require_session_id(session_id)
     lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
     runs = _list_runs_for_session_ids(context, lineage_session_ids, limit=limit)
@@ -1580,6 +1794,19 @@ def _normalized_optional_profile(profile: str | None) -> str | None:
     return normalized or None
 
 
+def _run_log_path(context: AppContext, run_id: str) -> Path:
+    return context.config.log_dir / f"{run_id}.jsonl"
+
+
+def _append_run_event(
+    context: AppContext,
+    run_id: str,
+    event: str,
+    details: dict[str, object] | None = None,
+) -> None:
+    append_run_event(_run_log_path(context, run_id), run_id=run_id, event=event, details=details)
+
+
 def _spawn_supervisor(context: AppContext, request_file: Path, run_id: str) -> None:
     command = [
         sys.executable,
@@ -1595,11 +1822,57 @@ def _spawn_supervisor(context: AppContext, request_file: Path, run_id: str) -> N
         "--request-file",
         str(request_file),
     ]
-    subprocess.Popen(
-        command,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
+    supervisor_output_path = context.config.log_dir / f"{run_id}.supervisor.log"
+    supervisor_output_path.parent.mkdir(parents=True, exist_ok=True)
+    _append_run_event(
+        context,
+        run_id,
+        "supervisor.spawn_requested",
+        {
+            "command": command,
+            "request_file": str(request_file),
+            "supervisor_output_path": str(supervisor_output_path),
+        },
+    )
+    try:
+        output = supervisor_output_path.open("ab")
+        process = subprocess.Popen(
+            command,
+            stdout=output,
+            stderr=output,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        _append_run_event(context, run_id, "supervisor.failed", {"error": str(exc)})
+        context.store.update_run(
+            run_id,
+            RunUpdate(
+                status=STATUS_FAILED,
+                error_text="Worker supervisor could not be launched",
+                blocker_text="Worker supervisor launch failed",
+                supervisor_output_path=supervisor_output_path,
+            ),
+        )
+        return
+    finally:
+        try:
+            output.close()
+        except UnboundLocalError:
+            pass
+
+    context.store.update_run(
+        run_id,
+        RunUpdate(
+            status=STATUS_QUEUED,
+            supervisor_pid=process.pid,
+            supervisor_output_path=supervisor_output_path,
+        ),
+    )
+    _append_run_event(
+        context,
+        run_id,
+        "supervisor.spawned",
+        {"supervisor_pid": process.pid, "supervisor_output_path": str(supervisor_output_path)},
     )
 
 
@@ -1825,6 +2098,12 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
     effective_blocker_text = current.blocker_text if blocker_text is None else blocker_text
     try:
         artifact_path = _write_return_artifact(context, run_id, result)
+        _append_run_event(
+            context,
+            run_id,
+            "artifact.written",
+            {"path": str(artifact_path) if artifact_path else None},
+        )
     except OSError as exc:
         artifact_error = f"Return artifact could not be written: {exc}"
         effective_blocker_text = (
