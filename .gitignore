@@ -39,5 +39,8 @@ node_modules/
 # CodeGraph (regenerate, don't track)
 .codegraph/
 
+# Research source repositories
+/docs/research/orchestra-skills-research/repos/
+
 # Data (track if your project needs it — customize this rule)
 data/

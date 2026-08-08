@@ -1,0 +1,492 @@
+{
+  "total_runs": 12,
+  "configurations": {
+    "current-researcher": {
+      "runs": 12,
+      "mean_rating": 3.594,
+      "mean_duration_seconds": 298.583,
+      "would_use_rate": 0.5,
+      "overkill_rate": 0.5
+    }
+  },
+  "runs": [
+    {
+      "scenario": "broad-decomposition",
+      "level": "planning",
+      "live": false,
+      "configuration": "current-researcher",
+      "trial": 1,
+      "ratings": {
+        "correctness": 2,
+        "usefulness": 2,
+        "evidence_faithfulness": 3,
+        "coverage": 3,
+        "scope_control": 1,
+        "escalation_judgment": 1,
+        "efficiency": 2,
+        "handoff_quality": 3
+      },
+      "mean_rating": 2.125,
+      "would_use": false,
+      "overkill": true,
+      "best_feature": "Identified the existing call path and relevant files.",
+      "main_failure": "Violated the research-only boundary by inventing a full implementation design and code before requirements were known.",
+      "notes": "Initial evaluator judgment; retain artifacts for paired review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 4749,
+        "source_reference_count": 4,
+        "duration_seconds": 256.0,
+        "trace_available": true,
+        "tool_count": 6,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_explore",
+          "bash",
+          "read",
+          "read",
+          "read",
+          "read"
+        ]
+      }
+    },
+    {
+      "scenario": "call-path",
+      "level": "focused",
+      "live": false,
+      "configuration": "current-researcher",
+      "trial": 1,
+      "ratings": {
+        "correctness": 5,
+        "usefulness": 5,
+        "evidence_faithfulness": 5,
+        "coverage": 5,
+        "scope_control": 5,
+        "escalation_judgment": 5,
+        "efficiency": 4,
+        "handoff_quality": 5
+      },
+      "mean_rating": 4.875,
+      "would_use": true,
+      "overkill": false,
+      "best_feature": "Complete concise trace with corroborating test evidence.",
+      "main_failure": "Minor extra commentary about out-of-scope error cases.",
+      "notes": "Initial evaluator judgment; retain artifacts for paired review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 1686,
+        "source_reference_count": 6,
+        "duration_seconds": 386.0,
+        "trace_available": true,
+        "tool_count": 6,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_files",
+          "bash",
+          "read",
+          "read",
+          "read",
+          "read"
+        ]
+      }
+    },
+    {
+      "scenario": "code-test-conflict",
+      "level": "focused",
+      "live": false,
+      "configuration": "current-researcher",
+      "trial": 1,
+      "ratings": {
+        "correctness": 5,
+        "usefulness": 5,
+        "evidence_faithfulness": 5,
+        "coverage": 5,
+        "scope_control": 5,
+        "escalation_judgment": 5,
+        "efficiency": 4,
+        "handoff_quality": 5
+      },
+      "mean_rating": 4.875,
+      "would_use": true,
+      "overkill": false,
+      "best_feature": "Clearly preserved and verified the implementation/test disagreement.",
+      "main_failure": "Running the test added modest overhead but useful confirmation.",
+      "notes": "Initial evaluator judgment; retain artifacts for paired review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 783,
+        "source_reference_count": 3,
+        "duration_seconds": 514.0,
+        "trace_available": true,
+        "tool_count": 5,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_files",
+          "bash",
+          "read",
+          "read",
+          "bash"
+        ]
+      }
+    },
+    {
+      "scenario": "live-official-api",
+      "level": "adaptive",
+      "live": true,
+      "configuration": "current-researcher",
+      "trial": 1,
+      "ratings": {
+        "correctness": 2,
+        "usefulness": 2,
+        "evidence_faithfulness": 3,
+        "coverage": 3,
+        "scope_control": 4,
+        "escalation_judgment": 4,
+        "efficiency": 4,
+        "handoff_quality": 2
+      },
+      "mean_rating": 3,
+      "would_use": false,
+      "overkill": false,
+      "best_feature": "Used the canonical documentation and found the version-added note.",
+      "main_failure": "Failed the requested retrieval-date requirement, used a placeholder date, and did not provide the exact signature cleanly.",
+      "notes": "Initial evaluator judgment; retain artifacts for paired review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 1569,
+        "source_reference_count": 3,
+        "duration_seconds": 233.0,
+        "trace_available": true,
+        "tool_count": 2,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "web_search",
+          "web_extract"
+        ]
+      }
+    },
+    {
+      "scenario": "planning-knowledge-gaps",
+      "level": "planning",
+      "live": false,
+      "configuration": "current-researcher",
+      "trial": 1,
+      "ratings": {
+        "correctness": 4,
+        "usefulness": 4,
+        "evidence_faithfulness": 4,
+        "coverage": 4,
+        "scope_control": 3,
+        "escalation_judgment": 4,
+        "efficiency": 3,
+        "handoff_quality": 4
+      },
+      "mean_rating": 3.75,
+      "would_use": true,
+      "overkill": true,
+      "best_feature": "Separated repository facts from decision-blocking unknowns.",
+      "main_failure": "Expanded to eight partly speculative gaps and made broad absence claims from a tiny fixture.",
+      "notes": "Initial evaluator judgment; retain artifacts for paired review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 3168,
+        "source_reference_count": 3,
+        "duration_seconds": 377.0,
+        "trace_available": true,
+        "tool_count": 7,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_files",
+          "bash",
+          "read",
+          "read",
+          "read",
+          "read",
+          "read"
+        ]
+      }
+    },
+    {
+      "scenario": "symbol-lookup",
+      "level": "lookup",
+      "live": false,
+      "configuration": "current-researcher",
+      "trial": 1,
+      "ratings": {
+        "correctness": 1,
+        "usefulness": 1,
+        "evidence_faithfulness": 1,
+        "coverage": 1,
+        "scope_control": 1,
+        "escalation_judgment": 2,
+        "efficiency": 2,
+        "handoff_quality": 2
+      },
+      "mean_rating": 1.375,
+      "would_use": false,
+      "overkill": true,
+      "best_feature": "Compact presentation.",
+      "main_failure": "Answered from an unrelated file outside the fixture and reached the wrong conclusion.",
+      "notes": "Initial evaluator judgment; retain artifacts for paired review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 878,
+        "source_reference_count": 1,
+        "duration_seconds": 97.0,
+        "trace_available": true,
+        "tool_count": 0,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": []
+      }
+    },
+    {
+      "scenario": "broad-decomposition",
+      "level": "planning",
+      "live": false,
+      "configuration": "current-researcher",
+      "trial": 2,
+      "ratings": {
+        "correctness": 3,
+        "usefulness": 3,
+        "evidence_faithfulness": 2,
+        "coverage": 4,
+        "scope_control": 1,
+        "escalation_judgment": 2,
+        "efficiency": 1,
+        "handoff_quality": 3
+      },
+      "mean_rating": 2.375,
+      "would_use": false,
+      "overkill": true,
+      "best_feature": "Identified the four genuine change surfaces and unresolved design decisions.",
+      "main_failure": "Violated the exact source boundary, inspected the lab evaluator and scenario definition, and quoted expected_behavior.",
+      "notes": "Initial evaluator judgment after full Pi trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 4376,
+        "source_reference_count": 10,
+        "duration_seconds": 433.0,
+        "trace_available": true,
+        "tool_count": 12,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_files",
+          "bash",
+          "read",
+          "read",
+          "read",
+          "read",
+          "bash",
+          "codegraph_explore",
+          "read",
+          "read",
+          "read",
+          "read"
+        ]
+      }
+    },
+    {
+      "scenario": "call-path",
+      "level": "focused",
+      "live": false,
+      "configuration": "current-researcher",
+      "trial": 2,
+      "ratings": {
+        "correctness": 5,
+        "usefulness": 5,
+        "evidence_faithfulness": 5,
+        "coverage": 5,
+        "scope_control": 5,
+        "escalation_judgment": 5,
+        "efficiency": 4,
+        "handoff_quality": 5
+      },
+      "mean_rating": 4.875,
+      "would_use": true,
+      "overkill": false,
+      "best_feature": "Complete accurate trace with corroborating test evidence.",
+      "main_failure": "Used shell discovery and four reads rather than semantic exploration.",
+      "notes": "Initial evaluator judgment after full Pi trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 1882,
+        "source_reference_count": 12,
+        "duration_seconds": 245.0,
+        "trace_available": true,
+        "tool_count": 5,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "bash",
+          "read",
+          "read",
+          "read",
+          "read"
+        ]
+      }
+    },
+    {
+      "scenario": "code-test-conflict",
+      "level": "focused",
+      "live": false,
+      "configuration": "current-researcher",
+      "trial": 2,
+      "ratings": {
+        "correctness": 5,
+        "usefulness": 5,
+        "evidence_faithfulness": 4,
+        "coverage": 5,
+        "scope_control": 5,
+        "escalation_judgment": 5,
+        "efficiency": 4,
+        "handoff_quality": 4
+      },
+      "mean_rating": 4.625,
+      "would_use": true,
+      "overkill": false,
+      "best_feature": "Correctly preserved the implementation/test conflict.",
+      "main_failure": "Evidence labels such as file:1 were ambiguous rather than exact paths.",
+      "notes": "Initial evaluator judgment after full Pi trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 777,
+        "source_reference_count": 3,
+        "duration_seconds": 251.0,
+        "trace_available": true,
+        "tool_count": 3,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "bash",
+          "read",
+          "read"
+        ]
+      }
+    },
+    {
+      "scenario": "live-official-api",
+      "level": "adaptive",
+      "live": true,
+      "configuration": "current-researcher",
+      "trial": 2,
+      "ratings": {
+        "correctness": 3,
+        "usefulness": 3,
+        "evidence_faithfulness": 4,
+        "coverage": 4,
+        "scope_control": 4,
+        "escalation_judgment": 3,
+        "efficiency": 2,
+        "handoff_quality": 2
+      },
+      "mean_rating": 3.125,
+      "would_use": false,
+      "overkill": true,
+      "best_feature": "Verified the exact signature against current and Python 3.11 official docs.",
+      "main_failure": "Failed the explicit actual-date requirement with 2026-01-XX and over-researched a simple official-page lookup.",
+      "notes": "Initial evaluator judgment after full Pi trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 1703,
+        "source_reference_count": 2,
+        "duration_seconds": 366.0,
+        "trace_available": true,
+        "tool_count": 4,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "web_search",
+          "web_search",
+          "web_search",
+          "web_extract"
+        ]
+      }
+    },
+    {
+      "scenario": "planning-knowledge-gaps",
+      "level": "planning",
+      "live": false,
+      "configuration": "current-researcher",
+      "trial": 2,
+      "ratings": {
+        "correctness": 3,
+        "usefulness": 3,
+        "evidence_faithfulness": 4,
+        "coverage": 3,
+        "scope_control": 4,
+        "escalation_judgment": 3,
+        "efficiency": 3,
+        "handoff_quality": 3
+      },
+      "mean_rating": 3.25,
+      "would_use": false,
+      "overkill": true,
+      "best_feature": "Read the complete fixture and cited known facts accurately.",
+      "main_failure": "Claimed exactly one gap, then listed additional gaps; treated the user request for CSV as still undecided.",
+      "notes": "Initial evaluator judgment after full Pi trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 2179,
+        "source_reference_count": 10,
+        "duration_seconds": 247.0,
+        "trace_available": true,
+        "tool_count": 7,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_files",
+          "bash",
+          "read",
+          "read",
+          "read",
+          "read",
+          "read"
+        ]
+      }
+    },
+    {
+      "scenario": "symbol-lookup",
+      "level": "lookup",
+      "live": false,
+      "configuration": "current-researcher",
+      "trial": 2,
+      "ratings": {
+        "correctness": 5,
+        "usefulness": 5,
+        "evidence_faithfulness": 5,
+        "coverage": 5,
+        "scope_control": 5,
+        "escalation_judgment": 5,
+        "efficiency": 4,
+        "handoff_quality": 5
+      },
+      "mean_rating": 4.875,
+      "would_use": true,
+      "overkill": false,
+      "best_feature": "Used Codegraph and returned the exact branch behavior.",
+      "main_failure": "An extra inventory call was unnecessary after Codegraph established the answer.",
+      "notes": "Initial evaluator judgment after full Pi trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 751,
+        "source_reference_count": 1,
+        "duration_seconds": 178.0,
+        "trace_available": true,
+        "tool_count": 2,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_explore",
+          "codegraph_files"
+        ]
+      }
+    }
+  ]
+}

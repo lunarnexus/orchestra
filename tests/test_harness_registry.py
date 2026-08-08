@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
+
 from orchestra.app import (
     create_default_registry,
     load_context,
@@ -85,6 +87,30 @@ def test_load_context_does_not_resolve_harness_loader_eagerly(tmp_path: Path) ->
     context = load_context(config_path=config_path, catalog_path=catalog_path, registry=registry)
 
     assert context.catalog.roles["worker"].harness == "dummy"
+
+
+def test_run_doctor_reports_missing_orchestra_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path, catalog_path = _write_runtime_files(tmp_path)
+    registry = HarnessRegistry()
+    registry.register(DummyHarness())
+
+    def fake_which(executable: str) -> str | None:
+        if executable == "orchestra":
+            return None
+        return f"/usr/bin/{executable}"
+
+    monkeypatch.setattr("orchestra.app.shutil.which", fake_which)
+
+    checks = run_doctor(config_path=config_path, catalog_path=catalog_path, registry=registry)
+
+    orchestra_check = next(check for check in checks if check.name == "executable:orchestra")
+    harness_check = next(check for check in checks if check.name == "harness:worker")
+    assert orchestra_check.ok is False
+    assert orchestra_check.detail == "executable not found: orchestra"
+    assert harness_check.ok is True
 
 
 def test_run_doctor_reports_broken_loader_clearly(tmp_path: Path) -> None:

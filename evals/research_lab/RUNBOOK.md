@@ -50,7 +50,7 @@ Boundaries:
 Stay read-only. Do not inspect sibling scenarios, manifest.json, scorecard.json, or evaluator files. Do not modify the fixture. Return the smallest complete evidence-backed answer.
 ```
 
-Do not show `manifest.json`, especially `expected_behavior`, to the research system.
+Do not show `manifest.json` or scorecards to the research system.
 
 ## Run end to end
 

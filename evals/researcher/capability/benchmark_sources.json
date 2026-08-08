@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "suite_type": "capability benchmark",
+  "sources": [
+    {
+      "name": "SWE-bench / SWE-bench Verified",
+      "benchmark_family": "SWE-bench-style repository tasks",
+      "use_for": "repo-grounded issue understanding, evidence localization, downstream build readiness",
+      "oracle_candidates": [
+        "benchmark instance metadata",
+        "gold patch touched files",
+        "fail-to-pass tests",
+        "pass-to-pass tests"
+      ],
+      "researcher_metric": "relevant evidence/file recall and citation support, not patch solve rate",
+      "status": "approved pattern; dataset import not yet implemented"
+    },
+    {
+      "name": "SWE-Explore-style repository localization",
+      "benchmark_family": "repository exploration and localization",
+      "use_for": "ranked relevant files/spans from real issue contexts",
+      "oracle_candidates": [
+        "gold files",
+        "gold spans",
+        "accepted fix changed regions"
+      ],
+      "researcher_metric": "recall@k / precision@k plus evidence faithfulness",
+      "status": "approved pattern; concrete public dataset source must be pinned before cases are added"
+    },
+    {
+      "name": "BrowseComp-style fixed-corpus retrieval",
+      "benchmark_family": "hard retrieval with short verifiable answers",
+      "use_for": "bounded document research with supporting citations and hard negatives",
+      "oracle_candidates": [
+        "normalized answer",
+        "supporting document ids",
+        "hard-negative document ids"
+      ],
+      "researcher_metric": "answer correctness and citation support",
+      "status": "approved pattern; fixed corpus source must be pinned before cases are added"
+    }
+  ]
+}

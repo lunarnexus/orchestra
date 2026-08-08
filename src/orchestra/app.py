@@ -23,6 +23,7 @@ from orchestra.config import (
     AgentCatalog,
     AppConfig,
     ConfigError,
+    ModelLimitConfig,
     RoleConfig,
     default_pi_orchestra_dir,
     load_agent_catalog,
@@ -281,10 +282,7 @@ def start_run(
             record,
             global_limit=context.config.concurrency.global_limit,
             per_session_limit=context.config.concurrency.per_session_limit,
-            per_model_limits={
-                model: limit.concurrency
-                for model, limit in context.catalog.model_limits.items()
-            },
+            per_model_limits=_expanded_model_limits(context.catalog.model_limits),
         )
     except ConcurrencyLimitError as exc:
         raise AppError(str(exc)) from exc
@@ -890,6 +888,17 @@ def format_status(context: AppContext, session_id: str) -> str:
     return "\n".join(lines)
 
 
+def _expanded_model_limits(
+    model_limits: dict[str, ModelLimitConfig],
+) -> dict[str, int]:
+    expanded: dict[str, int] = {}
+    for model, limit in model_limits.items():
+        expanded[model] = limit.concurrency
+        if "/" in model:
+            expanded.setdefault(model.rsplit("/", 1)[1], limit.concurrency)
+    return expanded
+
+
 def role_metadata(context: AppContext) -> dict[str, list[str]]:
     return {
         "roles": sorted(context.catalog.roles),
@@ -1167,6 +1176,11 @@ def _debug_transcript_section(record: RunRecord) -> str:
         lines.append(_debug_file_section("Transcript content", record.transcript_path))
         return "\n".join(lines)
     if record.worker_session_id and record.harness == "pi":
+        fallback = _find_pi_transcript(record.worker_session_id)
+        if fallback is not None:
+            lines.append("transcript_path: discovered by Pi fallback search")
+            lines.append(_debug_file_section("Transcript content", fallback))
+            return "\n".join(lines)
         lines.append("transcript_path: not recorded")
         lines.append(
             "fallback_search: find \"${PI_CODING_AGENT_SESSION_DIR:-$HOME/.pi/agent/sessions}\" "
@@ -1175,6 +1189,21 @@ def _debug_transcript_section(record: RunRecord) -> str:
     else:
         lines.append("transcript_path: not available")
     return "\n".join(lines)
+
+
+def _find_pi_transcript(worker_session_id: str) -> Path | None:
+    session_root = Path(
+        os.environ.get(
+            "PI_CODING_AGENT_SESSION_DIR",
+            str(Path.home() / ".pi" / "agent" / "sessions"),
+        )
+    )
+    if not session_root.is_dir():
+        return None
+    matches = list(session_root.rglob(f"*_{worker_session_id}.jsonl"))
+    if not matches:
+        return None
+    return max(matches, key=lambda path: path.stat().st_mtime)
 
 
 def format_history(context: AppContext, session_id: str, limit: int) -> str:

@@ -1,0 +1,249 @@
+{
+  "total_runs": 6,
+  "configurations": {
+    "codegraph-focused": {
+      "runs": 6,
+      "mean_rating": 3.958,
+      "mean_duration_seconds": 966.5,
+      "would_use_rate": 0.5,
+      "overkill_rate": 0.5
+    }
+  },
+  "runs": [
+    {
+      "scenario": "broad-decomposition",
+      "level": "planning",
+      "live": false,
+      "configuration": "codegraph-focused",
+      "trial": 1,
+      "ratings": {
+        "correctness": 3,
+        "usefulness": 3,
+        "evidence_faithfulness": 4,
+        "coverage": 3,
+        "scope_control": 2,
+        "escalation_judgment": 2,
+        "efficiency": 2,
+        "handoff_quality": 3
+      },
+      "mean_rating": 2.75,
+      "would_use": false,
+      "overkill": true,
+      "best_feature": "Identified the real API, worker, persistence, and test surfaces.",
+      "main_failure": "Missed the explicit request-tracing context and inspected directories outside the exact fixture scope.",
+      "notes": "Initial evaluator judgment after full artifact and tool-trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 3474,
+        "source_reference_count": 5,
+        "duration_seconds": 282.0,
+        "trace_available": true,
+        "tool_count": 8,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_explore",
+          "codegraph_files",
+          "bash",
+          "bash",
+          "read",
+          "read",
+          "read",
+          "read"
+        ]
+      }
+    },
+    {
+      "scenario": "call-path",
+      "level": "focused",
+      "live": false,
+      "configuration": "codegraph-focused",
+      "trial": 1,
+      "ratings": {
+        "correctness": 5,
+        "usefulness": 5,
+        "evidence_faithfulness": 5,
+        "coverage": 5,
+        "scope_control": 5,
+        "escalation_judgment": 5,
+        "efficiency": 4,
+        "handoff_quality": 5
+      },
+      "mean_rating": 4.875,
+      "would_use": true,
+      "overkill": false,
+      "best_feature": "Semantic exploration established the full path with test corroboration.",
+      "main_failure": "Used a second exploration and read, adding some overhead.",
+      "notes": "Initial evaluator judgment after full artifact and tool-trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 1497,
+        "source_reference_count": 7,
+        "duration_seconds": 260.0,
+        "trace_available": true,
+        "tool_count": 3,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_explore",
+          "codegraph_explore",
+          "read"
+        ]
+      }
+    },
+    {
+      "scenario": "code-test-conflict",
+      "level": "focused",
+      "live": false,
+      "configuration": "codegraph-focused",
+      "trial": 1,
+      "ratings": {
+        "correctness": 5,
+        "usefulness": 5,
+        "evidence_faithfulness": 5,
+        "coverage": 5,
+        "scope_control": 5,
+        "escalation_judgment": 5,
+        "efficiency": 5,
+        "handoff_quality": 5
+      },
+      "mean_rating": 5,
+      "would_use": true,
+      "overkill": false,
+      "best_feature": "One Codegraph query established both sides of the conflict.",
+      "main_failure": "No material failure.",
+      "notes": "Initial evaluator judgment after full artifact and tool-trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 913,
+        "source_reference_count": 3,
+        "duration_seconds": 130.0,
+        "trace_available": true,
+        "tool_count": 1,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_explore"
+        ]
+      }
+    },
+    {
+      "scenario": "live-official-api",
+      "level": "adaptive",
+      "live": true,
+      "configuration": "codegraph-focused",
+      "trial": 1,
+      "ratings": {
+        "correctness": 3,
+        "usefulness": 3,
+        "evidence_faithfulness": 4,
+        "coverage": 4,
+        "scope_control": 4,
+        "escalation_judgment": 3,
+        "efficiency": 3,
+        "handoff_quality": 2
+      },
+      "mean_rating": 3.25,
+      "would_use": false,
+      "overkill": true,
+      "best_feature": "Returned the exact signature from official documentation.",
+      "main_failure": "Reported a retrieval date inconsistent with the run date and used more source discovery than required.",
+      "notes": "Initial evaluator judgment after full artifact and tool-trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 1734,
+        "source_reference_count": 3,
+        "duration_seconds": 209.0,
+        "trace_available": true,
+        "tool_count": 3,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "web_search",
+          "web_search",
+          "web_extract"
+        ]
+      }
+    },
+    {
+      "scenario": "planning-knowledge-gaps",
+      "level": "planning",
+      "live": false,
+      "configuration": "codegraph-focused",
+      "trial": 1,
+      "ratings": {
+        "correctness": 3,
+        "usefulness": 3,
+        "evidence_faithfulness": 4,
+        "coverage": 4,
+        "scope_control": 3,
+        "escalation_judgment": 2,
+        "efficiency": 1,
+        "handoff_quality": 3
+      },
+      "mean_rating": 2.875,
+      "would_use": false,
+      "overkill": true,
+      "best_feature": "Accurately summarized established code and repository facts.",
+      "main_failure": "Expanded into speculative design choices, used many fallback tools, and took nearly 80 minutes.",
+      "notes": "Initial evaluator judgment after full artifact and tool-trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 3415,
+        "source_reference_count": 4,
+        "duration_seconds": 4784.0,
+        "trace_available": true,
+        "tool_count": 9,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_explore",
+          "codegraph_files",
+          "bash",
+          "read",
+          "read",
+          "read",
+          "read",
+          "read",
+          "bash"
+        ]
+      }
+    },
+    {
+      "scenario": "symbol-lookup",
+      "level": "lookup",
+      "live": false,
+      "configuration": "codegraph-focused",
+      "trial": 1,
+      "ratings": {
+        "correctness": 5,
+        "usefulness": 5,
+        "evidence_faithfulness": 5,
+        "coverage": 5,
+        "scope_control": 5,
+        "escalation_judgment": 5,
+        "efficiency": 5,
+        "handoff_quality": 5
+      },
+      "mean_rating": 5,
+      "would_use": true,
+      "overkill": false,
+      "best_feature": "One Codegraph query produced the exact correct answer.",
+      "main_failure": "No material failure.",
+      "notes": "Initial evaluator judgment after full artifact and tool-trace review.",
+      "observations": {
+        "result_present": true,
+        "result_characters": 563,
+        "source_reference_count": 1,
+        "duration_seconds": 134.0,
+        "trace_available": true,
+        "tool_count": 1,
+        "dispatch_count": 0,
+        "write_tool_used": false,
+        "tools": [
+          "codegraph_explore"
+        ]
+      }
+    }
+  ]
+}

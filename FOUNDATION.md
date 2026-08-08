@@ -624,6 +624,11 @@ Target responsibilities:
 - `orchestra init all` detects configured harnesses and runs the relevant init
   actions without duplicating work
 
+`orchestra doctor` should validate the resolved config/catalog, PyYAML import,
+the `orchestra` executable on `PATH` for host extensions, database/log paths,
+and configured harness executables. Pi init verification should use `/orch doctor`
+so the installed extension proves it can call the core setup checks.
+
 For packaged/non-source installs, packaged asset fallbacks may be used only with
 explicit `--copy`. Default link mode should fail clearly when no source-root
 link target is available. Package assets are fallback install sources, not the

@@ -262,4 +262,5 @@ def test_init_pi_copy_mode_uses_packaged_fallback_when_no_source_root_exists(
     assert [item.mode for item in result.files] == ["copy", "copy", "copy", "copy"]
     assert (pi_dir / "extensions" / "orchestra" / "index.ts").is_file()
     assert (pi_dir / "orchestra" / "config.yaml").is_file()
+    assert result.verification_command == 'pi --no-approve -p "/orch doctor"'
     assert not (pi_dir / "orchestra" / "config.yaml").is_symlink()

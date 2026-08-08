@@ -6,10 +6,83 @@ from pathlib import Path
 import pytest
 import yaml
 
+from orchestra.app import (
+    _debug_transcript_section,
+    _expanded_model_limits,
+    format_orchestrator_return,
+)
 from orchestra.harnesses.common import ORCHESTRA_DISPATCH_BUDGET_ENV
-from orchestra.state import STATUS_DONE, StateStore
+from orchestra.config import ModelLimitConfig
+from orchestra.state import STATUS_DONE, STATUS_FAILED, RunRecord, StateStore
 from tests.helpers import extract_run_id, wait_for_condition
 from tests.types import RuntimeFilesFactory
+
+
+def test_model_limits_match_unprefixed_role_model_names() -> None:
+    expanded = _expanded_model_limits(
+        {"lmstudio/qwen3.6-27b": ModelLimitConfig(concurrency=1)}
+    )
+
+    assert expanded["lmstudio/qwen3.6-27b"] == 1
+    assert expanded["qwen3.6-27b"] == 1
+
+
+def test_debug_transcript_section_inlines_pi_fallback_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker_session_id = "orchestra-worker-abc123"
+    transcript = tmp_path / "sessions" / "2026" / f"run_{worker_session_id}.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text('{"message":"tool trace"}\n', encoding="utf-8")
+    monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(tmp_path / "sessions"))
+    record = RunRecord(
+        run_id="abc123",
+        orchestrator_session_id="manual:test-session",
+        harness="pi",
+        role="builder",
+        task_label="debug-test",
+        log_path=tmp_path / "abc123.jsonl",
+        created_at="2026-08-07T00:00:00Z",
+        status=STATUS_DONE,
+        worker_session_id=worker_session_id,
+    )
+
+    section = _debug_transcript_section(record)
+
+    assert "transcript_path: discovered by Pi fallback search" in section
+    assert str(transcript) in section
+    assert '{"message":"tool trace"}' in section
+
+
+def test_orchestrator_return_includes_worker_roles(tmp_path: Path) -> None:
+    first = RunRecord(
+        run_id="34f3a4324432",
+        orchestrator_session_id="manual:test-session",
+        harness="pi",
+        role="appsec",
+        task_label="appsec-eval:t3",
+        log_path=tmp_path / "34f3a4324432.jsonl",
+        created_at="2026-08-07T00:00:00Z",
+        status=STATUS_DONE,
+        result_summary="Mode: appsec Verdict: fail",
+    )
+    second = RunRecord(
+        run_id="2bfb63e7db3a",
+        orchestrator_session_id="manual:test-session",
+        harness="pi",
+        role="planner",
+        task_label="planner-eval:t1",
+        log_path=tmp_path / "2bfb63e7db3a.jsonl",
+        created_at="2026-08-07T00:00:00Z",
+        status=STATUS_FAILED,
+        error_text="worker failed",
+    )
+
+    report = format_orchestrator_return([first, second])
+
+    assert "[orchestra: 2 workers returned]" in report
+    assert "[orchestra: appsec 34f3a4324432 success]" in report
+    assert "[orchestra: planner 2bfb63e7db3a fail]" in report
 
 
 def test_do_output_exposes_effective_timeout_seconds(
@@ -390,6 +463,8 @@ def test_doctor_command_checks_local_setup(
     captured = capsys.readouterr()
 
     assert exit_code == 0
+    assert "dependency:PyYAML: ok" in captured.out
+    assert "executable:orchestra:" in captured.out
     assert "config: ok" in captured.out
     assert "agent_catalog: ok" in captured.out
     assert "database: ok" in captured.out

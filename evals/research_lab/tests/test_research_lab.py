@@ -89,6 +89,26 @@ def test_collect_trace_copies_available_artifacts(
     assert sorted(copied) == ["orchestra.jsonl", "result-artifact.md"]
 
 
+def test_evaluate_case_separates_queue_and_execution_time(tmp_path: Path) -> None:
+    case_dir = create_case("symbol-lookup", tmp_path, configuration="baseline", trial=1)
+    traces = case_dir / "traces"
+    traces.mkdir()
+    events = [
+        {"event": "run.created", "status": "queued", "timestamp": "2026-01-01T00:00:00Z"},
+        {"event": "run.updated", "status": "running", "timestamp": "2026-01-01T00:02:00Z"},
+        {"event": "run.updated", "status": "done", "timestamp": "2026-01-01T00:02:30Z"},
+    ]
+    (traces / "orchestra.jsonl").write_text(
+        "".join(json.dumps(event) + "\n" for event in events)
+    )
+
+    observations = evaluate_case(case_dir)["observations"]
+
+    assert observations["duration_seconds"] == 150.0
+    assert observations["queue_seconds"] == 120.0
+    assert observations["execution_seconds"] == 30.0
+
+
 def test_report_groups_results_by_configuration(tmp_path: Path) -> None:
     for configuration, rating in [("direct", 3), ("micro", 5)]:
         case_dir = create_case(
