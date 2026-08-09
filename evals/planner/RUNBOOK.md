@@ -27,15 +27,13 @@ python3 -m evals.planner.cli list --suite capability/dev
 ```bash
 CASE=swebench-copy-parameter-ignored
 CASE_DIR=$(python3 -m evals.planner.cli prepare "$CASE" --run-root "$TRIAL")
-cat "$CASE_DIR/task.md"
+python3 -m evals.planner.cli prompt "$CASE_DIR"
 ```
 
 Dispatch one worker naturally:
 
 - role: `planner`
-- goal: exact task text from `task.md`
-- context: `Workspace: <absolute CASE_DIR>/workspace. Plan only against the assigned request.`
-- boundaries: `Do not inspect <CASE_DIR>/hidden, sibling cases, unrelated Orchestra source, or files outside the workspace except configured skills/planner/resources. Stay read-only except for planning artifacts such as PLAN.md, RESEARCH.md, or ROADMAP.md.`
+- goal: exact output of `python3 -m evals.planner.cli prompt "$CASE_DIR"`
 - stop condition: complete evidence-backed plan, blocked plan, or research-batch dispatch barrier
 - return shape: the Planner skill contract
 

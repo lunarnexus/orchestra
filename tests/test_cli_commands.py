@@ -2,18 +2,25 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 import yaml
 
 from orchestra.app import (
+    AppConfig,
+    AppContext,
+    AppError,
+    OrchestraPaths,
     _debug_transcript_section,
     _expanded_model_limits,
     format_orchestrator_return,
+    start_run,
 )
+from orchestra.config import AgentCatalog, ConcurrencyConfig, ModelLimitConfig, RoleConfig
 from orchestra.harnesses.common import ORCHESTRA_DISPATCH_BUDGET_ENV
-from orchestra.config import ModelLimitConfig
-from orchestra.state import STATUS_DONE, STATUS_FAILED, RunRecord, StateStore
+from orchestra.state import STATUS_DONE, STATUS_FAILED, ConcurrencyLimitError, RunRecord, StateStore
 from tests.helpers import extract_run_id, wait_for_condition
 from tests.types import RuntimeFilesFactory
 
@@ -25,6 +32,69 @@ def test_model_limits_match_unprefixed_role_model_names() -> None:
 
     assert expanded["lmstudio/qwen3.6-27b"] == 1
     assert expanded["qwen3.6-27b"] == 1
+
+
+@pytest.mark.parametrize(
+    ("failure_message",),
+    [
+        ("global concurrency limit exceeded",),
+        ("per-session concurrency limit exceeded",),
+        ("model concurrency limit exceeded: lmstudio/qwen active=1 limit=1",),
+    ],
+)
+def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_message: str,
+) -> None:
+    def reserve_run(*args: object, **kwargs: object) -> None:
+        raise ConcurrencyLimitError(failure_message)
+
+    store = cast(
+        Any,
+        SimpleNamespace(list_active_runs=lambda session_id=None: [], reserve_run=reserve_run),
+    )
+    context = AppContext(
+        config=AppConfig(
+            default_timeout=30,
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            concurrency=ConcurrencyConfig(global_limit=1, per_session_limit=1),
+        ),
+        catalog=AgentCatalog(
+            roles={"builder": RoleConfig(harness="shell", command=["echo"] )},
+            default_role="builder",
+            model_limits={"lmstudio/qwen": ModelLimitConfig(concurrency=1)},
+        ),
+        store=store,
+        registry=cast(Any, SimpleNamespace()),
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+    monkeypatch.setattr("orchestra.app.orchestra_can_dispatch", lambda: True)
+
+    with pytest.raises(
+        AppError,
+        match=(
+            rf"{failure_message}; dispatch was not accepted; wait for current workers to return, "
+            rf"then re-dispatch\. Run orchestra status --session-id manual:test-session"
+        ),
+    ):
+        start_run(
+            context,
+            session_id="manual:test-session",
+            role_name=None,
+            goal="Do work.",
+            approved_context="",
+            boundaries="",
+            acceptance_target="",
+            return_format="",
+            timeout_seconds=10,
+            task_label="",
+            batch_id=None,
+        )
 
 
 def test_debug_transcript_section_inlines_pi_fallback_transcript(
@@ -399,8 +469,82 @@ def test_status_reports_active_run(
     status_output = capsys.readouterr().out
 
     assert status_exit == 0
+    assert "session_id: manual:test-session" in status_output
     assert "active_runs: 1" in status_output
     assert run_id in status_output
+
+
+def test_status_without_session_id_reports_global_active_runs(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "sleep", "--sleep", "2", "--output", "slept"],
+    )
+
+    from orchestra.cli import main
+
+    first_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "do",
+            "--session-id",
+            "manual:first",
+            "--goal",
+            "Run first worker.",
+        ]
+    )
+    first_output = capsys.readouterr().out
+    first_run_id = extract_run_id(first_output)
+
+    second_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "do",
+            "--session-id",
+            "manual:second",
+            "--goal",
+            "Run second worker.",
+        ]
+    )
+    second_output = capsys.readouterr().out
+    second_run_id = extract_run_id(second_output)
+
+    assert first_exit == 0
+    assert second_exit == 0
+    assert wait_for_condition(
+        lambda: len(StateStore(db_path).list_active_runs()) == 2,
+        timeout=5,
+    )
+
+    status_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "status",
+        ]
+    )
+    status_output = capsys.readouterr().out
+
+    assert status_exit == 0
+    assert "scope: global" in status_output
+    assert "global_active_runs: 2" in status_output
+    assert "session=manual:first" in status_output
+    assert "session=manual:second" in status_output
+    assert first_run_id in status_output
+    assert second_run_id in status_output
 
 
 def test_stop_command_enforces_ownership(
@@ -622,7 +766,11 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
         yaml.safe_dump(
-            {"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600},
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            },
             sort_keys=False,
         ),
         encoding="utf-8",
@@ -693,7 +841,13 @@ def test_roles_command_accepts_common_true_enabled_values(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
+        yaml.safe_dump(
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            }
+        ),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -747,7 +901,13 @@ def test_roles_command_accepts_common_false_enabled_values(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
+        yaml.safe_dump(
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            }
+        ),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -799,7 +959,13 @@ def test_roles_command_rejects_disabling_default_role(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
+        yaml.safe_dump(
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            }
+        ),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -913,7 +1079,13 @@ def test_roles_command_rejects_invalid_role_mutations(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
+        yaml.safe_dump(
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            }
+        ),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -1037,7 +1209,13 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
+        yaml.safe_dump(
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            }
+        ),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -1121,7 +1299,13 @@ def test_disabled_role_is_rejected_without_fallback(
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        yaml.safe_dump({"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600}),
+        yaml.safe_dump(
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            }
+        ),
         encoding="utf-8",
     )
     prompts_path.write_text("{}\n", encoding="utf-8")
@@ -1186,7 +1370,11 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
         yaml.safe_dump(
-            {"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600},
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            },
             sort_keys=False,
         ),
         encoding="utf-8",
@@ -1315,7 +1503,11 @@ def test_do_without_role_uses_default_role(
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
         yaml.safe_dump(
-            {"state_dir": str(tmp_path / "state"), "log_dir": str(tmp_path / "logs"), "default_timeout": 600},
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            },
             sort_keys=False,
         ),
         encoding="utf-8",

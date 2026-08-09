@@ -9,6 +9,7 @@ from evals.planner.eval_harness import (
     CASES,
     collect_trace,
     create_workspace,
+    dispatch_prompt,
     grade_workspace,
     suite_summary,
     trace_summary,
@@ -38,6 +39,9 @@ def main() -> None:
     prepare.add_argument("case", choices=sorted(CASES))
     prepare.add_argument("--run-root", type=Path, required=True)
 
+    prompt = sub.add_parser("prompt")
+    prompt.add_argument("case_dir", type=Path)
+
     grade = sub.add_parser("grade")
     grade.add_argument("case_dir", type=Path)
 
@@ -59,6 +63,9 @@ def main() -> None:
         return
     if args.command == "collect-trace":
         collect_trace(args.run_id, args.case_dir, args.state_dir, args.log_dir)
+        return
+    if args.command == "prompt":
+        print(dispatch_prompt(args.case_dir))
         return
     if args.command == "grade":
         result = grade_workspace(args.case_dir)

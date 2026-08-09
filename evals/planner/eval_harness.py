@@ -270,6 +270,40 @@ def _tool_calls(trace_path: Path) -> list[dict[str, Any]]:
     return tools
 
 
+def dispatch_prompt(case_dir: Path) -> str:
+    task = (case_dir / "task.md").read_text().strip()
+    workspace = (case_dir / "workspace").resolve()
+    return (
+        f"{task}\n\n"
+        "Evaluation workspace contract:\n"
+        f"- Use only this workspace for repository evidence: {workspace}.\n"
+        "- You may load configured skills/planner/resources.\n"
+        "- Do not inspect evaluator artifacts: hidden directories, grade_config.json, "
+        "sibling case directories, run summaries, result files, traces, or grader files.\n"
+        "- If evaluator metadata appears accidentally, ignore it and do not use it to shape "
+        "the plan or return.\n"
+        "- Stay read-only except for planning artifacts such as PLAN.md, RESEARCH.md, "
+        "or ROADMAP.md.\n"
+        "Return the exact Planner skill contract."
+    )
+
+
+def _walk_strings(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        strings: list[str] = []
+        for child in value.values():
+            strings.extend(_walk_strings(child))
+        return strings
+    if isinstance(value, list):
+        strings = []
+        for child in value:
+            strings.extend(_walk_strings(child))
+        return strings
+    return []
+
+
 def trace_summary(
     trace_path: Path,
     *,
@@ -292,6 +326,21 @@ def trace_summary(
     dispatch_count = sum(tool["name"] == "orch_dispatch" for tool in tools)
     saw_codegraph = any(tool["name"].startswith("codegraph") for tool in tools)
     saw_explore = any(tool["name"] == "codegraph_explore" for tool in tools)
+    evaluator_artifact_access: list[str] = []
+    evaluator_markers = (
+        "/hidden/",
+        "/traces/",
+        "grade_config.json",
+        "summary.json",
+        "results.jsonl",
+        "result.txt",
+    )
+    for tool in tools:
+        for value in _walk_strings(tool.get("arguments", {})):
+            normalized = value.replace("\\", "/")
+            if any(marker in normalized for marker in evaluator_markers):
+                evaluator_artifact_access.append(normalized)
+
     missing_resources: list[str] = []
     for resource in expected_resources:
         expected_suffix = "/" + resource.replace("\\", "/")
@@ -301,7 +350,7 @@ def trace_summary(
             for tool in tools
         ):
             missing_resources.append(resource)
-    process_pass = not saw_write and not missing_resources
+    process_pass = not saw_write and not missing_resources and not evaluator_artifact_access
     if requires_dispatch:
         process_pass = process_pass and dispatch_count >= 1
     if requires_no_dispatch:
@@ -317,6 +366,7 @@ def trace_summary(
         "saw_codegraph": saw_codegraph,
         "saw_explore": saw_explore,
         "missing_resources": missing_resources,
+        "evaluator_artifact_access": sorted(set(evaluator_artifact_access)),
     }
 
 

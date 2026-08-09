@@ -244,11 +244,50 @@ Report at least:
 
 Do not collapse all dimensions into one leaderboard score unless the report also preserves the underlying dimensions.
 
-## Trace collection
+## Result recording and trace collection
 
-Always retain Orchestra's run record, log, return artifact, role, harness, model, and worker session ID.
+Record scores compactly by default under a timestamped run root so repeated runs never overwrite earlier results:
 
-For Pi workers, follow `docs/debug.md` to locate the session JSONL named with:
+```text
+evals/<role>/runs/<YYYYMMDDTHHMMSSZ>-<suite>-<model-or-label>/
+  results.jsonl
+  summary.json
+```
+
+Create a fresh run root for each suite run, trial, model, or harness comparison. Within one run root, append one row per evaluated case to `results.jsonl` and rewrite only that run root's `summary.json`.
+
+Each `results.jsonl` row should include:
+
+```json
+{
+  "case": "<case-id>",
+  "suite": "<suite>",
+  "run_id": "<run-id>",
+  "worker_session_id": "orchestra-worker-<run-id>",
+  "status": "done|failed|cancelled|timeout",
+  "grade": {
+    "passed": true,
+    "outcome_pass": true,
+    "process_pass": true,
+    "scope_pass": true,
+    "policy_pass": true,
+    "handoff_pass": true
+  },
+  "refs": {
+    "log": "logs/<run-id>.jsonl",
+    "artifact": "state/return-artifacts/<run-id>.md",
+    "debug": "orchestra debug --run-id <run-id>"
+  }
+}
+```
+
+Do not embed full lifecycle logs, return artifacts, harness transcripts, or debug output inside scoring records. Score files (`results.jsonl`, `summary.json`, and per-case grade records when used) should store only grades, run ids, worker session ids, status, compact metrics, and references needed to reconstruct evidence.
+
+Use run ids and worker session ids as stable references; reconstruct full evidence with `orchestra debug --run-id <run-id>` when investigating a failure or adjudication.
+
+Full trace copies are opt-in for debugging, holdout adjudication, or archival qualification runs. Keep copied traces outside score records. When enabled, retain Orchestra's run record, log, return artifact, role, harness, model, worker session ID, and harness transcript as separate referenced artifacts.
+
+For Pi workers, `orchestra debug` locates the session JSONL named with:
 
 ```text
 orchestra-worker-<run-id>

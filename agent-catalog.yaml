@@ -37,7 +37,7 @@ roles:
     harness_fallback:
     - harness_config: hermes
       profile: tori
-    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    model: openai-codex/gpt-5.4-mini
     skills:
     - builder
     prompt_addition: Implement the assigned task only. Stay in scope. Return files
@@ -48,7 +48,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   verifier:
     harness_config: pi
-    model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+    model: openai-codex/gpt-5.4-mini
     skills:
     - verifier
     prompt_addition: Independently prove whether the work satisfies its scope and
@@ -80,13 +80,13 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   researcher:
     harness_config: pi
-    model: qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved
+    model: openai-codex/gpt-5.4
     prompt_addition: Gather evidence with sources from docs, web, or code. Do not
       change code. Return concise findings, sources, blockers, and risks.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
-      HINDSIGHT4PI_AUTO_RECALL: '1'
+      HINDSIGHT4PI_AUTO_RECALL: '0'
     skills:
     - researcher
   intern:
@@ -111,7 +111,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   planner:
     harness_config: pi
-    model: qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved
+    model: openai-codex/gpt-5.5
     skills:
     - planner
     prompt_addition: Plan the work. Ask numbered questions for unknowns. May dispatch

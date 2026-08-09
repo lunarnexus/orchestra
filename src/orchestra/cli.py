@@ -16,9 +16,9 @@ from orchestra.app import (
     await_session_report_payload,
     consume_pending_session_report,
     format_command_echo,
-    format_dispatch_ack,
     format_debug_run,
     format_debug_session,
+    format_dispatch_ack,
     format_doctor_checks,
     format_history,
     format_host_help,
@@ -116,7 +116,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     status_parser = subparsers.add_parser("status", help="show active run status")
     status_parser.add_argument(
         "--session-id",
-        required=True,
+        default=None,
         help="local/manual session id for CLI mode",
     )
     status_parser.set_defaults(handler=_handle_status)

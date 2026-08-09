@@ -62,6 +62,15 @@ from orchestra.state import (
     StateStore,
 )
 
+__all__ = [
+    "AppConfig",
+    "AppContext",
+    "AppError",
+    "OrchestraPaths",
+    "load_context",
+    "start_run",
+]
+
 REPORT_HEADER = "Orchestra session report"
 WORKER_EMPTY_RESULT_ERROR = "Worker exited successfully without a meaningful result"
 WORKER_EMPTY_RESULT_BLOCKER = "Worker protocol error: empty result"
@@ -285,7 +294,7 @@ def start_run(
             per_model_limits=_expanded_model_limits(context.catalog.model_limits),
         )
     except ConcurrencyLimitError as exc:
-        raise AppError(str(exc)) from exc
+        raise AppError(_format_concurrency_limit_error(str(exc), session_id=session_id)) from exc
 
     request_file.write_text(
         json.dumps(
@@ -311,7 +320,9 @@ def start_run(
     )
 
 
-def run_supervisor_guarded(context: AppContext, *, run_id: str, request_file: str | Path) -> RunRecord:
+def run_supervisor_guarded(
+    context: AppContext, *, run_id: str, request_file: str | Path
+) -> RunRecord:
     _append_run_event(context, run_id, "supervisor.started", {"pid": os.getpid()})
     try:
         context.store.update_run(
@@ -336,7 +347,7 @@ def run_supervisor_guarded(context: AppContext, *, run_id: str, request_file: st
                 ),
             )
         except Exception:
-            raise exc
+            raise exc from None
 
 
 def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path) -> RunRecord:
@@ -552,6 +563,14 @@ def format_started_run(started: StartedRun) -> str:
 def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
     role_text = f" {role}" if role else ""
     return f"orchestra dispatched:{role_text} {run_id}"
+
+
+def _format_concurrency_limit_error(message: str, *, session_id: str) -> str:
+    guidance = (
+        "dispatch was not accepted; wait for current workers to return, then re-dispatch. "
+        f"Run orchestra status --session-id {session_id}"
+    )
+    return f"{message}; {guidance}"
 
 
 def format_progress_notification(
@@ -856,8 +875,29 @@ def _reconcile_queued_run(
     )
 
 
-def format_status(context: AppContext, session_id: str) -> str:
+def format_status(context: AppContext, session_id: str | None = None) -> str:
     reconcile_stale_queued_runs(context)
+    global_runs = context.store.list_active_runs()
+    if session_id is None:
+        lines = [
+            "scope: global",
+            f"active_runs: {len(global_runs)}",
+            f"global_active_runs: {len(global_runs)}",
+        ]
+        if not global_runs:
+            lines.append("status: no active runs")
+            return "\n".join(lines)
+
+        lines.append("runs:")
+        for run in global_runs:
+            pid = f" pid={run.process_id}" if run.process_id is not None else ""
+            lines.append(
+                "- "
+                f"{run.run_id} [{run.status}] {run.role} "
+                f"session={run.orchestrator_session_id} :: {run.task_label}{pid}"
+            )
+        return "\n".join(lines)
+
     _require_session_id(session_id)
     lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
     runs = _list_active_runs_for_session_ids(context, lineage_session_ids)
@@ -868,7 +908,7 @@ def format_status(context: AppContext, session_id: str) -> str:
     lines.extend(
         [
             f"active_runs: {len(runs)}",
-            f"global_active_runs: {len(context.store.list_active_runs())}",
+            f"global_active_runs: {len(global_runs)}",
         ]
     )
     if not runs:

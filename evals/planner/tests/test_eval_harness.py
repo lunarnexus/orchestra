@@ -8,6 +8,7 @@ from evals.planner.cli import parse_run_id
 from evals.planner.eval_harness import (
     CASES,
     create_workspace,
+    dispatch_prompt,
     grade_workspace,
     suite_summary,
     trace_summary,
@@ -113,6 +114,18 @@ def test_forbidden_researcher_planning_fails(tmp_path: Path) -> None:
     assert grade["verdict_pass"] is True
     assert grade["forbidden_pass"] is False
     assert grade["outcome_pass"] is False
+
+
+def test_dispatch_prompt_contains_eval_workspace_contract(tmp_path: Path) -> None:
+    case_dir = create_workspace("contract-scope-creep", tmp_path)
+
+    prompt = dispatch_prompt(case_dir)
+
+    assert "Evaluation workspace contract:" in prompt
+    assert "Use only this workspace" in prompt
+    assert "Do not inspect evaluator artifacts" in prompt
+    assert "grade_config.json" in prompt
+    assert str((case_dir / "workspace").resolve()) in prompt
 
 
 def test_empty_result_is_runtime_failure(tmp_path: Path) -> None:
@@ -261,6 +274,39 @@ def test_trace_rejects_dispatch_when_not_expected(tmp_path: Path) -> None:
     )
 
     assert summary["process_pass"] is False
+
+
+def test_trace_rejects_evaluator_artifact_access(tmp_path: Path) -> None:
+    trace = tmp_path / "trace.jsonl"
+    trace.write_text(
+        json.dumps(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "name": "bash",
+                            "arguments": {"command": "cat case/hidden/grade_config.json"},
+                        }
+                    ],
+                }
+            }
+        )
+        + "\n"
+    )
+
+    summary = trace_summary(
+        trace,
+        expected_resources=(),
+        requires_dispatch=False,
+        requires_no_dispatch=False,
+        requires_semantic=False,
+        semantic_tool_available=False,
+    )
+
+    assert summary["process_pass"] is False
+    assert summary["evaluator_artifact_access"] == ["cat case/hidden/grade_config.json"]
 
 
 def test_parse_run_id() -> None:
