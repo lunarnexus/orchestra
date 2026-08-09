@@ -1648,7 +1648,23 @@ def run_doctor(
     context.config.log_dir.mkdir(parents=True, exist_ok=True)
     checks.append(DoctorCheck("log_dir", True, str(context.config.log_dir)))
 
-    for role_name, role in sorted(context.catalog.roles.items()):
+    enabled_roles = {
+        role_name: role
+        for role_name, role in sorted(context.catalog.roles.items())
+        if role.enabled
+    }
+    checks.append(
+        DoctorCheck(
+            "roles:enabled",
+            bool(enabled_roles),
+            f"{len(enabled_roles)} enabled role{'s' if len(enabled_roles) != 1 else ''} configured"
+            if enabled_roles
+            else "no enabled roles configured",
+        )
+    )
+
+    usable_harness_count = 0
+    for role_name, role in enabled_roles.items():
         try:
             harness = context.registry.get(role.harness)
         except HarnessLoadError as exc:
@@ -1681,7 +1697,21 @@ def run_doctor(
                 )
             )
             continue
+        usable_harness_count += 1
         checks.append(DoctorCheck(f"harness:{role_name}", True, resolved))
+
+    checks.append(
+        DoctorCheck(
+            "harness:any_usable",
+            usable_harness_count > 0,
+            (
+                f"{usable_harness_count} usable enabled role "
+                f"harness{'es' if usable_harness_count != 1 else ''}"
+            )
+            if usable_harness_count
+            else "no usable enabled worker harness found",
+        )
+    )
     return checks
 
 
@@ -1703,6 +1733,18 @@ def _doctor_executable_check(executable: str) -> DoctorCheck:
             f"executable not found: {executable}",
         )
     return DoctorCheck(f"executable:{executable}", True, resolved)
+
+
+def doctor_checks_pass(checks: list[DoctorCheck]) -> bool:
+    """Return whether doctor checks indicate a usable Orchestra setup."""
+    required_check_names = {"roles:enabled", "harness:any_usable"}
+    for check in checks:
+        if check.name.startswith("harness:") and check.name != "harness:any_usable":
+            continue
+        if check.name in required_check_names or not check.name.startswith("harness:"):
+            if not check.ok:
+                return False
+    return True
 
 
 def format_doctor_checks(checks: list[DoctorCheck]) -> str:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 
 from orchestra.app import (
     create_default_registry,
+    doctor_checks_pass,
     load_context,
     run_doctor,
     run_supervisor,
@@ -28,7 +30,7 @@ class DummyHarness:
         return request.goal
 
     def build_command(self, role: RoleConfig, prompt: str) -> list[str]:
-        return ["python", "-c", "print('doctor ok')"]
+        return [sys.executable, "-c", "print('doctor ok')"]
 
     def start(self, request: WorkerRequest, role: RoleConfig) -> WorkerProcess:
         raise NotImplementedError
@@ -38,7 +40,10 @@ def _write_runtime_files(tmp_path: Path, *, harness: str = "dummy") -> tuple[Pat
     config_path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
-    config_path.write_text("default_timeout: 600\n", encoding="utf-8")
+    config_path.write_text(
+        f"default_timeout: 600\nstate_dir: {tmp_path / 'state'}\nlog_dir: {tmp_path / 'logs'}\n",
+        encoding="utf-8",
+    )
     prompts_path.write_text("{}\n", encoding="utf-8")
     catalog_path.write_text(
         f"""
@@ -121,8 +126,72 @@ def test_run_doctor_reports_broken_loader_clearly(tmp_path: Path) -> None:
     checks = run_doctor(config_path=config_path, catalog_path=catalog_path, registry=registry)
 
     harness_check = next(check for check in checks if check.name == "harness:worker")
+    aggregate_check = next(check for check in checks if check.name == "harness:any_usable")
     assert harness_check.ok is False
     assert harness_check.detail == "failed to load harness: dummy: boom"
+    assert aggregate_check.ok is False
+    assert aggregate_check.detail == "no usable enabled worker harness found"
+    assert doctor_checks_pass(checks) is False
+
+
+def test_run_doctor_passes_with_one_usable_enabled_harness(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_path.write_text("default_timeout: 600\n", encoding="utf-8")
+    prompts_path.write_text("{}\n", encoding="utf-8")
+    catalog_path.write_text(
+        """
+default_role: worker
+roles:
+  worker:
+    harness: dummy
+    command: [python]
+  missing_worker:
+    harness: missing
+    command: [missing-agent]
+""".lstrip(),
+        encoding="utf-8",
+    )
+    registry = HarnessRegistry()
+    registry.register(DummyHarness())
+
+    checks = run_doctor(config_path=config_path, catalog_path=catalog_path, registry=registry)
+
+    usable_check = next(check for check in checks if check.name == "harness:any_usable")
+    missing_check = next(check for check in checks if check.name == "harness:missing_worker")
+    assert usable_check.ok is True
+    assert usable_check.detail == "1 usable enabled role harness"
+    assert missing_check.ok is False
+    assert doctor_checks_pass(checks) is True
+
+
+def test_run_doctor_fails_without_enabled_roles(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_path.write_text("default_timeout: 600\n", encoding="utf-8")
+    prompts_path.write_text("{}\n", encoding="utf-8")
+    catalog_path.write_text(
+        """
+default_role: worker
+roles:
+  worker:
+    harness: dummy
+    command: [python]
+    enabled: false
+""".lstrip(),
+        encoding="utf-8",
+    )
+    registry = HarnessRegistry()
+    registry.register(DummyHarness())
+
+    checks = run_doctor(config_path=config_path, catalog_path=catalog_path, registry=registry)
+
+    config_check = next(check for check in checks if check.name == "config")
+    assert config_check.ok is False
+    assert config_check.detail == "default_role must be enabled: worker"
+    assert doctor_checks_pass(checks) is False
 
 
 def test_run_supervisor_marks_broken_loader_failed_and_clears_request(tmp_path: Path) -> None:

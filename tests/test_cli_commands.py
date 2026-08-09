@@ -676,7 +676,9 @@ def test_doctor_command_checks_local_setup(
     assert "config: ok" in captured.out
     assert "agent_catalog: ok" in captured.out
     assert "database: ok" in captured.out
+    assert "roles:enabled: ok" in captured.out
     assert "harness:worker: ok" in captured.out
+    assert "harness:any_usable: ok" in captured.out
 
 
 def test_internal_command_echo_preserves_full_orch_command(

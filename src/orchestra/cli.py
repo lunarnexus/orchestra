@@ -15,6 +15,7 @@ from orchestra.app import (
     await_session_report,
     await_session_report_payload,
     consume_pending_session_report,
+    doctor_checks_pass,
     format_command_echo,
     format_debug_run,
     format_debug_session,
@@ -361,7 +362,7 @@ def _handle_stop(args: argparse.Namespace) -> int:
 def _handle_doctor(args: argparse.Namespace) -> int:
     checks = run_doctor(config_path=args.config, catalog_path=args.agent_catalog)
     print(format_doctor_checks(checks))
-    return 0 if all(check.ok for check in checks) else 1
+    return 0 if doctor_checks_pass(checks) else 1
 
 
 def _handle_roles(args: argparse.Namespace) -> int:
