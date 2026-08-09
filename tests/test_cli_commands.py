@@ -16,6 +16,7 @@ from orchestra.app import (
     _debug_transcript_section,
     _expanded_model_limits,
     format_orchestrator_return,
+    format_status,
     start_run,
 )
 from orchestra.config import AgentCatalog, ConcurrencyConfig, ModelLimitConfig, RoleConfig
@@ -52,7 +53,22 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
 
     store = cast(
         Any,
-        SimpleNamespace(list_active_runs=lambda session_id=None: [], reserve_run=reserve_run),
+        SimpleNamespace(
+            list_active_runs=lambda session_id=None: [
+                RunRecord(
+                    run_id="run-1",
+                    orchestrator_session_id="manual:test-session",
+                    harness="shell",
+                    role="builder",
+                    task_label="test task",
+                    log_path=Path("/tmp/run-1.jsonl"),
+                    created_at="2026-08-07T00:00:00Z",
+                    status="running",
+                    model="lmstudio/qwen",
+                )
+            ],
+            reserve_run=reserve_run,
+        ),
     )
     context = AppContext(
         config=AppConfig(
@@ -79,7 +95,8 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
         AppError,
         match=(
             rf"{failure_message}; dispatch was not accepted; wait for current workers to return, "
-            rf"then re-dispatch\. Run orchestra status --session-id manual:test-session"
+            rf"then re-dispatch\.\nsession_id: manual:test-session\nactive_runs: 1/1\n"
+            rf"global_active_runs: 1/1"
         ),
     ):
         start_run(
@@ -472,6 +489,53 @@ def test_status_reports_active_run(
     assert "session_id: manual:test-session" in status_output
     assert "active_runs: 1" in status_output
     assert run_id in status_output
+
+
+def test_format_status_reports_capacity_notation_for_session_and_global_scopes() -> None:
+    active_run = RunRecord(
+        run_id="run-1",
+        orchestrator_session_id="manual:test-session",
+        harness="shell",
+        role="builder",
+        task_label="test task",
+        log_path=Path("/tmp/run-1.jsonl"),
+        created_at="2026-08-07T00:00:00Z",
+        status="running",
+        model="lmstudio/qwen",
+    )
+    context = AppContext(
+        config=AppConfig(
+            default_timeout=30,
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+        ),
+        catalog=cast(
+            Any,
+            SimpleNamespace(model_limits={"lmstudio/qwen": ModelLimitConfig(concurrency=1)}),
+        ),
+        store=cast(Any, SimpleNamespace(list_active_runs=lambda session_id=None: [active_run])),
+        registry=cast(Any, SimpleNamespace()),
+        paths=OrchestraPaths(
+            config_path=Path("/tmp/config.yaml"),
+            catalog_path=Path("/tmp/catalog.yaml"),
+        ),
+    )
+
+    assert format_status(context, "manual:test-session").splitlines()[:6] == [
+        "session_id: manual:test-session",
+        "active_runs: 1/2",
+        "global_active_runs: 1/4",
+        "model_active_runs:",
+        "- lmstudio/qwen: 1/1",
+        "runs:",
+    ]
+    assert format_status(context).splitlines()[:6] == [
+        "scope: global",
+        "active_runs: 1/4",
+        "global_active_runs: 1/4",
+        "model_active_runs:",
+        "- lmstudio/qwen: 1/1",
+        "runs:",
+    ]
 
 
 def test_status_without_session_id_reports_global_active_runs(

@@ -294,7 +294,9 @@ def start_run(
             per_model_limits=_expanded_model_limits(context.catalog.model_limits),
         )
     except ConcurrencyLimitError as exc:
-        raise AppError(_format_concurrency_limit_error(str(exc), session_id=session_id)) from exc
+        raise AppError(
+            _format_concurrency_limit_error(str(exc), context=context, session_id=session_id)
+        ) from exc
 
     request_file.write_text(
         json.dumps(
@@ -565,12 +567,14 @@ def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
     return f"orchestra dispatched:{role_text} {run_id}"
 
 
-def _format_concurrency_limit_error(message: str, *, session_id: str) -> str:
-    guidance = (
-        "dispatch was not accepted; wait for current workers to return, then re-dispatch. "
-        f"Run orchestra status --session-id {session_id}"
-    )
-    return f"{message}; {guidance}"
+def _format_concurrency_limit_error(
+    message: str,
+    *,
+    context: AppContext,
+    session_id: str,
+) -> str:
+    guidance = "dispatch was not accepted; wait for current workers to return, then re-dispatch."
+    return f"{message}; {guidance}\n{format_status(context, session_id)}"
 
 
 def format_progress_notification(
@@ -878,12 +882,20 @@ def _reconcile_queued_run(
 def format_status(context: AppContext, session_id: str | None = None) -> str:
     reconcile_stale_queued_runs(context)
     global_runs = context.store.list_active_runs()
+    global_limit = context.config.concurrency.global_limit
+    per_session_limit = context.config.concurrency.per_session_limit
+    model_limits = context.catalog.model_limits
     if session_id is None:
         lines = [
             "scope: global",
-            f"active_runs: {len(global_runs)}",
-            f"global_active_runs: {len(global_runs)}",
+            f"active_runs: {len(global_runs)}/{global_limit}",
+            f"global_active_runs: {len(global_runs)}/{global_limit}",
         ]
+        if model_limits:
+            lines.append("model_active_runs:")
+            for model in sorted(model_limits):
+                active = sum(1 for run in global_runs if run.model == model)
+                lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
         if not global_runs:
             lines.append("status: no active runs")
             return "\n".join(lines)
@@ -907,10 +919,15 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
         lines.append(f"lineage_session_ids: {', '.join(lineage_session_ids)}")
     lines.extend(
         [
-            f"active_runs: {len(runs)}",
-            f"global_active_runs: {len(global_runs)}",
+            f"active_runs: {len(runs)}/{per_session_limit}",
+            f"global_active_runs: {len(global_runs)}/{global_limit}",
         ]
     )
+    if model_limits:
+        lines.append("model_active_runs:")
+        for model in sorted(model_limits):
+            active = sum(1 for run in runs if run.model == model)
+            lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
     if not runs:
         lines.append("status: no active runs")
         return "\n".join(lines)
