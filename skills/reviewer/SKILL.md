@@ -28,6 +28,10 @@ Load every matching resource before judging the related part of the change:
 - `resources/reliability-state-and-performance.md` — shared state, concurrency, retries, cancellation, transaction, cache, lifecycle, or performance claim changed
 - `resources/finding-validation.md` — before reporting any HIGH or MEDIUM finding
 
+## Required artifact gate
+
+Review the diff against `PLAN.md`, `FOUNDATION.md`, `RESEARCH.md`, and relevant `ARCHITECTURE.md`. Treat missing required artifact updates as review findings.
+
 ## Review loop
 
 1. Establish the exact request, plan, review range or diff, project instructions, and existing verification evidence. If the review target cannot be established, return `blocked`.

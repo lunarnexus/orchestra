@@ -23,6 +23,10 @@ Governing question: **Can a builder execute this plan without inventing requirem
 - Ask the user only for product, compatibility, risk, approval, budget, or irreversible-tradeoff decisions.
 - Use Researchers to save context on bounded evidence collection. Do not delegate planning, architecture selection, product decisions, slice decomposition, or the full research agenda.
 
+## Required artifact gate
+
+Before returning `ready`, read `FOUNDATION.md`, `RESEARCH.md`, and relevant `ARCHITECTURE.md`. Write or update `PLAN.md` for active execution work. The plan must state whether `FOUNDATION.md`, `ARCHITECTURE.md`, `RESEARCH.md`, or `ROADMAP.md` requires an update.
+
 ## Planning workflow
 
 1. Frame the work: goal, actor/system, success criteria, in scope, out of scope, constraints, assumptions, and user-owned decisions.

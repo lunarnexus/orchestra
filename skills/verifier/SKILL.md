@@ -25,6 +25,10 @@ Read only what establishes the verification target and evidence:
 
 If the acceptance target is ambiguous or material evidence required for a verdict is unavailable, return `blocked`.
 
+## Required artifact gate
+
+Verify against `PLAN.md` acceptance criteria and `FOUNDATION.md` constraints. Check whether changed behavior matches `ARCHITECTURE.md` and `RESEARCH.md`. Treat a required artifact mismatch as a verification failure.
+
 ## Verification loop
 
 1. Map every acceptance criterion to the evidence and fresh command that can decide it.

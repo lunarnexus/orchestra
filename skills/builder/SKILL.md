@@ -44,6 +44,10 @@ Load every matching conditional resource:
 - `resources/external-integrations.md` — external API, service, SDK, or protocol integration
 - `resources/commit-handoff.md` — commit preparation was explicitly assigned
 
+## Required artifact gate
+
+Before mutation, read the approved `PLAN.md`. Read `FOUNDATION.md` and relevant `ARCHITECTURE.md` before changing design-affecting code. Update `ARCHITECTURE.md` when implementation changes documented system design or behavior. Return a blocker if required artifact updates are outside the approved scope.
+
 ## Orient
 
 Before editing, confirm:

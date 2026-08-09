@@ -162,6 +162,18 @@ Use artifacts by purpose:
 - `PLAN.md` — active execution plan and progress markers
 - `ROADMAP.md` — long-lived TODO and wishlist backlog, tech-debt
 
+## Artifact gates
+
+Artifact alignment is a phase gate. Before moving to the next phase, confirm required artifacts were read and updated when the phase changed their contents:
+- scope: `FOUNDATION.md`, active `PLAN.md`, relevant `ROADMAP.md`
+- research: `FOUNDATION.md`, relevant `ARCHITECTURE.md`, `RESEARCH.md`
+- planning: `FOUNDATION.md`, `RESEARCH.md`, relevant `ARCHITECTURE.md`, `PLAN.md`
+- build: approved `PLAN.md`, `FOUNDATION.md`, relevant `ARCHITECTURE.md`
+- verify/review/appsec: `PLAN.md`, `RESEARCH.md`, `ARCHITECTURE.md`, `FOUNDATION.md`
+- commit: git status/diff plus all required artifact updates
+
+If a required artifact is absent or not applicable, record that in the phase summary. Missing required artifact updates block implementation, review, security review, and commit.
+
 ## Git discipline
 
 For code work:
