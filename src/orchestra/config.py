@@ -233,8 +233,12 @@ def resolve_agent_catalog_path(path: str | Path | None = None) -> Path:
 def load_app_config(path: str | Path) -> AppConfig:
     raw = _load_yaml_mapping(path)
 
-    state_dir = Path(_get_optional_string(raw, "state_dir") or DEFAULT_STATE_DIR)
-    log_dir = Path(_get_optional_string(raw, "log_dir") or DEFAULT_LOG_DIR)
+    state_dir = Path(
+        _get_optional_string(raw, "state_dir") or DEFAULT_STATE_DIR
+    ).expanduser()
+    log_dir = Path(
+        _get_optional_string(raw, "log_dir") or DEFAULT_LOG_DIR
+    ).expanduser()
     default_timeout = _get_required_positive_int(raw, "default_timeout")
     turn_limit = _get_optional_positive_int_or_none(raw, "turn_limit")
     soft_timeout = _get_optional_positive_int_or_none(raw, "soft_timeout")

@@ -112,6 +112,25 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.prompts.tool_role_description == DEFAULT_TOOL_ROLE_DESCRIPTION
 
 
+def test_load_app_config_expands_tilde_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text(
+        "default_timeout: 600\nstate_dir: ~/orchestra/state\nlog_dir: ~/orchestra/logs\n",
+        encoding="utf-8",
+    )
+    prompts_path.write_text("{}\n", encoding="utf-8")
+
+    config = load_app_config(path)
+
+    assert config.state_dir == home / "orchestra" / "state"
+    assert config.log_dir == home / "orchestra" / "logs"
+
+
 def test_default_host_help_uses_generic_session_wording() -> None:
     assert (
         "/orch on                           Load the orchestra orchestrator skill"
