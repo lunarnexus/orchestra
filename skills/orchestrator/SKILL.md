@@ -56,6 +56,8 @@ For each step in the flow:
   - when workers return, briefly report errors, blockers, decisions, or approvals needed
   - briefly state the next step in the flow
   - if the user asks you to proceed through a phase/step/slice, continue until that boundary unless a blocker, required approval, or user decision appears
+  - At the end of each Phase, Step, or where appropriate, recommend the next step in the workflow.
+
 
 ## Goal intake loop
 

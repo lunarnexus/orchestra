@@ -31,6 +31,8 @@ Common LLM coding obstacles Orchestra is designed around:
 - **Parallel confusion** — session ownership and concurrency limits keep results attached to the right parent session.
 - **Prompt identity mistakes** — host integrations derive session identity from runtime context, not model output.
 
+Since Orchestra is harness agnostic, it isn't bogged down with the details of skill loading (though we do inject some basic workflow skills), memory systems, system prompts, LLM usage, etc., but that also makes it harder to test the effectiveness of Orchestra. I used pi.dev for most of the benchmark testing because it's a minimal harness and has a minimal influence on Orchestra.
+
 ## Key Features
 
 - Dispatch focused sub-agents from the CLI or supported host integrations.
