@@ -112,7 +112,10 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.prompts.tool_role_description == DEFAULT_TOOL_ROLE_DESCRIPTION
 
 
-def test_load_app_config_expands_tilde_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_app_config_expands_tilde_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -173,7 +176,8 @@ def test_default_tool_guidance_keeps_orchestrator_context_clean() -> None:
         "then re-dispatch once. If the retry times out, record the missing fact as a "
         "blocker and stop.",
         "Do not perform failed worker work yourself.",
-        "After dispatch, do not wait or poll. Continue independent work or stop; Orchestra will return worker results.",
+        "After dispatch, do not wait or poll. Continue independent work or stop; "
+        "Orchestra will return worker results.",
         "Use exact enabled roles; omit role for the default.",
     )
     assert DEFAULT_TOOL_GOAL_DESCRIPTION == (
@@ -259,8 +263,14 @@ def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
         ("default_timeout: 30\nconcurrency: 3\n", "'concurrency' must be a mapping"),
         ("default_timeout: 30\nauto_return: maybe\n", "'auto_return' must be a boolean"),
         ("default_timeout: 30\nturn_limit: 0\n", "'turn_limit' must be a positive integer"),
-        ("default_timeout: 30\nsoft_timeout: 30\n", "'soft_timeout' must be less than 'default_timeout'"),
-        ("default_timeout: 30\nstate_dir: ''\n", "'state_dir' must be a non-empty string when provided"),
+        (
+            "default_timeout: 30\nsoft_timeout: 30\n",
+            "'soft_timeout' must be less than 'default_timeout'",
+        ),
+        (
+            "default_timeout: 30\nstate_dir: ''\n",
+            "'state_dir' must be a non-empty string when provided",
+        ),
     ],
 )
 def test_load_app_config_rejects_invalid_values(
