@@ -1,3 +1,12 @@
+# Harness command templates for one-shot prompts, as typed on the command line:
+#   pi:       pi --model [model] -p [prompt]
+#   hermes:   hermes --profile [profile] -z [prompt]
+#   opencode: opencode run --agent [agent] --model [model] [prompt]
+#
+# harness_configs.command uses argv-list form. Supported placeholders are:
+#   {prompt}, {model}, {profile}, {agent}
+# If an optional placeholder value is unset, that token is omitted; when the
+# preceding token is a long option such as --model, that option is omitted too.
 default_role: builder
 model_limits:
   lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved:
@@ -31,6 +40,37 @@ harness_configs:
     - --model
     - '{model}'
     - '{prompt}'
+# Role schema example:
+# roles:
+#   example_role:
+#     harness_config: pi              # required when top-level harness_configs is present
+#                                     # must name a configured harness_config
+#     harness_fallback:               # optional non-empty list; entries allow only
+#                                     # harness_config, model, profile, and agent
+#     - harness_config: hermes        # required per fallback entry
+#       model: provider/model         # optional non-empty string fallback override
+#       profile: profile-name         # optional non-empty string fallback override
+#       agent: agent-name             # optional non-empty string fallback override
+#     model: provider/model           # optional non-empty string; fills {model}
+#     profile: profile-name           # optional non-empty string; fills {profile}
+#     agent: agent-name               # optional non-empty string; fills {agent}
+#     worker_budget: 2                # optional positive integer; child dispatch budget
+#     turn_limit: 20                  # optional positive integer; worker turn budget
+#     soft_timeout: 300               # optional positive integer seconds; worker soft timeout
+#     skills:                         # optional non-empty list of skill names
+#     - builder                       # names may use letters, numbers, _, ., and -
+#     prompt_addition: Extra role instructions.  # optional non-empty string
+#     enabled: true                   # optional boolean; defaults to true
+#     env:                            # optional mapping: valid ENV_NAME keys to string values
+#       HINDSIGHT4PI_AUTO_RECALL: '0' # keys cannot start with reserved ORCHESTRA_ prefixes
+#     # Legacy catalog mode only, when top-level harness_configs is absent:
+#     # harness: pi                   # required non-empty string in legacy mode
+#     # command:                      # required non-empty argv list of non-empty strings
+#     # - pi
+#     # - --model
+#     # - '{model}'
+#     # - -p
+#     # - '{prompt}'
 roles:
   builder:
     harness_config: pi
