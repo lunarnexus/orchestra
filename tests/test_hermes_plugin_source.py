@@ -4,7 +4,9 @@ import ast
 import builtins
 import importlib.util
 import json
+import os
 import subprocess
+import threading
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -70,6 +72,30 @@ class InjectOnlyContext:
     def inject_message(self, content: str, role: str = "user") -> bool:
         self.injected.append((content, role))
         return True
+
+
+class NoInjectHermesPluginContext:
+    def __init__(self, session_id: str | None = None) -> None:
+        self.tools: list[dict[str, Any]] = []
+        self.commands: list[dict[str, Any]] = []
+        self.hooks: list[tuple[str, Any]] = []
+        self.injected: list[tuple[str, str]] = []
+        self._manager = SimpleNamespace(
+            _cli_ref=SimpleNamespace(
+                session_id=session_id,
+                agent=SimpleNamespace(steer=lambda content: True),
+                _agent_running=False,
+            )
+        )
+
+    def register_tool(self, **kwargs: Any) -> None:
+        self.tools.append(kwargs)
+
+    def register_command(self, name: str, **kwargs: Any) -> None:
+        self.commands.append({"name": name, **kwargs})
+
+    def register_hook(self, name: str, handler: Any) -> None:
+        self.hooks.append((name, handler))
 
 
 class RegistrationOnlyContext:
@@ -146,8 +172,109 @@ def test_hermes_plugin_registers_dispatch_tool_without_session_id_schema(
     assert "timeout" not in schema["parameters"]["properties"]
     assert "session_id" not in json.dumps(schema)
     assert ctx.commands[0]["name"] == "orch"
+    assert "/orch on" in ctx.commands[0]["description"]
+    assert "on" in ctx.commands[0]["args_hint"]
+    assert "do" in ctx.commands[0]["args_hint"]
+    assert "--role" in ctx.commands[0]["args_hint"]
+    assert "--timeout" in ctx.commands[0]["args_hint"]
+    assert "--task-label" in ctx.commands[0]["args_hint"]
+    assert "status" in ctx.commands[0]["args_hint"]
+    assert "history" in ctx.commands[0]["args_hint"]
+    assert "stop" in ctx.commands[0]["args_hint"]
+    assert "doctor" in ctx.commands[0]["args_hint"]
+    assert "roles" in ctx.commands[0]["args_hint"]
     assert ctx.commands[0]["handler"]("") == ""
-    assert ctx.hooks == []
+    assert [name for name, _ in ctx.hooks] == [
+        "on_session_end",
+        "on_session_finalize",
+        "on_session_reset",
+        "on_session_start",
+        "pre_tool_call",
+        "pre_llm_call",
+    ]
+
+
+def test_hermes_plugin_session_cleanup_hooks_clear_matching_report_watcher_state() -> None:
+    plugin = load_plugin()
+    ctx = FakeHermesPluginContext(session_id="runtime")
+    plugin._REPORT_WATCHERS.clear()
+    plugin._REPORT_WATCHERS.update({"hermes:runtime", "hermes:other"})
+    plugin._AWAIT_RUN_WATCHERS.clear()
+    plugin._AWAIT_RUN_WATCHERS.update(
+        {
+            "hermes:runtime": {"abc123", "xyz999"},
+            "hermes:other": {"other-run"},
+        }
+    )
+
+    plugin.register(ctx)
+    cleanup = dict(ctx.hooks)["on_session_end"]
+
+    cleanup(session_id="runtime")
+    assert plugin._REPORT_WATCHERS == {"hermes:other"}
+    assert plugin._AWAIT_RUN_WATCHERS == {"hermes:other": {"other-run"}}
+
+    cleanup()
+    cleanup(session_id=None)
+    cleanup(session_id="")
+    cleanup(session_id=object())
+    assert plugin._REPORT_WATCHERS == {"hermes:other"}
+    assert plugin._AWAIT_RUN_WATCHERS == {"hermes:other": {"other-run"}}
+
+
+def test_hermes_plugin_session_report_watcher_suppresses_late_delivery_after_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+    started = threading.Event()
+    release = threading.Event()
+    done = threading.Event()
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_await-session-report":
+            started.set()
+            assert release.wait(5)
+            return completed(
+                args,
+                json.dumps({"runIds": ["abc123"], "report": "worker done"}),
+            )
+        raise AssertionError(f"unexpected command: {args}")
+
+    original_watch = plugin._watch_session_report
+
+    def wrapped_watch(*args: Any, **kwargs: Any) -> None:
+        try:
+            original_watch(*args, **kwargs)
+        finally:
+            done.set()
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(plugin, "_watch_session_report", wrapped_watch)
+    ctx = FakeHermesPluginContext(session_id="runtime")
+
+    plugin._start_session_report_watcher(ctx, "hermes:runtime", "abc123", 35)
+    assert started.wait(5)
+
+    plugin._on_session_cleanup(session_id="runtime")
+    release.set()
+
+    assert wait_for_condition(lambda: done.is_set())
+    assert calls == [
+        [
+            "_await-session-report",
+            "--session-id",
+            "hermes:runtime",
+            "--run-id",
+            "abc123",
+            "--timeout",
+            "35",
+            "--json",
+        ]
+    ]
+    assert ctx.injected == []
+    assert ctx.steered == []
 
 
 @pytest.mark.parametrize(
@@ -175,6 +302,188 @@ def test_hermes_plugin_gates_dispatch_tool_by_worker_budget(
 
     assert [tool["name"] for tool in ctx.tools] == registered_tools
     assert [command["name"] for command in ctx.commands] == ["orch"]
+
+
+@pytest.mark.parametrize(
+    ("env_name", "raw_budget", "expected"),
+    [
+        ("ORCHESTRA_TURN_BUDGET", None, 0),
+        ("ORCHESTRA_TURN_BUDGET", "0", 0),
+        ("ORCHESTRA_TURN_BUDGET", "-1", 1),
+        ("ORCHESTRA_SOFT_TIMEOUT_SECONDS", "   ", 0),
+        ("ORCHESTRA_SOFT_TIMEOUT_SECONDS", "3", 3),
+        ("ORCHESTRA_SOFT_TIMEOUT_SECONDS", "bogus", 1),
+    ],
+)
+def test_parse_budget_env_matches_pi_rules(
+    monkeypatch: pytest.MonkeyPatch,
+    env_name: str,
+    raw_budget: str | None,
+    expected: int,
+) -> None:
+    plugin = load_plugin()
+    monkeypatch.delenv(env_name, raising=False)
+    if raw_budget is not None:
+        monkeypatch.setenv(env_name, raw_budget)
+
+    assert plugin._parse_budget_env(env_name) == expected
+
+
+def test_hermes_plugin_pre_tool_call_blocks_after_soft_timeout_and_injects_prompt_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    clock = {"value": 100.0}
+    monkeypatch.setattr(plugin.time, "monotonic", lambda: clock["value"])
+    monkeypatch.setenv("ORCHESTRA_SOFT_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_tool_call = dict(ctx.hooks)["pre_tool_call"]
+    clock["value"] = 102.0
+
+    expected = {
+        "action": "block",
+        "message": "Orchestra soft timeout reached; return budget handoff",
+    }
+    assert pre_tool_call() == expected
+    assert pre_tool_call() == expected
+    assert ctx.injected == [("Budget handoff\n\nBudget trigger: soft_timeout", "user")]
+
+
+def test_hermes_plugin_pre_tool_call_blocks_without_budget_prompt_without_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    clock = {"value": 100.0}
+    monkeypatch.setattr(plugin.time, "monotonic", lambda: clock["value"])
+    monkeypatch.setenv("ORCHESTRA_SOFT_TIMEOUT_SECONDS", "1")
+    monkeypatch.delenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", raising=False)
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_tool_call = dict(ctx.hooks)["pre_tool_call"]
+    clock["value"] = 102.0
+
+    assert pre_tool_call() == {
+        "action": "block",
+        "message": "Orchestra soft timeout reached; return budget handoff",
+    }
+    assert ctx.injected == []
+
+
+def test_hermes_plugin_pre_llm_call_decrements_turn_budget_and_injects_prompt_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    monkeypatch.setenv("ORCHESTRA_TURN_BUDGET", "2")
+    monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
+
+    assert pre_llm_call() is None
+    assert os.environ["ORCHESTRA_TURN_BUDGET"] == "2"
+    assert pre_llm_call() is None
+    assert os.environ["ORCHESTRA_TURN_BUDGET"] == "2"
+    assert ctx.injected == [("Budget handoff\n\nBudget trigger: turn_limit", "user")]
+
+
+def test_hermes_plugin_pre_llm_call_falls_back_to_context_when_injection_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    monkeypatch.setenv("ORCHESTRA_TURN_BUDGET", "1")
+    monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
+    ctx = NoInjectHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
+
+    assert pre_llm_call() == {"context": "Budget handoff\n\nBudget trigger: turn_limit"}
+    assert pre_llm_call() is None
+    assert os.environ["ORCHESTRA_TURN_BUDGET"] == "1"
+    assert ctx.injected == []
+
+
+def test_hermes_plugin_session_start_resets_only_requested_budget_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    monkeypatch.setenv("ORCHESTRA_TURN_BUDGET", "1")
+    monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
+    ctx = FakeHermesPluginContext()
+
+    plugin.register(ctx)
+    hooks = dict(ctx.hooks)
+    pre_llm_call = hooks["pre_llm_call"]
+    on_session_start = hooks["on_session_start"]
+
+    assert pre_llm_call(session_id="runtime-a") is None
+    assert pre_llm_call(session_id="runtime-b") is None
+    assert ctx.injected == [
+        ("Budget handoff\n\nBudget trigger: turn_limit", "user"),
+        ("Budget handoff\n\nBudget trigger: turn_limit", "user"),
+    ]
+
+    on_session_start(session_id="runtime-a")
+
+    assert pre_llm_call(session_id="runtime-b") is None
+    assert pre_llm_call(session_id="runtime-a") is None
+    assert ctx.injected == [
+        ("Budget handoff\n\nBudget trigger: turn_limit", "user"),
+        ("Budget handoff\n\nBudget trigger: turn_limit", "user"),
+        ("Budget handoff\n\nBudget trigger: turn_limit", "user"),
+    ]
+
+
+def test_hermes_plugin_session_cleanup_clears_only_requested_budget_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    monkeypatch.setenv("ORCHESTRA_TURN_BUDGET", "1")
+    monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
+    ctx = FakeHermesPluginContext()
+
+    plugin.register(ctx)
+    pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
+
+    assert pre_llm_call(session_id="runtime-a") is None
+    assert pre_llm_call(session_id="runtime-b") is None
+
+    plugin._on_session_cleanup(session_id="runtime-a")
+
+    assert pre_llm_call(session_id="runtime-b") is None
+    assert pre_llm_call(session_id="runtime-a") is None
+    assert ctx.injected == [
+        ("Budget handoff\n\nBudget trigger: turn_limit", "user"),
+        ("Budget handoff\n\nBudget trigger: turn_limit", "user"),
+        ("Budget handoff\n\nBudget trigger: turn_limit", "user"),
+    ]
+
+
+def test_hermes_plugin_budget_hooks_fail_closed_without_trusted_session_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    clock = {"value": 100.0}
+    monkeypatch.setattr(plugin.time, "monotonic", lambda: clock["value"])
+    monkeypatch.setenv("ORCHESTRA_TURN_BUDGET", "1")
+    monkeypatch.setenv("ORCHESTRA_SOFT_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
+    ctx = FakeHermesPluginContext()
+
+    plugin.register(ctx)
+    hooks = dict(ctx.hooks)
+    pre_llm_call = hooks["pre_llm_call"]
+    pre_tool_call = hooks["pre_tool_call"]
+    clock["value"] = 102.0
+
+    assert pre_llm_call() is None
+    assert pre_tool_call() is None
+    assert ctx.injected == []
 
 
 def test_hermes_plugin_manifest_declares_tool_and_fail_closed_command() -> None:
@@ -226,11 +535,177 @@ def test_orch_slash_session_scoped_commands_fail_closed_without_runtime_context(
         "status session_id attacker",
         "history 7 session_id attacker",
         "stop run-1 session_id attacker",
+        "on session_id attacker",
     ]:
         output = ctx.commands[0]["handler"](raw_args)
         assert "runtime session context" in output
 
     assert calls == []
+
+
+def test_orch_slash_on_injects_orchestrator_skill_into_current_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        if args[0] == "_orchestrator-skill":
+            return completed(args, "orchestrator skill payload\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+    plugin.register(ctx)
+    calls.clear()
+
+    output = ctx.commands[0]["handler"]("on")
+
+    assert output == "Hermes /orch on succeeded: orchestrator skill injected"
+    assert calls == [["_orchestrator-skill"]]
+    assert ctx.injected == [("orchestrator skill payload", "user")]
+
+
+def test_orch_slash_on_is_idempotent_per_session_and_cleared_on_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        if args[0] == "_orchestrator-skill":
+            return completed(args, "orchestrator skill payload\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+    plugin.register(ctx)
+    calls.clear()
+    handler = ctx.commands[0]["handler"]
+
+    assert handler("on") == "Hermes /orch on succeeded: orchestrator skill injected"
+    assert handler("on") == "Hermes /orch on already active for this session"
+    plugin._on_session_cleanup(session_id="cli-session")
+    assert handler("on") == "Hermes /orch on succeeded: orchestrator skill injected"
+
+    assert calls == [["_orchestrator-skill"], ["_orchestrator-skill"]]
+    assert ctx.injected == [
+        ("orchestrator skill payload", "user"),
+        ("orchestrator skill payload", "user"),
+    ]
+
+
+def test_orch_slash_on_clears_active_state_if_helper_raises_then_retry_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+    orchestrator_skill_calls = 0
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal orchestrator_skill_calls
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        if args[0] == "_orchestrator-skill":
+            orchestrator_skill_calls += 1
+            if orchestrator_skill_calls == 1:
+                raise RuntimeError("boom")
+            return completed(args, "orchestrator skill payload\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+    plugin.register(ctx)
+    calls.clear()
+    handler = ctx.commands[0]["handler"]
+
+    assert handler("on") == "Hermes /orch on failed: orchestrator skill helper raised: boom"
+    assert handler("on") == "Hermes /orch on succeeded: orchestrator skill injected"
+
+    assert calls == [["_orchestrator-skill"], ["_orchestrator-skill"]]
+    assert ctx.injected == [("orchestrator skill payload", "user")]
+
+
+@pytest.mark.parametrize(
+    ("ctx_factory", "ctx_setup", "helper_stdout", "helper_code", "expected"),
+    [
+        (
+            lambda: FakeHermesPluginContext(session_id="cli-session"),
+            lambda ctx: None,
+            "orchestrator skill payload\n",
+            1,
+            "Hermes /orch on failed: orchestrator skill helper failed",
+        ),
+        (
+            lambda: FakeHermesPluginContext(session_id="cli-session"),
+            lambda ctx: None,
+            "   \n",
+            0,
+            "Hermes /orch on failed: orchestrator skill payload was empty",
+        ),
+        (
+            lambda: NoInjectHermesPluginContext(session_id="cli-session"),
+            lambda ctx: None,
+            "orchestrator skill payload\n",
+            0,
+            "Hermes /orch on failed: ctx.inject_message is unavailable",
+        ),
+        (
+            lambda: FakeHermesPluginContext(session_id="cli-session"),
+            lambda ctx: setattr(
+                ctx,
+                "inject_message",
+                lambda content, role="user": (_ for _ in ()).throw(RuntimeError("inject boom")),
+            ),
+            "orchestrator skill payload\n",
+            0,
+            "Hermes /orch on failed: ctx.inject_message raised: inject boom",
+        ),
+        (
+            lambda: FakeHermesPluginContext(session_id="cli-session"),
+            lambda ctx: setattr(ctx, "inject_success", False),
+            "orchestrator skill payload\n",
+            0,
+            "Hermes /orch on failed: ctx.inject_message returned False",
+        ),
+    ],
+)
+def test_orch_slash_on_reports_deterministic_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    ctx_factory: Any,
+    ctx_setup: Any,
+    helper_stdout: str,
+    helper_code: int,
+    expected: str,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        if args[0] == "_orchestrator-skill":
+            return completed(args, helper_stdout, code=helper_code)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = ctx_factory()
+    ctx_setup(ctx)
+    plugin.register(ctx)
+    calls.clear()
+
+    output = ctx.commands[0]["handler"]("on")
+
+    assert output == expected
+    assert calls == [["_orchestrator-skill"]]
 
 
 def test_orch_slash_doctor_help_are_sessionless_safe_wrappers_and_scoped_fail_closed(
@@ -313,13 +788,20 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_injects_when_
             return completed(
                 args, f"run_id: cli-run\ntimeout_seconds: {timeout_value}\nstatus: queued\n"
             )
-        if args[0] == "_dispatch-ack":
-            return completed(args, "orchestra dispatched: reviewer cli-run\n")
         if args[0] == "_await-session-report":
             return completed(
                 args,
                 json.dumps({"runIds": ["cli-run"], "report": "reviewer done"}),
             )
+        if args[0] == "_await-run":
+            return completed(
+                args,
+                "status: done\nrole: reviewer\nactive_runs_remaining: 0\n",
+            )
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra: reviewer cli-run returned done (1/1)\n")
+        if args[0] == "_dispatch-ack":
+            return completed(args, "orchestra dispatched: reviewer cli-run\n")
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
         raise AssertionError(f"unexpected command: {args}")
@@ -334,6 +816,12 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_injects_when_
     )
 
     assert output == "orchestra dispatched: reviewer cli-run"
+    assert wait_for_condition(
+        lambda: [call[0] for call in calls].count("_await-session-report") == 1
+        and [call[0] for call in calls].count("_await-run") == 1
+        and [call[0] for call in calls].count("_progress-message") == 1
+        and any(call[0] == "_mark-session-report-delivered" for call in calls)
+    )
     assert [
         "do",
         "--session-id",
@@ -357,8 +845,28 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_injects_when_
         "35",
         "--json",
     ] in calls
-    assert not any(args[0] == "_await-run" for args in calls)
-    assert not any(args[0] == "_progress-message" for args in calls)
+    assert [
+        "_await-run",
+        "--session-id",
+        "hermes:cli-session",
+        "--run-id",
+        "cli-run",
+        "--timeout",
+        "35",
+    ] in calls
+    assert [
+        "_progress-message",
+        "--completed",
+        "1",
+        "--total",
+        "1",
+        "--run-id",
+        "cli-run",
+        "--status",
+        "done",
+        "--role",
+        "reviewer",
+    ] in calls
     assert ctx.steered == []
     assert ctx.injected == [("reviewer done", "user")]
 
@@ -371,13 +879,14 @@ def test_orch_slash_fails_closed_without_hook_session_context() -> None:
     assert "runtime session context" in output
 
 
-def test_hermes_plugin_source_does_not_trust_global_or_lifecycle_slash_session() -> None:
+def test_hermes_plugin_source_uses_session_cleanup_hooks() -> None:
     source = PLUGIN_PATH.read_text(encoding="utf-8")
 
     assert "_CURRENT_SESSION_ID" not in source
-    assert "on_session_start" not in source
-    assert "on_session_reset" not in source
-    assert "on_session_finalize" not in source
+    assert "on_session_end" in source
+    assert "on_session_finalize" in source
+    assert "on_session_reset" in source
+    assert "on_session_start" in source
 
 
 @pytest.mark.parametrize(
@@ -474,6 +983,13 @@ def test_orch_slash_cli_private_session_fallback_dispatches_hermes_escaped_quote
             return completed(args, code=1)
         if args[0] == "do":
             return completed(args, "run_id: cli-run\ntimeout_seconds: 600\nstatus: queued\n")
+        if args[0] == "_await-run":
+            return completed(
+                args,
+                "status: done\nrole: researcher\nactive_runs_remaining: 0\n",
+            )
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra: researcher cli-run returned done (1/1)\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: researcher cli-run\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -492,24 +1008,49 @@ def test_orch_slash_cli_private_session_fallback_dispatches_hermes_escaped_quote
     )
 
     assert output == "orchestra dispatched: researcher cli-run"
-    assert calls == [
-        [
-            "do",
-            "--session-id",
-            "hermes:cli-session",
-            "--goal",
-            "Smoke test only. Do not edit files. Inspect README.md, PLAN.md, and "
-            "agent-catalog.yaml. Return status, files inspected, configured worker role "
-            "harness, one-sentence project purpose, blockers.",
-            "--role",
-            "researcher",
-            "--timeout",
-            "120",
-            "--task-label",
-            "quoted smoke label",
-        ],
-        ["_dispatch-ack", "--run-id", "cli-run", "--role", "researcher"],
-    ]
+    assert wait_for_condition(
+        lambda: [call[0] for call in calls].count("_await-run") == 1
+        and [call[0] for call in calls].count("_progress-message") == 1
+        and any(call[0] == "_dispatch-ack" for call in calls)
+    )
+    assert [
+        "do",
+        "--session-id",
+        "hermes:cli-session",
+        "--goal",
+        "Smoke test only. Do not edit files. Inspect README.md, PLAN.md, and "
+        "agent-catalog.yaml. Return status, files inspected, configured worker role "
+        "harness, one-sentence project purpose, blockers.",
+        "--role",
+        "researcher",
+        "--timeout",
+        "120",
+        "--task-label",
+        "quoted smoke label",
+    ] in calls
+    assert [
+        "_await-run",
+        "--session-id",
+        "hermes:cli-session",
+        "--run-id",
+        "cli-run",
+        "--timeout",
+        "630",
+    ] in calls
+    assert [
+        "_progress-message",
+        "--completed",
+        "1",
+        "--total",
+        "1",
+        "--run-id",
+        "cli-run",
+        "--status",
+        "done",
+        "--role",
+        "researcher",
+    ] in calls
+    assert ["_dispatch-ack", "--run-id", "cli-run", "--role", "researcher"] in calls
 
 
 def test_orch_slash_do_rejects_malformed_quotes_without_dispatch(
@@ -545,6 +1086,13 @@ def test_orch_dispatch_builds_cli_args_from_runtime_kwargs_and_returns_ack(
         calls.append(args)
         if args[0] == "do":
             return completed(args, "run_id: abc123\ntimeout_seconds: 600\nstatus: queued\n")
+        if args[0] == "_await-run":
+            return completed(
+                args,
+                "status: done\nrole: reviewer\nactive_runs_remaining: 0\n",
+            )
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra: reviewer abc123 returned done (1/1)\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: reviewer abc123\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -560,21 +1108,46 @@ def test_orch_dispatch_builds_cli_args_from_runtime_kwargs_and_returns_ack(
         session_id="runtime-session",
     )
 
-    assert calls == [
-        [
-            "do",
-            "--session-id",
-            "hermes:runtime-session",
-            "--goal",
-            "ship focused task",
-            "--role",
-            "reviewer",
-            "--task-label",
-            "review-task",
-        ],
-        ["_dispatch-ack", "--run-id", "abc123", "--role", "reviewer"],
-    ]
     assert output == "orchestra dispatched: reviewer abc123"
+    assert wait_for_condition(
+        lambda: [call[0] for call in calls].count("_await-run") == 1
+        and [call[0] for call in calls].count("_progress-message") == 1
+        and any(call[0] == "_dispatch-ack" for call in calls)
+    )
+    assert [
+        "do",
+        "--session-id",
+        "hermes:runtime-session",
+        "--goal",
+        "ship focused task",
+        "--role",
+        "reviewer",
+        "--task-label",
+        "review-task",
+    ] in calls
+    assert [
+        "_await-run",
+        "--session-id",
+        "hermes:runtime-session",
+        "--run-id",
+        "abc123",
+        "--timeout",
+        "630",
+    ] in calls
+    assert [
+        "_progress-message",
+        "--completed",
+        "1",
+        "--total",
+        "1",
+        "--run-id",
+        "abc123",
+        "--status",
+        "done",
+        "--role",
+        "reviewer",
+    ] in calls
+    assert ["_dispatch-ack", "--run-id", "abc123", "--role", "reviewer"] in calls
 
 
 def test_orch_dispatch_uses_effective_default_role_from_cli_output(
@@ -593,6 +1166,13 @@ def test_orch_dispatch_uses_effective_default_role_from_cli_output(
                 "status: queued\n"
             )
             return completed(args, output)
+        if args[0] == "_await-run":
+            return completed(
+                args,
+                "status: done\nrole: reviewer\nactive_runs_remaining: 0\n",
+            )
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra: reviewer abc123 returned done (1/1)\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: reviewer abc123\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -601,11 +1181,36 @@ def test_orch_dispatch_uses_effective_default_role_from_cli_output(
 
     output = plugin.orch_dispatch({"goal": "do work"}, session_id="runtime")
 
-    assert calls == [
-        ["do", "--session-id", "hermes:runtime", "--goal", "do work"],
-        ["_dispatch-ack", "--run-id", "abc123", "--role", "reviewer"],
-    ]
     assert output == "orchestra dispatched: reviewer abc123"
+    assert wait_for_condition(
+        lambda: [call[0] for call in calls].count("_await-run") == 1
+        and [call[0] for call in calls].count("_progress-message") == 1
+        and any(call[0] == "_dispatch-ack" for call in calls)
+    )
+    assert ["do", "--session-id", "hermes:runtime", "--goal", "do work"] in calls
+    assert [
+        "_await-run",
+        "--session-id",
+        "hermes:runtime",
+        "--run-id",
+        "abc123",
+        "--timeout",
+        "630",
+    ] in calls
+    assert [
+        "_progress-message",
+        "--completed",
+        "1",
+        "--total",
+        "1",
+        "--run-id",
+        "abc123",
+        "--status",
+        "done",
+        "--role",
+        "reviewer",
+    ] in calls
+    assert ["_dispatch-ack", "--run-id", "abc123", "--role", "reviewer"] in calls
 
 
 def test_orch_dispatch_requires_run_id_before_ack(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -626,6 +1231,7 @@ def test_orch_dispatch_requires_run_id_before_ack(monkeypatch: pytest.MonkeyPatc
 
 def test_registered_orch_dispatch_injects_when_idle_and_marks_report_delivered(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     plugin = load_plugin()
     calls: list[list[str]] = []
@@ -643,6 +1249,13 @@ def test_registered_orch_dispatch_injects_when_idle_and_marks_report_delivered(
                 args,
                 json.dumps({"runIds": ["abc123"], "report": "worker done"}),
             )
+        if args[0] == "_await-run":
+            return completed(
+                args,
+                "status: done\nrole: reviewer\nactive_runs_remaining: 0\n",
+            )
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra: reviewer abc123 returned done (1/1)\n")
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
         raise AssertionError(f"unexpected command: {args}")
@@ -654,8 +1267,15 @@ def test_registered_orch_dispatch_injects_when_idle_and_marks_report_delivered(
     output = ctx.tools[0]["handler"]({"goal": "do work"}, session_id="runtime")
 
     assert output == "orchestra dispatched: worker abc123"
+    assert wait_for_condition(
+        lambda: [call[0] for call in calls].count("_await-session-report") == 1
+        and [call[0] for call in calls].count("_await-run") == 1
+        and [call[0] for call in calls].count("_progress-message") == 1
+        and any(call[0] == "_mark-session-report-delivered" for call in calls)
+    )
     assert ctx.steered == []
     assert ctx.injected == [("worker done", "user")]
+    assert capsys.readouterr().err == "orchestra: reviewer abc123 returned done (1/1)\n"
     assert [
         "_await-session-report",
         "--session-id",
@@ -666,8 +1286,28 @@ def test_registered_orch_dispatch_injects_when_idle_and_marks_report_delivered(
         "630",
         "--json",
     ] in calls
-    assert not any(args[0] == "_await-run" for args in calls)
-    assert not any(args[0] == "_progress-message" for args in calls)
+    assert [
+        "_await-run",
+        "--session-id",
+        "hermes:runtime",
+        "--run-id",
+        "abc123",
+        "--timeout",
+        "630",
+    ] in calls
+    assert [
+        "_progress-message",
+        "--completed",
+        "1",
+        "--total",
+        "1",
+        "--run-id",
+        "abc123",
+        "--status",
+        "done",
+        "--role",
+        "reviewer",
+    ] in calls
     assert [
         "_mark-session-report-delivered",
         "--session-id",
@@ -696,6 +1336,13 @@ def test_registered_orch_dispatch_prefers_runtime_tool_context_for_report(
                 args,
                 json.dumps({"runIds": ["abc123"], "report": "worker done"}),
             )
+        if args[0] == "_await-run":
+            return completed(
+                args,
+                "status: done\nrole: reviewer\nactive_runs_remaining: 0\n",
+            )
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra: reviewer abc123 returned done (1/1)\n")
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
         raise AssertionError(f"unexpected command: {args}")
@@ -712,12 +1359,17 @@ def test_registered_orch_dispatch_prefers_runtime_tool_context_for_report(
     )
 
     assert output == "orchestra dispatched: worker abc123"
-    assert wait_for_condition(lambda: runtime_ctx.injected == [("worker done", "user")])
+    assert wait_for_condition(
+        lambda: runtime_ctx.injected == [("worker done", "user")]
+        and [call[0] for call in calls].count("_await-run") == 1
+        and [call[0] for call in calls].count("_progress-message") == 1
+    )
     assert runtime_ctx.steered == []
 
 
 def test_final_report_injects_when_idle_without_using_steer(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     plugin = load_plugin()
     calls: list[list[str]] = []
@@ -733,6 +1385,13 @@ def test_final_report_injects_when_idle_without_using_steer(
                 args,
                 json.dumps({"runIds": ["abc123"], "report": "worker done"}),
             )
+        if args[0] == "_await-run":
+            return completed(
+                args,
+                "status: done\nrole: reviewer\nactive_runs_remaining: 0\n",
+            )
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra: reviewer abc123 returned done (1/1)\n")
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
         raise AssertionError(f"unexpected command: {args}")
@@ -749,12 +1408,13 @@ def test_final_report_injects_when_idle_without_using_steer(
     assert output == "orchestra dispatched: worker abc123"
     assert wait_for_condition(
         lambda: [call[0] for call in calls].count("_await-session-report") == 1
+        and [call[0] for call in calls].count("_await-run") == 1
+        and [call[0] for call in calls].count("_progress-message") == 1
         and any(call[0] == "_mark-session-report-delivered" for call in calls)
     )
     assert ctx.injected == [("worker done", "user")]
     assert not hasattr(ctx, "steered") or ctx.steered == []
-    assert not any(args[0] == "_await-run" for args in calls)
-    assert not any(args[0] == "_progress-message" for args in calls)
+    assert capsys.readouterr().err == "orchestra: reviewer abc123 returned done (1/1)\n"
     assert [
         "_await-session-report",
         "--session-id",
@@ -764,6 +1424,28 @@ def test_final_report_injects_when_idle_without_using_steer(
         "--timeout",
         "630",
         "--json",
+    ] in calls
+    assert [
+        "_await-run",
+        "--session-id",
+        "hermes:runtime",
+        "--run-id",
+        "abc123",
+        "--timeout",
+        "630",
+    ] in calls
+    assert [
+        "_progress-message",
+        "--completed",
+        "1",
+        "--total",
+        "1",
+        "--run-id",
+        "abc123",
+        "--status",
+        "done",
+        "--role",
+        "reviewer",
     ] in calls
     assert [
         "_mark-session-report-delivered",
@@ -802,6 +1484,127 @@ def test_watcher_wait_budget_uses_payload_timeout_not_default() -> None:
     plugin = load_plugin()
 
     assert plugin._watcher_wait_budget_seconds(5) == 35
+
+
+def test_parse_await_run_output_extracts_fields_and_defaults_to_missing_total() -> None:
+    plugin = load_plugin()
+
+    parsed = plugin._parse_await_run_output(
+        "status: blocked\nrole: reviewer\nblocker: awaiting review\n"
+    )
+
+    assert parsed == {
+        "status": "blocked",
+        "role": "reviewer",
+        "blocker": "awaiting review",
+        "active_remaining": None,
+    }
+
+
+def test_await_run_watcher_logs_progress_without_injecting(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_await-run":
+            return completed(
+                args,
+                "status: blocked\nrole: reviewer\nblocker: awaiting review\n",
+            )
+        if args[0] == "_progress-message":
+            return completed(args, "orchestra: reviewer abc123 returned blocked (1/1)\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime")
+
+    plugin._start_session_await_run_watcher(ctx, "hermes:runtime", "abc123", 35)
+
+    assert wait_for_condition(lambda: plugin._AWAIT_RUN_WATCHERS == {})
+    assert capsys.readouterr().err == "orchestra: reviewer abc123 returned blocked (1/1)\n"
+    assert calls == [
+        [
+            "_await-run",
+            "--session-id",
+            "hermes:runtime",
+            "--run-id",
+            "abc123",
+            "--timeout",
+            "35",
+        ],
+        [
+            "_progress-message",
+            "--completed",
+            "1",
+            "--total",
+            "1",
+            "--run-id",
+            "abc123",
+            "--status",
+            "blocked",
+            "--role",
+            "reviewer",
+        ],
+    ]
+    assert ctx.injected == []
+
+
+def test_await_run_watcher_suppresses_progress_after_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+    started = threading.Event()
+    release = threading.Event()
+    done = threading.Event()
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_await-run":
+            started.set()
+            assert release.wait(5)
+            return completed(
+                args,
+                "status: blocked\nrole: reviewer\nblocker: awaiting review\n",
+            )
+        raise AssertionError(f"unexpected command: {args}")
+
+    original_watch = plugin._watch_await_run
+
+    def wrapped_watch(*args: Any, **kwargs: Any) -> None:
+        try:
+            original_watch(*args, **kwargs)
+        finally:
+            done.set()
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(plugin, "_watch_await_run", wrapped_watch)
+    ctx = FakeHermesPluginContext(session_id="runtime")
+
+    plugin._start_session_await_run_watcher(ctx, "hermes:runtime", "abc123", 35)
+    assert started.wait(5)
+
+    plugin._on_session_cleanup(session_id="runtime")
+    release.set()
+
+    assert wait_for_condition(lambda: done.is_set())
+    assert calls == [
+        [
+            "_await-run",
+            "--session-id",
+            "hermes:runtime",
+            "--run-id",
+            "abc123",
+            "--timeout",
+            "35",
+        ]
+    ]
+    assert capsys.readouterr().err == ""
 
 
 def test_extract_dispatch_timeout_seconds_parses_output() -> None:

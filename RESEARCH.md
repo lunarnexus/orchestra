@@ -843,3 +843,32 @@ Evidence-backed conclusions:
 The reusable method is documented in
 `docs/skill-evaluation-methodology.md`; the executable builder fixtures and
 runbook live under `evals/builder/`.
+
+## Hermes plugin Pi-parity capability research
+
+Research date: 2026-08-11
+
+Sources:
+
+- `docs/plugin_creation.md`
+- `extensions/pi/orchestra/index.ts`
+- `extensions/hermes/orchestra/__init__.py`
+- `state/return-artifacts/1ed12c94ef89.md`
+- `state/return-artifacts/eeefa34d82bd.md`
+- `state/return-artifacts/efac00aa3cff.md`
+- `state/return-artifacts/7993343060b3.md`
+- `state/return-artifacts/ccaca4e54b84.md`
+- `state/return-artifacts/bbea0ac80e61.md`
+- `state/return-artifacts/bc335bc848ae.md`
+- live Hermes mina CLI proof from `/orch_on_probe`
+
+Findings:
+
+- Hermes already has parity for `orch_dispatch(goal, role?, taskLabel?)`, host-derived runtime session ids, `/orch help|doctor|roles|status|history|stop|do`, consolidated auto-return, and delivered/release report handling.
+- Hermes `/orch on` is practical: a throwaway mina-profile plugin successfully called `ctx.inject_message(orchestra _orchestrator-skill payload, role="user")`, and Hermes loaded the orchestrator skill in the active session.
+- Hermes supports plugin lifecycle hooks including session start/end/finalize/reset. These can be used for watcher/session cleanup.
+- Hermes command completion for plugins is limited to static metadata via `args_hint`; no public dynamic argument-completion callback exists for role/run-id completion parity.
+- Hermes supports `pre_tool_call` blocking and `pre_llm_call` context injection, but no exact Pi-style `turn_end` event or elapsed-session budget hook was found. Budget parity should implement only behavior supported by these hooks and keep turn-budget counters in session-local plugin state rather than mutating `os.environ`.
+- No public Hermes plugin API was found for native notifications, footer/status updates, rendered transcript entries, or dynamic completion callbacks. Private CLI references exist but no safe public mutator was proven, so production code should not depend on private UI internals for those features.
+
+Conclusion: implemented source-supported Hermes parity: `/orch on`, static command metadata, lifecycle cleanup, supported budget hooks, and `_await-run` progress handling using stderr/log output instead of transcript injection. Final stabilization keeps budget state and `/orch on` activation per normalized runtime session, clears that state on lifecycle cleanup, and uses watcher generation guards to suppress late report/progress side effects after session cleanup. Native notification/footer/rendered-entry/dynamic-completion parity remains unsupported by current Hermes public APIs unless new host APIs appear.

@@ -450,6 +450,7 @@ runtime for ownership or auto-return unless wrapped by a runtime host adapter.
 The MVP host command surface is:
 
 - `/orch help`
+- `/orch on`
 - `/orch do`
 - `/orch status`
 - `/orch stop`
@@ -471,11 +472,10 @@ focused research, implementation, verification, review, and security work.
 User-facing updates to the main session should stay concise and
 decision-focused.
 
-For Pi, `/orch on` manually injects the `orchestrator` skill into the current
-main session once. The workflow source for that injection is
-`skills/orchestrator/SKILL.md`. MVP does not include `/orch off`, and repeated
-or compaction-aware reinjection is tracked in `ROADMAP.md`. This main-session
-injection is Pi-first until other host adapters add equivalent support.
+For supported host adapters, `/orch on` manually injects the `orchestrator`
+skill into the current main session once. The workflow source for that injection
+is `skills/orchestrator/SKILL.md`. MVP does not include `/orch off`, and
+repeated or compaction-aware reinjection is tracked in `ROADMAP.md`.
 
 ### Requested-Role Fallback
 

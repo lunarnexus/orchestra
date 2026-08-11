@@ -133,7 +133,9 @@ When a role lists skills, Orchestra searches recursively under `skills/` for `<s
 
 ### Main-session skill injection
 
-Pi supports `/orch on`, which injects `skills/orchestrator/SKILL.md` into the current main session once. That main session becomes the orchestrator brain: it owns planning, sequencing, approvals, artifact alignment, dispatch, and final judgment.
+Supported host adapters expose `/orch on`, which injects `skills/orchestrator/SKILL.md` into the current main session once. That main session becomes the orchestrator brain: it owns planning, sequencing, approvals, artifact alignment, dispatch, and final judgment.
+
+Pi delivers the skill through its host message API. Hermes delivers the same core skill through `ctx.inject_message(...)`, tracks activation by normalized runtime session id, and clears activation plus watcher/budget state from Hermes lifecycle hooks.
 
 ## Standard artifacts
 

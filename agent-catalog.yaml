@@ -72,9 +72,9 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   critic:
     harness_config: hermes
-    profile: tori
+    profile: mina
     prompt_addition: Focus on the assigned task and return a compact result.
-    enabled: false
+    enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
       HINDSIGHT4PI_AUTO_RECALL: '0'
@@ -93,7 +93,7 @@ roles:
     harness_config: pi
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
     prompt_addition: Focus on the assigned task and return a compact result.
-    enabled: true
+    enabled: false
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
       HINDSIGHT4PI_AUTO_RECALL: '0'

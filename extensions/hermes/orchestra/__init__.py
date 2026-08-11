@@ -22,6 +22,37 @@ _REPORT_WATCHER_RETRY_BASE_DELAY_SECONDS = 0.25
 _REPORT_WATCHER_RETRY_MAX_DELAY_SECONDS = 3.0
 _REPORT_WATCHERS: set[str] = set()
 _REPORT_WATCHERS_LOCK = threading.Lock()
+_AWAIT_RUN_WATCHERS: dict[str, set[str]] = {}
+_AWAIT_RUN_WATCHERS_LOCK = threading.Lock()
+_SESSION_WATCHER_GENERATIONS: dict[str, int] = {}
+_SESSION_WATCHER_GENERATIONS_LOCK = threading.Lock()
+
+
+class _BudgetState:
+    __slots__ = (
+        "turn_budget",
+        "soft_timeout_seconds",
+        "session_started_at",
+        "budget_prompt_delivered",
+    )
+
+    def __init__(
+        self,
+        turn_budget: int,
+        soft_timeout_seconds: int,
+        session_started_at: float,
+        budget_prompt_delivered: bool,
+    ) -> None:
+        self.turn_budget = turn_budget
+        self.soft_timeout_seconds = soft_timeout_seconds
+        self.session_started_at = session_started_at
+        self.budget_prompt_delivered = budget_prompt_delivered
+
+
+_BUDGET_STATES: dict[str, _BudgetState] = {}
+_BUDGET_STATES_LOCK = threading.Lock()
+_ORCH_ON_ACTIVE_SESSIONS: set[str] = set()
+_ORCH_ON_ACTIVE_SESSIONS_LOCK = threading.Lock()
 
 _FALLBACK_TOOL_INFO = {
     "description": "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
@@ -31,22 +62,94 @@ _FALLBACK_TOOL_INFO = {
     "roleDescription": "(Optional) specific role; omit for default.",
     "taskLabelDescription": "Optional short request label.",
 }
+_ORCH_COMMAND_ARGS_HINT = (
+    "help | on | do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal> | "
+    "roles ... | status | stop <run-id> | doctor | history [LIMIT]"
+)
 
 _TOOL_TIMEOUT_ERROR = (
     "timeout is not accepted by orch_dispatch; configured default_timeout applies."
 )
 _ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET"
+_ORCHESTRA_TURN_BUDGET_ENV = "ORCHESTRA_TURN_BUDGET"
+_ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV = "ORCHESTRA_SOFT_TIMEOUT_SECONDS"
+_ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV = "ORCHESTRA_BUDGET_EXCEEDED_PROMPT"
+_SOFT_TIMEOUT_BLOCK_REASON = "Orchestra soft timeout reached; return budget handoff"
 
 
-def _orchestra_dispatch_budget() -> int:
-    raw = os.environ.get(_ORCHESTRA_DISPATCH_BUDGET_ENV, "").strip()
+def _parse_budget_env(name: str) -> int:
+    raw = os.environ.get(name, "").strip()
     if not raw:
         return 0
     try:
         budget = int(raw)
     except ValueError:
         return 1
-    return max(budget, 0)
+    return budget if budget >= 0 else 1
+
+
+def _budget_exceeded_prompt_message(reason: str) -> str | None:
+    prompt = os.environ.get(_ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV, "").strip()
+    if not prompt:
+        return None
+    return f"{prompt}\n\nBudget trigger: {reason}"
+
+
+def _hook_session_id(ctx: Any | None, kwargs: dict[str, Any]) -> str | None:
+    raw_session_id = kwargs.get("session_id")
+    if isinstance(raw_session_id, str):
+        try:
+            return normalize_hermes_session_id(raw_session_id)
+        except ValueError:
+            return None
+    if ctx is None:
+        return None
+    return _slash_session_id(ctx)
+
+
+def _reset_budget_state(runtime_session_id: str) -> None:
+    with _BUDGET_STATES_LOCK:
+        _BUDGET_STATES[runtime_session_id] = _BudgetState(
+            turn_budget=_parse_budget_env(_ORCHESTRA_TURN_BUDGET_ENV),
+            soft_timeout_seconds=_parse_budget_env(_ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV),
+            session_started_at=time.monotonic(),
+            budget_prompt_delivered=False,
+        )
+
+
+def _budget_state(runtime_session_id: str) -> _BudgetState:
+    state = _BUDGET_STATES.get(runtime_session_id)
+    if state is None:
+        state = _BudgetState(
+            turn_budget=_parse_budget_env(_ORCHESTRA_TURN_BUDGET_ENV),
+            soft_timeout_seconds=_parse_budget_env(_ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV),
+            session_started_at=time.monotonic(),
+            budget_prompt_delivered=False,
+        )
+        _BUDGET_STATES[runtime_session_id] = state
+    return state
+
+
+def _clear_budget_state(runtime_session_id: str) -> None:
+    with _BUDGET_STATES_LOCK:
+        _BUDGET_STATES.pop(runtime_session_id, None)
+
+
+def _orch_on_mark_active(runtime_session_id: str) -> bool:
+    with _ORCH_ON_ACTIVE_SESSIONS_LOCK:
+        if runtime_session_id in _ORCH_ON_ACTIVE_SESSIONS:
+            return False
+        _ORCH_ON_ACTIVE_SESSIONS.add(runtime_session_id)
+        return True
+
+
+def _orch_on_clear(runtime_session_id: str) -> None:
+    with _ORCH_ON_ACTIVE_SESSIONS_LOCK:
+        _ORCH_ON_ACTIVE_SESSIONS.discard(runtime_session_id)
+
+
+def _orchestra_dispatch_budget() -> int:
+    return _parse_budget_env(_ORCHESTRA_DISPATCH_BUDGET_ENV)
 
 
 def _can_dispatch_orchestra_worker() -> bool:
@@ -227,12 +330,64 @@ def _extract_field(output: str, field: str) -> str | None:
     return None
 
 
+def _parse_await_run_output(output: str) -> dict[str, str | int | None]:
+    active_remaining_text = _extract_field(output, "active_runs_remaining")
+    active_remaining = (
+        int(active_remaining_text)
+        if active_remaining_text is not None and active_remaining_text.isdigit()
+        else None
+    )
+    return {
+        "status": _extract_field(output, "status"),
+        "role": _extract_field(output, "role"),
+        "blocker": _extract_field(output, "blocker"),
+        "active_remaining": active_remaining,
+    }
+
+
+def _format_await_run_progress(
+    run_id: str,
+    status: str,
+    completed_count: int,
+    total_count: int,
+    role: str | None = None,
+    blocker: str | None = None,
+) -> str:
+    role_text = f" {role}" if role else ""
+    blocker_text = f" :: {blocker}" if blocker else ""
+    return (
+        f"orchestra:{role_text} {run_id} returned {status} "
+        f"({completed_count}/{total_count}){blocker_text}"
+    )
+
+
 def _error(message: str) -> str:
     return json.dumps({"error": message})
 
 
 def _log_watcher_error(message: str) -> None:
     sys.stderr.write(f"orchestra auto-return watcher failed: {message}\n")
+
+
+def _log_watcher_progress(message: str) -> None:
+    sys.stderr.write(f"{message}\n")
+
+
+def _current_session_watcher_generation(runtime_session_id: str) -> int:
+    with _SESSION_WATCHER_GENERATIONS_LOCK:
+        return _SESSION_WATCHER_GENERATIONS.get(runtime_session_id, 0)
+
+
+def _invalidate_session_watcher_generation(runtime_session_id: str) -> None:
+    with _SESSION_WATCHER_GENERATIONS_LOCK:
+        _SESSION_WATCHER_GENERATIONS[runtime_session_id] = (
+            _SESSION_WATCHER_GENERATIONS.get(runtime_session_id, 0) + 1
+        )
+
+
+def _session_watcher_generation_is_current(runtime_session_id: str, generation: int) -> bool:
+    with _SESSION_WATCHER_GENERATIONS_LOCK:
+        return _SESSION_WATCHER_GENERATIONS.get(runtime_session_id, 0) == generation
 
 
 def _slash_session_id(ctx: Any | None) -> str | None:
@@ -330,13 +485,21 @@ def _handle_session_report_result(
     runtime_session_id: str,
     result: subprocess.CompletedProcess[str],
     fallback_run_ids: list[str] | None = None,
+    *,
+    session_generation: int | None = None,
 ) -> None:
+    if session_generation is None:
+        session_generation = _current_session_watcher_generation(runtime_session_id)
+    if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
+        return
     if result.returncode != 0:
         error_text = (result.stdout or result.stderr).strip()
         if error_text:
             _log_watcher_error(error_text)
         return
 
+    if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
+        return
     raw_report = result.stdout.strip()
     if not raw_report:
         return
@@ -351,16 +514,24 @@ def _handle_session_report_result(
                 run_ids = parsed_run_ids
         message = payload.get("report") if isinstance(payload, dict) else None
         if not isinstance(message, str) or not message.strip():
-            _release_session_report(runtime_session_id, run_ids)
+            if _session_watcher_generation_is_current(runtime_session_id, session_generation):
+                _release_session_report(runtime_session_id, run_ids)
+            return
+        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
             return
         if not _deliver_report(ctx, message.strip()):
-            _release_session_report(runtime_session_id, run_ids)
+            if _session_watcher_generation_is_current(runtime_session_id, session_generation):
+                _release_session_report(runtime_session_id, run_ids)
+            return
+        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
             return
         if not _mark_session_report_delivered(runtime_session_id, run_ids):
-            _release_session_report(runtime_session_id, run_ids)
+            if _session_watcher_generation_is_current(runtime_session_id, session_generation):
+                _release_session_report(runtime_session_id, run_ids)
     except Exception as exc:  # noqa: BLE001 - plugin must not crash watcher thread
-        _release_session_report(runtime_session_id, run_ids)
-        _log_watcher_error(str(exc))
+        if _session_watcher_generation_is_current(runtime_session_id, session_generation):
+            _release_session_report(runtime_session_id, run_ids)
+            _log_watcher_error(str(exc))
 
 
 def _watch_session_report(
@@ -368,8 +539,13 @@ def _watch_session_report(
     runtime_session_id: str,
     run_id: str,
     wait_budget_seconds: int,
+    session_generation: int | None = None,
 ) -> None:
     try:
+        if session_generation is None:
+            session_generation = _current_session_watcher_generation(runtime_session_id)
+        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
+            return
         for attempt in range(_REPORT_WATCHER_ATTEMPTS):
             result = _run_orchestra(
                 [
@@ -384,11 +560,27 @@ def _watch_session_report(
                 ],
                 timeout_seconds=_watcher_subprocess_timeout_seconds(wait_budget_seconds),
             )
+            if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
+                return
             if result.returncode == 0:
-                _handle_session_report_result(ctx, runtime_session_id, result, [run_id])
+                _handle_session_report_result(
+                    ctx,
+                    runtime_session_id,
+                    result,
+                    [run_id],
+                    session_generation=session_generation,
+                )
                 return
             if attempt == _REPORT_WATCHER_ATTEMPTS - 1:
-                _handle_session_report_result(ctx, runtime_session_id, result, [run_id])
+                _handle_session_report_result(
+                    ctx,
+                    runtime_session_id,
+                    result,
+                    [run_id],
+                    session_generation=session_generation,
+                )
+                return
+            if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
                 return
             time.sleep(_report_watcher_retry_delay_seconds(attempt))
     except Exception as exc:  # plugin watcher thread must survive unexpected command failures
@@ -413,17 +605,139 @@ def _start_session_report_watcher(
 ) -> None:
     if ctx is None:
         return
+    session_generation = _current_session_watcher_generation(runtime_session_id)
     with _REPORT_WATCHERS_LOCK:
         if runtime_session_id in _REPORT_WATCHERS:
             return
         _REPORT_WATCHERS.add(runtime_session_id)
     thread = threading.Thread(
         target=_watch_session_report,
-        args=(ctx, runtime_session_id, run_id, wait_budget_seconds),
+        args=(ctx, runtime_session_id, run_id, wait_budget_seconds, session_generation),
         daemon=True,
         name=f"orchestra-report-{run_id}",
     )
     thread.start()
+
+
+def _start_session_await_run_watcher(
+    ctx: Any | None,
+    runtime_session_id: str,
+    run_id: str,
+    wait_budget_seconds: int,
+) -> None:
+    session_generation = _current_session_watcher_generation(runtime_session_id)
+    with _AWAIT_RUN_WATCHERS_LOCK:
+        session_run_ids = _AWAIT_RUN_WATCHERS.setdefault(runtime_session_id, set())
+        if run_id in session_run_ids:
+            return
+        session_run_ids.add(run_id)
+    thread = threading.Thread(
+        target=_watch_await_run,
+        args=(runtime_session_id, run_id, wait_budget_seconds, session_generation),
+        daemon=True,
+        name=f"orchestra-await-run-{run_id}",
+    )
+    thread.start()
+
+
+def _watch_await_run(
+    runtime_session_id: str,
+    run_id: str,
+    wait_budget_seconds: int,
+    session_generation: int | None = None,
+) -> None:
+    try:
+        if session_generation is None:
+            session_generation = _current_session_watcher_generation(runtime_session_id)
+        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
+            return
+        result = _run_orchestra(
+            [
+                "_await-run",
+                "--session-id",
+                runtime_session_id,
+                "--run-id",
+                run_id,
+                "--timeout",
+                str(wait_budget_seconds),
+            ],
+            timeout_seconds=_watcher_subprocess_timeout_seconds(wait_budget_seconds),
+        )
+        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
+            return
+        if result.returncode != 0:
+            error_text = (result.stdout or result.stderr).strip()
+            if error_text:
+                _log_watcher_error(error_text)
+            return
+
+        parsed = _parse_await_run_output(result.stdout)
+        status = str(parsed["status"] or "done")
+        role = parsed["role"] if isinstance(parsed["role"], str) else None
+        blocker = parsed["blocker"] if isinstance(parsed["blocker"], str) else None
+        active_remaining = parsed["active_remaining"]
+        total_count = active_remaining + 1 if isinstance(active_remaining, int) else 1
+        progress_result = _run_orchestra(
+            [
+                "_progress-message",
+                "--completed",
+                "1",
+                "--total",
+                str(total_count),
+                "--run-id",
+                run_id,
+                "--status",
+                status,
+                *(["--role", role] if role else []),
+            ]
+        )
+        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
+            return
+        if progress_result.returncode != 0:
+            error_text = (progress_result.stdout or progress_result.stderr).strip()
+            if error_text:
+                _log_watcher_error(error_text)
+        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
+            return
+        progress_text = progress_result.stdout.strip()
+        if not progress_text:
+            progress_text = _format_await_run_progress(
+                run_id,
+                status,
+                1,
+                total_count,
+                role,
+                blocker,
+            )
+        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
+            return
+        _log_watcher_progress(progress_text)
+    except Exception as exc:  # noqa: BLE001 - plugin must not crash watcher thread
+        _log_watcher_error(str(exc))
+    finally:
+        with _AWAIT_RUN_WATCHERS_LOCK:
+            session_run_ids = _AWAIT_RUN_WATCHERS.get(runtime_session_id)
+            if session_run_ids is not None:
+                session_run_ids.discard(run_id)
+                if not session_run_ids:
+                    _AWAIT_RUN_WATCHERS.pop(runtime_session_id, None)
+
+
+def _on_session_cleanup(**kwargs: Any) -> None:
+    raw_session_id = kwargs.get("session_id")
+    if not isinstance(raw_session_id, str):
+        return
+    try:
+        runtime_session_id = normalize_hermes_session_id(raw_session_id)
+    except ValueError:
+        return
+    _invalidate_session_watcher_generation(runtime_session_id)
+    _clear_budget_state(runtime_session_id)
+    _orch_on_clear(runtime_session_id)
+    with _REPORT_WATCHERS_LOCK:
+        _REPORT_WATCHERS.discard(runtime_session_id)
+    with _AWAIT_RUN_WATCHERS_LOCK:
+        _AWAIT_RUN_WATCHERS.pop(runtime_session_id, None)
 
 
 def _dispatch_orchestra_run(
@@ -471,6 +785,7 @@ def _dispatch_orchestra_run(
     dispatch_timeout = _extract_dispatch_timeout_seconds(result.stdout)
     wait_budget_seconds = _watcher_wait_budget_seconds(dispatch_timeout)
     _start_session_report_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
+    _start_session_await_run_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
 
     effective_role = _extract_field(result.stdout, "role") or requested_role or "worker"
     ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", effective_role])
@@ -496,6 +811,44 @@ def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
         return _error("Hermes session_id is required")
 
     return _dispatch_orchestra_run(args, runtime_session_id, ctx=kwargs.get("_ctx"))
+
+
+def _orch_on_error(reason: str) -> str:
+    return f"Hermes /orch on failed: {reason}"
+
+
+def _orch_on(ctx: Any | None, runtime_session_id: str) -> str:
+    if not _orch_on_mark_active(runtime_session_id):
+        return "Hermes /orch on already active for this session"
+
+    success = False
+    try:
+        try:
+            result = _run_orchestra(["_orchestrator-skill"])
+        except Exception as exc:  # noqa: BLE001 - plugin must not crash on helper failure
+            return _orch_on_error(f"orchestrator skill helper raised: {exc}")
+        if result.returncode != 0:
+            return _orch_on_error("orchestrator skill helper failed")
+        try:
+            payload = result.stdout.strip()
+        except Exception as exc:
+            return _orch_on_error(f"orchestrator skill payload processing raised: {exc}")
+        if not payload:
+            return _orch_on_error("orchestrator skill payload was empty")
+        try:
+            inject_message = getattr(ctx, "inject_message", None)
+            if not callable(inject_message):
+                return _orch_on_error("ctx.inject_message is unavailable")
+            injected = inject_message(payload, role="user")
+        except Exception as exc:  # noqa: BLE001 - plugin must not crash on inject failure
+            return _orch_on_error(f"ctx.inject_message raised: {exc}")
+        if not injected:
+            return _orch_on_error("ctx.inject_message returned False")
+        success = True
+        return "Hermes /orch on succeeded: orchestrator skill injected"
+    finally:
+        if not success:
+            _orch_on_clear(runtime_session_id)
 
 
 def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
@@ -529,6 +882,9 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
             "Hermes /orch requires runtime session context. "
             "Start a new Hermes session or use the orch_dispatch tool."
         )
+
+    if subcommand == "on":
+        return _orch_on(ctx, runtime_session_id)
 
     if subcommand == "status":
         result = _run_orchestra(["status", "--session-id", runtime_session_id])
@@ -568,7 +924,7 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
 
 
 def register(ctx: Any) -> None:
-    """Register Hermes tool, slash command, and report watcher."""
+    """Register Hermes tool, slash command, hooks, and report watcher."""
 
     def dispatch_handler(args: dict[str, Any], **kwargs: Any) -> str:
         kwargs.setdefault("_ctx", ctx)
@@ -576,6 +932,69 @@ def register(ctx: Any) -> None:
 
     def command_handler(raw_args: str) -> str:
         return _orch_command(raw_args, ctx=ctx)
+
+    initial_session_id = _slash_session_id(ctx)
+    if initial_session_id is not None:
+        _reset_budget_state(initial_session_id)
+
+    def inject_budget_prompt(reason: str) -> bool:
+        message = _budget_exceeded_prompt_message(reason)
+        if not message:
+            return False
+        inject_message = getattr(ctx, "inject_message", None)
+        if not callable(inject_message):
+            return False
+        try:
+            return bool(inject_message(message, role="user"))
+        except Exception:
+            return False
+
+    def pre_tool_call_handler(**_kwargs: Any) -> dict[str, str] | None:
+        runtime_session_id = _hook_session_id(ctx, _kwargs)
+        if runtime_session_id is None:
+            return None
+        with _BUDGET_STATES_LOCK:
+            state = _budget_state(runtime_session_id)
+            elapsed = time.monotonic() - state.session_started_at
+            if state.soft_timeout_seconds <= 0 or elapsed < state.soft_timeout_seconds:
+                return None
+            if state.budget_prompt_delivered:
+                return {"action": "block", "message": _SOFT_TIMEOUT_BLOCK_REASON}
+            state.budget_prompt_delivered = True
+        inject_budget_prompt("soft_timeout")
+        return {"action": "block", "message": _SOFT_TIMEOUT_BLOCK_REASON}
+
+    def pre_llm_call_handler(**_kwargs: Any) -> dict[str, str] | None:
+        runtime_session_id = _hook_session_id(ctx, _kwargs)
+        if runtime_session_id is None:
+            return None
+        message: str | None = None
+        with _BUDGET_STATES_LOCK:
+            state = _budget_state(runtime_session_id)
+            if state.budget_prompt_delivered:
+                return None
+            if state.turn_budget > 1:
+                state.turn_budget -= 1
+                return None
+            message = _budget_exceeded_prompt_message("turn_limit")
+            if message is None:
+                return None
+            state.budget_prompt_delivered = True
+        inject_message = getattr(ctx, "inject_message", None)
+        if callable(inject_message):
+            try:
+                injected = inject_message(message, role="user")
+            except Exception:
+                injected = False
+            if injected:
+                return None
+        return {"context": message}
+
+    def on_session_start_handler(**_kwargs: Any) -> None:
+        runtime_session_id = _hook_session_id(ctx, _kwargs)
+        if runtime_session_id is None:
+            return
+        _reset_budget_state(runtime_session_id)
 
     if _can_dispatch_orchestra_worker():
         tool_info = _load_tool_info()
@@ -588,5 +1007,17 @@ def register(ctx: Any) -> None:
     ctx.register_command(
         "orch",
         handler=command_handler,
-        description="Orchestra host adapter: /orch help|do|roles|status|stop|doctor|history",
+        description=(
+            "Orchestra host adapter: /orch help|on|do|roles|status|stop|doctor|history "
+            "(use /orch on to inject the orchestrator skill)"
+        ),
+        args_hint=_ORCH_COMMAND_ARGS_HINT,
     )
+    register_hook = getattr(ctx, "register_hook", None)
+    if callable(register_hook):
+        register_hook("on_session_end", _on_session_cleanup)
+        register_hook("on_session_finalize", _on_session_cleanup)
+        register_hook("on_session_reset", _on_session_cleanup)
+        register_hook("on_session_start", on_session_start_handler)
+        register_hook("pre_tool_call", pre_tool_call_handler)
+        register_hook("pre_llm_call", pre_llm_call_handler)
