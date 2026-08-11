@@ -169,8 +169,10 @@ def test_pi_extension_host_command_path(
         "/orch on                           Load the orchestra orchestrator skill"
         in help_output
     )
-    assert "Configured roles" in help_output
-    assert "D builder  pi" in help_output
+    assert "/orch roles" in help_output
+    assert "Configured roles" not in help_output
+    assert "Default: builder" not in help_output
+    assert "D builder  pi" not in help_output
 
     doctor = _run_pi(env, session_id, "/orch doctor")
     assert doctor.returncode == 0

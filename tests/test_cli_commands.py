@@ -1340,11 +1340,11 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert "Settings: harness, enabled, model, profile, agent" in help_output
     assert "VALUE for enabled: true, yes, y, 1, on | false, no, n, 0, off" in help_output
     assert "harness-config" not in help_output
-    assert "Configured roles" in help_output
-    assert "Default: reviewer" in help_output
-    assert "  ✓  worker [pi]" in help_output
-    assert "  D  reviewer [hermes]" in help_output
-    assert "      model: gpt-5" in help_output
+    assert "Configured roles" not in help_output
+    assert "Default: reviewer" not in help_output
+    assert "  ✓  worker [pi]" not in help_output
+    assert "  D  reviewer [hermes]" not in help_output
+    assert "      model: gpt-5" not in help_output
     assert "  ✗  critic" not in help_output
     assert "  ✓  worker [pi]" in tool_info["description"]
     assert "  D  reviewer [hermes]" in tool_info["description"]

@@ -96,5 +96,3 @@ host_help: |-
   Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, ask a worker,
   or ask another agent.
   auto_return: prompt orchestrator upon return of workers
-
-  {roles}

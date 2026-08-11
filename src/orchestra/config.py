@@ -81,9 +81,7 @@ DEFAULT_HOST_HELP = """Orchestra commands:
 
 Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, ask a worker,
 or ask another agent.
-auto_return: prompt orchestrator upon return of workers
-
-{roles}"""
+auto_return: prompt orchestrator upon return of workers"""
 DEFAULT_BUDGET_EXCEEDED_PROMPT = """Orchestra worker budget exceeded. Stop new work now.
 
 Do not continue implementation, research, review, or tool use except what is absolutely

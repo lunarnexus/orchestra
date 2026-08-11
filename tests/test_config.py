@@ -141,6 +141,10 @@ def test_default_host_help_uses_generic_session_wording() -> None:
         in DEFAULT_HOST_HELP
     )
     assert "Pi session" not in DEFAULT_HOST_HELP
+    assert "Configured roles" not in DEFAULT_HOST_HELP
+    assert "Default:" not in DEFAULT_HOST_HELP
+    assert "  ✓  " not in DEFAULT_HOST_HELP
+    assert "  D  " not in DEFAULT_HOST_HELP
 
 
 def test_default_tool_guidance_keeps_orchestrator_context_clean() -> None:
