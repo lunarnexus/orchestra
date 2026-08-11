@@ -15,6 +15,7 @@ It gives a host agent or CLI a small, consistent way to:
 - enforce concurrency, cancellation, and timeouts
 - return compact results without flooding the parent context
 - inspect active and completed runs from a CLI or /slash command surface
+- dispatch workers in the background, leaving your main session open and responsive for multi-tasking.
 
 Some harnesses are fast and light, some are smart but bloated.  Some burn tokens at break-neck speed, some just don't have the features you want.  Well, with Orchestra, you can use all your favorite agent harnesses for what they're good at.  Big and full featured with lots of UI bells and whistles for the orchestrator, and lightweight for coders, smart with heavy memory systems for researchers, whatever you want.  
 
