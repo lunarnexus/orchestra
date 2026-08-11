@@ -24,7 +24,7 @@ Current stage: implementation approved. Research is complete; the user approved 
 | `/orch help/on/doctor/roles/status/history/stop/do` | present | done | Hermes command surface now includes `/orch on`. |
 | Consolidated auto-return reports | present | done | Includes delivered/release bookkeeping and generation guards that suppress late delivery after session cleanup. |
 | `/orch on` orchestrator-skill injection | implemented | done | Uses `orchestra _orchestrator-skill` and `ctx.inject_message(..., role="user")`; live mina CLI spike proved the path. |
-| Per-worker `_await-run` progress watching | implemented | done | Conservative stderr/log progress without native notifications or transcript injection; generation guards suppress late logs after session cleanup. |
+| Per-worker `_await-run` progress watching | removed | done | Live Hermes consistently failed in this path; consolidated auto-return remains, and Hermes must not fake progress through prompt injection. |
 | Active-worker footer/status UI | no public API found | blocked | Built-in footer/status commands exist, but no public plugin API or proven private mutator exists. Do not use private internals without new evidence. |
 | Argument completions | static metadata implemented | done | Uses `args_hint`; dynamic role/run-id completions are not supported by public plugin API. |
 | Rendered command/output entries | no public API found | blocked | No host UI rendering API found in `PluginContext`. |
@@ -62,10 +62,10 @@ None.
    - Result: builder `6af0e3adf825` implemented `/orch on` using `orchestra _orchestrator-skill` plus `ctx.inject_message(..., role="user")` and added focused tests.
    - Verification: `python3 -m pytest tests/test_hermes_plugin_source.py -q` passed with 59 tests; focused ruff passed; focused mypy on tests passed. Full touched-file mypy still has a pre-existing `no-any-return` at `extensions/hermes/orchestra/__init__.py:402`.
 
-4. [x] sequential — Implement Hermes `_await-run` progress handling
+4. [x] sequential — Remove Hermes `_await-run` progress handling
    - Scope: `extensions/hermes/orchestra/__init__.py`, focused tests.
-   - Result: builder `0ad0ad8261ad` kept and stabilized `_await-run` progress watcher, logging progress to stderr only to avoid transcript noise.
-   - Verification: `python3 -m pytest tests/test_hermes_plugin_source.py -q` passed with 73 tests; focused ruff passed.
+   - Result: live Hermes showed the `_await-run` watcher path fails consistently while consolidated auto-return works, so builder `81fb45a35bff` removed the Hermes per-worker progress watcher code and tests.
+   - Verification: `python3 -m pytest tests/test_hermes_plugin_source.py -q` passed with 76 tests; focused ruff passed; `python3 -m mypy src tests` passed; `git diff --check` passed.
 
 5. [ ] sequential or blocked — Implement host UX parity items supported by Hermes APIs
    - Completed supported item:

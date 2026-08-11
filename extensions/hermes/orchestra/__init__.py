@@ -22,8 +22,6 @@ _REPORT_WATCHER_RETRY_BASE_DELAY_SECONDS = 0.25
 _REPORT_WATCHER_RETRY_MAX_DELAY_SECONDS = 3.0
 _REPORT_WATCHERS: set[str] = set()
 _REPORT_WATCHERS_LOCK = threading.Lock()
-_AWAIT_RUN_WATCHERS: dict[str, set[str]] = {}
-_AWAIT_RUN_WATCHERS_LOCK = threading.Lock()
 _SESSION_WATCHER_GENERATIONS: dict[str, int] = {}
 _SESSION_WATCHER_GENERATIONS_LOCK = threading.Lock()
 
@@ -330,47 +328,12 @@ def _extract_field(output: str, field: str) -> str | None:
     return None
 
 
-def _parse_await_run_output(output: str) -> dict[str, str | int | None]:
-    active_remaining_text = _extract_field(output, "active_runs_remaining")
-    active_remaining = (
-        int(active_remaining_text)
-        if active_remaining_text is not None and active_remaining_text.isdigit()
-        else None
-    )
-    return {
-        "status": _extract_field(output, "status"),
-        "role": _extract_field(output, "role"),
-        "blocker": _extract_field(output, "blocker"),
-        "active_remaining": active_remaining,
-    }
-
-
-def _format_await_run_progress(
-    run_id: str,
-    status: str,
-    completed_count: int,
-    total_count: int,
-    role: str | None = None,
-    blocker: str | None = None,
-) -> str:
-    role_text = f" {role}" if role else ""
-    blocker_text = f" :: {blocker}" if blocker else ""
-    return (
-        f"orchestra:{role_text} {run_id} returned {status} "
-        f"({completed_count}/{total_count}){blocker_text}"
-    )
-
-
 def _error(message: str) -> str:
     return json.dumps({"error": message})
 
 
 def _log_watcher_error(message: str) -> None:
     sys.stderr.write(f"orchestra auto-return watcher failed: {message}\n")
-
-
-def _log_watcher_progress(message: str) -> None:
-    sys.stderr.write(f"{message}\n")
 
 
 def _current_session_watcher_generation(runtime_session_id: str) -> int:
@@ -619,110 +582,6 @@ def _start_session_report_watcher(
     thread.start()
 
 
-def _start_session_await_run_watcher(
-    ctx: Any | None,
-    runtime_session_id: str,
-    run_id: str,
-    wait_budget_seconds: int,
-) -> None:
-    session_generation = _current_session_watcher_generation(runtime_session_id)
-    with _AWAIT_RUN_WATCHERS_LOCK:
-        session_run_ids = _AWAIT_RUN_WATCHERS.setdefault(runtime_session_id, set())
-        if run_id in session_run_ids:
-            return
-        session_run_ids.add(run_id)
-    thread = threading.Thread(
-        target=_watch_await_run,
-        args=(runtime_session_id, run_id, wait_budget_seconds, session_generation),
-        daemon=True,
-        name=f"orchestra-await-run-{run_id}",
-    )
-    thread.start()
-
-
-def _watch_await_run(
-    runtime_session_id: str,
-    run_id: str,
-    wait_budget_seconds: int,
-    session_generation: int | None = None,
-) -> None:
-    try:
-        if session_generation is None:
-            session_generation = _current_session_watcher_generation(runtime_session_id)
-        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
-            return
-        result = _run_orchestra(
-            [
-                "_await-run",
-                "--session-id",
-                runtime_session_id,
-                "--run-id",
-                run_id,
-                "--timeout",
-                str(wait_budget_seconds),
-            ],
-            timeout_seconds=_watcher_subprocess_timeout_seconds(wait_budget_seconds),
-        )
-        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
-            return
-        if result.returncode != 0:
-            error_text = (result.stdout or result.stderr).strip()
-            if error_text:
-                _log_watcher_error(error_text)
-            return
-
-        parsed = _parse_await_run_output(result.stdout)
-        status = str(parsed["status"] or "done")
-        role = parsed["role"] if isinstance(parsed["role"], str) else None
-        blocker = parsed["blocker"] if isinstance(parsed["blocker"], str) else None
-        active_remaining = parsed["active_remaining"]
-        total_count = active_remaining + 1 if isinstance(active_remaining, int) else 1
-        progress_result = _run_orchestra(
-            [
-                "_progress-message",
-                "--completed",
-                "1",
-                "--total",
-                str(total_count),
-                "--run-id",
-                run_id,
-                "--status",
-                status,
-                *(["--role", role] if role else []),
-            ]
-        )
-        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
-            return
-        if progress_result.returncode != 0:
-            error_text = (progress_result.stdout or progress_result.stderr).strip()
-            if error_text:
-                _log_watcher_error(error_text)
-        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
-            return
-        progress_text = progress_result.stdout.strip()
-        if not progress_text:
-            progress_text = _format_await_run_progress(
-                run_id,
-                status,
-                1,
-                total_count,
-                role,
-                blocker,
-            )
-        if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
-            return
-        _log_watcher_progress(progress_text)
-    except Exception as exc:  # noqa: BLE001 - plugin must not crash watcher thread
-        _log_watcher_error(str(exc))
-    finally:
-        with _AWAIT_RUN_WATCHERS_LOCK:
-            session_run_ids = _AWAIT_RUN_WATCHERS.get(runtime_session_id)
-            if session_run_ids is not None:
-                session_run_ids.discard(run_id)
-                if not session_run_ids:
-                    _AWAIT_RUN_WATCHERS.pop(runtime_session_id, None)
-
-
 def _on_session_cleanup(**kwargs: Any) -> None:
     raw_session_id = kwargs.get("session_id")
     if not isinstance(raw_session_id, str):
@@ -736,8 +595,6 @@ def _on_session_cleanup(**kwargs: Any) -> None:
     _orch_on_clear(runtime_session_id)
     with _REPORT_WATCHERS_LOCK:
         _REPORT_WATCHERS.discard(runtime_session_id)
-    with _AWAIT_RUN_WATCHERS_LOCK:
-        _AWAIT_RUN_WATCHERS.pop(runtime_session_id, None)
 
 
 def _dispatch_orchestra_run(
@@ -785,7 +642,6 @@ def _dispatch_orchestra_run(
     dispatch_timeout = _extract_dispatch_timeout_seconds(result.stdout)
     wait_budget_seconds = _watcher_wait_budget_seconds(dispatch_timeout)
     _start_session_report_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
-    _start_session_await_run_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
 
     effective_role = _extract_field(result.stdout, "role") or requested_role or "worker"
     ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", effective_role])
