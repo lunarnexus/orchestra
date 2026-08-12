@@ -23,6 +23,7 @@ from orchestra.app import (
     format_doctor_checks,
     format_history,
     format_host_help,
+    format_opencode_help,
     format_progress_notification,
     format_roles,
     format_run_report,
@@ -50,6 +51,7 @@ from orchestra.state import StateError
 INTERNAL_COMMANDS = frozenset(
     {
         "help-host",
+        "help-opencode",
         "_run-supervisor",
         "_pending-report",
         "_await-session-report",
@@ -153,6 +155,9 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     if include_internal:
         help_parser = subparsers.add_parser("help-host", help=argparse.SUPPRESS)
         help_parser.set_defaults(handler=_handle_help_host)
+
+        opencode_help_parser = subparsers.add_parser("help-opencode", help=argparse.SUPPRESS)
+        opencode_help_parser.set_defaults(handler=_handle_help_opencode)
 
     history_parser = subparsers.add_parser("history", help="show prior run summaries")
     history_parser.add_argument(
@@ -380,6 +385,12 @@ def _handle_roles(args: argparse.Namespace) -> int:
 def _handle_help_host(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
     print(format_host_help(context))
+    return 0
+
+
+def _handle_help_opencode(args: argparse.Namespace) -> int:
+    del args
+    print(format_opencode_help())
     return 0
 
 

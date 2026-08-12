@@ -20,6 +20,8 @@ These features already live in Orchestra core or core CLI helpers. New plugins s
 - `orchestra doctor` — check local setup.
 - `orchestra roles` — list or update configured roles.
 - `orchestra history` — show prior run summaries.
+- OpenCode host support should expose `orch_dispatch` plus `orch_status`; `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, and `roles`.
+- Role edits go through `orchestra roles ROLE SETTING VALUE`, not by hand-editing config files. Supported settings are `harness`, `enabled`, `model`, `profile`, and `agent`.
 
 ### Orchestration behavior
 
@@ -41,7 +43,8 @@ These features already live in Orchestra core or core CLI helpers. New plugins s
 
 ### Host helper commands
 
-- `help-host` — core-formatted `/orch` help.
+- `help-host` — core-formatted Pi-equivalent `/orch` help.
+- `help-opencode` — core-formatted OpenCode prompt-template `/orch` help.
 - `_command-echo` — core-formatted command echo.
 - `_tool-info` — tool description, prompt snippet, guidelines, and parameter descriptions.
 - `_role-metadata` — role and harness-config metadata for completions and tool refresh.
@@ -60,7 +63,7 @@ Plugins should forward these environment-driven core config selectors when invok
 - `ORCHESTRA_CONFIG`
 - `ORCHESTRA_AGENT_CATALOG`
 
-Core also participates in dispatch budget handling through `ORCHESTRA_DISPATCH_BUDGET`.
+Plugins should also honor `ORCHESTRA_DISPATCH_BUDGET` for dispatch-budget handling when the host adapter launches work on behalf of the current session.
 
 ## Host-plugin responsibilities
 
@@ -76,6 +79,7 @@ A Pi-equivalent host plugin should implement the following host-side behavior.
 ### Native surfaces
 
 - Register `orch_dispatch` when the host supports callable tools.
+- Register `orch_status` when the host supports callable tools for host/session actions.
 - Register `/orch` when the host supports native slash commands.
 - Surface core output through the host's native UI or text response path.
 - Provide command completions when the host has a completion API.
@@ -138,6 +142,12 @@ Implement these when the host supports them:
 - Argument completions for subcommands, roles, harness configs, active run ids, and common history/timeout values.
 - Main-session turn or soft-timeout budget enforcement using host turn/tool hooks.
 
+## Parity tiers
+
+Required baseline parity for a new host is reliable runtime identity, a native dispatch surface, core helper reuse, consolidated auto-return, delivered/release report handling, and lifecycle cleanup for any background watchers.
+
+Best host-supported parity adds the Pi-equivalent command surface, `/orch on`, progress notifications, status/footer UI, rendered entries, completions, and budget hooks only where the host exposes stable APIs for those behaviors.
+
 ## Pi implementation mapping
 
 The Pi plugin is the reference implementation for host-side behavior. Its Pi-specific mechanics are not portable requirements:
@@ -152,6 +162,23 @@ The Pi plugin is the reference implementation for host-side behavior. Its Pi-spe
 - `pi.sendUserMessage(..., { deliverAs: "steer" })` for budget handoff steering.
 - `session_start`, `session_shutdown`, `turn_end`, and `tool_call` event hooks.
 - Global Pi extension installation under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/orchestra/index.ts`.
+
+## OpenCode implementation mapping
+
+OpenCode should follow best host-supported parity rather than copying Pi APIs directly:
+
+- Use `context.sessionID` as the runtime identity source and normalize it as `opencode:<sessionID>`.
+- Register `orch_dispatch(goal, role?, taskLabel?)` through the OpenCode plugin tool API. Keep `timeout` out of the tool contract.
+- Register `orch_status(action, limit?, role?, setting?, value?)` for OpenCode `/orch on|status|history|help|doctor|roles`; ignore irrelevant optional fields outside their action to tolerate host/model-filled optional tool fields.
+- Use tokenized process execution for `orchestra` commands and reuse core helpers for tool info, acknowledgements, progress messages, reports, and role metadata.
+- Use `client.session.prompt(...)` or `client.session.promptAsync(...)` with target `path.id` and text `parts` for session-targeted delivery. Prefer synchronous `prompt(...)` for auto-return wake delivery; use `promptAsync(...)` only as fallback unless a host version is proven to schedule async prompts reliably.
+- Use OpenCode TUI notification APIs for dispatch/progress/failure notifications when available.
+- Use OpenCode lifecycle disposal hooks to clean up watchers when using TUI plugin surfaces.
+- Treat OpenCode `commands/` files as prompt-template macros. Keep templates concise because OpenCode displays template text in the conversation. Executable `/orch` slash-command parity should use a proven plugin command API, not prompt macros.
+- TUI status/footer slots can provide host UX parity when a TUI plugin is available.
+- Transcript-entry rendering, stable dynamic completions, and Pi-style turn-budget hooks require new host evidence before implementation.
+- Global installation should target OpenCode's global plugin location, for example `~/.config/opencode/plugins/`, unless a project-local install is explicitly requested.
+- `orchestra init opencode` installs there from a source checkout, and `--copy` falls back to the packaged plugin asset when a wheel install has no checkout to link against.
 
 ## New plugin delta checklist
 

@@ -215,12 +215,16 @@ Research date: 2026-07-31; refreshed 2026-08-04
 - OpenCode one-shot worker support is implemented in the repository through
   `src/orchestra/harnesses/opencode.py`, lazy harness registry loading, harness
   tests, and catalog schema support.
-- OpenCode host/orchestrator support is not implemented yet. There is no
-  `extensions/opencode/orchestra/` source and `orchestra init opencode` currently
-  reports harness-only status rather than installing host integration files.
-- Root catalog currently defines an `opencode` harness config, but the active
-  `appsec` role is still Pi-backed. Do not rely on older notes that describe
-  `appsec` as OpenCode-backed without rechecking the catalog.
+- OpenCode host/orchestrator support now has an existing plugin source at
+  `extensions/opencode/orchestra/index.ts` with plugin-registered
+  `orch_dispatch` and `orch_status` tools, toast helpers, runtime session
+  ownership from `context.sessionID`, tokenized `execFile` execution, and
+  consolidated auto-return plumbing through OpenCode session prompt APIs.
+- `orchestra init opencode` now targets the global OpenCode plugin path and
+  can fall back to the packaged asset mirror with `--copy` when a source
+  checkout is unavailable.
+- Root catalog currently defines an `opencode` harness config, but active role
+  mappings should be rechecked before relying on any role being OpenCode-backed.
 
 ### Preserved OpenCode host planning notes
 
@@ -306,6 +310,10 @@ orchestra do --session-id manual:opencode-demo --role appsec --goal "Reply with 
 - OpenCode custom commands are prompt templates, not executable host command
   hooks. They support `$ARGUMENTS` and positional `$1`, `$2`, `$3`, etc., but the
   documented `template` is the prompt sent to the LLM.
+- OpenCode `orch_status` should cover `on`, `status`, `history`, `help`,
+  `doctor`, and `roles`; role updates go through `orchestra roles ROLE SETTING
+  VALUE`, with supported settings `harness`, `enabled`, `model`, `profile`, and
+  `agent`.
 - Plugin event names include `command.executed` and `tui.command.execute`, but
   local types show event handlers as observation hooks returning `void`, not a
   command implementation/mutation path. `command.executed` carries `name`,
@@ -336,23 +344,82 @@ orchestra do --session-id manual:opencode-demo --role appsec --goal "Reply with 
   plus plugin-managed notifications and return delivery. A standalone tool file
   should not be part of the initial implementation unless testing proves the
   plugin-registered tool path is insufficient.
-- OpenCode slash command parity is limited by available evidence. Prompt-template
-  commands can provide convenience prompts, but true executable `/orch` command
-  parity should be treated as unsupported unless a command mutation/execution API
-  is proven in a spike.
+- OpenCode slash command parity is limited by available evidence. Official
+  custom commands are prompt templates, not executable handlers. Installed local
+  type definitions expose an undocumented TUI command registration API with
+  slash metadata and `onSelect`, so real `/orch` commands may be possible but
+  require a spike and explicit version-risk acceptance before production use.
 - OpenCode auto-return should preserve existing Orchestra semantics: individual
   worker returns can notify the UI and optionally add non-turn context with
   `noReply:true`; once all workers for the owning session finish, the plugin
   should send the response prompt to the calling OpenCode agent so it can resume
-  orchestration. This needs loop-prevention and active-session guardrails.
+  orchestration. Prefer session-targeted `client.session.prompt(...)` for the
+  wake path, with `promptAsync(...)` only as a fallback when `prompt` is
+  unavailable. This needs loop-prevention and active-session guardrails.
+- Best host-supported UI parity likely requires a split OpenCode plugin model:
+  server/plugin code for tool registration and session hooks, plus TUI plugin
+  code for toasts, footer/status slots, lifecycle disposal, and slash command
+  experiments. Transcript-entry injection, stable dynamic completions, and exact
+  Pi turn-budget hooks remain unsupported by current evidence.
 - `orchestra init opencode` should be planned as a global installer using the
   source checkout under `extensions/opencode/orchestra/`; package asset mirrors
-  are deferred for non-editable/wheel installs.
+  are deferred for non-editable/wheel installs unless release packaging changes
+  make them necessary.
 - Preserve one-shot worker behavior and explicit harness selection while adding
   the host plugin surface.
 - Do not build parallel-write safety as part of OpenCode parity. For now, the
   orchestrator decides which read-only or file-disjoint tasks are safe to run in
   parallel.
+
+### OpenCode plugin Pi-parity refresh
+
+Research date: 2026-08-11
+
+Worker evidence:
+
+- `state/return-artifacts/7a4d61864388.md` — command API research.
+- `state/return-artifacts/2d53fc564571.md` — session injection API research.
+- `state/return-artifacts/c6077ebb5ead.md` — UI/lifecycle/budget API research.
+- `state/return-artifacts/5c2de056418c.md` — `docs/plugin_creation.md` parity guidance review.
+
+Findings:
+
+- Official OpenCode custom commands are prompt templates. They can be useful
+  convenience prompts, but they are not a documented executable host command
+  handler with programmatic output.
+- Installed `@opencode-ai/plugin` type definitions expose undocumented TUI slash
+  command registration through `command.register`, `TuiCommand.slash`, and
+  `onSelect`. This is a candidate for `/orch` parity only after a live spike and
+  version-risk decision.
+- Plugin session injection is supported through the SDK client:
+  `client.session.prompt(...)` waits for a response, while
+  `client.session.promptAsync(...)` sends asynchronously. Both accept a target
+  `path.id`, text `parts`, and optional `noReply`; omitting `noReply` should
+  trigger a normal assistant reply. For Orchestra auto-return wake delivery,
+  prefer `prompt(...)`; async prompts can be persisted without reliably waking
+  the session loop on affected OpenCode versions.
+- Toasts/notifications are supported through OpenCode TUI APIs. TUI lifecycle
+  disposal and footer/status slots are exposed in local type definitions, but
+  richer transcript-entry rendering was not found.
+- Tool hooks exist, but no stable max-turn or max-tool-call budget hook matching
+  Pi's turn/soft-timeout behavior was found. Budget parity should be limited to
+  dispatch-budget checks and any directly supported hook behavior proven later.
+- `docs/plugin_creation.md` applies directly to OpenCode: host adapters stay thin,
+  runtime identity comes from host context, `orch_dispatch` excludes `timeout`,
+  slash-command parity may include `timeout` when a command surface exists, and
+  OpenCode should reuse core helpers for text, reports, metadata, and delivery
+  bookkeeping.
+- `docs/plugin_creation.md` now records required baseline parity versus best
+  host-supported parity and includes an OpenCode mapping for runtime identity,
+  plugin tools, session-targeted delivery, TUI notifications/status, command
+  limits, and install location.
+
+Conclusion: best host-supported OpenCode parity should proceed first through the
+existing plugin-registered `orch_dispatch` path, hardened auto-return through
+session-targeted prompt APIs, and toast/status UX where supported. Exact `/orch`
+command parity and `/orch on` should remain blocked until a TUI-plugin spike
+proves safe executable command handling and session injection behavior in live
+OpenCode.
 
 ## Professional Development Methodology Research
 

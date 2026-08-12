@@ -44,14 +44,17 @@ orchestra = [
   "assets/prompts.yaml",
   "assets/agent-catalog.yaml",
   "assets/pi/orchestra/index.ts",
+  "assets/opencode/orchestra/index.ts",
+  "assets/opencode/orchestra/commands/orch.md",
 ]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra --ignore=evals --ignore=docs/research"
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+extend-exclude = ["evals", "docs/research"]
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "UP"]

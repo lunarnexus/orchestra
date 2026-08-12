@@ -151,6 +151,12 @@ Current support includes:
 
 Harness-specific model names, profiles, agents, and command templates belong in `agent-catalog.yaml`.
 
+Compatibility differs by host because each harness exposes different plugin and UI APIs:
+
+- **Pi** has the closest native integration: executable `/orch` commands, footer/status updates, host lifecycle hooks, and worker harness support.
+- **Hermes** supports the core command/tool workflow and worker harness path.
+- **OpenCode** supports callable tools and documented prompt-template commands, but some TUI parity is not implemented yet. OpenCode `/orch` commands are prompt templates that instruct the model to call `orch_status` or `orch_dispatch`; they are not plugin-owned executable slash handlers. Footer/status UI is also not implemented because a live TUI slot plugin load/render path has not been proven. OpenCode worker budgets, timeouts, and environment variables are still applied to child workers, but Pi-style main-session turn/tool budget hooks are not implemented because equivalent stable OpenCode lifecycle hooks have not been proven.
+
 ## Host Integrations
 
 ### Pi
@@ -206,9 +212,11 @@ Install or update the OpenCode plugin:
 
 ```bash
 orchestra init opencode
+# for non-source installs:
+orchestra init opencode --copy
 ```
 
-OpenCode support includes the `orch_dispatch` callable tool. Worker execution is also supported through configured OpenCode roles.
+OpenCode support includes `orch_dispatch`, `orch_status`, the documented `/orch` prompt template, session-targeted auto-return, and progress toasts when the host UI supports them. OpenCode `/orch` entries are prompt templates, not executable plugin slash commands; footer/status UI and Pi-style main-session turn/tool budget hooks are not implemented for OpenCode.
 
 ## Development
 

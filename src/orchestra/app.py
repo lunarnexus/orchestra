@@ -1109,6 +1109,18 @@ def format_host_help(context: AppContext) -> str:
     )
 
 
+def format_opencode_help() -> str:
+    return """OpenCode /orch commands:
+- /orch on — load Orchestra mode
+- /orch status — show active workers for this OpenCode session
+- /orch history [limit] — show recent worker results for this OpenCode session
+- /orch roles — show roles
+- /orch roles ROLE SETTING VALUE — update harness|enabled|model|profile|agent
+- /orch doctor — check setup
+- /orch do [--role ROLE] <request> — dispatch a worker
+""".strip()
+
+
 def format_command_echo(raw_command: str) -> str:
     raw = raw_command.strip()
     if not raw:
@@ -1546,16 +1558,18 @@ def init_opencode(
     copy: bool = False,
     source_root: str | Path | None = None,
 ) -> InitOpencodeResult:
-    root = _find_source_root(source_root)
-    if root is None:
-        raise AppError("opencode init source root not found; rerun from a source checkout")
-
+    source_paths = _opencode_init_source_paths(source_root, copy=copy)
     files = [
         _copy_init_file(
-            root / "extensions" / "opencode" / "orchestra" / "index.ts",
-            default_opencode_orchestra_dir() / "index.ts",
+            source_paths["extension"],
+            default_opencode_orchestra_file(),
             force=force,
-        )
+        ),
+        _copy_init_file(
+            source_paths["command"],
+            default_opencode_orch_command_file(),
+            force=force,
+        ),
     ]
     return InitOpencodeResult(files=files, verification_command="opencode --help")
 
@@ -1792,6 +1806,27 @@ def _config_source_paths(source_root: str | Path | None, *, copy: bool) -> dict[
     }
 
 
+def _opencode_init_source_paths(
+    source_root: str | Path | None,
+    *,
+    copy: bool,
+) -> dict[str, Path]:
+    root = _find_source_root(source_root)
+    if root is not None:
+        base = root / "extensions" / "opencode" / "orchestra"
+        return {
+            "extension": base / "index.ts",
+            "command": base / "commands" / "orch.md",
+        }
+    if not copy:
+        raise AppError("opencode init source root not found; rerun with --copy")
+    base = Path(__file__).resolve().parent / "assets" / "opencode" / "orchestra"
+    return {
+        "extension": base / "index.ts",
+        "command": base / "commands" / "orch.md",
+    }
+
+
 def _find_source_root(source_root: str | Path | None = None) -> Path | None:
     if source_root is not None:
         candidate = Path(source_root)
@@ -1911,8 +1946,12 @@ def default_opencode_home() -> Path:
     return Path.home() / ".config" / "opencode"
 
 
-def default_opencode_orchestra_dir() -> Path:
-    return default_opencode_home() / "plugins" / "orchestra"
+def default_opencode_orchestra_file() -> Path:
+    return default_opencode_home() / "plugins" / "orchestra.ts"
+
+
+def default_opencode_orch_command_file() -> Path:
+    return default_opencode_home() / "commands" / "orch.md"
 
 
 def _normalized_optional_profile(profile: str | None) -> str | None:

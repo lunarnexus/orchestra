@@ -8,10 +8,122 @@ def test_opencode_plugin_registers_orch_dispatch_tool() -> None:
 
     assert 'import { tool, type Plugin } from "@opencode-ai/plugin";' in source
     assert 'export const OrchestraPlugin: Plugin = async ({ client }) => {' in source
+    assert 'const orchStatusTool = tool({' in source
+    assert 'action: tool.schema' in source
+    assert '.enum(["on", "status", "history", "help", "doctor", "roles"])' in source
+    assert 'orch_status: orchStatusTool,' in source
     assert 'tool: {' in source
     assert 'orch_dispatch: tool({' in source
-    assert 'description: "Orchestra dispatch tool for OpenCode."' in source
-    assert 'goal: tool.schema.string()' in source
+    assert 'const toolInfo = await loadToolInfo();' in source
+    assert 'description: toolInfo.description,' in source
+    assert 'goal: tool.schema.string().describe(toolInfo.goalDescription),' in source
+    assert 'role: tool.schema.string().optional().describe(toolInfo.roleDescription),' in source
+    assert (
+        'taskLabel: tool.schema.string().optional().describe(toolInfo.taskLabelDescription),'
+        in source
+    )
+
+
+def test_opencode_plugin_routes_orch_status_actions_and_role_settings() -> None:
+    source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
+
+    assert 'type OrchStatusArgs = {' in source
+    assert (
+        'const SUPPORTED_ROLE_SETTINGS = new Set(["harness", "enabled", "model", "profile", '
+        '"agent"]);' in source
+    )
+    assert 'if (args.action === "on") {' in source
+    assert '["orchestra", "_orchestrator-skill"]' in source
+    assert '["orchestra", "status", "--session-id", ownerId]' in source
+    assert 'normalizeOrchStatusLimit(args.limit)' in source
+    assert (
+        '["orchestra", "history", "--session-id", ownerId, "--limit", '
+        'normalizeOrchStatusLimit(args.limit)]' in source
+    )
+    assert '["orchestra", "help-opencode"]' in source
+    assert '["orchestra", "doctor"]' in source
+    assert '["orchestra", "roles", "--all"]' in source
+    assert '["orchestra", "roles", role, setting, value]' in source
+    assert 'role, setting, and value must all be supplied together' in source
+    assert 'Unsupported role setting' in source
+    assert 'context.sessionID is required for orch_status status/history.' in source
+    assert 'limit is only accepted for orch_status history.' not in source
+    assert 'role, setting, and value are only accepted for orch_status roles.' not in source
+
+
+def test_opencode_plugin_ignores_irrelevant_orch_status_optional_fields() -> None:
+    source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
+
+    validate_pos = source.index("function validateOrchStatusArgs(")
+    roles_return_pos = source.index('if (action !== "roles") {', validate_pos)
+    roles_return_body_pos = source.index("return;", roles_return_pos)
+    roles_validation_pos = source.index(
+        "role, setting, and value must all be supplied together for orch_status roles.",
+        validate_pos,
+    )
+    history_command_pos = source.index('if (args.action === "history") {')
+    limit_normalize_pos = source.index("normalizeOrchStatusLimit(args.limit)", history_command_pos)
+
+    assert roles_return_pos < roles_return_body_pos < roles_validation_pos
+    assert history_command_pos < limit_normalize_pos
+    assert "limit is only accepted for orch_status history." not in source
+    assert "role, setting, and value are only accepted for orch_status roles." not in source
+
+
+def test_opencode_source_and_asset_mirrors_match() -> None:
+    plugin_source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
+    plugin_asset = Path("src/orchestra/assets/opencode/orchestra/index.ts").read_text(
+        encoding="utf-8"
+    )
+    command_source = Path("extensions/opencode/orchestra/commands/orch.md").read_text(
+        encoding="utf-8"
+    )
+    command_asset = Path("src/orchestra/assets/opencode/orchestra/commands/orch.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert plugin_source == plugin_asset
+    assert command_source == command_asset
+    assert (
+        "Call exactly one Orchestra tool for this command, "
+        "then return the tool output to the user:"
+    ) in command_source
+    assert 'orch_status({ action: "on" })' in command_source
+    assert 'orch_dispatch({ goal, role?, taskLabel? })' in command_source
+    assert "/orch stop" not in command_source
+
+
+def test_opencode_plugin_reuses_core_tool_info_and_dispatch_budget_guard() -> None:
+    source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
+
+    assert 'const ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET";' in source
+    assert 'function orchestraDispatchBudget(): number {' in source
+    assert 'function canDispatchOrchestraWorker(): boolean {' in source
+    assert 'return orchestraDispatchBudget() !== 1;' in source
+    assert 'async function loadToolInfo(): Promise<ToolInfoPayload> {' in source
+    assert 'const result = await runOrchestra(["orchestra", "_tool-info"]);' in source
+    assert 'const orchStatusTool = tool({' in source
+    assert 'if (!canDispatchOrchestraWorker()) {' in source
+    assert 'return { tool: { orch_status: orchStatusTool } };' in source
+    assert 'const toolInfo = await loadToolInfo();' in source
+    assert 'description: toolInfo.description,' in source
+    assert 'goal: tool.schema.string().describe(toolInfo.goalDescription),' in source
+    assert 'role: tool.schema.string().optional().describe(toolInfo.roleDescription),' in source
+    assert (
+        'taskLabel: tool.schema.string().optional().describe(toolInfo.taskLabelDescription),'
+        in source
+    )
+
+
+def test_opencode_plugin_forwards_orchestra_config_and_catalog_to_cli_calls() -> None:
+    source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
+
+    assert 'function orchestraBaseArgs(): string[] {' in source
+    assert 'if (process.env.ORCHESTRA_CONFIG) {' in source
+    assert 'args.push("--config", process.env.ORCHESTRA_CONFIG);' in source
+    assert 'if (process.env.ORCHESTRA_AGENT_CATALOG) {' in source
+    assert 'args.push("--agent-catalog", process.env.ORCHESTRA_AGENT_CATALOG);' in source
+    assert 'execFileAsync(file, [...orchestraBaseArgs(), ...args], { encoding: "utf8" });' in source
 
 
 def test_opencode_plugin_executes_with_session_identity_guardrails() -> None:
@@ -31,7 +143,8 @@ def test_opencode_plugin_executes_with_session_identity_guardrails() -> None:
     assert '"orchestrator_session_id"' in source
     assert 'timeout is not accepted by orch_dispatch; configured default_timeout applies.' in source
     assert 'Object.prototype.hasOwnProperty.call(args, "timeout")' in source
-    assert 'owner_id: ownerId,' in source
+    assert 'const goal = args.goal.trim();' in source
+    assert 'if (!goal) {' in source
     assert 'role: tool.schema.string().optional()' in source
     assert 'taskLabel: tool.schema.string().optional()' in source
 
@@ -65,7 +178,11 @@ def test_opencode_plugin_executes_tokenized_dispatch_with_execfile_and_wires_del
         in source
     )
     assert 'const [file, ...args] = command;' in source
-    assert 'await execFileAsync(file, args, { encoding: "utf8" });' in source
+    assert (
+        'await execFileAsync(file, [...orchestraBaseArgs(), ...args], { '
+        'encoding: "utf8" });'
+        in source
+    )
     assert 'const result = await runOrchestra(command);' in source
     assert 'if (result.returncode !== 0) {' in source
     assert 'stderr: string;' in source
@@ -76,8 +193,20 @@ def test_opencode_plugin_executes_tokenized_dispatch_with_execfile_and_wires_del
         'queueSessionReportDelivery(client, rawSessionID, ownerId, runId, '
         'timeoutSeconds, runOrchestra);'
     )
+    ack_call = (
+        'const ack = await runOrchestra(["orchestra", "_dispatch-ack", '
+        '"--run-id", runId, "--role", role]);'
+    )
     assert queue_call in source
-    assert 'timeout_seconds: timeoutSeconds,' in source
+    assert ack_call in source
+    assert 'timeout_seconds: timeoutSeconds,' not in source
+    assert (
+        'return ack.stdout.trim() || result.stdout.trim() || '
+        '`orchestra dispatched: ${role} '
+        '${runId}`;'
+        in source
+    )
+    assert 'throw new Error(ack.stderr || "orchestra dispatch ack failed.");' not in source
     assert 'command.join(" ")' not in source
     assert 'shell: true' not in source
     assert 'spawn(' not in source
@@ -89,9 +218,40 @@ def test_opencode_plugin_executes_tokenized_dispatch_with_execfile_and_wires_del
     )
     run_id_pos = source.index('const runId = extractRunId(result.stdout);', execute_pos)
     queue_pos = source.index(queue_call, execute_pos)
-    return_pos = source.index('return JSON.stringify({', execute_pos)
+    ack_pos = source.index(ack_call, execute_pos)
+    return_pos = source.index(
+        (
+            'return ack.stdout.trim() || result.stdout.trim() || '
+            '`orchestra dispatched: ${role} '
+            '${runId}`;'
+        ),
+        execute_pos,
+    )
 
-    assert timeout_pos < run_id_pos < queue_pos < return_pos
+    assert timeout_pos < run_id_pos < queue_pos < ack_pos < return_pos
+
+
+def test_opencode_plugin_falls_back_when_dispatch_ack_fails() -> None:
+    source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
+
+    ack_call = (
+        'const ack = await runOrchestra(["orchestra", "_dispatch-ack", '
+        '"--run-id", runId, "--role", role]);'
+    )
+    fallback_return = (
+        'return ack.stdout.trim() || result.stdout.trim() || '
+        '`orchestra dispatched: ${role} ${runId}`;'
+    )
+
+    assert ack_call in source
+    assert fallback_return in source
+    assert 'throw new Error(ack.stderr || "orchestra dispatch ack failed.");' not in source
+
+    execute_pos = source.index('async execute(args, context) {')
+    ack_pos = source.index(ack_call, execute_pos)
+    fallback_pos = source.index(fallback_return, ack_pos)
+
+    assert ack_pos < fallback_pos
 
 
 def test_opencode_plugin_uses_sparse_toasts_for_dispatch_and_failure() -> None:
@@ -161,7 +321,11 @@ def test_opencode_plugin_prompts_final_reports_through_the_owning_session() -> N
     assert 'function releaseSessionReport(' in source
     assert 'function buildMarkSessionReportDeliveredCommand(' in source
     assert 'function buildReleaseSessionReportCommand(' in source
-    assert 'client.session.prompt({' in source
+    assert 'function getSessionPrompt(' in source
+    assert 'const session = client?.session;' in source
+    assert 'return session.prompt.bind(session);' in source
+    assert 'return session.promptAsync.bind(session);' in source
+    assert 'await sessionPrompt({' in source
     assert 'path: { id: rawSessionID },' in source
     assert 'body: { parts: [{ type: "text", text: envelope.report }] },' in source
     assert 'buildMarkSessionReportDeliveredCommand(ownerId, envelope.runIds)' in source
@@ -178,6 +342,58 @@ def test_opencode_plugin_prompts_final_reports_through_the_owning_session() -> N
     assert 'noReply: true' not in source
 
 
+def test_opencode_plugin_prefers_prompt_and_cleans_up_report_delivery_claims() -> None:
+    source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
+
+    assert (
+        'prompt?: (payload: OpenCodeSessionPromptPayload) => '
+        'Promise<unknown> | unknown;'
+        in source
+    )
+    assert 'function getSessionPrompt(' in source
+    assert 'const session = client?.session;' in source
+    assert 'return session.prompt.bind(session);' in source
+    assert 'return session.promptAsync.bind(session);' in source
+    assert 'if (!sessionPrompt) {' in source
+    assert 'await sessionPrompt({' in source
+    assert 'let preserveClaim = false;' in source
+    assert 'finally {' in source
+    assert 'if (!preserveClaim) {' in source
+    assert 'releaseSessionReportDeliveryClaim(ownerId, envelope.runIds);' in source
+    assert 'if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope))) {' in source
+
+    prompt_pos = source.index('async function promptSessionReport(')
+    session_prompt_pos = source.index('function getSessionPrompt(')
+    finally_pos = source.index('finally {', prompt_pos)
+    release_claim_pos = source.index(
+        'releaseSessionReportDeliveryClaim(ownerId, envelope.runIds);',
+        finally_pos,
+    )
+    deliver_pos = source.index('async function deliverSessionReport(')
+    deliver_null_pos = source.index(
+        'if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope))) {',
+        deliver_pos,
+    )
+
+    assert session_prompt_pos < prompt_pos < finally_pos < release_claim_pos
+    assert deliver_pos < deliver_null_pos
+
+
+def test_opencode_plugin_releases_pending_report_when_session_prompt_is_unavailable() -> None:
+    source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
+
+    prompt_pos = source.index('async function promptSessionReport(')
+    no_prompt_pos = source.index('if (!sessionPrompt) {', prompt_pos)
+    claim_pos = source.index(
+        'if (!claimSessionReportDelivery(ownerId, envelope.runIds)) {',
+        prompt_pos,
+    )
+    release_pos = source.index('releaseSessionReport(ownerId);', prompt_pos)
+
+    assert 'if (!sessionPrompt) {' in source
+    assert 'releaseSessionReport(ownerId);' in source
+    assert no_prompt_pos < release_pos < claim_pos
+
 def test_opencode_plugin_claims_each_report_once_before_prompting() -> None:
     source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
 
@@ -193,10 +409,10 @@ def test_opencode_plugin_claims_each_report_once_before_prompting() -> None:
     assert 'function releaseSessionReportDeliveryClaim(' in source
     assert 'if (!claimSessionReportDelivery(ownerId, envelope.runIds)) {' in source
     assert 'releaseSessionReportDeliveryClaim(ownerId, envelope.runIds);' in source
-    assert 'finally {' not in source
+    assert 'finally {' in source
 
     claim_pos = source.index('if (!claimSessionReportDelivery(ownerId, envelope.runIds)) {')
-    prompt_pos = source.index('await client.session.prompt({')
+    prompt_pos = source.index('await sessionPrompt({')
     mark_pos = source.index('markSessionReportDelivered(ownerId, envelope.runIds);')
     release_claim_pos = source.index('releaseSessionReportDeliveryClaim(ownerId, envelope.runIds);')
 
@@ -219,9 +435,93 @@ def test_opencode_plugin_queues_report_delivery_in_background() -> None:
         'timeoutSeconds, runOrchestra);'
     )
     queue_pos = source.index(queue_call, execute_pos)
-    return_pos = source.index('return JSON.stringify({', execute_pos)
+    return_pos = source.index(
+        (
+            'return ack.stdout.trim() || result.stdout.trim() || '
+            '`orchestra dispatched: ${role} '
+            '${runId}`;'
+        ),
+        execute_pos,
+    )
 
     assert queue_pos < return_pos
+
+
+def test_opencode_plugin_queues_progress_notifications_in_background() -> None:
+    source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
+
+    assert 'const sessionRuns = new Map<string, Set<string>>();' in source
+    assert 'const sessionCompletedRuns = new Map<string, Set<string>>();' in source
+    assert 'function trackSessionRun(' in source
+    assert 'function buildAwaitRunCommand(' in source
+    assert '"_await-run"' in source
+    assert 'function buildProgressMessageCommand(' in source
+    assert '"_progress-message"' in source
+    assert 'async function notifyProgressToast(' in source
+    assert 'function queueRunProgressNotification(' in source
+    assert (
+        'void deliverRunProgressNotification(client, ownerId, runId, '
+        'timeoutSeconds, runner).catch('
+    ) in source
+
+    deliver_pos = source.index('async function deliverRunProgressNotification(')
+    watcher_timeout_pos = source.index(
+        'const watcherTimeoutSeconds = timeoutSeconds + WATCHER_TIMEOUT_MARGIN_SECONDS;',
+        deliver_pos,
+    )
+    await_run_pos = source.index(
+        'const awaitRunResult = await runner(buildAwaitRunCommand('
+        'ownerId, runId, watcherTimeoutSeconds));',
+        deliver_pos,
+    )
+    progress_pos = source.index(
+        'const progressResult = await runner(',
+        deliver_pos,
+    )
+    toast_pos = source.index(
+        'await notifyProgressToast(client, progressResult.stdout.trim() ||',
+        deliver_pos,
+    )
+
+    execute_pos = source.index('async execute(args, context) {')
+    run_id_pos = source.index('const runId = extractRunId(result.stdout);', execute_pos)
+    track_pos = source.index('trackSessionRun(ownerId, runId);', execute_pos)
+    progress_queue_pos = source.index(
+        'queueRunProgressNotification(client, ownerId, runId, timeoutSeconds, runOrchestra);',
+        execute_pos,
+    )
+    report_queue_pos = source.index(
+        'queueSessionReportDelivery(client, rawSessionID, ownerId, runId, '
+        'timeoutSeconds, runOrchestra);',
+        execute_pos,
+    )
+    ack_pos = source.index(
+        'const ack = await runOrchestra(["orchestra", "_dispatch-ack", '
+        '"--run-id", runId, "--role", role]);',
+        execute_pos,
+    )
+
+    assert run_id_pos < track_pos < progress_queue_pos < report_queue_pos < ack_pos
+    assert deliver_pos < watcher_timeout_pos < await_run_pos < progress_pos < toast_pos
+
+
+def test_opencode_plugin_cleans_up_progress_state_when_await_run_fails() -> None:
+    source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
+
+    deliver_pos = source.index('async function deliverRunProgressNotification(')
+    try_pos = source.index('try {', deliver_pos)
+    failure_pos = source.index('if (awaitRunResult.returncode !== 0) {', deliver_pos)
+    finally_pos = source.index('finally {', deliver_pos)
+    cleanup_guard_pos = source.index('if (!markedCompleted) {', deliver_pos)
+    cleanup_pos = source.index('releaseSessionProgressRun(ownerId, runId);', deliver_pos)
+    release_all_pos = source.index('releaseSessionProgressRuns(ownerId);', deliver_pos)
+
+    assert 'function releaseSessionProgressRun(ownerId: string, runId: string): void {' in source
+    assert 'let markedCompleted = false;' in source
+    assert (
+        deliver_pos < try_pos < failure_pos < finally_pos < cleanup_guard_pos
+        < cleanup_pos < release_all_pos
+    )
 
 
 def test_opencode_plugin_delivers_final_reports_only_after_retrieval_succeeds() -> None:
@@ -233,10 +533,10 @@ def test_opencode_plugin_delivers_final_reports_only_after_retrieval_succeeds() 
         deliver_pos,
     )
     prompt_call_pos = source.index(
-        'await promptSessionReport(client, rawSessionID, ownerId, envelope);',
+        'if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope))) {',
         deliver_pos,
     )
-    prompt_pos = source.index('await client.session.prompt({')
+    prompt_pos = source.index('await sessionPrompt({')
     mark_command_pos = source.index(
         'buildMarkSessionReportDeliveredCommand(ownerId, envelope.runIds)'
     )
@@ -244,7 +544,7 @@ def test_opencode_plugin_delivers_final_reports_only_after_retrieval_succeeds() 
     release_command_pos = source.index(
         'buildReleaseSessionReportCommand(ownerId, envelope.runIds)'
     )
-    release_pos = source.index('releaseSessionReport(ownerId);')
+    release_pos = source.index('releaseSessionReport(ownerId);', release_command_pos)
 
     assert watch_pos < prompt_call_pos
     assert prompt_pos < mark_command_pos < mark_pos

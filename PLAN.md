@@ -1,103 +1,115 @@
 # Plan
 
-## Active: Hermes plugin parity with Pi plugin
+## Active: OpenCode unfinished parity items
 
-Goal: bring the Hermes Orchestra plugin to Pi-plugin parity where Hermes host APIs make it practical, without weakening runtime-session ownership or moving core behavior into the host adapter.
+Goal: finish the remaining OpenCode host-plugin parity work that is practical under the user's **best host-supported parity** decision, while preserving runtime-session ownership, thin-adapter boundaries, safe auto-return, and the already implemented `orch_dispatch`/auto-return/progress/package baseline.
 
-Current stage: implementation approved. Research is complete; the user approved skipping remaining spikes and proceeding with source-supported parity work.
+Current stage: OpenCode `orch_status`, docs/artifact follow-up, command-template install support, and live `/orch` smoke have passed using the configured OpenCode model alias `lmstudio/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved@q6_k`. A live `/orch on` TUI issue caused by irrelevant optional fields has been fixed by ignoring `limit` outside `history` and role fields outside `roles`. User accepted role env display risk for this slice. Executable TUI slash commands remain unproven. Footer/status UI slot API exists in types, but live TUI plugin loading failed; production footer/status UI remains blocked.
 
-### Evidence so far
+### Current evidence and constraints
 
-- Pi feature inventory: `state/return-artifacts/1ed12c94ef89.md`
-- Hermes feature inventory: `state/return-artifacts/eeefa34d82bd.md`
-- Plugin parity contract: `state/return-artifacts/efac00aa3cff.md`, `docs/plugin_creation.md`
-- Initial planner result: `state/return-artifacts/92c1b974c3b1.md`
-- Hermes host capability research: `state/return-artifacts/7993343060b3.md`, `state/return-artifacts/ccaca4e54b84.md`, `state/return-artifacts/bbea0ac80e61.md`, `state/return-artifacts/bc335bc848ae.md`
-- Live mina CLI spike: `/orch_on_probe` successfully injected `orchestra _orchestrator-skill` via `ctx.inject_message(..., role="user")`; scratch artifacts were cleaned up by `state/return-artifacts/2c656ccfe027.md`.
+- OpenCode command research: `state/return-artifacts/7a4d61864388.md`
+  - Official OpenCode custom commands are prompt templates.
+  - Local OpenCode TUI types expose undocumented slash command registration (`command.register`, `TuiCommand.slash`, `onSelect`).
+- OpenCode session injection research: `state/return-artifacts/2d53fc564571.md`
+  - `client.session.prompt(...)` / `promptAsync(...)` can target `path.id` with text `parts`.
+  - Auto-return wake delivery should prefer synchronous `prompt(...)`.
+- OpenCode UI/lifecycle research: `state/return-artifacts/c6077ebb5ead.md`
+  - Toasts, TUI lifecycle disposal, and footer/status slots appear supported in local TUI APIs.
+  - Transcript-entry rendering, stable dynamic completions, and Pi-style turn/tool budget hooks were not found.
+- Plugin creation guidance: `docs/plugin_creation.md`
+- OpenCode source/tests: `extensions/opencode/orchestra/index.ts`, `src/orchestra/assets/opencode/orchestra/index.ts`, `tests/test_opencode_plugin_source.py`, `tests/test_init_targets.py`
+- Verification baseline:
+  - Targeted OpenCode tests passed.
+  - `python3 -m ruff check .` passed after exclusions/cleanup.
+  - `python3 -m mypy src tests` passed.
+  - `python3 -m build` passed and included the OpenCode asset.
+  - `orchestra init opencode --force` and `opencode --help` passed.
+  - Full `python3 -m pytest` currently fails 10 tests in untouched Pi/report/baseline expectation areas; focused OpenCode tests pass.
 
-### Current parity matrix
+### Unfinished items
 
-| Capability | Hermes status | Marker | Notes |
-|---|---|---:|---|
-| `orch_dispatch(goal, role?, taskLabel?)` | present | done | Rejects timeout and identity overrides. |
-| Runtime session ownership | present | done | Uses host runtime context and normalized `hermes:<id>` ids. |
-| `/orch help/on/doctor/roles/status/history/stop/do` | present | done | Hermes command surface now includes `/orch on`. |
-| Consolidated auto-return reports | present | done | Includes delivered/release bookkeeping and generation guards that suppress late delivery after session cleanup. |
-| `/orch on` orchestrator-skill injection | implemented | done | Uses `orchestra _orchestrator-skill` and `ctx.inject_message(..., role="user")`; live mina CLI spike proved the path. |
-| Per-worker `_await-run` progress watching | removed | done | Live Hermes consistently failed in this path; consolidated auto-return remains, and Hermes must not fake progress through prompt injection. |
-| Active-worker footer/status UI | no public API found | blocked | Built-in footer/status commands exist, but no public plugin API or proven private mutator exists. Do not use private internals without new evidence. |
-| Argument completions | static metadata implemented | done | Uses `args_hint`; dynamic role/run-id completions are not supported by public plugin API. |
-| Rendered command/output entries | no public API found | blocked | No host UI rendering API found in `PluginContext`. |
-| Lifecycle cleanup hooks | implemented | done | Uses `on_session_start`, `on_session_end`, `on_session_finalize`, and `on_session_reset`; cleanup invalidates watcher generations and clears tracking. |
-| Turn/soft-timeout budget hooks | implemented | done | Uses `pre_tool_call` and `pre_llm_call`; no process-global turn-budget mutation. No generic turn-end hook exists in Hermes. |
+1. [x] sequential — Live end-to-end OpenCode smoke
+   - Scope: installed OpenCode plugin behavior in a real OpenCode session.
+   - Goal: exercise `orch_dispatch`, progress toast path, and final auto-return in the owning OpenCode session.
+   - Approved live sequence: run `orchestra init opencode --force`, start OpenCode from the repo root, and send a prompt asking it to use `orch_dispatch` with role `researcher`, task label `opencode-e2e-smoke`, and goal `Reply exactly OPENCODE_E2E_SMOKE_OK. Do not inspect or modify files.`
+   - Attempt `3218ff2f4ea0`: failed. `orchestra init opencode --force` installed `/Users/james/.config/opencode/plugins/orchestra/index.ts`, but `opencode debug info` reported `plugins: none`, `opencode debug config` reported `"plugin": []`, and a live `opencode run` prompt said `orch_dispatch` was unavailable. Negative control `opencode run ... "Reply exactly HELLO"` succeeded with the live LM Studio model.
+   - Current blocker: OpenCode plugin source is copied to nested `plugins/orchestra/index.ts`, but research `6970b3b471bd` found local OpenCode plugins are auto-loaded as JS/TS files directly under `~/.config/opencode/plugins/`; npm plugins use `"plugin": [...]`, so local install should not edit config.
+   - Installer fix: builder `cc0f1765dd3e` changed `orchestra init opencode` to install `~/.config/opencode/plugins/orchestra.ts` or `OPENCODE_CONFIG_DIR/plugins/orchestra.ts`, updated init tests and `ARCHITECTURE.md`, preserved source-checkout and packaged-asset fallback, and kept the plugin asset mirror matched. Focused init/OpenCode tests passed with 26 tests, focused Ruff passed, source/asset mirror matched, and `git diff --check` passed.
+   - Installer verification: verifier `64cb1549ee7a` passed; temp `OPENCODE_CONFIG_DIR` init created a top-level `plugins/orchestra.ts`, did not mutate `opencode.json`, and `opencode debug info` listed the plugin file URI.
+   - Cancelled live retry: verifier `93148a35aae5` was cancelled to rerun with the explicit user-specified LM Studio model.
+   - Live smoke: verifier `a6a2367a59b4` passed using `lmstudio/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved@q6_k`; `orch_dispatch` returned ack `orchestra dispatched: researcher 4a6f6294a84e`, follow-up history showed `OPENCODE_E2E_SMOKE_OK`, and final OpenCode response included `OPENCODE_E2E_SMOKE_OK`. Progress toast was not observable in the CLI transcript.
+   - Live `/orch` smoke: verifier `d5eb0090d847` passed using `lmstudio/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved@q6_k`; `orchestra init opencode --force` installed `/Users/james/.config/opencode/plugins/orchestra.ts` and `/Users/james/.config/opencode/commands/orch.md`; `opencode debug config` showed `command.orch.template`; `/orch help`, `/orch roles`, `/orch on`, `/orch status`, `/orch history 10`, and `/orch do Reply exactly OPENCODE_ORCH_TEMPLATE_SMOKE_OK` all routed successfully, with dispatch result `OPENCODE_ORCH_TEMPLATE_SMOKE_OK`.
+   - Follow-up live test found an OpenCode auto-return binding bug when `client.session.prompt` was called unbound. Fixed by binding `prompt`/`promptAsync` to `client.session`; focused tests pass and a live `orch_dispatch` smoke with `OPENCODE_PLUGIN_BIND_OK` completed without the `this._client` failure and marked the report delivered. Reviewer `1c0167871a1d` and appsec `ed5b79cb0edf` passed the binding fix.
+   - User TUI `/orch on` exposed model/tool retries because OpenCode supplied optional `limit`, `role`, `setting`, and `value` fields for `action=on`; fixed `orch_status` to ignore `limit` except for `history` and role fields except for `roles`, while preserving `history` limit validation and `roles` update validation. Reinstalled plugin and live-tested `/orch on` plus an explicit TUI-like extra-field `orch_status` call successfully. Reviewer `437099537117` and appsec `9d015430a31d` passed.
+   - Verbosity polish: shortened the OpenCode `commands/orch.md` prompt template and changed `orch_status help` to call core `help-opencode`, which omits OpenCode-unsupported `/orch do --timeout` and `/orch stop <run-id>` wording. Live `/orch help` returned concise OpenCode-specific help. Reviewer `e130e1e6609f` and appsec `f845808d05eb` passed the stop-removal follow-up.
+   - Stop when live behavior is documented or a host/runtime blocker is recorded.
+   - Verify: dispatch ack, dispatch/progress toast if observable, final report in the same session, and assistant response containing `OPENCODE_E2E_SMOKE_OK`.
+   - Risk: P1 — live host/model behavior may differ from source-contract tests.
 
-### Research completed
+2. [ ] sequential — Spike executable OpenCode TUI slash-command parity
+   - Scope: disposable scratch OpenCode TUI plugin only.
+   - Goal: prove whether undocumented TUI `command.register` + `slash` + `onSelect` can implement safe executable `/orch` commands with user-visible output and session-targeted injection.
+   - Approved spike constraints: use a temporary `OPENCODE_CONFIG_DIR`; do not edit repo files; create disposable TUI plugin files only under the temp config; launch live OpenCode only after the fixture exists.
+   - Attempt `7211b7514a6f`: timed out. Shrinking to sequential spike slices: first create a disposable fixture only, then run one live command, then interpret evidence.
+   - Fixture slice: builder `5f019675d326` created `/tmp/orchestra-opencode-tui-slash-spike/plugins/orchestra.ts`, registering disposable `/orch-spike`, logging `onSelect`, attempting to resolve a current session id, injecting `ORCHESTRA_TUI_SPIKE_ON_MARKER` only if session id and `client.session.prompt` are available, and logging `lifecycle.onDispose`.
+   - Live command slice: verifier `5877a037a4b9` was blocked. It launched the OpenCode TUI with the temp config and model, but the TUI command invocation was not safely automatable; logs showed startup only and no `onSelect`, marker injection, or dispose evidence.
+   - Manual user attempt: `/orch-spike` was not visible in the OpenCode TUI. This suggests either the disposable fixture uses the wrong TUI plugin registration shape, TUI plugins are loaded differently than server plugins, or slash visibility requires additional metadata/config.
+   - RCA research `d25ab55d377e`: fixture was malformed for TUI plugin loading: no default export, wrong imports, wrong `command.register` shape, wrong `slash` shape, no config plugin spec, and local `@opentui/*` peer deps were unresolved. Next spike slice is to build a corrected temp fixture with `export default { id, tui(api) { api.command?.register(() => [...]) } }` and config `plugin` entry.
+   - Corrected fixture slice: builder `598fd09e3e1e` created `/tmp/orchestra-opencode-tui-slash-spike-v2` with `opencode.json`, `package.json`, and `plugins/orchestra-spike.ts`; config `plugin[]` points to `file:///tmp/orchestra-opencode-tui-slash-spike-v2/plugins/orchestra-spike.ts`; local import sanity check returned `object orchestra-spike`; `opencode debug config` included the temp file URI.
+   - Corrected live fixture test: verifier `30777db18a05` failed. `opencode debug config` included the temp plugin URI and `opencode debug info` listed both global Orchestra and temp spike plugins, but live TUI input `/orch-spike` and fallback `/orch-spike<Tab><Return>` showed `No matching items`; no `onSelect`, marker injection, session id, or dispose evidence was observed.
+   - RCA research `08647fd44374`: most likely `api.command.register` is unsupported or drifted as a legacy/deprecated path in OpenCode `@opencode-ai/plugin` 1.17.11; recommended one tiny follow-up is to inspect the version-matched `api.keymap.registerLayer({ commands, bindings })` shape and re-test only if source evidence is found.
+   - Stop when `/orch help` and `/orch on` feasibility is proven or rejected in live OpenCode.
+   - Verify: one live OpenCode command invocation with observed behavior.
+   - Risk: P1/P0 — undocumented host API and session injection boundary.
 
-- `f1e04c9f9106` — current `python3` environment has no importable Hermes package; installed source was found separately under `/Users/james/.hermes/hermes-agent`.
-- `7993343060b3` — Hermes `PluginContext` supports `inject_message`, `register_command(args_hint=...)`, and lifecycle hooks; no public notification or footer/status API was found.
-- `ccaca4e54b84` — Hermes slash autocomplete exists, but plugin commands only get static/metadata-style `args_hint`, not dynamic argument completion callbacks.
+3. [x] sequential — Implement documented prompt-template `/orch` command and companion `orch_status` tool
+   - Scope: OpenCode command template install path, assets, and plugin tools.
+   - User decision: use one companion tool named `orch_status`; keep worker dispatch in existing `orch_dispatch`.
+   - `orch_status` actions:
+     - `on` → run `orchestra _orchestrator-skill` and return the main-session orchestrator skill payload for the model to adopt.
+     - `status` → run `orchestra status --session-id opencode:<context.sessionID>`.
+     - `history` → run `orchestra history --session-id opencode:<context.sessionID> --limit <limit>`.
+     - `help` → run `orchestra help-host`.
+     - `doctor` → run `orchestra doctor`.
+     - `roles` → list with `orchestra roles` or `orchestra roles --all`; if `role`, `setting`, and `value` are all supplied, update via `orchestra roles ROLE SETTING VALUE`.
+   - Supported role config change settings, verified by research `1e3a12cb1a64`: `harness`, `enabled`, `model`, `profile`, `agent`. Do not edit config files by hand. Do not promise unsupported fields.
+   - Target command template: install documented OpenCode `commands/orch.md` so `/orch on|status|history|help|doctor|roles` tells the model to call `orch_status` and `/orch do ...` tells the model to call `orch_dispatch`; unsupported stop/timeout routes are omitted from OpenCode help/template text.
+   - Tool slice: builder `b039b552bbfc` added `orch_status` with `on|status|history|help|doctor|roles`, session-scoped `status/history`, role-setting validation for `harness|enabled|model|profile|agent`, tokenized CLI calls, source/asset mirror sync, and source-contract tests. Focused pytest passed with 20 tests, focused Ruff passed, mirror check passed, and `git diff --check` passed.
+   - Tool verification: verifier `c254685ecb1c` passed; fresh focused pytest passed with 20 tests, focused Ruff passed, source/asset mirror matched, and `git diff --check` passed.
+   - Tool review: reviewer `2fc27169b94d` failed because OpenCode docs/artifacts still described only `orch_dispatch`; update `FOUNDATION.md`, `ARCHITECTURE.md`, and `RESEARCH.md` to include `orch_status` and supported actions/settings.
+   - Tool security: appsec `5f10589fa3a7` failed because core role listings print `env` values; `orch_status roles` would expose those values to the model. User decision: do not redact role `env` values in this slice because project role env values are not used for secrets; proceed with the docs/artifact stale-surface fix only.
+   - Docs follow-up: builder `5eda98e180c4` updated `FOUNDATION.md`, `ARCHITECTURE.md`, `RESEARCH.md`, and `docs/plugin_creation.md` to mention both `orch_dispatch` and `orch_status`, list `orch_status` actions `on|status|history|help|doctor|roles`, and state role config changes use `orchestra roles ROLE SETTING VALUE` with supported settings `harness|enabled|model|profile|agent`; verifier `84b064202f09` passed.
+   - Command-template install: builder `e60f83e5683b` found this already implemented: `orchestra init opencode` installs top-level `plugins/orchestra.ts` and `commands/orch.md`; tests passed (`tests/test_init_targets.py` 8 passed, `tests/test_opencode_plugin_source.py` 20 passed), Ruff passed, build passed including `assets/opencode/orchestra/commands/orch.md`, and `git diff --check` passed. Reviewer `a6d82f231038`, verifier `b40459da7355`, and appsec `f2f88f87ff3f` passed.
+   - Live `/orch` smoke: verifier `d5eb0090d847` passed with `/orch help`, `/orch roles`, `/orch on`, `/orch status`, `/orch history 10`, and `/orch do Reply exactly OPENCODE_ORCH_TEMPLATE_SMOKE_OK`; follow-up local smoke used `@q6_k` and confirmed the bound session prompt fix with `OPENCODE_PLUGIN_BIND_OK`.
+   - Stop when `orchestra init opencode --force` installs the command template, docs/tests cover it, and live `/orch on` can be tested manually or through OpenCode if automatable.
+   - Risk: P1/P0 — model-mediated command UX, role config changes through CLI, and session-boundary instructions.
 
-### Research in flight
+4. [x] sequential — Spike OpenCode footer/status slot shape
+   - Scope: disposable TUI plugin fixture only; no production code until slot registration shape is proven.
+   - Research `0b7dcce21e85`: OpenCode exposes TUI slot APIs through `@opencode-ai/plugin/tui`; candidate slots include `app_bottom`, `home_footer`, and `sidebar_footer`; state APIs include `api.state.session.status(sessionID)` and route context via `api.route.current`.
+   - Spike `4fbf8500afa8`: found the API shape as `api.slots.register(plugin)` where `plugin` is a Solid-style TUI plugin exported as `export default { id?, tui(api, options, meta) { ... } }`; host slot map includes `home_footer` and `sidebar_footer`, but not `app_bottom`.
+   - Live slot check `1a4203504ddc` failed: slot types exist in `/Users/james/.opencode/node_modules/@opencode-ai/plugin/dist/tui.d.ts`, but `opencode plugin /tmp/orchestra-opencode-tui-slot-shape-spike/plugin --force --print-logs --log-level DEBUG` rejected the minimal TUI plugin with `must default export an object with server()`, and no footer/sidebar render evidence was observed in the live TUI.
+   - Stop when a tiny fixture proves `home_footer` or `sidebar_footer` renders from a plugin in live OpenCode, or records unsupported/blocked evidence.
+   - Risk: P1 — TUI slot API is type-backed, but the live plugin load path for `tui()` plugins is not proven in this installed OpenCode version.
 
-None.
+5. [ ] blocked — Executable TUI slash commands and production footer/status UI
+   - Blocker for executable slash commands: source-backed proof that OpenCode TUI command APIs can register executable slash commands in the current build.
+   - Blocker for production footer/status UI: successful live TUI plugin load/render proof for `home_footer` or `sidebar_footer`; current live fixture was rejected by the OpenCode plugin loader.
+   - Target if accepted: executable `/orch ...` and/or active worker footer/status with cleanup on dispose.
+   - Excluded unless new evidence appears: transcript-entry rendering, stable dynamic completions, Pi-style turn/tool budget hooks.
+   - Risk: P1 — lifecycle leaks or dependency on unstable host UI APIs.
 
-### Additional research completed
-
-- `bbea0ac80e61` — Hermes supports `pre_tool_call` blocking, `pre_llm_call` context injection, and lifecycle hooks, but has no generic `turn_end` hook and no explicit elapsed-session budget data in hooks.
-- `bc335bc848ae` — no public footer/status/notification plugin API exists; private `ctx._manager._cli_ref` access exists but no concrete safe footer/status/notification mutator was proven.
-- `0f461a6b519b` — Pi budget contract uses `ORCHESTRA_DISPATCH_BUDGET`, `ORCHESTRA_TURN_BUDGET`, `ORCHESTRA_SOFT_TIMEOUT_SECONDS`, and `ORCHESTRA_BUDGET_EXCEEDED_PROMPT`; only soft timeout blocks tool calls, while turn budget injects a steer prompt on turn end.
-
-### Planned slices
-
-1. [x] sequential — Complete Hermes capability research
-   - Scope: installed Hermes package/source API evidence only.
-   - Result: source-supported features identified and recorded in `RESEARCH.md`.
-
-2. [x] sequential — Run exact spikes where research cannot prove behavior
-   - Result: Spike A proved `/orch on` injection in live mina Hermes CLI.
-   - User decision: skip remaining spikes and proceed with implementation.
-
-3. [x] sequential — Implement `/orch on`
-   - Scope: `extensions/hermes/orchestra/__init__.py`, focused tests.
-   - Result: builder `6af0e3adf825` implemented `/orch on` using `orchestra _orchestrator-skill` plus `ctx.inject_message(..., role="user")` and added focused tests.
-   - Verification: `python3 -m pytest tests/test_hermes_plugin_source.py -q` passed with 59 tests; focused ruff passed; focused mypy on tests passed. Full touched-file mypy still has a pre-existing `no-any-return` at `extensions/hermes/orchestra/__init__.py:402`.
-
-4. [x] sequential — Remove Hermes `_await-run` progress handling
-   - Scope: `extensions/hermes/orchestra/__init__.py`, focused tests.
-   - Result: live Hermes showed the `_await-run` watcher path fails consistently while consolidated auto-return works, so builder `81fb45a35bff` removed the Hermes per-worker progress watcher code and tests.
-   - Verification: `python3 -m pytest tests/test_hermes_plugin_source.py -q` passed with 76 tests; focused ruff passed; `python3 -m mypy src tests` passed; `git diff --check` passed.
-
-5. [ ] sequential or blocked — Implement host UX parity items supported by Hermes APIs
-   - Completed supported item:
-     - static `args_hint` command metadata — builder `7dc63150e43c`; focused pytest 59 passed and focused ruff passed.
-   - Completed supported item:
-     - lifecycle cleanup hooks — builder `214602f8a5d0`; focused pytest 60 passed and focused ruff passed.
-   - Completed supported items:
-     - `pre_tool_call` soft-timeout blocking and `pre_llm_call` budget/context injection — builder `dff85dacee2f`; focused pytest 71 passed and focused ruff passed. Security follow-up `42a07a0f923d` removed process-global `ORCHESTRA_TURN_BUDGET` mutation and kept turn budget in session-local state; focused pytest 73 passed and focused ruff passed.
-   - Sequential supported items remaining:
-     - none for this slice
-   - Blocked unsupported items unless new Hermes API evidence appears:
-     - native notifications
-     - active-worker footer/status
-     - rendered command/output entries
-     - dynamic role/run-id argument completions
-   - Each item must have a source-backed Hermes API and focused tests before build dispatch.
-
-6. [ ] sequential — Documentation and artifact alignment
-   - Scope: `RESEARCH.md`, `ROADMAP.md` only if an item is proven impossible or intentionally postponed by user decision, and `docs/plugin_creation.md` only if parity wording needs correction.
-   - Stop when implemented parity and unsupported host limits are documented with evidence.
-
-7. [ ] sequential — Verification/review/security
-   - Focused checks passed: `python3 -m pytest tests/test_hermes_plugin_source.py -q` passed with 73 tests; focused ruff passed; `python3 -m mypy tests/test_hermes_plugin_source.py` passed.
-   - Review passed before the security follow-up; security re-review `2ae146722bfe` passed after the env-bleed fix.
-   - Final review follow-up `8ef14f3ceac3` added watcher generation guards; focused pytest passed with 75 tests and focused ruff passed.
-   - Final stabilization `98a72e31a981` kept per-session budget state, `/orch on` idempotence, cleanup clearing, and watcher guards; `python3 -m pytest tests/test_hermes_plugin_source.py -q` passed with 78 tests, focused ruff passed, `python3 -m mypy src tests` passed, and `git diff --check` passed.
-   - Final review follow-up `7896af9e6c8a` clears `/orch on` active state on helper/payload/inject exceptions and added retry regression coverage; focused pytest passed with 79 tests, focused ruff passed, and `python3 -m mypy src tests` passed.
-   - Final review follow-up: `ARCHITECTURE.md` now reflects Hermes `/orch on`, session activation tracking, and lifecycle cleanup responsibilities.
-   - Final checks remaining before commit readiness: final verification/review/security re-check after the architecture alignment update.
+5. [x] sequential — Final verification/review/commit readiness for unfinished items
+   - Scope: full diff after any spike-promoted or production implementation work.
+   - Verify: focused tests, `python3 -m pytest`, `python3 -m ruff check .`, `python3 -m mypy src tests`, `python3 -m build`, `orchestra init opencode --force`, live OpenCode smoke where applicable.
+   - Final gates: reviewer `b0f6bb7b59e8` passed and appsec `08eb3384756f` passed for the OpenCode parity diff; reviewer `1c0167871a1d` and appsec `ed5b79cb0edf` passed the follow-up auto-return binding fix. Full `python3 -m pytest` still has unrelated baseline failures in untouched Pi/report expectations; focused OpenCode tests, Ruff, mypy, build, mirror checks, live `/orch` smoke, and `git diff --check` passed.
+   - Stop when implemented unfinished scope is verified, reviewed, and ready for commit approval.
+   - Risk: P1 — host integration readiness.
 
 ### Approval gates
 
-- Implementation scope is approved by the user after research; remaining edits should stay within the slices above.
-- Destructive work is out of scope.
-- Commit/push require separate approval after verification, review, and security review.
+- Research/planning may proceed.
+- Live OpenCode session/model-backed smoke requires user approval before execution.
+- Production implementation of undocumented TUI slash-command APIs requires explicit user acceptance after spike evidence.
+- Commit/push require separate approval.

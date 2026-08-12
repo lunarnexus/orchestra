@@ -188,6 +188,8 @@ as required state.
 - Dispatch Pi workers with focused role prompts.
 - Support the MVP `/orch` host-facing command set: `/orch do`, `/orch status`,
   `/orch stop`, `/orch doctor`, and `/orch history`.
+- OpenCode host support includes both `orch_dispatch` and `orch_status`; `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, and `roles`.
+- Role config changes use `orchestra roles ROLE SETTING VALUE`, not hand-edited config files. Supported settings are `harness`, `enabled`, `model`, `profile`, and `agent`.
 - Return compact worker results without stuffing full worker context into the
   orchestrator session.
 - Consolidate worker completions by orchestrator session, not by batch: when the
@@ -216,6 +218,9 @@ worker returns with a standing objective and completion contract.
 `/orch status` reports active agents/runs plus tiny service health. `/orch history`
 reads compact DB summaries and JSONL operational logs for previous inputs and
 outputs.
+OpenCode command routing should treat `/orch` prompt templates as convenience
+wrappers over `orch_status` and `orch_dispatch` rather than a separate
+orchestration path.
 
 ### Context and Results
 

@@ -9,6 +9,23 @@ import pytest
 from orchestra.app import AppError, init_all, init_opencode, init_pi
 from orchestra.cli import main
 
+OPENCODE_COMMAND_TEMPLATE = """# /orch
+Args: `$ARGUMENTS`
+
+Call exactly one Orchestra tool for this command, then return the tool output to the user:
+- `on` -> `orch_status({ action: "on" })`
+- `status` -> `orch_status({ action: "status" })`
+- `history [limit]` -> `orch_status({ action: "history", limit })`
+- `help` -> `orch_status({ action: "help" })`
+- `doctor` -> `orch_status({ action: "doctor" })`
+- `roles` -> `orch_status({ action: "roles" })`
+- `roles ROLE SETTING VALUE` -> `orch_status({ action: "roles", role, setting, value })`
+- `do [--role ROLE] ...` -> `orch_dispatch({ goal, role?, taskLabel? })`
+
+Use only fields shown for the selected action. Never invent a session id.
+Supported role settings: `harness`, `enabled`, `model`, `profile`, `agent`.
+""".lstrip()
+
 
 def completed(
     args: list[str],
@@ -26,6 +43,9 @@ def _write_source_tree(root: Path, catalog_text: str) -> None:
     opencode_extension = root / "extensions" / "opencode" / "orchestra" / "index.ts"
     opencode_extension.parent.mkdir(parents=True)
     opencode_extension.write_text("opencode extension", encoding="utf-8")
+    opencode_command = root / "extensions" / "opencode" / "orchestra" / "commands" / "orch.md"
+    opencode_command.parent.mkdir(parents=True)
+    opencode_command.write_text(OPENCODE_COMMAND_TEMPLATE, encoding="utf-8")
     (root / "config.yaml").write_text("state_dir: state\n", encoding="utf-8")
     (root / "prompts.yaml").write_text("{}\n", encoding="utf-8")
     (root / "agent-catalog.yaml").write_text(catalog_text, encoding="utf-8")
@@ -55,10 +75,12 @@ roles:
 
     result = init_opencode(source_root=source, copy=True)
 
-    assert [item.action for item in result.files] == ["created"]
-    assert [item.mode for item in result.files] == ["copy"]
-    installed_extension = opencode_config / "plugins" / "orchestra" / "index.ts"
+    assert [item.action for item in result.files] == ["created", "created"]
+    assert [item.mode for item in result.files] == ["copy", "copy"]
+    installed_extension = opencode_config / "plugins" / "orchestra.ts"
+    installed_command = opencode_config / "commands" / "orch.md"
     assert installed_extension.read_text(encoding="utf-8") == "opencode extension"
+    assert installed_command.read_text(encoding="utf-8") == OPENCODE_COMMAND_TEMPLATE
     assert result.verification_command == "opencode --help"
 
 
@@ -82,15 +104,19 @@ roles:
     harness_config: opencode
 """.lstrip(),
     )
-    installed_extension = opencode_config / "plugins" / "orchestra" / "index.ts"
+    installed_extension = opencode_config / "plugins" / "orchestra.ts"
+    installed_command = opencode_config / "commands" / "orch.md"
     installed_extension.parent.mkdir(parents=True)
     installed_extension.write_text("existing", encoding="utf-8")
+    installed_command.parent.mkdir(parents=True)
+    installed_command.write_text("existing command", encoding="utf-8")
     monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(opencode_config))
 
     result = init_opencode(source_root=source)
 
-    assert result.files[0].action == "exists"
+    assert [item.action for item in result.files] == ["exists", "exists"]
     assert installed_extension.read_text(encoding="utf-8") == "existing"
+    assert installed_command.read_text(encoding="utf-8") == "existing command"
 
 
 def test_init_opencode_force_overwrites(
@@ -113,15 +139,40 @@ roles:
     harness_config: opencode
 """.lstrip(),
     )
-    installed_extension = opencode_config / "plugins" / "orchestra" / "index.ts"
+    installed_extension = opencode_config / "plugins" / "orchestra.ts"
+    installed_command = opencode_config / "commands" / "orch.md"
     installed_extension.parent.mkdir(parents=True)
     installed_extension.write_text("existing", encoding="utf-8")
+    installed_command.parent.mkdir(parents=True)
+    installed_command.write_text("existing command", encoding="utf-8")
     monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(opencode_config))
 
     result = init_opencode(source_root=source, force=True, copy=True)
 
-    assert result.files[0].action == "updated"
+    assert [item.action for item in result.files] == ["updated", "updated"]
     assert installed_extension.read_text(encoding="utf-8") == "opencode extension"
+    assert installed_command.read_text(encoding="utf-8") == OPENCODE_COMMAND_TEMPLATE
+
+
+def test_init_opencode_copy_mode_uses_packaged_asset_when_source_root_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opencode_config = tmp_path / "opencode-config"
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(opencode_config))
+    from orchestra import app
+
+    monkeypatch.setattr(app, "_find_source_root", lambda source_root=None: None)
+
+    result = init_opencode(copy=True)
+
+    installed_extension = opencode_config / "plugins" / "orchestra.ts"
+    installed_command = opencode_config / "commands" / "orch.md"
+    assert [item.action for item in result.files] == ["created", "created"]
+    assert [item.mode for item in result.files] == ["copy", "copy"]
+    assert result.verification_command == "opencode --help"
+    assert "orch_dispatch" in installed_extension.read_text(encoding="utf-8")
+    assert installed_command.read_text(encoding="utf-8") == OPENCODE_COMMAND_TEMPLATE
 
 
 def test_cli_init_opencode_uses_current_source_tree(
@@ -152,9 +203,10 @@ roles:
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "created:copy:" in captured.out
+    assert captured.out.count("created:copy:") == 2
     assert "verify: opencode --help" in captured.out
-    assert (opencode_config / "plugins" / "orchestra" / "index.ts").exists()
+    assert (opencode_config / "plugins" / "orchestra.ts").exists()
+    assert (opencode_config / "commands" / "orch.md").exists()
 
 
 def test_init_all_detects_harnesses_and_deduplicates_targets(
@@ -207,8 +259,9 @@ roles:
     assert result.pi is not None
     assert len(result.hermes) == 2
     assert result.opencode is not None
-    assert [item.action for item in result.opencode.files] == ["created"]
-    assert result.opencode.files[0].target == opencode_config / "plugins" / "orchestra" / "index.ts"
+    assert [item.action for item in result.opencode.files] == ["created", "created"]
+    assert result.opencode.files[0].target == opencode_config / "plugins" / "orchestra.ts"
+    assert result.opencode.files[1].target == opencode_config / "commands" / "orch.md"
     assert calls == [
         [
             "hermes",

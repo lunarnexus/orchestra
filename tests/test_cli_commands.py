@@ -1267,6 +1267,21 @@ def test_role_metadata_lists_unused_harness_configs(
     assert payload == {"roles": ["worker"], "harnessConfigs": ["pi", "unused"]}
 
 
+def test_opencode_help_describes_supported_open_code_template_commands(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from orchestra.cli import main
+
+    exit_code = main(["help-opencode"])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "OpenCode /orch commands:" in output
+    assert "/orch do [--role ROLE] <request>" in output
+    assert "/orch stop" not in output
+    assert "/orch do --timeout" not in output
+
+
 def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
