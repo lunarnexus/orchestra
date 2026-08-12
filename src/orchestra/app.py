@@ -405,12 +405,14 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
                 attempted_role = fallback_role
 
         if started_role is None or worker is None:
-            return _finalize_supervisor_setup_failure(
+            finalized = _finalize_supervisor_setup_failure(
                 context,
                 run_id,
                 error_text="; ".join(startup_failures),
                 blocker_text=_setup_failure_blocker(last_failure_text),
             )
+            pending_request.request_file.unlink(missing_ok=True)
+            return finalized
 
     assert started_role is not None
     assert worker is not None

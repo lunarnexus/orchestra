@@ -205,7 +205,7 @@ def test_python_module_requested_role_fallback_is_visible_in_history_and_final_r
         "5",
     )
     assert report.returncode == 0
-    assert f"[orchestra: Worker {run_id} success]" in report.stdout
+    assert f"[orchestra: reviewer {run_id} success]" in report.stdout
     assert note in report.stdout
 
 

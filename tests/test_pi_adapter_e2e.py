@@ -102,7 +102,7 @@ def test_pi_extension_host_on_refreshes_skill_each_time(
 
     install = _install_pi_extension(env)
     assert install.returncode == 0
-    assert 'verify: pi --no-approve -p "/orch help"' in install.stdout
+    assert 'verify: pi --no-approve -p "/orch doctor"' in install.stdout
     assert (pi_dir / "extensions" / "orchestra" / "index.ts").exists()
 
     session_id = f"orch-host-on-{uuid.uuid4().hex}"

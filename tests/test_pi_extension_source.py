@@ -94,7 +94,7 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert "format_dispatch_ack" in core_source
     assert "format_command_echo" in core_source
     assert "tool_info" in core_source
-    assert "[orchestra: Worker" in core_source
+    assert "[orchestra: {run.role}" in core_source
     assert "Request: {run.task_label}" in core_source
     assert "Log: {run.log_path}" in core_source
     assert "{label}: {summary}" in core_source

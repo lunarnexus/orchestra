@@ -47,7 +47,7 @@ def test_init_pi_installs_global_extension_and_config(
     assert (pi_dir / "orchestra" / "config.yaml").exists()
     assert (pi_dir / "orchestra" / "prompts.yaml").exists()
     assert (pi_dir / "orchestra" / "agent-catalog.yaml").exists()
-    assert result.verification_command == 'pi --no-approve -p "/orch help"'
+    assert result.verification_command == 'pi --no-approve -p "/orch doctor"'
 
 
 def test_init_pi_does_not_overwrite_without_force(
@@ -104,5 +104,5 @@ def test_cli_init_pi_uses_current_source_tree(
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert "verify: pi --no-approve -p \"/orch help\"" in captured.out
+    assert "verify: pi --no-approve -p \"/orch doctor\"" in captured.out
     assert (pi_dir / "extensions" / "orchestra" / "index.ts").exists()

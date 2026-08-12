@@ -177,7 +177,7 @@ def test_await_session_report_retries_transient_database_open_failure(
 
     assert report is not None
     assert report.run_ids == ["run-transient"]
-    assert "[orchestra: Worker run-transient success]" in report.text
+    assert "[orchestra: worker run-transient success]" in report.text
     assert flaky_store.get_run_calls == 2
 
 

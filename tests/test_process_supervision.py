@@ -437,7 +437,7 @@ def test_unknown_harness_marks_run_failed_and_clears_active_queue(
     assert record.blocker_text == "Worker harness is not configured"
     assert store.list_active_runs("manual:missing-harness") == []
     assert store.list_active_runs() == []
-    assert (tmp_path / "state" / "requests" / f"{run_id}.json").exists() is True
+    assert (tmp_path / "state" / "requests" / f"{run_id}.json").exists() is False
 
     status = run_cli(
         "--config",

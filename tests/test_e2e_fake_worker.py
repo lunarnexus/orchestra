@@ -82,6 +82,6 @@ def test_fake_worker_e2e_stop_history_and_pending_report(
         "manual:e2e",
     )
     assert report.returncode == 0
-    assert f"[orchestra: Worker {run_id} fail]" in report.stdout
+    assert f"[orchestra: worker {run_id} fail]" in report.stdout
     assert "Request: long running task" in report.stdout
     assert "Cancelled by orchestra stop" in report.stdout

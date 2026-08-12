@@ -54,8 +54,8 @@ def test_consolidated_report_includes_all_unreported_terminal_runs(
     report = consume_pending_session_report(context, "manual:report")
     assert report is not None
     assert report.startswith("[orchestra: 2 workers returned]\n\n")
-    assert f"[orchestra: Worker {first_id} success]" in report
-    assert f"[orchestra: Worker {second_id} success]" in report
+    assert f"[orchestra: worker {first_id} success]" in report
+    assert f"[orchestra: worker {second_id} success]" in report
     assert "Request: first goal" in report
     assert "Request: second goal" in report
     assert "Result: worker ok" in report
@@ -361,5 +361,5 @@ def test_fallback_note_appears_in_final_report(
 
     note = "fallback: reviewer used harness_config pi after hermes failed to start"
     assert report is not None
-    assert f"[orchestra: Worker {run_id} success]" in report
+    assert f"[orchestra: reviewer {run_id} success]" in report
     assert f"Result: {note}; worker ok" in report
