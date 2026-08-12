@@ -185,7 +185,7 @@ class RoleConfig:
     model: str | None = None
     profile: str | None = None
     agent: str | None = None
-    worker_budget: int | None = None
+    nested_dispatch_depth: int | None = None
     turn_limit: int | None = None
     soft_timeout: int | None = None
     enabled: bool = True
@@ -344,6 +344,8 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
         if not isinstance(role_raw, dict):
             raise ConfigError(f"role '{role_name}' must be a mapping")
 
+        _validate_role_keys(role_raw, role_name, uses_harness_configs=bool(harness_configs))
+
         if harness_configs:
             harness_config_name = _get_required_string(
                 role_raw,
@@ -374,7 +376,7 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                 model=_get_optional_string(role_raw, "model"),
                 profile=_get_optional_string(role_raw, "profile"),
                 agent=_get_optional_string(role_raw, "agent"),
-                worker_budget=_get_optional_positive_int_or_none(role_raw, "worker_budget"),
+                nested_dispatch_depth=_get_optional_nested_dispatch_depth(role_raw),
                 turn_limit=_get_optional_positive_int_or_none(role_raw, "turn_limit"),
                 soft_timeout=_get_optional_positive_int_or_none(role_raw, "soft_timeout"),
                 enabled=_get_optional_bool(role_raw, "enabled", True),
@@ -411,7 +413,7 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
             model=_get_optional_string(role_raw, "model"),
             profile=_get_optional_string(role_raw, "profile"),
             agent=_get_optional_string(role_raw, "agent"),
-            worker_budget=_get_optional_positive_int_or_none(role_raw, "worker_budget"),
+            nested_dispatch_depth=_get_optional_nested_dispatch_depth(role_raw),
             turn_limit=_get_optional_positive_int_or_none(role_raw, "turn_limit"),
             soft_timeout=_get_optional_positive_int_or_none(role_raw, "soft_timeout"),
             enabled=_get_optional_bool(role_raw, "enabled", True),
@@ -560,6 +562,38 @@ def _get_optional_positive_int_or_none(data: dict[str, Any], key: str) -> int | 
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ConfigError(f"'{key}' must be a positive integer")
     return value
+
+
+def _get_optional_nested_dispatch_depth(data: dict[str, Any]) -> int | None:
+    return _get_optional_positive_int_or_none(data, "nested_dispatch_depth")
+
+
+def _validate_role_keys(
+    data: dict[str, Any], role_name: str, *, uses_harness_configs: bool
+) -> None:
+    allowed_keys = {
+        "harness_fallback",
+        "prompt_addition",
+        "model",
+        "profile",
+        "agent",
+        "nested_dispatch_depth",
+        "turn_limit",
+        "soft_timeout",
+        "enabled",
+        "skills",
+        "env",
+    }
+    allowed_keys.add("harness_config" if uses_harness_configs else "harness")
+    if not uses_harness_configs:
+        allowed_keys.add("command")
+    unknown_keys = sorted(set(data) - allowed_keys)
+    if unknown_keys:
+        joined = ", ".join(unknown_keys)
+        raise ConfigError(
+            f"role '{role_name}' uses unsupported keys: {joined}; "
+            f"allowed keys are {', '.join(sorted(allowed_keys))}"
+        )
 
 
 def _get_optional_string_list(

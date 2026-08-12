@@ -34,7 +34,7 @@ def orchestra_can_dispatch(env: Mapping[str, str] | None = None) -> bool:
 
 def worker_subprocess_env(
     *,
-    worker_budget: int | None = None,
+    nested_dispatch_depth: int | None = None,
     turn_limit: int | None = None,
     soft_timeout: int | None = None,
     budget_exceeded_prompt: str = "",
@@ -44,7 +44,7 @@ def worker_subprocess_env(
     worker_env = dict(env or os.environ)
     worker_env.update(role_env or {})
     current_budget = orchestra_dispatch_budget(worker_env)
-    configured_budget = worker_budget or 1
+    configured_budget = nested_dispatch_depth or 1
     if current_budget > 1:
         child_budget = min(current_budget - 1, configured_budget)
     else:

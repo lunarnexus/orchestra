@@ -422,7 +422,7 @@ roles:
     prompt_addition: Review only.
     model: gpt-5
     profile: reviewer
-    worker_budget: 2
+    nested_dispatch_depth: 2
     turn_limit: 30
     soft_timeout: 840
     skills:
@@ -447,13 +447,35 @@ roles:
     assert reviewer.harness_fallback[0].agent is None
     assert reviewer.model == "gpt-5"
     assert reviewer.profile == "reviewer"
-    assert reviewer.worker_budget == 2
+    assert reviewer.nested_dispatch_depth == 2
     assert reviewer.turn_limit == 30
     assert reviewer.soft_timeout == 840
     assert reviewer.command == ["hermes", "--profile", "{profile}", "-z", "{prompt}"]
     assert reviewer.enabled is True
     assert reviewer.skills == ("code-reviewer",)
     assert reviewer.env == {"FEATURE_FLAG": "1", "EMPTY_OK": ""}
+
+
+def test_load_agent_catalog_rejects_legacy_worker_budget_key(tmp_path: Path) -> None:
+    path = tmp_path / "agent-catalog.yaml"
+    path.write_text(
+        """
+default_role: worker
+roles:
+  worker:
+    harness: pi
+    command: [pi]
+    worker_budget: 2
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    match = (
+        r"role 'worker' uses unsupported keys: worker_budget; "
+        r"allowed keys are .*nested_dispatch_depth.*"
+    )
+    with pytest.raises(ConfigError, match=match):
+        load_agent_catalog(path)
 
 
 @pytest.mark.parametrize(
@@ -516,8 +538,8 @@ roles:
             "roles:\n"
             "  worker:\n"
             "    harness_config: pi\n"
-            "    worker_budget: 0\n",
-            "'worker_budget' must be a positive integer",
+            "    nested_dispatch_depth: 0\n",
+            "'nested_dispatch_depth' must be a positive integer",
         ),
         (
             "harness_configs:\n"

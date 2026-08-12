@@ -121,4 +121,4 @@ roles:
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
       HINDSIGHT4PI_AUTO_RECALL: '0'
-    worker_budget: 2
+    nested_dispatch_depth: 2

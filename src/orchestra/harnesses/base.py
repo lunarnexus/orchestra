@@ -22,7 +22,7 @@ class WorkerRequest:
     acceptance_target: str = ""
     return_format: str = ""
     task_label: str = ""
-    worker_budget: int | None = None
+    nested_dispatch_depth: int | None = None
     turn_limit: int | None = None
     soft_timeout: int | None = None
     budget_exceeded_prompt: str = ""

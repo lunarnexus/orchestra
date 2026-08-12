@@ -332,7 +332,7 @@ A standalone `orchestra-researcher` application could justify this architecture 
 
 ### Worker Budget
 
-`worker_budget` controls nested dispatch depth, not child count.
+`nested_dispatch_depth` controls nested dispatch depth, not child count.
 
 - budget `2` allows a worker to dispatch children;
 - children receive budget `1` and cannot dispatch grandchildren.

@@ -50,7 +50,7 @@ class OpenCodeHarness:
             text=True,
             start_new_session=supports_process_groups(),
             env=worker_subprocess_env(
-                worker_budget=request.worker_budget,
+                nested_dispatch_depth=request.nested_dispatch_depth,
                 turn_limit=request.turn_limit,
                 soft_timeout=request.soft_timeout,
                 budget_exceeded_prompt=request.budget_exceeded_prompt,

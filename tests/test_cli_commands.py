@@ -321,7 +321,7 @@ def test_do_rejects_over_model_limit(
     assert store.get_run(run_id).model == "lmstudio/qwen"
 
 
-def test_do_uses_role_worker_budget_for_worker_env(
+def test_do_uses_role_nested_dispatch_depth_for_worker_env(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
@@ -336,7 +336,7 @@ def test_do_uses_role_worker_budget_for_worker_env(
         ],
     )
     catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
-    catalog["roles"]["worker"]["worker_budget"] = 2
+    catalog["roles"]["worker"]["nested_dispatch_depth"] = 2
     catalog_path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
 
     from orchestra.cli import main
@@ -349,9 +349,9 @@ def test_do_uses_role_worker_budget_for_worker_env(
             str(catalog_path),
             "do",
             "--session-id",
-            "manual:worker-budget-role",
+            "manual:nested-dispatch-depth-role",
             "--goal",
-            "Print worker budget env.",
+            "Print nested dispatch depth env.",
         ]
     )
     output = capsys.readouterr().out
@@ -1476,7 +1476,8 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
                                 "print(json.dumps({"
                                 "'argv': sys.argv[1:-1], "
                                 "'prompt': sys.argv[-1], "
-                                "'worker_budget': os.environ.get('ORCHESTRA_DISPATCH_BUDGET'), "
+                                "'nested_dispatch_depth': "
+                                "os.environ.get('ORCHESTRA_DISPATCH_BUDGET'), "
                                 "'role_env': os.environ.get('ROLE_ENV_TEST')"
                                 "}))"
                             ),
@@ -1501,7 +1502,7 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
                         "model": "requested-model",
                         "prompt_addition": "Review only.",
                         "skills": ["reviewer"],
-                        "worker_budget": 2,
+                        "nested_dispatch_depth": 2,
                         "env": {"ROLE_ENV_TEST": "configured"},
                     },
                 },
@@ -1547,7 +1548,7 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
     artifact_text = record.result_artifact_path.read_text(encoding="utf-8")
     payload = json.loads(artifact_text.split("## stdout\n\n", 1)[1].strip())
     assert payload["argv"] == ["--model", "fallback-model"]
-    assert payload["worker_budget"] == "2"
+    assert payload["nested_dispatch_depth"] == "2"
     assert payload["role_env"] == "configured"
     assert "Role: reviewer" in payload["prompt"]
     assert "Role skill: reviewer" in payload["prompt"]

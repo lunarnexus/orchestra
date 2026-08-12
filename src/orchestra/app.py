@@ -1088,8 +1088,10 @@ def _format_role_lines(
             lines.append(f"      profile: {role.profile}")
         if role.agent:
             lines.append(f"      agent: {role.agent}")
-        if role.worker_budget is not None:
-            lines.append(f"      worker_budget: {role.worker_budget}")
+        if role.nested_dispatch_depth is not None:
+            lines.append(
+                f"      nested_dispatch_depth: {role.nested_dispatch_depth}"
+            )
         if role.turn_limit is not None:
             lines.append(f"      turn_limit: {role.turn_limit}")
         if role.soft_timeout is not None:
@@ -2107,7 +2109,7 @@ def _start_worker_process(
         return_format=pending_request.return_format,
         timeout_seconds=pending_request.timeout_seconds,
         task_label=pending_request.task_label,
-        worker_budget=role.worker_budget,
+        nested_dispatch_depth=role.nested_dispatch_depth,
         turn_limit=role.turn_limit or context.config.turn_limit,
         soft_timeout=role.soft_timeout or context.config.soft_timeout,
         budget_exceeded_prompt=context.config.prompts.budget_exceeded_prompt,

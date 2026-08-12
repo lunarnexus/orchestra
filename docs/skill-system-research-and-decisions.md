@@ -275,7 +275,7 @@ Working default flow:
 Possible compact core:
 
 - `orchestrator` — main-session planning, sequencing, dispatch, and judgment
-- `planner` — planning and research coordination; injects `planner`, uses Pi for MVP, and has `worker_budget: 2` so it can dispatch researchers
+- `planner` — planning and research coordination; injects `planner`, uses Pi for MVP, and has `nested_dispatch_depth: 2` so it can dispatch researchers
 - `researcher` — facts, docs, web, and code research; injects `researcher`
 - `builder` — focused implementation; injects `builder` with concise TDD, git, debugging, scope, and verification guidance
 - `reviewer` — verify/review/security checking modes
@@ -342,7 +342,7 @@ Prefer lightweight continuity over a heavy workflow cockpit:
 Initial decision:
 
 - Planner agents may dispatch researcher agents to verify facts, inspect code, search docs/web, and gather evidence.
-- Planner role uses `worker_budget: 2`; child researchers keep the default budget and cannot dispatch again.
+- Planner role uses `nested_dispatch_depth: 2`; child researchers keep the default depth and cannot dispatch again.
 - Researchers, builders, reviewers, and appsec agents do not dispatch subagents initially.
 
 ## Next questions

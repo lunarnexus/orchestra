@@ -306,7 +306,7 @@ def test_worker_subprocess_env_decrements_orchestra_dispatch_budget(
     else:
         monkeypatch.setenv(ORCHESTRA_DISPATCH_BUDGET_ENV, current)
 
-    env = worker_subprocess_env(worker_budget=configured)
+    env = worker_subprocess_env(nested_dispatch_depth=configured)
 
     assert orchestra_can_dispatch() is can_dispatch
     assert env[ORCHESTRA_DISPATCH_BUDGET_ENV] == child
@@ -371,7 +371,7 @@ def test_pi_harness_start_sets_orchestra_dispatch_budget_env_budget(
         acceptance_target=worker_request.acceptance_target,
         timeout_seconds=worker_request.timeout_seconds,
         log_path=worker_request.log_path,
-        worker_budget=2,
+        nested_dispatch_depth=2,
     )
     harness = PiHarness()
     role = RoleConfig(

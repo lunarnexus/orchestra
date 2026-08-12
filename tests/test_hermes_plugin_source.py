@@ -278,7 +278,7 @@ def test_hermes_plugin_session_report_watcher_suppresses_late_delivery_after_cle
         ("3", ["orch_dispatch"]),
     ],
 )
-def test_hermes_plugin_gates_dispatch_tool_by_worker_budget(
+def test_hermes_plugin_gates_dispatch_tool_by_nested_dispatch_depth(
     monkeypatch: pytest.MonkeyPatch,
     budget: str | None,
     registered_tools: list[str],
