@@ -155,16 +155,23 @@ Compatibility differs by host because each harness exposes different plugin and 
 
 | Feature | Pi | Hermes | OpenCode |
 | --- | --- | --- | --- |
-| Worker harness | ✅ | ✅ | ✅ one-shot |
-| Host install (`orchestra init ...`) | ✅ | ✅ | ✅ |
-| `orch_dispatch` tool | ✅ | ✅ where tools are supported | ✅ |
-| `/orch` command surface | ✅ executable commands | ✅ commands | ⚠️ prompt templates |
-| `/orch on/status/history/help/doctor/roles` | ✅ | ✅ | ✅ via `orch_status` |
-| `/orch do` | ✅ | ✅ | ✅ via `orch_dispatch` |
+| Can be worker | ✅ | ✅ | ✅* |
+| Can be orchestrator | ✅ | ✅ | ⚠️* |
+| `/slash` commands | ✅ | ✅ | ⚠️* |
 | Footer/status UI | ✅ | — | ❌ |
-| Main-session turn/tool budget hooks | ✅ | — | ❌ |
+| Hard timeouts | ✅ | ✅ | ✅ |
+| Soft timeouts | ✅ | ✅ | ✅ |
+| Turn limits | ✅ | ✅ | ✅ |
+| Role skill injection | ✅ | ✅ | ✅ |
+| Model/global concurrency limits | ✅ | ✅ | ✅ |
+| ENV injection | ✅ | ✅ | ✅ |
+| Debug traces | ✅ | ✅ | ✅ |
 
-OpenCode is partially supported: its `/orch` entries are documented prompt templates that ask the model to call `orch_status` or `orch_dispatch`, not plugin-owned executable slash handlers. OpenCode child-worker budgets, timeouts, and environment variables are still applied by Orchestra; the missing budget hooks are only the Pi-style hooks for observing and steering the main OpenCode session itself.
+Notes:
+
+- OpenCode worker support is one-shot.
+- OpenCode orchestrator support uses callable tools and prompt templates.
+- OpenCode `/slash` commands are documented prompt templates, not plugin-owned executable commands.
 
 ## Host Integrations
 
@@ -225,7 +232,7 @@ orchestra init opencode
 orchestra init opencode --copy
 ```
 
-OpenCode is partially supported. Current support includes `orch_dispatch`, `orch_status`, the documented `/orch` prompt template, session-targeted auto-return, and progress toasts when the host UI supports them. OpenCode does not currently provide Orchestra footer/status UI or Pi-style main-session turn/tool budget hooks.
+OpenCode is partially supported. Current support includes `orch_dispatch`, `orch_status`, the documented `/orch` prompt template, session-targeted auto-return, and progress toasts when the host UI supports them. OpenCode does not currently provide Orchestra footer/status UI.
 
 ## Development
 
