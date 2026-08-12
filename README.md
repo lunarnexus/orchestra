@@ -158,7 +158,7 @@ Compatibility differs by host because each harness exposes different plugin and 
 | Can be worker | ✅ | ✅ | ✅* |
 | Can be orchestrator | ✅ | ✅ | ⚠️* |
 | `/slash` commands | ✅ | ✅ | ⚠️* |
-| Footer/status UI | ✅ | — | ❌ |
+| Footer/status UI | ✅ | ❌ | ❌ |
 | Hard timeouts | ✅ | ✅ | ✅ |
 | Soft timeouts | ✅ | ✅ | ✅ |
 | Turn limits | ✅ | ✅ | ✅ |
@@ -166,12 +166,6 @@ Compatibility differs by host because each harness exposes different plugin and 
 | Model/global concurrency limits | ✅ | ✅ | ✅ |
 | ENV injection | ✅ | ✅ | ✅ |
 | Debug traces | ✅ | ✅ | ✅ |
-
-Notes:
-
-- OpenCode worker support is one-shot.
-- OpenCode orchestrator support uses callable tools and prompt templates.
-- OpenCode `/slash` commands are documented prompt templates, not plugin-owned executable commands.
 
 ## Host Integrations
 
