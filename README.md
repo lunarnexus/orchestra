@@ -147,15 +147,24 @@ Current support includes:
 
 - **Pi** — host integration and worker harness
 - **Hermes** — host integration and worker harness
-- **OpenCode** — host integration and one-shot worker harness
+- **OpenCode** — partially supported host integration and one-shot worker harness
 
 Harness-specific model names, profiles, agents, and command templates belong in `agent-catalog.yaml`.
 
 Compatibility differs by host because each harness exposes different plugin and UI APIs:
 
-- **Pi** has the closest native integration: executable `/orch` commands, footer/status updates, host lifecycle hooks, and worker harness support.
-- **Hermes** supports the core command/tool workflow and worker harness path.
-- **OpenCode** supports callable tools and documented prompt-template commands, but some TUI parity is not implemented yet. OpenCode `/orch` commands are prompt templates that instruct the model to call `orch_status` or `orch_dispatch`; they are not plugin-owned executable slash handlers. Footer/status UI is also not implemented because a live TUI slot plugin load/render path has not been proven. OpenCode worker budgets, timeouts, and environment variables are still applied to child workers, but Pi-style main-session turn/tool budget hooks are not implemented because equivalent stable OpenCode lifecycle hooks have not been proven.
+| Feature | Pi | Hermes | OpenCode |
+| --- | --- | --- | --- |
+| Worker harness | ✅ | ✅ | ✅ one-shot |
+| Host install (`orchestra init ...`) | ✅ | ✅ | ✅ |
+| `orch_dispatch` tool | ✅ | ✅ where tools are supported | ✅ |
+| `/orch` command surface | ✅ executable commands | ✅ commands | ⚠️ prompt templates |
+| `/orch on/status/history/help/doctor/roles` | ✅ | ✅ | ✅ via `orch_status` |
+| `/orch do` | ✅ | ✅ | ✅ via `orch_dispatch` |
+| Footer/status UI | ✅ | — | ❌ |
+| Main-session turn/tool budget hooks | ✅ | — | ❌ |
+
+OpenCode is partially supported: its `/orch` entries are documented prompt templates that ask the model to call `orch_status` or `orch_dispatch`, not plugin-owned executable slash handlers. OpenCode child-worker budgets, timeouts, and environment variables are still applied by Orchestra; the missing budget hooks are only the Pi-style hooks for observing and steering the main OpenCode session itself.
 
 ## Host Integrations
 
@@ -216,7 +225,7 @@ orchestra init opencode
 orchestra init opencode --copy
 ```
 
-OpenCode support includes `orch_dispatch`, `orch_status`, the documented `/orch` prompt template, session-targeted auto-return, and progress toasts when the host UI supports them. OpenCode `/orch` entries are prompt templates, not executable plugin slash commands; footer/status UI and Pi-style main-session turn/tool budget hooks are not implemented for OpenCode.
+OpenCode is partially supported. Current support includes `orch_dispatch`, `orch_status`, the documented `/orch` prompt template, session-targeted auto-return, and progress toasts when the host UI supports them. OpenCode does not currently provide Orchestra footer/status UI or Pi-style main-session turn/tool budget hooks.
 
 ## Development
 
