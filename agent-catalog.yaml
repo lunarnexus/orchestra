@@ -1,5 +1,8 @@
 # Harness command templates for one-shot prompts, as typed on the command line:
 #   pi:       pi --model [model] -p [prompt]
+#             Pi thinking format can be encoded in the model as [model]:[thinking],
+#             where thinking is off|minimal|low|medium|high|xhigh|max.
+#             Example: openai-codex/gpt-5.5:high
 #   hermes:   hermes --profile [profile] -z [prompt]
 #   opencode: opencode run --agent [agent] --model [model] [prompt]
 #
