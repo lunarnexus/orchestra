@@ -188,8 +188,11 @@ as required state.
 - Dispatch Pi workers with focused role prompts.
 - Support the MVP `/orch` host-facing command set: `/orch do`, `/orch status`,
   `/orch stop`, `/orch doctor`, and `/orch history`.
-- OpenCode host support includes both `orch_dispatch` and `orch_status`; `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, and `roles`.
+- OpenCode host support includes both `orch_dispatch` and `orch_status`; `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, `roles`, and `stop`.
 - Role config changes use `orchestra roles ROLE SETTING VALUE`, not hand-edited config files. Supported settings are `harness`, `enabled`, `model`, `profile`, and `agent`.
+- OpenCode `/orch roles ROLE SETTING VALUE` is model-callable through `orch_status` in this slice; it is not an executable slash-command surface yet.
+- `orch_status roles` displays configured role env values.
+- Pi and Hermes native `/orch roles` commands remain mutable.
 - Return compact worker results without stuffing full worker context into the
   orchestrator session.
 - Consolidate worker completions by orchestrator session, not by batch: when the
@@ -383,9 +386,16 @@ prompt tells the worker to load the named native skill before doing the task.
 implementation-quality skill, and `appsec` uses a dedicated application-security
 skill. Role `env` values are applied only to worker
 subprocess environments; env keys must be valid environment variable names and
-cannot use the reserved `ORCHESTRA_` prefix. User-facing role listings show env
-keys, not values. Avoid hard-coding planning, coding, reviewing, or other work
-methods into core.
+cannot use the reserved `ORCHESTRA_` prefix. Project policy is that configured
+environment variables do not contain passwords, tokens, API keys, or other
+secrets; secret material belongs outside Orchestra role `env` values. Host tools
+and role listings may show configured role `env` values and should not add
+env-specific redaction or mutation limits based on an assumption that role `env`
+contains secrets.
+
+OpenCode role env values are shown through `orch_status roles`.
+
+Avoid hard-coding planning, coding, reviewing, or other work methods into core.
 
 Role-skill readiness requires live behavioral evaluation through the normal
 host -> Orchestra role -> configured worker path. Grade outcome, process, scope,

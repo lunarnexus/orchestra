@@ -14,11 +14,12 @@ type OrchDispatchArgs = {
   taskLabel?: string;
 };
 
-type OrchStatusAction = "on" | "status" | "history" | "help" | "doctor" | "roles";
+type OrchStatusAction = "on" | "status" | "history" | "help" | "doctor" | "roles" | "stop";
 
 type OrchStatusArgs = {
   action: OrchStatusAction;
   limit?: number;
+  runId?: string;
   role?: string;
   setting?: string;
   value?: string;
@@ -33,6 +34,13 @@ type ToolInfoPayload = {
   goalDescription: string;
   roleDescription: string;
   taskLabelDescription: string;
+  statusDescription: string;
+  statusActionDescription: string;
+  statusLimitDescription: string;
+  statusRunIdDescription: string;
+  statusRoleDescription: string;
+  statusSettingDescription: string;
+  statusValueDescription: string;
 };
 
 type OpenCodeToastVariant = "info" | "error";
@@ -143,6 +151,13 @@ async function loadToolInfo(): Promise<ToolInfoPayload> {
     goalDescription: "Focused worker request/task to delegate.",
     roleDescription: "(Optional) specific role; omit for default.",
     taskLabelDescription: "Optional short request label.",
+    statusDescription: "Inspect or control Orchestra host-session state from OpenCode.",
+    statusActionDescription: "OpenCode /orch action.",
+    statusLimitDescription: "Positive history limit; defaults to 10.",
+    statusRunIdDescription: "Required run id for stop.",
+    statusRoleDescription: "Role to update when using action roles.",
+    statusSettingDescription: "Role setting to update when using action roles.",
+    statusValueDescription: "Role setting value to update when using action roles.",
   };
 }
 
@@ -214,20 +229,8 @@ function validateOrchStatusArgs(action: OrchStatusAction, args: OrchStatusArgs):
     return;
   }
 
-  if (hasRoleChangeArgs && !(role && setting && value)) {
-    throw new Error("role, setting, and value must all be supplied together for orch_status roles.");
-  }
-
-  if (!hasRoleChangeArgs) {
-    return;
-  }
-
-  if (!SUPPORTED_ROLE_SETTINGS.has(setting as string)) {
-    throw new Error(
-      `Unsupported role setting: ${setting}. Supported settings: ${Array.from(SUPPORTED_ROLE_SETTINGS).join(
-        ", ",
-      )}.`,
-    );
+  if (hasRoleChangeArgs) {
+    throw new Error("orch_status roles is read-only; use the host /orch roles command to change role settings.");
   }
 }
 
@@ -240,14 +243,14 @@ function buildOrchStatusCommand(ownerId: string | null, args: OrchStatusArgs): s
 
   if (args.action === "status") {
     if (!ownerId) {
-      throw new Error("context.sessionID is required for orch_status status/history.");
+      throw new Error("context.sessionID is required for orch_status status/history/stop.");
     }
     return ["orchestra", "status", "--session-id", ownerId];
   }
 
   if (args.action === "history") {
     if (!ownerId) {
-      throw new Error("context.sessionID is required for orch_status status/history.");
+      throw new Error("context.sessionID is required for orch_status status/history/stop.");
     }
     return ["orchestra", "history", "--session-id", ownerId, "--limit", normalizeOrchStatusLimit(args.limit)];
   }
@@ -260,10 +263,21 @@ function buildOrchStatusCommand(ownerId: string | null, args: OrchStatusArgs): s
     return ["orchestra", "doctor"];
   }
 
-  const { role, setting, value } = normalizeOrchStatusRoleFields(args);
-  if (role && setting && value) {
-    return ["orchestra", "roles", role, setting, value];
+  if (args.action === "stop") {
+    if (!ownerId) {
+      throw new Error("context.sessionID is required for orch_status status/history/stop.");
+    }
+    const runId = normalizeOrchStatusText(args.runId);
+    if (!runId) {
+      throw new Error("runId is required for orch_status stop.");
+    }
+    return ["orchestra", "stop", "--session-id", ownerId, "--run-id", runId];
   }
+
+  if (args.action === "roles") {
+    return ["orchestra", "roles", "--all"];
+  }
+
   return ["orchestra", "roles", "--all"];
 }
 
@@ -742,30 +756,30 @@ function queueRunProgressNotification(
 }
 
 export const OrchestraPlugin: Plugin = async ({ client }) => {
+  const toolInfo = await loadToolInfo();
   const orchStatusTool = tool({
-    description: "Inspect or control Orchestra host-session state from OpenCode.",
+    description: toolInfo.statusDescription,
     args: {
-      action: tool.schema
-        .enum(["on", "status", "history", "help", "doctor", "roles"])
-        .describe("OpenCode /orch action."),
+      action: tool.schema.enum(["on", "status", "history", "help", "doctor", "roles", "stop"]).describe(toolInfo.statusActionDescription),
       limit: tool.schema
         .number()
         .int()
         .positive()
         .optional()
-        .describe("Positive history limit; defaults to 10."),
-      role: tool.schema.string().optional().describe("Role to update when using action roles."),
-      setting: tool.schema.string().optional().describe("Role setting to update when using action roles."),
-      value: tool.schema.string().optional().describe("Role setting value to update when using action roles."),
+        .describe(toolInfo.statusLimitDescription),
+      runId: tool.schema.string().optional().describe(toolInfo.statusRunIdDescription),
+      role: tool.schema.string().optional().describe(toolInfo.statusRoleDescription),
+      setting: tool.schema.string().optional().describe(toolInfo.statusSettingDescription),
+      value: tool.schema.string().optional().describe(toolInfo.statusValueDescription),
     },
     async execute(args, context) {
       const statusArgs = args as OrchStatusArgs;
       const rawSessionID = context.sessionID?.trim();
       let ownerId: string | null = null;
 
-      if (statusArgs.action === "status" || statusArgs.action === "history") {
+      if (statusArgs.action === "status" || statusArgs.action === "history" || statusArgs.action === "stop") {
         if (!rawSessionID) {
-          throw new Error("context.sessionID is required for orch_status status/history.");
+          throw new Error("context.sessionID is required for orch_status status/history/stop.");
         }
         ownerId = normalizeOpenCodeOwnerId(rawSessionID);
       }
@@ -787,7 +801,6 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
     return { tool: { orch_status: orchStatusTool } };
   }
 
-  const toolInfo = await loadToolInfo();
   return {
     tool: {
       orch_status: orchStatusTool,

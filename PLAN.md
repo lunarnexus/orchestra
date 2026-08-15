@@ -22,37 +22,40 @@ Current evidence:
 
 ### Planned slices
 
-1. [ ] sequential — Core prompt/schema metadata
+1. [x] sequential — Core prompt/schema metadata
    - Scope: `prompts.yaml`, `src/orchestra/assets/prompts.yaml`, `src/orchestra/config.py`, `src/orchestra/app.py`, `src/orchestra/cli.py` if needed, `tests/test_config.py`, `tests/test_cli_commands.py`.
    - Goal: add centralized status-tool metadata for `_tool-info` while preserving existing dispatch metadata keys for compatibility.
    - Status metadata must cover description plus `action`, `limit`, `runId`, `role`, `setting`, and `value` parameter descriptions.
    - Verify: `python3 -m pytest tests/test_config.py tests/test_cli_commands.py -q`.
    - Risk: P1 — public prompt/tool metadata affects model behavior.
    - Gates: reviewer.
+   - Review/appsec: passed.
 
-2. [ ] sequential — Add Pi `orch_status`
+2. [x] sequential — Add Pi `orch_status`
    - Scope: `extensions/pi/orchestra/index.ts`, `src/orchestra/assets/pi/orchestra/index.ts`, `tests/test_pi_extension_source.py`.
    - Interface: `orch_status(action, limit?, runId?, role?, setting?, value?)` with actions `on|status|history|help|doctor|roles|stop`.
    - Requirements: use `ctx.sessionManager.getSessionId()` for session-scoped actions; require `runId` for `stop`; do not add `goal` to `orch_status`; consume metadata from `_tool-info`.
    - Verify: `python3 -m pytest tests/test_pi_extension_source.py -q`.
    - Risk: P1 — model-callable stop/control surface.
    - Gates: reviewer + appsec.
+   - Review/appsec: passed.
 
-3. [ ] sequential — Add Hermes `orch_status`
+3. [x] sequential — Add Hermes `orch_status`
    - Scope: `extensions/hermes/orchestra/__init__.py`, `extensions/hermes/orchestra/plugin.yaml` if it lists tools, `tests/test_hermes_plugin_source.py`.
    - Interface: same actions/args as Pi; runtime identity comes from Hermes `session_id` kwarg; `stop` requires `runId`; `orch_dispatch` stays dispatch-only with required `goal`.
    - Verify: `python3 -m pytest tests/test_hermes_plugin_source.py -q`.
+   - Status: focused Hermes source tests passed.
    - Risk: P1 — session ownership and stop control.
    - Gates: reviewer + appsec.
 
-4. [ ] sequential — Align OpenCode `orch_status`
+4. [x] sequential — Align OpenCode `orch_status`
    - Scope: `extensions/opencode/orchestra/index.ts`, `src/orchestra/assets/opencode/orchestra/index.ts`, `tests/test_opencode_plugin_source.py`.
    - Requirements: add `stop` action and `runId`; replace hardcoded status metadata with `_tool-info` metadata; keep current tolerance for irrelevant optional fields outside their action.
    - Verify: `python3 -m pytest tests/test_opencode_plugin_source.py -q`.
    - Risk: P1 — model-callable stop/control and metadata drift.
    - Gates: reviewer + appsec.
 
-5. [ ] sequential — Docs and artifact alignment
+5. [x] sequential — Docs and artifact alignment
    - Scope: `FOUNDATION.md`, `ARCHITECTURE.md`, `docs/plugin_creation.md`, `PLAN.md`; update `RESEARCH.md` only if new evidence is collected.
    - Requirements: document both model-callable tools, supported `orch_status` actions including `stop`, supported role settings, and the prompt metadata path from `prompts.yaml` through `_tool-info` into host plugins.
    - Verify: inspection plus focused tests above.

@@ -1369,6 +1369,13 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert "  D  reviewer [hermes]" in tool_info["roleDescription"]
     assert "  ✗  critic" not in tool_info["description"]
     assert "  ✗  critic" not in tool_info["roleDescription"]
+    assert tool_info["statusDescription"].startswith("Orchestra session/status/control actions.")
+    assert "on, status, history, help, doctor, roles, stop" in tool_info["statusActionDescription"]
+    assert tool_info["statusLimitDescription"] == "Optional limit for history results."
+    assert tool_info["statusRunIdDescription"] == "Run id to stop."
+    assert tool_info["statusRoleDescription"] == "Optional role for roles queries or updates."
+    assert tool_info["statusSettingDescription"] == "Optional role setting to update."
+    assert tool_info["statusValueDescription"] == "Optional role setting value."
     assert "timeoutDescription" not in tool_info
 
 

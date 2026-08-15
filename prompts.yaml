@@ -38,6 +38,13 @@ tool_goal_description: >-
 tool_role_description: >-
   (Optional) specific role; omit for default. {roles}
 tool_task_label_description: Optional short request label.
+status_description: Orchestra session/status/control actions.
+status_action_description: Action to perform. One of on, status, history, help, doctor, roles, stop.
+status_limit_description: Optional limit for history results.
+status_run_id_description: Run id to stop.
+status_role_description: Optional role for roles queries or updates.
+status_setting_description: Optional role setting to update.
+status_value_description: Optional role setting value.
 budget_exceeded_prompt: |-
   Orchestra worker budget exceeded. Stop new work now.
 

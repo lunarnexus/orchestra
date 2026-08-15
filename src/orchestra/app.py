@@ -168,6 +168,13 @@ class ToolInfo:
     goal_description: str
     role_description: str
     task_label_description: str
+    status_description: str
+    status_action_description: str
+    status_limit_description: str
+    status_run_id_description: str
+    status_role_description: str
+    status_setting_description: str
+    status_value_description: str
 
 
 @dataclass(frozen=True)
@@ -1142,6 +1149,13 @@ def tool_info(context: AppContext) -> ToolInfo:
         goal_description=prompts.tool_goal_description,
         role_description=prompts.tool_role_description.format(roles=roles),
         task_label_description=prompts.tool_task_label_description,
+        status_description=prompts.status_description,
+        status_action_description=prompts.status_action_description,
+        status_limit_description=prompts.status_limit_description,
+        status_run_id_description=prompts.status_run_id_description,
+        status_role_description=prompts.status_role_description,
+        status_setting_description=prompts.status_setting_description,
+        status_value_description=prompts.status_value_description,
     )
 
 

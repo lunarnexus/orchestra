@@ -59,6 +59,13 @@ _FALLBACK_TOOL_INFO = {
     "goalDescription": "Focused worker request/task to delegate.",
     "roleDescription": "(Optional) specific role; omit for default.",
     "taskLabelDescription": "Optional short request label.",
+    "statusDescription": "Inspect, control, or refresh the current Orchestra session.",
+    "statusActionDescription": "Orchestra session action to run.",
+    "statusLimitDescription": "Optional history limit for history actions.",
+    "statusRunIdDescription": "Required run id for stop actions.",
+    "statusRoleDescription": "Optional role name to inspect.",
+    "statusSettingDescription": "Optional role setting to inspect.",
+    "statusValueDescription": "Optional role setting value.",
 }
 _ORCH_COMMAND_ARGS_HINT = (
     "help | on | do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal> | "
@@ -266,6 +273,74 @@ def _schema(tool_info: dict[str, Any]) -> dict[str, Any]:
             "required": ["goal"],
         },
     }
+
+
+def _status_schema(tool_info: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": "orch_status",
+        "description": str(tool_info["statusDescription"]),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["on", "status", "history", "help", "doctor", "roles", "stop"],
+                    "description": str(tool_info["statusActionDescription"]),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": str(tool_info["statusLimitDescription"]),
+                },
+                "runId": {
+                    "type": "string",
+                    "description": str(tool_info["statusRunIdDescription"]),
+                },
+                "role": {
+                    "type": "string",
+                    "description": str(tool_info["statusRoleDescription"]),
+                },
+                "setting": {
+                    "type": "string",
+                    "description": str(tool_info["statusSettingDescription"]),
+                },
+                "value": {
+                    "type": "string",
+                    "description": str(tool_info["statusValueDescription"]),
+                },
+            },
+            "required": ["action"],
+        },
+    }
+
+
+def _normalize_status_limit(limit: Any) -> str:
+    if type(limit) is int:
+        if limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        return str(limit)
+    if isinstance(limit, str):
+        normalized = limit.strip()
+        if not normalized.isdigit() or int(normalized) <= 0:
+            raise ValueError("limit must be a positive integer")
+        return normalized
+    raise ValueError("limit must be a positive integer")
+
+
+def _filter_role_lines(output: str) -> str:
+    return output.strip()
+
+
+def _orch_status_error(reason: str) -> str:
+    return f"Hermes /orch status failed: {reason}"
+
+
+def _orch_status_runtime_session_id(raw_session_id: Any) -> str | None:
+    if not isinstance(raw_session_id, str):
+        return None
+    try:
+        return normalize_hermes_session_id(raw_session_id)
+    except ValueError:
+        return None
 
 
 def _extract_dispatch_timeout_seconds(output: str) -> int:
@@ -707,6 +782,60 @@ def _orch_on(ctx: Any | None, runtime_session_id: str) -> str:
             _orch_on_clear(runtime_session_id)
 
 
+def orch_status(args: dict[str, Any], **kwargs: Any) -> str:
+    supplied_identity_args = sorted(_IDENTITY_ARG_NAMES.intersection(args))
+    if supplied_identity_args:
+        return _orch_status_error(
+            "identity arguments are not accepted; Hermes runtime session_id is used instead"
+        )
+
+    action = str(args.get("action") or "").strip()
+    if not action:
+        return _orch_status_error("action is required")
+
+    if action not in {"on", "status", "history", "help", "doctor", "roles", "stop"}:
+        return _orch_status_error(f"unsupported action: {action}")
+
+    runtime_session_id: str | None = None
+    if action in {"on", "status", "history", "stop"}:
+        runtime_session_id = _orch_status_runtime_session_id(kwargs.get("session_id"))
+        if runtime_session_id is None:
+            return _orch_status_error("Hermes session_id is required")
+
+    if action == "on":
+        return _orch_on(kwargs.get("_ctx"), runtime_session_id)
+
+    if action == "status":
+        result = _run_orchestra(["status", "--session-id", runtime_session_id])
+        return result.stdout or result.stderr
+
+    if action == "history":
+        limit = args.get("limit")
+        limit_text = "10" if limit is None else _normalize_status_limit(limit)
+        result = _run_orchestra(
+            ["history", "--session-id", runtime_session_id, "--limit", limit_text]
+        )
+        return result.stdout or result.stderr
+
+    if action == "help":
+        result = _run_orchestra(["help-host"])
+        return result.stdout or result.stderr
+
+    if action == "doctor":
+        result = _run_orchestra(["doctor"])
+        return result.stdout or result.stderr
+
+    if action == "roles":
+        result = _run_orchestra(["roles", "--all"])
+        return _filter_role_lines(result.stdout or result.stderr)
+
+    run_id = str(args.get("runId") or "").strip()
+    if not run_id:
+        return _orch_status_error("runId is required for orch_status stop")
+    result = _run_orchestra(["stop", "--session-id", runtime_session_id, "--run-id", run_id])
+    return result.stdout or result.stderr
+
+
 def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
     trimmed = raw_args.strip()
     if not trimmed or trimmed == "help":
@@ -786,6 +915,10 @@ def register(ctx: Any) -> None:
         kwargs.setdefault("_ctx", ctx)
         return orch_dispatch(args, **kwargs)
 
+    def status_handler(args: dict[str, Any], **kwargs: Any) -> str:
+        kwargs.setdefault("_ctx", ctx)
+        return orch_status(args, **kwargs)
+
     def command_handler(raw_args: str) -> str:
         return _orch_command(raw_args, ctx=ctx)
 
@@ -852,14 +985,20 @@ def register(ctx: Any) -> None:
             return
         _reset_budget_state(runtime_session_id)
 
+    tool_info = _load_tool_info()
     if _can_dispatch_orchestra_worker():
-        tool_info = _load_tool_info()
         ctx.register_tool(
             name="orch_dispatch",
             toolset="orchestra",
             schema=_schema(tool_info),
             handler=dispatch_handler,
         )
+    ctx.register_tool(
+        name="orch_status",
+        toolset="orchestra",
+        schema=_status_schema(tool_info),
+        handler=status_handler,
+    )
     ctx.register_command(
         "orch",
         handler=command_handler,

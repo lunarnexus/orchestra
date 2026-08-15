@@ -60,8 +60,8 @@ Current host surfaces:
 - packaged OpenCode asset mirror: `src/orchestra/assets/opencode/orchestra/index.ts`
 
 The OpenCode init target installs globally under `~/.config/opencode/plugins/orchestra.ts`; `--copy` uses the packaged asset mirror when a source checkout is unavailable.
-OpenCode's supported surface now includes both `orch_dispatch` and `orch_status`. `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, and `roles`, with role updates routed through `orchestra roles ROLE SETTING VALUE` for supported settings `harness`, `enabled`, `model`, `profile`, and `agent`.
-`client.session.prompt(...)` is the preferred wake path; `promptAsync(...)` remains fallback-only. `/orch` slash-command and TUI parity are intentionally blocked until a stable host API is proven.
+OpenCode's supported surface now includes both `orch_dispatch` and `orch_status`. `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, `roles`, and `stop`, with role updates routed through `orchestra roles ROLE SETTING VALUE` for supported settings `harness`, `enabled`, `model`, `profile`, and `agent`.
+`orch_status roles` is model-callable and read-only for now; it reports configured role env values. `client.session.prompt(...)` is the preferred wake path; `promptAsync(...)` remains fallback-only. `/orch` slash-command and TUI parity are intentionally blocked until a stable host API is proven.
 
 Adapters retrieve runtime session identity from host context and pass it to core. The model or user prompt must not provide session identity.
 
@@ -103,6 +103,7 @@ The packaged asset at `src/orchestra/assets/agent-catalog.yaml` mirrors root def
 ### `prompts.yaml`
 
 Shared prompt text used by core and reports where appropriate.
+The public tool/help wording and parameter descriptions flow from `prompts.yaml` through core `_tool-info` into host plugins.
 
 ## Roles and skills
 

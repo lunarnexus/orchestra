@@ -166,7 +166,7 @@ def test_hermes_plugin_registers_dispatch_tool_without_session_id_schema(
 
     plugin.register(ctx)
 
-    assert [tool["name"] for tool in ctx.tools] == ["orch_dispatch"]
+    assert [tool["name"] for tool in ctx.tools] == ["orch_dispatch", "orch_status"]
     schema = ctx.tools[0]["schema"]
     assert set(schema["parameters"]["properties"]) == {"goal", "role", "taskLabel"}
     assert "timeout" not in schema["parameters"]["properties"]
@@ -194,6 +194,59 @@ def test_hermes_plugin_registers_dispatch_tool_without_session_id_schema(
     ]
 
 
+@pytest.mark.parametrize("budget", [None, "0", "2", "3"])
+def test_hermes_plugin_registers_orch_status_tool_with_tool_info_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    budget: str | None,
+) -> None:
+    plugin = load_plugin()
+    if budget is not None:
+        monkeypatch.setenv("ORCHESTRA_DISPATCH_BUDGET", budget)
+
+    payload = {
+        "description": "dynamic description",
+        "promptSnippet": "dynamic prompt snippet",
+        "promptGuidelines": ["guideline one", "guideline two"],
+        "goalDescription": "dynamic goal",
+        "roleDescription": "dynamic role",
+        "taskLabelDescription": "dynamic label",
+        "statusDescription": "dynamic status",
+        "statusActionDescription": "dynamic action",
+        "statusLimitDescription": "dynamic limit",
+        "statusRunIdDescription": "dynamic run id",
+        "statusRoleDescription": "dynamic status role",
+        "statusSettingDescription": "dynamic status setting",
+        "statusValueDescription": "dynamic status value",
+    }
+    monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, json.dumps(payload)))
+    ctx = FakeHermesPluginContext()
+
+    plugin.register(ctx)
+
+    expected_tools = ["orch_status"] if budget == "1" else ["orch_dispatch", "orch_status"]
+    assert [tool["name"] for tool in ctx.tools] == expected_tools
+    status_tool = next(tool for tool in ctx.tools if tool["name"] == "orch_status")
+    schema = status_tool["schema"]
+    assert schema["name"] == "orch_status"
+    assert schema["description"] == "dynamic status"
+    assert set(schema["parameters"]["properties"]) == {
+        "action",
+        "limit",
+        "runId",
+        "role",
+        "setting",
+        "value",
+    }
+    assert schema["parameters"]["properties"]["action"]["description"] == "dynamic action"
+    assert schema["parameters"]["properties"]["limit"]["description"] == "dynamic limit"
+    assert schema["parameters"]["properties"]["runId"]["description"] == "dynamic run id"
+    assert schema["parameters"]["properties"]["role"]["description"] == "dynamic status role"
+    assert schema["parameters"]["properties"]["setting"]["description"] == "dynamic status setting"
+    assert schema["parameters"]["properties"]["value"]["description"] == "dynamic status value"
+    assert schema["parameters"]["required"] == ["action"]
+    assert "session_id" not in json.dumps(schema)
+
+
 def test_hermes_plugin_session_cleanup_hooks_clear_matching_report_watcher_state() -> None:
     plugin = load_plugin()
     ctx = FakeHermesPluginContext(session_id="runtime")
@@ -211,6 +264,141 @@ def test_hermes_plugin_session_cleanup_hooks_clear_matching_report_watcher_state
     cleanup(session_id="")
     cleanup(session_id=object())
     assert plugin._REPORT_WATCHERS == {"hermes:other"}
+
+
+@pytest.mark.parametrize("action", ["status", "history", "stop", "roles", "on"])
+def test_hermes_orch_status_routes_session_actions_and_keeps_roles_read_only(
+    action: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    tool_info_payload = {
+        "description": "dynamic description",
+        "promptSnippet": "dynamic prompt snippet",
+        "promptGuidelines": ["guideline"],
+        "goalDescription": "dynamic goal",
+        "roleDescription": "dynamic role",
+        "taskLabelDescription": "dynamic label",
+        "statusDescription": "dynamic status",
+        "statusActionDescription": "dynamic action",
+        "statusLimitDescription": "dynamic limit",
+        "statusRunIdDescription": "dynamic run id",
+        "statusRoleDescription": "dynamic status role",
+        "statusSettingDescription": "dynamic status setting",
+        "statusValueDescription": "dynamic status value",
+    }
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(tool_info_payload))
+        if args[0] == "status":
+            return completed(args, "status output\n")
+        if args[0] == "history":
+            return completed(args, "history output\n")
+        if args[0] == "stop":
+            return completed(args, "stop output\n")
+        if args[0] == "doctor":
+            return completed(args, "doctor output\n")
+        if args[0] == "help-host":
+            return completed(args, "help output\n")
+        if args[0] == "roles":
+            return completed(
+                args,
+                "Configured roles\nDefault: builder\n\n"
+                "  D  builder [pi]\n"
+                "      env: SECRET=hidden\n"
+                "  ✓  reviewer [hermes]\n"
+                "      model: gpt\n",
+            )
+        if args[0] == "_orchestrator-skill":
+            return completed(args, "orchestrator skill payload\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime")
+    plugin.register(ctx)
+    handler = next(tool["handler"] for tool in ctx.tools if tool["name"] == "orch_status")
+
+    assert handler({"action": "status"}, session_id="runtime") == "status output\n"
+    assert handler({"action": "history", "limit": 7}, session_id="runtime") == "history output\n"
+    assert handler({"action": "doctor"}) == "doctor output\n"
+    assert handler({"action": "help"}) == "help output\n"
+    assert handler(
+        {"action": "roles", "role": "reviewer", "setting": "enabled", "value": "false"}
+    ) == (
+        "Configured roles\nDefault: builder\n\n  D  builder [pi]\n"
+        "      env: SECRET=hidden\n  ✓  reviewer [hermes]\n"
+        "      model: gpt"
+    )
+    assert handler({"action": "on"}, session_id="runtime") == (
+        "Hermes /orch on succeeded: orchestrator skill injected"
+    )
+    assert handler({"action": "stop", "runId": "run-1"}, session_id="runtime") == (
+        "stop output\n"
+    )
+
+    assert calls == [
+        ["_tool-info"],
+        ["status", "--session-id", "hermes:runtime"],
+        ["history", "--session-id", "hermes:runtime", "--limit", "7"],
+        ["doctor"],
+        ["help-host"],
+        ["roles", "--all"],
+        ["_orchestrator-skill"],
+        ["stop", "--session-id", "hermes:runtime", "--run-id", "run-1"],
+    ]
+    assert ctx.injected == [("orchestrator skill payload", "user")]
+
+
+@pytest.mark.parametrize("action", ["status", "history", "stop", "on"])
+def test_hermes_orch_status_rejects_model_supplied_identity_args(
+    action: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime")
+    plugin.register(ctx)
+    handler = next(tool["handler"] for tool in ctx.tools if tool["name"] == "orch_status")
+
+    output = handler({"action": action, "session_id": "attacker"}, session_id="runtime")
+
+    assert "identity arguments are not accepted" in output
+    assert calls == [["_tool-info"]]
+
+
+def test_hermes_orch_status_requires_run_id_for_stop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, code=1)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime")
+    plugin.register(ctx)
+    handler = next(tool["handler"] for tool in ctx.tools if tool["name"] == "orch_status")
+
+    output = handler({"action": "stop"}, session_id="runtime")
+
+    assert "runId is required" in output
+    assert calls == [["_tool-info"]]
 
 
 def test_hermes_plugin_session_report_watcher_suppresses_late_delivery_after_cleanup(
@@ -271,11 +459,11 @@ def test_hermes_plugin_session_report_watcher_suppresses_late_delivery_after_cle
 @pytest.mark.parametrize(
     ("budget", "registered_tools"),
     [
-        (None, ["orch_dispatch"]),
-        ("0", ["orch_dispatch"]),
-        ("1", []),
-        ("2", ["orch_dispatch"]),
-        ("3", ["orch_dispatch"]),
+        (None, ["orch_dispatch", "orch_status"]),
+        ("0", ["orch_dispatch", "orch_status"]),
+        ("1", ["orch_status"]),
+        ("2", ["orch_dispatch", "orch_status"]),
+        ("3", ["orch_dispatch", "orch_status"]),
     ],
 )
 def test_hermes_plugin_gates_dispatch_tool_by_nested_dispatch_depth(
@@ -481,7 +669,7 @@ def test_hermes_plugin_manifest_declares_tool_and_fail_closed_command() -> None:
     manifest = yaml.safe_load(MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert manifest["name"] == "orchestra"
-    assert manifest["provides_tools"] == ["orch_dispatch"]
+    assert manifest["provides_tools"] == ["orch_dispatch", "orch_status"]
     assert manifest["provides_commands"] == ["orch"]
 
 

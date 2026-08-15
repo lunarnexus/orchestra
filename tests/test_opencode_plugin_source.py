@@ -10,7 +10,11 @@ def test_opencode_plugin_registers_orch_dispatch_tool() -> None:
     assert 'export const OrchestraPlugin: Plugin = async ({ client }) => {' in source
     assert 'const orchStatusTool = tool({' in source
     assert 'action: tool.schema' in source
-    assert '.enum(["on", "status", "history", "help", "doctor", "roles"])' in source
+    assert '.enum(["on", "status", "history", "help", "doctor", "roles", "stop"])' in source
+    assert (
+        'runId: tool.schema.string().optional().describe(toolInfo.statusRunIdDescription),'
+        in source
+    )
     assert 'orch_status: orchStatusTool,' in source
     assert 'tool: {' in source
     assert 'orch_dispatch: tool({' in source
@@ -22,12 +26,18 @@ def test_opencode_plugin_registers_orch_dispatch_tool() -> None:
         'taskLabel: tool.schema.string().optional().describe(toolInfo.taskLabelDescription),'
         in source
     )
+    assert 'description: toolInfo.statusDescription,' in source
+    assert (
+        'action: tool.schema.enum(["on", "status", "history", "help", "doctor", "roles", "stop"])'
+        in source
+    )
 
 
 def test_opencode_plugin_routes_orch_status_actions_and_role_settings() -> None:
     source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
 
     assert 'type OrchStatusArgs = {' in source
+    assert 'runId?: string;' in source
     assert (
         'const SUPPORTED_ROLE_SETTINGS = new Set(["harness", "enabled", "model", "profile", '
         '"agent"]);' in source
@@ -43,10 +53,15 @@ def test_opencode_plugin_routes_orch_status_actions_and_role_settings() -> None:
     assert '["orchestra", "help-opencode"]' in source
     assert '["orchestra", "doctor"]' in source
     assert '["orchestra", "roles", "--all"]' in source
-    assert '["orchestra", "roles", role, setting, value]' in source
-    assert 'role, setting, and value must all be supplied together' in source
-    assert 'Unsupported role setting' in source
-    assert 'context.sessionID is required for orch_status status/history.' in source
+    assert '["orchestra", "roles", role, setting, value]' not in source
+    assert '["orchestra", "stop", "--session-id", ownerId, "--run-id", runId]' in source
+    assert (
+        'orch_status roles is read-only; use the host /orch roles command to change role settings.'
+        in source
+    )
+    assert 'Unsupported role setting' not in source
+    assert 'context.sessionID is required for orch_status status/history/stop.' in source
+    assert 'runId is required for orch_status stop.' in source
     assert 'limit is only accepted for orch_status history.' not in source
     assert 'role, setting, and value are only accepted for orch_status roles.' not in source
 
@@ -56,15 +71,14 @@ def test_opencode_plugin_ignores_irrelevant_orch_status_optional_fields() -> Non
 
     validate_pos = source.index("function validateOrchStatusArgs(")
     roles_return_pos = source.index('if (action !== "roles") {', validate_pos)
-    roles_return_body_pos = source.index("return;", roles_return_pos)
     roles_validation_pos = source.index(
-        "role, setting, and value must all be supplied together for orch_status roles.",
+        'orch_status roles is read-only; use the host /orch roles command to change role settings.',
         validate_pos,
     )
     history_command_pos = source.index('if (args.action === "history") {')
     limit_normalize_pos = source.index("normalizeOrchStatusLimit(args.limit)", history_command_pos)
 
-    assert roles_return_pos < roles_return_body_pos < roles_validation_pos
+    assert roles_return_pos < roles_validation_pos
     assert history_command_pos < limit_normalize_pos
     assert "limit is only accepted for orch_status history." not in source
     assert "role, setting, and value are only accepted for orch_status roles." not in source

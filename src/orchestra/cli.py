@@ -492,6 +492,13 @@ def _handle_tool_info(args: argparse.Namespace) -> int:
                 "goalDescription": info.goal_description,
                 "roleDescription": info.role_description,
                 "taskLabelDescription": info.task_label_description,
+                "statusDescription": info.status_description,
+                "statusActionDescription": info.status_action_description,
+                "statusLimitDescription": info.status_limit_description,
+                "statusRunIdDescription": info.status_run_id_description,
+                "statusRoleDescription": info.status_role_description,
+                "statusSettingDescription": info.status_setting_description,
+                "statusValueDescription": info.status_value_description,
             }
         )
     )

@@ -65,6 +65,15 @@ DEFAULT_TOOL_GOAL_DESCRIPTION = (
 )
 DEFAULT_TOOL_ROLE_DESCRIPTION = "(Optional) specific role; omit for default. {roles}"
 DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
+DEFAULT_STATUS_DESCRIPTION = "Orchestra session/status/control actions."
+DEFAULT_STATUS_ACTION_DESCRIPTION = (
+    "Action to perform. One of on, status, history, help, doctor, roles, stop."
+)
+DEFAULT_STATUS_LIMIT_DESCRIPTION = "Optional limit for history results."
+DEFAULT_STATUS_RUN_ID_DESCRIPTION = "Run id to stop."
+DEFAULT_STATUS_ROLE_DESCRIPTION = "Optional role for roles queries or updates."
+DEFAULT_STATUS_SETTING_DESCRIPTION = "Optional role setting to update."
+DEFAULT_STATUS_VALUE_DESCRIPTION = "Optional role setting value."
 DEFAULT_HOST_HELP = """Orchestra commands:
   /orch help                         Show this help
   /orch on                           Load the orchestra orchestrator skill
@@ -145,6 +154,13 @@ class PromptConfig:
     tool_goal_description: str = DEFAULT_TOOL_GOAL_DESCRIPTION
     tool_role_description: str = DEFAULT_TOOL_ROLE_DESCRIPTION
     tool_task_label_description: str = DEFAULT_TOOL_TASK_LABEL_DESCRIPTION
+    status_description: str = DEFAULT_STATUS_DESCRIPTION
+    status_action_description: str = DEFAULT_STATUS_ACTION_DESCRIPTION
+    status_limit_description: str = DEFAULT_STATUS_LIMIT_DESCRIPTION
+    status_run_id_description: str = DEFAULT_STATUS_RUN_ID_DESCRIPTION
+    status_role_description: str = DEFAULT_STATUS_ROLE_DESCRIPTION
+    status_setting_description: str = DEFAULT_STATUS_SETTING_DESCRIPTION
+    status_value_description: str = DEFAULT_STATUS_VALUE_DESCRIPTION
     host_help: str = DEFAULT_HOST_HELP
     budget_exceeded_prompt: str = DEFAULT_BUDGET_EXCEEDED_PROMPT
 
@@ -286,6 +302,32 @@ def load_app_config(path: str | Path) -> AppConfig:
         tool_task_label_description=_get_optional_string(
             prompts_raw, "tool_task_label_description"
         ) or DEFAULT_TOOL_TASK_LABEL_DESCRIPTION,
+        status_description=_get_optional_string(prompts_raw, "status_description")
+        or DEFAULT_STATUS_DESCRIPTION,
+        status_action_description=_get_optional_string(
+            prompts_raw, "status_action_description"
+        )
+        or DEFAULT_STATUS_ACTION_DESCRIPTION,
+        status_limit_description=_get_optional_string(
+            prompts_raw, "status_limit_description"
+        )
+        or DEFAULT_STATUS_LIMIT_DESCRIPTION,
+        status_run_id_description=_get_optional_string(
+            prompts_raw, "status_run_id_description"
+        )
+        or DEFAULT_STATUS_RUN_ID_DESCRIPTION,
+        status_role_description=_get_optional_string(
+            prompts_raw, "status_role_description"
+        )
+        or DEFAULT_STATUS_ROLE_DESCRIPTION,
+        status_setting_description=_get_optional_string(
+            prompts_raw, "status_setting_description"
+        )
+        or DEFAULT_STATUS_SETTING_DESCRIPTION,
+        status_value_description=_get_optional_string(
+            prompts_raw, "status_value_description"
+        )
+        or DEFAULT_STATUS_VALUE_DESCRIPTION,
         host_help=_get_optional_string(prompts_raw, "host_help") or DEFAULT_HOST_HELP,
         budget_exceeded_prompt=_get_optional_string(
             prompts_raw, "budget_exceeded_prompt"

@@ -288,6 +288,13 @@ interface ToolInfoPayload {
   goalDescription: string;
   roleDescription: string;
   taskLabelDescription: string;
+  statusDescription: string;
+  statusActionDescription: string;
+  statusLimitDescription: string;
+  statusRunIdDescription: string;
+  statusRoleDescription: string;
+  statusSettingDescription: string;
+  statusValueDescription: string;
 }
 
 async function hostHelp(): Promise<string> {
@@ -312,6 +319,13 @@ async function loadToolInfo(): Promise<ToolInfoPayload> {
     goalDescription: "Focused worker request/task to delegate.",
     roleDescription: "(Optional) specific role; omit for default.",
     taskLabelDescription: "Optional short request label.",
+    statusDescription: "Inspect, control, or refresh the current Orchestra session.",
+    statusActionDescription: "Orchestra session action to run.",
+    statusLimitDescription: "Optional history limit for history actions.",
+    statusRunIdDescription: "Required run id for stop actions.",
+    statusRoleDescription: "Optional role name to update or inspect.",
+    statusSettingDescription: "Optional role setting to update.",
+    statusValueDescription: "Optional role setting value.",
   };
 }
 
@@ -406,6 +420,17 @@ function doArgumentContext(tokens: string[]): { expecting: "role" | "timeout" | 
   }
 
   return { expecting, goalStarted };
+}
+
+type OrchStatusAction = "on" | "status" | "history" | "help" | "doctor" | "roles" | "stop";
+
+interface OrchStatusParams {
+  action: OrchStatusAction;
+  limit?: string;
+  runId?: string;
+  role?: string;
+  setting?: string;
+  value?: string;
 }
 
 export default async function orchestraExtension(pi: ExtensionAPI) {
@@ -1044,6 +1069,119 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     return null;
   }
 
+  function sanitizeRoleListing(output: string): string {
+    const sanitized = output.trim();
+    return sanitized.length > 0 ? sanitized : "";
+  }
+
+  function registerOrchStatusTool(toolInfo: ToolInfoPayload): void {
+    pi.registerTool({
+      name: "orch_status",
+      label: "Orchestra Status",
+      description: toolInfo.statusDescription,
+      promptSnippet: toolInfo.promptSnippet,
+      promptGuidelines: [...toolInfo.promptGuidelines, toolInfo.statusActionDescription],
+      parameters: Type.Object({
+        action: Type.Union([
+          Type.Literal("on"),
+          Type.Literal("status"),
+          Type.Literal("history"),
+          Type.Literal("help"),
+          Type.Literal("doctor"),
+          Type.Literal("roles"),
+          Type.Literal("stop"),
+        ]),
+        limit: Type.Optional(Type.String({ description: toolInfo.statusLimitDescription })),
+        runId: Type.Optional(Type.String({ description: toolInfo.statusRunIdDescription })),
+        role: Type.Optional(Type.String({ description: toolInfo.statusRoleDescription })),
+        setting: Type.Optional(Type.String({ description: toolInfo.statusSettingDescription })),
+        value: Type.Optional(Type.String({ description: toolInfo.statusValueDescription })),
+      }),
+      async execute(_toolCallId, params: OrchStatusParams, _signal, _onUpdate, ctx) {
+        const failure = (text: string): { content: Array<{ type: "text"; text: string }>; isError: true } => ({
+          content: [{ type: "text", text }],
+          isError: true,
+        });
+        const success = (text: string): { content: Array<{ type: "text"; text: string }>; isError: false } => ({
+          content: [{ type: "text", text }],
+          isError: false,
+        });
+        const runtimeSessionId = () => {
+          try {
+            return normalizePiSessionId(ctx.sessionManager.getSessionId());
+          } catch {
+            return null;
+          }
+        };
+
+        if (params.action === "help") {
+          const result = await runOrchestra(["help-host"]);
+          return success(result.stdout || result.stderr);
+        }
+
+        if (params.action === "doctor") {
+          const result = await runOrchestra(["doctor"]);
+          return success(result.stdout || result.stderr);
+        }
+
+        if (params.action === "on") {
+          const sessionId = runtimeSessionId();
+          if (!sessionId) {
+            return failure("Pi session_id is required for orch_status on.");
+          }
+          const result = await injectOrchestratorSkill(sessionId);
+          return result.code === 0 ? success(result.output) : failure(result.output);
+        }
+
+        if (params.action === "status") {
+          const sessionId = runtimeSessionId();
+          if (!sessionId) {
+            return failure("Pi session_id is required for orch_status status.");
+          }
+          const result = await runOrchestra(["status", "--session-id", sessionId]);
+          return success(result.stdout || result.stderr);
+        }
+
+        if (params.action === "history") {
+          const sessionId = runtimeSessionId();
+          if (!sessionId) {
+            return failure("Pi session_id is required for orch_status history.");
+          }
+          const limitValue = params.limit?.trim() || "10";
+          const result = await runOrchestra(["history", "--session-id", sessionId, "--limit", limitValue]);
+          return success(result.stdout || result.stderr);
+        }
+
+        if (params.action === "roles") {
+          const role = params.role?.trim() || "";
+          const setting = params.setting?.trim() || "";
+          const value = params.value?.trim() || "";
+          if (role || setting || value) {
+            return failure("orch_status roles is read-only; use the host /orch roles command to change role settings.");
+          }
+          const result = await runOrchestra(["roles", "--all"]);
+          const output = sanitizeRoleListing(result.stdout || result.stderr);
+          return output ? success(output) : success("");
+        }
+
+        if (params.action === "stop") {
+          const sessionId = runtimeSessionId();
+          if (!sessionId) {
+            return failure("Pi session_id is required for orch_status stop.");
+          }
+          const runId = params.runId?.trim() || "";
+          if (!runId) {
+            return failure("runId is required for orch_status stop.");
+          }
+          const result = await runOrchestra(["stop", "--session-id", sessionId, "--run-id", runId]);
+          return success(result.stdout || result.stderr);
+        }
+
+        return failure(`Unknown orch_status action: ${params.action}`);
+      },
+    });
+  }
+
   function registerOrchDispatchTool(toolInfo: ToolInfoPayload): void {
     pi.registerTool({
       name: "orch_dispatch",
@@ -1073,12 +1211,14 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     });
   }
 
-  async function refreshOrchDispatchToolRegistration(): Promise<void> {
+  async function refreshOrchDispatchToolRegistration(toolInfo?: ToolInfoPayload): Promise<void> {
     if (!registerDispatchTool) return;
-    registerOrchDispatchTool(await loadToolInfo());
+    registerOrchDispatchTool(toolInfo ?? await loadToolInfo());
   }
 
-  await refreshOrchDispatchToolRegistration();
+  const toolInfo = await loadToolInfo();
+  registerOrchStatusTool(toolInfo);
+  await refreshOrchDispatchToolRegistration(toolInfo);
 
   pi.registerCommand("orch", {
     description: "Orchestra host adapter: /orch help|on|do|roles|status|stop|doctor|history",

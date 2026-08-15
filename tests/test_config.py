@@ -12,6 +12,13 @@ from orchestra.config import (
     DEFAULT_PER_SESSION_CONCURRENCY,
     DEFAULT_RETURN_FORMAT,
     DEFAULT_STATE_DIR,
+    DEFAULT_STATUS_ACTION_DESCRIPTION,
+    DEFAULT_STATUS_DESCRIPTION,
+    DEFAULT_STATUS_LIMIT_DESCRIPTION,
+    DEFAULT_STATUS_ROLE_DESCRIPTION,
+    DEFAULT_STATUS_RUN_ID_DESCRIPTION,
+    DEFAULT_STATUS_SETTING_DESCRIPTION,
+    DEFAULT_STATUS_VALUE_DESCRIPTION,
     DEFAULT_TOOL_DESCRIPTION,
     DEFAULT_TOOL_GOAL_DESCRIPTION,
     DEFAULT_TOOL_PROMPT_GUIDELINES,
@@ -110,6 +117,13 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.prompts.tool_prompt_guidelines == DEFAULT_TOOL_PROMPT_GUIDELINES
     assert config.prompts.tool_goal_description == DEFAULT_TOOL_GOAL_DESCRIPTION
     assert config.prompts.tool_role_description == DEFAULT_TOOL_ROLE_DESCRIPTION
+    assert config.prompts.status_description == DEFAULT_STATUS_DESCRIPTION
+    assert config.prompts.status_action_description == DEFAULT_STATUS_ACTION_DESCRIPTION
+    assert config.prompts.status_limit_description == DEFAULT_STATUS_LIMIT_DESCRIPTION
+    assert config.prompts.status_run_id_description == DEFAULT_STATUS_RUN_ID_DESCRIPTION
+    assert config.prompts.status_role_description == DEFAULT_STATUS_ROLE_DESCRIPTION
+    assert config.prompts.status_setting_description == DEFAULT_STATUS_SETTING_DESCRIPTION
+    assert config.prompts.status_value_description == DEFAULT_STATUS_VALUE_DESCRIPTION
 
 
 def test_load_app_config_expands_tilde_paths(
@@ -374,6 +388,13 @@ tool_prompt_guidelines:
   - Custom guideline.
 host_help: Custom help {roles}
 budget_exceeded_prompt: Custom budget handoff.
+status_description: Custom status description.
+status_action_description: Custom action description.
+status_limit_description: Custom limit description.
+status_run_id_description: Custom run id description.
+status_role_description: Custom role description.
+status_setting_description: Custom setting description.
+status_value_description: Custom value description.
 """.lstrip(),
         encoding="utf-8",
     )
@@ -386,6 +407,13 @@ budget_exceeded_prompt: Custom budget handoff.
     assert config.prompts.tool_prompt_guidelines == ("Custom guideline.",)
     assert config.prompts.host_help == "Custom help {roles}"
     assert config.prompts.budget_exceeded_prompt == "Custom budget handoff."
+    assert config.prompts.status_description == "Custom status description."
+    assert config.prompts.status_action_description == "Custom action description."
+    assert config.prompts.status_limit_description == "Custom limit description."
+    assert config.prompts.status_run_id_description == "Custom run id description."
+    assert config.prompts.status_role_description == "Custom role description."
+    assert config.prompts.status_setting_description == "Custom setting description."
+    assert config.prompts.status_value_description == "Custom value description."
 
 
 def test_load_agent_catalog_supports_optional_fields(tmp_path: Path) -> None:
