@@ -4,9 +4,9 @@ This document separates Orchestra core behavior from host-plugin responsibilitie
 
 ## Goal
 
-A host plugin should provide a native way for a host session to dispatch and supervise Orchestra workers while keeping orchestration policy in the Python core.
+A host plugin should provide a native way for a host session to dispatch and supervise Orchestra subagents while keeping orchestration policy in the Python core.
 
-The plugin should be thin. It owns host identity, host UI, host message delivery, native command/tool registration, and background watcher lifecycle. The core owns dispatch, scheduling, state, formatting, reports, and worker execution.
+The plugin should be thin. It owns host identity, host UI, host message delivery, native command/tool registration, and background watcher lifecycle. The core owns dispatch, scheduling, state, formatting, reports, and subagent execution.
 
 ## Core behavior to reuse
 
@@ -14,7 +14,7 @@ These features already live in Orchestra core or core CLI helpers. New plugins s
 
 ### User-facing operations
 
-- `orchestra do` — dispatch a worker run.
+- `orchestra do` — dispatch a subagent run.
 - `orchestra status` — show active run status.
 - `orchestra stop` — stop an owned active run.
 - `orchestra doctor` — check local setup.
@@ -30,8 +30,8 @@ These features already live in Orchestra core or core CLI helpers. New plugins s
 
 - Role/default-role selection.
 - Requested-role fallback.
-- Worker prompt building.
-- Worker skill injection.
+- Subagent prompt building.
+- Subagent skill injection.
 - Harness execution.
 - Timeout handling.
 - Stop/cancel/process supervision.
@@ -120,14 +120,14 @@ A Pi-equivalent command surface includes:
 
 ### Watchers and return delivery
 
-- After successful dispatch, start a run watcher with `_await-run` when per-worker progress is useful for the host.
-- Use `_progress-message` for per-worker progress text.
-- Prefer non-prompt notifications for per-worker progress.
+- After successful dispatch, start a run watcher with `_await-run` when per-subagent progress is useful for the host.
+- Use `_progress-message` for per-subagent progress text.
+- Prefer non-prompt notifications for per-subagent progress.
 - Start a session-report watcher with `_await-session-report` for consolidated auto-return.
 - Deliver the returned report to the owning runtime session.
 - Mark delivered report run ids with `_mark-session-report-delivered` after successful delivery.
 - Release report run ids with `_release-session-report` if delivery fails after acquiring a report.
-- Derive watcher timeout from the effective worker timeout plus host margin.
+- Derive watcher timeout from the effective subagent timeout plus host margin.
 
 ### Lifecycle cleanup
 
@@ -139,7 +139,7 @@ A Pi-equivalent command surface includes:
 
 Implement these when the host supports them:
 
-- Active-worker status bar/footer.
+- Active-subagent status bar/footer.
 - Rendered command and output entries.
 - Native notifications for dispatch/progress/failure.
 - Argument completions for subcommands, roles, harness configs, active run ids, and common history/timeout values.
@@ -160,7 +160,7 @@ The Pi plugin is the reference implementation for host-side behavior. Its Pi-spe
 - `pi.registerTool` for `orch_dispatch`.
 - `pi.registerEntryRenderer` and `pi.appendEntry` for rendered command/output entries.
 - `ctx.ui.notify` for notifications.
-- `ctx.ui.setStatus` for footer worker status.
+- `ctx.ui.setStatus` for footer subagent status.
 - `pi.sendUserMessage(..., { deliverAs: "followUp", triggerTurn: true })` for final auto-return and `/orch on` delivery.
 - `pi.sendUserMessage(..., { deliverAs: "steer" })` for budget handoff steering.
 - `session_start`, `session_shutdown`, `turn_end`, and `tool_call` event hooks.
@@ -192,7 +192,7 @@ Before implementing a new host plugin, answer these questions.
 3. **Command support** — Can the host expose the `/orch` command surface?
 4. **Main-session skill** — Can the host deliver `_orchestrator-skill` into the current main session?
 5. **Auto-return** — How can the plugin deliver the consolidated session report to the owning session?
-6. **Progress** — Does the host have non-prompt notifications for per-worker progress?
+6. **Progress** — Does the host have non-prompt notifications for per-subagent progress?
 7. **Lifecycle** — What session end/shutdown hook can clean up watchers?
 8. **UI** — What native status, notification, output, or completion APIs should be used?
 9. **Install** — Does the host need an `orchestra init <host>` target?

@@ -145,19 +145,19 @@ async function loadToolInfo(): Promise<ToolInfoPayload> {
   }
 
   return {
-    description: "Delegate or dispatch a focused task to an Orchestra worker/subagent.",
-    promptSnippet: "Dispatch focused work to Orchestra workers/subagents.",
-    promptGuidelines: ["Use orch_dispatch for narrow delegated worker tasks."],
-    goalDescription: "Focused worker request/task to delegate.",
-    roleDescription: "(Optional) specific role; omit for default.",
+    description: "Use orch_dispatch as the default for detailed work. Inspect the whole request, call it once per slice, and always dispatch all unblocked independent slices in parallel. Keep writes file-disjoint and dependencies in order. Choose the best matching role; the parent owns decisions, approvals, artifacts, and synthesis.",
+    promptSnippet: "Use Orchestra tools to delegate work.",
+    promptGuidelines: ["Follow the shared orch_dispatch and orch_status descriptions."],
+    goalDescription: "One worker slice: goal, exact scope, stop condition, and return shape.",
+    roleDescription: "Optional worker capability; choose the best matching enabled role.",
     taskLabelDescription: "Optional short request label.",
-    statusDescription: "Inspect or control Orchestra host-session state from OpenCode.",
-    statusActionDescription: "OpenCode /orch action.",
-    statusLimitDescription: "Positive history limit; defaults to 10.",
-    statusRunIdDescription: "Required run id for stop.",
-    statusRoleDescription: "Role to update when using action roles.",
-    statusSettingDescription: "Role setting to update when using action roles.",
-    statusValueDescription: "Role setting value to update when using action roles.",
+    statusDescription: "Use orch_status for status, completed results, read-only roles, setup/help, activation, and stopping an owned run. Use orch_dispatch to start work; completed reports return automatically.",
+    statusActionDescription: "Action: help, doctor, roles, status, history, on, or stop; stop requires runId.",
+    statusLimitDescription: "Optional positive history limit for action=history.",
+    statusRunIdDescription: "Required run id when action=stop.",
+    statusRoleDescription: "Reserved for compatibility; action=roles lists all configured roles.",
+    statusSettingDescription: "Reserved; model-callable roles are read-only.",
+    statusValueDescription: "Reserved; model-callable roles are read-only.",
   };
 }
 

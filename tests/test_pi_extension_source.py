@@ -120,8 +120,9 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     ]
     assert 'goal: Type.String(' not in status_block
     assert 'taskLabel: Type.Optional' not in status_block
-    for keyword in ("delegate", "dispatch", "subagent", "sub-agent", "worker"):
+    for keyword in ("delegate", "dispatch", "subagent", "sub-agent"):
         assert keyword in prompts_source
+    assert "worker" not in prompts_source
 
 
 def test_clean_return_templates_live_in_core_not_extension() -> None:

@@ -165,39 +165,49 @@ def test_default_host_help_uses_generic_session_wording() -> None:
 
 
 def test_default_tool_guidance_keeps_orchestrator_context_clean() -> None:
-    assert DEFAULT_TOOL_DESCRIPTION == (
-        "Dispatch one small scoped worker slice. Each slice has one goal, exact scope, "
-        "one stop condition, and one return shape. Research answers one small question "
-        "against one exact source scope, not a topic. The parent keeps sequencing, "
-        "approvals, and final synthesis. Use an exact configured role; omit role for "
-        "the default. {roles}"
-    )
-    assert DEFAULT_TOOL_PROMPT_SNIPPET == (
-        "Dispatch one small scoped worker slice. Research is one small answerable "
-        "question, not a topic. {roles}"
-    )
+    for expected in (
+        "Use orch_dispatch as the default way",
+        "inspect the whole request",
+        "Call orch_dispatch once per slice",
+        "make multiple calls",
+        "Always dispatch all currently unblocked, independent slices in parallel",
+        "Parallel write slices must own separate files or resources",
+        "Keep dependency-bound work in order",
+        "immediately dispatch every newly unblocked slice",
+        "self-contained brief",
+        "artifact references",
+        "recommended next step",
+        "Omit role when no specialized enabled role is a better match",
+        "parent owns decomposition, sequencing, user decisions, approvals",
+        "Completed worker reports return automatically",
+        "Use orch_status for status/control",
+        "{roles}",
+    ):
+        assert expected in DEFAULT_TOOL_DESCRIPTION
+    assert DEFAULT_TOOL_PROMPT_SNIPPET == "Use Orchestra tools to delegate work."
     assert DEFAULT_TOOL_PROMPT_GUIDELINES == (
-        "Before calling orch_dispatch, reduce the task to one worker slice: one goal, "
-        "one exact scope, one stop condition, and one return shape.",
-        "For research, ask one small answerable question with one exact source scope: "
-        "one file, one docs page/section, one URL, or one tight file cluster.",
-        "Do not dispatch broad topics such as API support, install behavior, "
-        "notification APIs, or overall design. Convert them into small questions "
-        "first.",
-        "Do not dispatch implementation, verification, or review that depends on "
-        "unresolved research. Wait for the research result, then continue.",
-        "If a research worker times out, shrink to one source and one exact question, "
-        "then re-dispatch once. If the retry times out, record the missing fact as a "
-        "blocker and stop.",
-        "Do not perform failed worker work yourself.",
-        "After dispatch, do not wait or poll. Continue independent work or stop; "
-        "Orchestra will return worker results.",
-        "Use exact enabled roles; omit role for the default.",
+        "Follow the shared orch_dispatch and orch_status descriptions.",
     )
     assert DEFAULT_TOOL_GOAL_DESCRIPTION == (
         "One small worker slice: goal, exact scope, stop condition, and return shape."
     )
-    assert "Return the smallest complete answer" in DEFAULT_RETURN_FORMAT
+    assert "enabled role that best matches" in DEFAULT_TOOL_ROLE_DESCRIPTION
+    assert "no specialized enabled role is a better match" in (
+        DEFAULT_TOOL_ROLE_DESCRIPTION
+    )
+    for expected in (
+        "status for active workers",
+        "history for completed worker results",
+        "roles for available read-only role information",
+        "stop with a runId",
+        "Use orch_dispatch to start work",
+        "Completed worker reports return automatically",
+    ):
+        assert expected in DEFAULT_STATUS_DESCRIPTION
+    assert "runId" in DEFAULT_STATUS_ACTION_DESCRIPTION
+    assert "read-only" in DEFAULT_STATUS_SETTING_DESCRIPTION
+    assert "artifact implications" in DEFAULT_RETURN_FORMAT
+    assert "recommended next step" in DEFAULT_RETURN_FORMAT
 
 
 @pytest.mark.parametrize(

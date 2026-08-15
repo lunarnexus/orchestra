@@ -9,6 +9,8 @@ These rules apply to all AI coding agents working on this project.
 - Favor simple MVP work over speculative framework building.
 - Prefer small, reviewable changes with clear verification.
 - Be explicit about what is implemented now versus only planned.
+- The main-session orchestrator owns project documentation and standard artifact edits. Subagents inspect docs and return evidence, implications, or proposed wording; they do not edit project documentation.
+- Public documentation calls launched Orchestra agents **subagents**, never workers. Internal code/schema identifiers may retain existing `worker` names for compatibility.
 
 ## Schema & Data Changes
 
@@ -76,5 +78,7 @@ Source copy for the global Pi host extension lives at `extensions/pi/orchestra/i
 - Host adapters must retrieve runtime session ids from runtime context, not from user prompts or model output.
 - CLI `--session-id` is local/manual mode only and must not be described as a runtime host identity source.
 - Generic command/help/tool/report wording belongs in the Python core or core config, not duplicated in host adapters.
+- Shared tool descriptions own cross-host capabilities, delegation-by-default, whole-request lookahead, one-call-per-slice fan-out, role selection, parallelism, dependency basics, and return expectations. Host-specific prompt snippets must stay minimal.
+- Skills own stricter workflow, artifact gates, methodology, approvals, and role-specific process; do not rely on a skill for basic tool operation.
 - Host adapters must stay thin: runtime session identity, host UI/rendering, notifications, and host message injection only.
-- If changing public output strings, prompt labels, or tool metadata, update core/config and tests; do not patch only `extensions/pi/orchestra/index.ts`.
+- If changing public output strings, prompt labels, or tool metadata, update core/config, host fallback metadata, and tests; do not patch only `extensions/pi/orchestra/index.ts`.

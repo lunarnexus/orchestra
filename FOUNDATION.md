@@ -19,14 +19,14 @@ decisions.
   background runs, parallel review, chains, review loops, role definitions, and
   model/tool overrides.
 - **dev-orchestra** — orchestration discipline: the parent plans, routes,
-  gates, and judges; workers handle narrow research, planning, implementation,
+  gates, and judges; subagents handle narrow research, planning, implementation,
   review, verification, and security slices.
-- **CelloS** — useful lessons from deterministic scheduling, subprocess worker
+- **CelloS** — useful lessons from deterministic scheduling, subagent subprocess
   isolation, SQLite-backed state, connector abstractions, approval gates, and
   auditability. Orchestra is a separate project and should not inherit CelloS
   complexity by default.
 - **Hermes, Pi, OpenCode, ACP-compatible agents** — first target ecosystems for
-  orchestrator adapters and worker harnesses.
+  orchestrator adapters and subagent harnesses.
 
 ## Non-Negotiable Principles
 
@@ -37,7 +37,7 @@ decisions.
    Native plugins/extensions are required where reliable slash-command UX,
    session ownership, or automatic returns are needed; MCP-only is not
    enough for the full behavior.
-3. **Narrow worker slices** — child agents receive focused prompts with explicit
+3. **Narrow subagent slices** — child agents receive focused prompts with explicit
    scope, stop conditions, and return format.
 4. **Lean state** — store only operational state needed for supervision,
    recovery, and status. JSONL operational logs keep compact lifecycle records
@@ -57,19 +57,23 @@ decisions.
   and receives compact progress/results.
 - **Harness** — adapter that knows how to run a specific agent runtime such as
   Pi, Hermes, OpenCode, ACP, or another shell agent.
-- **Worker agent** — specialized child agent launched through a harness for one
-  scoped task.
+- **Subagent** — specialized child agent launched through a harness for one
+  scoped task. Public documentation consistently uses **subagent** for these
+  agents. Internal implementation and persisted identifiers may retain `worker`
+  names such as `WorkerRequest`, `worker_session_id`, and
+  `orchestra-worker-<run-id>`; those are compatibility details, not public agent
+  terminology.
 - **`orchestrator_session_id`** — the runtime, exact host/calling session id that
-  invoked Orchestra. Worker ownership, control calls, approval routing, and
+  invoked Orchestra. Subagent ownership, control calls, approval routing, and
   auto-return are keyed by this identifier, not by best guesses, batches, humans,
   projects, host windows, or any id supplied by the LLM.
   Read-only status/history may aggregate known runtime-continuation lineage for
   host UX, but that does not change the stored owner id or control boundary.
-- **Role** — tentative reusable worker purpose such as `builder`, `reviewer`,
+- **Role** — tentative reusable subagent purpose such as `builder`, `reviewer`,
   `researcher`, `appsec`, or `planner`. Roles are a routing convenience, not a
   fixed taxonomy.
-- **Run** — one worker execution requested by an orchestrator session.
-- **Batch** — optional UI/API grouping for workers requested together. Batches do
+- **Run** — one subagent execution requested by an orchestrator session.
+- **Batch** — optional UI/API grouping for subagents requested together. Batches do
   not define return semantics; returns are grouped by orchestrator session.
 - **Step** — one child-agent execution inside a run.
 - **Status** — lightweight runtime state: queued, running, waiting, done,
@@ -86,13 +90,13 @@ decisions.
 | MCP-capable, not MCP-only | MCP is a good universal tool surface, but host-native plugins/extensions are required for reliable slash UX and session ownership/auto-return; generic MCP alone cannot provide the full behavior. | 2026-07-27 |
 | Python core | Python fits local subprocess orchestration, SQLite, CLI packaging, and existing CelloS lessons. TypeScript should be used only where host extensions require it. | 2026-07-27 |
 | One-shot first | Start with simple subprocess calls such as Pi/Hermes/OpenCode one-shots; keep RPC, ACP streaming, and approval passthrough on the roadmap. | 2026-07-27 |
-| SQLite for lean runtime state | Track useful supervision state by default while writing JSONL operational logs for inspection. Harness-owned session logs and return artifacts may retain full worker context outside core run state. | 2026-07-27 |
+| SQLite for lean runtime state | Track useful supervision state by default while writing JSONL operational logs for inspection. Harness-owned session logs and return artifacts may retain full subagent context outside core run state. | 2026-07-27 |
 | `config.yaml` as primary config | Project and user configuration should use YAML, including concurrency limits, defaults, logging, timeouts, and explicit harness selection/fallback policy. | 2026-07-27 |
 | Separate agent catalog | Agent/model/role combinations, context limits, and harness-specific defaults should live outside core config once schema settles. | 2026-07-27 |
 | Minimal scheduler | Use a small run supervisor for concurrency, process tracking, status, and cancellation; avoid CelloS-style project-management weight. | 2026-07-27 |
-| Session-scoped returns | Worker returns are grouped by orchestrator session, not by batch. Send one consolidated return only when that session has no active workers remaining. | 2026-07-27 |
-| Exact session ownership | Multi-orchestrator support is mandatory: workers must be tracked and controlled by `orchestrator_session_id`. Do not infer ownership. | 2026-07-27 |
-| Adapter identity | Core requires a `orchestrator_session_id` for worker ownership, control, and auto-return. Host plugins/extensions/adapters must hard-code retrieval from runtime context and pass it to core; the LLM must never provide or remember this id. | 2026-07-27 |
+| Session-scoped returns | Subagent returns are grouped by orchestrator session, not by batch. Send one consolidated return only when that session has no active subagents remaining. | 2026-07-27 |
+| Exact session ownership | Multi-orchestrator support is mandatory: subagents must be tracked and controlled by `orchestrator_session_id`. Do not infer ownership. | 2026-07-27 |
+| Adapter identity | Core requires a `orchestrator_session_id` for subagent ownership, control, and auto-return. Host plugins/extensions/adapters must hard-code retrieval from runtime context and pass it to core; the LLM must never provide or remember this id. | 2026-07-27 |
 | MVP limit handling | Enforce global and per-session concurrency limits. If a `/orch do` request exceeds either limit, return an error for MVP instead of queueing. | 2026-07-27 |
 | Config-driven harness selection | Harness selection should come from explicit config/catalog entries, not from startup-time plugin discovery or environment scanning. | 2026-07-28 |
 | Lazy harness loading | Harness implementations/plugins should load only when a configured role actually requests them, keeping startup overhead low. | 2026-07-28 |
@@ -113,7 +117,7 @@ decisions.
   `prompts.yaml` carries prompt text, and `agent-catalog.yaml` carries role and
   harness definitions.
 - **Implemented harnesses/host surfaces:** CLI, Pi extension, Hermes plugin, Pi
-  worker harnesses, and Hermes worker harnesses.
+  subagent harnesses, and Hermes subagent harnesses.
 - **Planned harness and protocol work:** tracked in `ROADMAP.md`.
 
 Harness implementations should be loaded lazily only when referenced by the
@@ -127,9 +131,9 @@ Default state should include only:
 - run id
 - `orchestrator_session_id`, provided by the host adapter from a
   hard-coded reliable runtime-context retrieval method
-- optional batch id when a host command or API request submits grouped workers
-- worker harness
-- worker role
+- optional batch id when a host command or API request submits grouped subagents
+- subagent harness
+- subagent role
 - status
 - start and end timestamps
 - local process handle when available
@@ -138,18 +142,18 @@ Default state should include only:
 - optional return artifact path and summary-truncated flag
 - error or blocker
 - JSONL log path
-- optional worker session handle or transcript path when the harness exposes one
+- optional subagent session handle or transcript path when the harness exposes one
 - approval-needed flag for interactive modes
 
 Default state should not store full prompts, full transcripts, raw token streams,
 or every tool call. JSONL operational logs should record lifecycle events,
 status changes, result summaries, and harness session ids when available. A
-worker's full final stdout/stderr is kept as a return artifact under
+subagent's full final stdout/stderr is kept as a return artifact under
 `state/return-artifacts/` so truncated summaries can point the orchestrator at
-the complete worker return.
+the complete subagent return.
 
 Harnesses may report or assign a native session id or transcript file path for
-debugging or resume. Pi workers run as saved sessions with deterministic
+debugging or resume. Pi subagents run as saved sessions with deterministic
 `orchestra-worker-<run-id>` ids; Hermes one-shots/profile runs usually persist
 sessions. Orchestra should store such handles as metadata or log references, not
 as required state.
@@ -162,19 +166,19 @@ as required state.
    context and passes it to core. The LLM must not provide, remember, or infer
    this id.
 4. Core resolves defaults from `config.yaml` and the agent catalog.
-5. Harness discovery selects an available worker runtime.
+5. Harness discovery selects an available subagent runtime.
 6. The run supervisor verifies the `orchestrator_session_id` and enforces
    global and per-session concurrency limits.
-7. `/orch do` starts one worker for the current orchestrator session. The
+7. `/orch do` starts one subagent for the current orchestrator session. The
    orchestrator may call `/orch do` repeatedly and asynchronously until a
    concurrency limit is reached.
 8. Each harness launches a focused child agent with scoped context.
 9. Orchestra tracks lean status while JSONL logs capture operational details and
-   stores the worker's full final stdout/stderr as a return artifact.
-10. When any worker finishes, Orchestra updates state and checks
+   stores the subagent's full final stdout/stderr as a return artifact.
+10. When any subagent finishes, Orchestra updates state and checks
    `count_active_workers(orchestrator_session_id)`.
 11. If that count is below 1, Orchestra creates one minimal consolidated return
-   prompt/report for that orchestrator session. It must not send per-worker
+   prompt/report for that orchestrator session. It must not send per-subagent
    prompts.
 12. When supported and enabled, Orchestra prods the owning orchestrator by
    re-entering as one new host/orchestrator turn with the consolidated session
@@ -185,21 +189,21 @@ as required state.
 ## Initial Feature Target
 
 - Call Orchestra from a host agent or CLI.
-- Dispatch Pi workers with focused role prompts.
+- Dispatch Pi subagents with focused role prompts.
 - Support the MVP `/orch` host-facing command set: `/orch do`, `/orch status`,
   `/orch stop`, `/orch doctor`, and `/orch history`.
-- OpenCode host support includes both `orch_dispatch` and `orch_status`; `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, `roles`, and `stop`.
-- Role config changes use `orchestra roles ROLE SETTING VALUE`, not hand-edited config files. Supported settings are `harness`, `enabled`, `model`, `profile`, and `agent`.
-- OpenCode `/orch roles ROLE SETTING VALUE` is model-callable through `orch_status` in this slice; it is not an executable slash-command surface yet.
+- Pi, Hermes, and OpenCode host support includes both `orch_dispatch` and `orch_status`; `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, `roles`, and `stop`.
+- Role config changes use native host commands or `orchestra roles ROLE SETTING VALUE`, not hand-edited config files. Supported settings are `harness`, `enabled`, `model`, `profile`, and `agent`.
+- Model-callable `orch_status roles` is read-only for now. Consequently, OpenCode's prompt-template `/orch roles ROLE SETTING VALUE` path does not mutate roles; Pi and Hermes native `/orch roles` handlers retain role updates.
 - `orch_status roles` displays configured role env values.
 - Pi and Hermes native `/orch roles` commands remain mutable.
-- Return compact worker results without stuffing full worker context into the
+- Return compact subagent results without stuffing full subagent context into the
   orchestrator session.
-- Consolidate worker completions by orchestrator session, not by batch: when the
-  final active worker for that session finishes, return one minimal session
+- Consolidate subagent completions by orchestrator session, not by batch: when the
+  final active subagent for that session finishes, return one minimal session
   report.
 - Support multiple orchestrator sessions concurrently without allowing one
-  session to receive, stop, or control another session's workers.
+  session to receive, stop, or control another session's subagents.
 - Store lean run status in SQLite plus JSONL operational logs.
 - Keep verbose details available through JSONL logs, return artifacts, or harness-owned session logs.
 
@@ -216,7 +220,7 @@ Use `/orch` as the host-facing command namespace:
 - `/orch history`
 
 `/orch goal` is tracked in `ROADMAP.md`. It should build on session-scoped
-worker returns with a standing objective and completion contract.
+subagent returns with a standing objective and completion contract.
 
 `/orch status` reports active agents/runs plus tiny service health. `/orch history`
 reads compact DB summaries and JSONL operational logs for previous inputs and
@@ -227,30 +231,30 @@ orchestration path.
 
 ### Context and Results
 
-Raw subagent streams must not flow into orchestrator context. Workers return
+Raw subagent streams must not flow into orchestrator context. Subagents return
 compact status/finding reports using a slim result template. Orchestra is a task
-dispatch and supervision layer: it cares that the worker run happened, status,
+dispatch and supervision layer: it cares that the subagent run happened, status,
 errors/blockers, and a compact report. The orchestrator can understand prose;
 structured deterministic data is useful for operational status but is not
-mandatory for worker findings. Do not require workers to return JSON, and do not
-make core design depend on parsing worker content before handoff.
+mandatory for subagent findings. Do not require subagents to return JSON, and do not
+make core design depend on parsing subagent content before handoff.
 
-Worker completions are grouped by exact orchestrator session, not by batch. A
+Subagent completions are grouped by exact orchestrator session, not by batch. A
 batch may be stored as optional metadata, but it must not decide return routing or
-completion grouping. `/orch do` adds one worker to the current orchestrator
+completion grouping. `/orch do` adds one subagent to the current orchestrator
 session; the orchestrator may call `/orch do` repeatedly and asynchronously until
 a concurrency limit is reached. For hosts that rotate session ids across a
 logical conversation, such as Hermes context compression, stored run ownership
 remains exact while read-only `status` and `history` may display the compression
 lineage to reduce operator confusion.
 
-When any worker finishes, Orchestra updates state and checks
+When any subagent finishes, Orchestra updates state and checks
 `count_active_workers(orchestrator_session_id)`. If the count is below 1,
 Orchestra sends one minimal consolidated return prompt/report for that
-orchestrator session with per-worker status, compact results or blockers, and
-JSONL log references. Do not send per-worker prompts, and do not return
+orchestrator session with per-subagent status, compact results or blockers, and
+JSONL log references. Do not send per-subagent prompts, and do not return
 one report per batch. When a compact summary is truncated, the report marks it
-as truncated and includes the return artifact path for the full worker return.
+as truncated and includes the return artifact path for the full subagent return.
 
 ### Scheduling and Workflows
 
@@ -258,32 +262,32 @@ Parallelism is scheduler-driven under configured concurrency limits, not a
 separate command. Enforce global, per-orchestrator-session, and configured
 per-model concurrency limits. MVP defaults are `global=4` and `per_session=3`.
 If a `/orch do` request would exceed a limit, return an error for MVP. Queued
-worker requests, review loops, and watchdogs are tracked in `ROADMAP.md`.
+subagent requests, review loops, and watchdogs are tracked in `ROADMAP.md`.
 
-Worker completions should prod only the owning orchestrator session by
+Subagent completions should prod only the owning orchestrator session by
 re-entering as one new host/orchestrator turn with the consolidated session
 report when the host supports it. Auto-prodding/`auto_return` is enabled by
 default, with a simple config toggle to disable it for hosts or users that prefer
 explicit `/orch status` or `/orch history` checks. MVP loop controls should stay
 small: global, per-session, and per-model concurrency limits, required
-configured worker timeout, `/orch stop`, and session-scoped consolidated
+configured subagent timeout, `/orch stop`, and session-scoped consolidated
 returns. Do not add max-turn, max-run, max-time, or compatibility-flag machinery
 until there is a demonstrated need.
 
 ### Multi-Orchestrator Ownership
 
-Every worker must be associated with
+Every subagent must be associated with
 the `orchestrator_session_id` that created it, and control operations such as
 `/orch stop`, return prods, and approval routing must use that exact id to
 prevent separate orchestrators from receiving or controlling one another's
-workers. Read-only `status` and `history` may include host-specific continuation
+subagents. Read-only `status` and `history` may include host-specific continuation
 lineage, but must not expand control authority.
 Do not allow best-guess ownership based on user, working directory, project,
-process tree, wall-clock recency, host window title, worker content, or LLM
+process tree, wall-clock recency, host window title, subagent content, or LLM
 memory. Core must reject session-scoped operations when the runtime
 `orchestrator_session_id` is missing, unruntime, or mismatched; status-only
 operations may be allowed only when explicitly safe and not capable of exposing
-or controlling another session's workers.
+or controlling another session's subagents.
 
 ### Adapter Identity Decisions
 
@@ -317,7 +321,7 @@ with MCP and not with model/user-supplied ids.
 
 ### Harness Ownership
 
-Worker sessions and memory are owned by underlying harnesses, not Orchestra.
+Subagent sessions and memory are owned by underlying harnesses, not Orchestra.
 Orchestra tracks lean operational state and result summaries.
 
 ### Configuration Defaults
@@ -327,18 +331,18 @@ Default concurrency limits are global `4` and per-session `3`. `auto_return` is
 enabled by default. These must be configurable through `config.yaml` and runtime
 options.
 
-The effective worker timeout is the authoritative execution budget for a worker
+The effective subagent timeout is the authoritative execution budget for a subagent
 process: explicit per-run timeout when provided, otherwise configured
 `default_timeout`. Host watcher subprocesses, auto-return waiters, progress
 waiters, or other host adapter waits must derive their wait budget from that
-effective worker timeout plus the documented host margin.
+effective subagent timeout plus the documented host margin.
 
 ### Agent Catalog
 
 Agent catalog definitions live in `agent-catalog.yaml` and are split into:
 
 - `harness_configs:` — reusable launch/runtime templates
-- `roles:` — worker-selection fields and role-specific prompt guidance
+- `roles:` — subagent-selection fields and role-specific prompt guidance
 
 A harness config should stay small and contain only harness launch/runtime
 details, primarily:
@@ -346,7 +350,7 @@ details, primarily:
 - `harness`
 - `command`
 
-A role entry should own worker-selection fields such as:
+A role entry should own subagent-selection fields such as:
 
 - `harness_config`
 - `model`
@@ -370,21 +374,21 @@ proven by implementation.
 
 ### Roles and Core Boundaries
 
-Current worker roles are `builder`, `planner`, `researcher`, `reviewer`,
+Current subagent roles are `builder`, `planner`, `researcher`, `reviewer`,
 `verifier`, and `appsec`; `critic` remains optional/disabled. The main session
 uses the `orchestrator` skill when Orchestra mode is manually enabled in Pi.
-Worker prompts should stay minimal: load configured role skills first, then
-pass a normal delegation prompt. Role skills optimize for smaller worker models:
+Subagent prompts should stay minimal: load configured role skills first, then
+pass a normal delegation prompt. Role skills optimize for smaller subagent models:
 keep the default workflow and role boundary in `SKILL.md`, put conditional
 methodology in resources with exact triggers, and fix behavioral failures at the
 governing instruction instead of accumulating incident-specific prohibitions.
 Orchestra searches recursively under `skills/`
 for `<skill-name>/SKILL.md` relative to the current working directory and
 injects the local content when present. If no local skill file exists, the
-prompt tells the worker to load the named native skill before doing the task.
+prompt tells the subagent to load the named native skill before doing the task.
 `verifier` uses its own acceptance-evidence skill. `reviewer` uses a dedicated
 implementation-quality skill, and `appsec` uses a dedicated application-security
-skill. Role `env` values are applied only to worker
+skill. Role `env` values are applied only to subagent
 subprocess environments; env keys must be valid environment variable names and
 cannot use the reserved `ORCHESTRA_` prefix. Project policy is that configured
 environment variables do not contain passwords, tokens, API keys, or other
@@ -398,16 +402,30 @@ OpenCode role env values are shown through `orch_status roles`.
 Avoid hard-coding planning, coding, reviewing, or other work methods into core.
 
 Role-skill readiness requires live behavioral evaluation through the normal
-host -> Orchestra role -> configured worker path. Grade outcome, process, scope,
+host -> Orchestra role -> configured subagent path. Grade outcome, process, scope,
 policy, and handoff separately; retain trace gaps as unknown rather than
 inferring compliance from a successful result.
 
 ### Dispatch Prompt Shape
 
-Dispatch prompts should stay slim, in the style of `dev-orchestra`: one goal,
-approved scope/context, explicit out-of-scope boundaries, acceptance target,
-focused instructions, and a concise return with status, results, blockers, and
-risks.
+Dispatch prompts should stay slim and self-contained: one goal, exact scope,
+relevant context and artifact references, explicit boundaries, stop condition,
+acceptance target, and expected return. Default returns should state the outcome,
+evidence, changed files, checks, blockers, risks, artifact implications, and the
+recommended next step while separating completed work from proposed follow-up.
+
+The common `orch_dispatch` tool description, not host-specific prompt additions,
+owns flexible delegation behavior. It makes dispatch the default for detailed
+work, tells the parent to inspect the whole request before starting, requires one
+tool call per slice, and requires all currently unblocked independent slices to
+be dispatched before parent work continues. Read-only and file-disjoint slices
+run in parallel; dependency-bound work stays sequential. As results return, the
+parent reassesses remaining work and dispatches newly unblocked slices. The parent
+retains decomposition, user decisions, sequencing, approvals, project
+documentation and artifact edits, artifact alignment, synthesis, and final
+judgment. Subagents report evidence and documentation implications rather than
+editing project documentation. Skills provide stricter workflow phases,
+methodology, artifact gates, and role-specific process.
 
 ### Pi Host Extension Installation
 
@@ -443,7 +461,7 @@ possible:
 
 - command and tool metadata
 - command echo policy
-- worker prompt labels and default return format
+- subagent prompt labels and default return format
 - dispatch acknowledgement text
 - progress notification text
 - result and report formatting
@@ -473,17 +491,32 @@ The MVP host command surface is:
 - `/orch history`
 
 `/orch do` is the manual dispatch path. Natural-language delegation is supported
-through a host tool named `orch_dispatch`. Dispatch trigger language includes
-delegate, dispatch, subagent/sub-agent, worker, ask another agent, and
-parallelize a narrow task. If a role is omitted, the default role is `builder`.
-The dispatch tool should include available configured roles in its metadata, and
-that metadata should come from core so host adapters stay consistent.
+through a host tool named `orch_dispatch`. Its common metadata makes subagents the
+default for research, planning, implementation, debugging, testing, verification,
+review, security assessment, and follow-up work. Project documentation remains
+main-session orchestrator work. The
+parent scans the whole request, makes one dispatch call per slice, and always
+launches all currently unblocked independent slices before continuing. Read-only
+or file-disjoint slices run in parallel; work with unresolved dependencies or
+overlapping resources stays sequential.
+
+The tool description explains flexible role selection and coordination basics.
+Role skills define how each role performs its work. If a role is omitted, the
+catalog default applies; callers should choose the best matching enabled role and
+omit it when no specialized role is a better match. Research, planning,
+implementation, verification, review, and security should use distinct roles so
+independent judgment remains independent. Available configured roles and their runtime metadata come from core so
+host adapters stay consistent. Host-specific prompt snippets remain minimal and
+must not carry behavior absent from the common descriptions.
 
 ### Main-Session Orchestration Mode and Skills
 
 The main session is the orchestrator brain. It owns planning, sequencing,
-approvals, artifact alignment, and final judgment while worker agents perform
-focused research, implementation, verification, review, and security work.
+approvals, project documentation, standard artifact edits, artifact alignment,
+and final judgment while subagents perform focused research, implementation,
+verification, review, and security work. Subagents inspect relevant documentation
+and return evidence, implications, and recommended edits; the orchestrator
+applies documentation and standard artifact changes in the main session.
 User-facing updates to the main session should stay concise and
 decision-focused.
 
@@ -496,7 +529,7 @@ repeated or compaction-aware reinjection is tracked in `ROADMAP.md`.
 
 If no role is requested, use the catalog `default_role`. If a requested role
 fails to start on its primary harness, recoverable fallback must preserve the
-requested role name, skills, prompt additions, env, and worker budget. Fallback
+requested role name, skills, prompt additions, env, and subagent budget. Fallback
 may change only the effective `harness_config` and optional runtime overrides
 such as `model`, `profile`, or `agent`, using the role's `harness_fallback`
 list. Disabled requested roles still fail clearly. Final reports and history
@@ -505,12 +538,15 @@ should mention successful fallback.
 ### Standard Artifacts
 
 The standard working artifacts are `FOUNDATION.md`, `ARCHITECTURE.md`,
-`RESEARCH.md`, `PLAN.md`, and `ROADMAP.md`. Skills may describe expected
+`RESEARCH.md`, `PLAN.md`, and `ROADMAP.md`. The main-session orchestrator is the
+editor and alignment owner for these artifacts and other project documentation.
+Subagents may inspect them and must report documentation implications or proposed
+text, but they do not edit project documentation. Skills may describe expected
 content. Template work is tracked in `ROADMAP.md`.
 
 ### Session Identity
 
-Worker ownership is keyed by `orchestrator_session_id`. CLI
+Subagent ownership is keyed by `orchestrator_session_id`. CLI
 `--session-id` remains local/manual mode only and is not a runtime host identity
 boundary. Pi runtime identity is `ctx.sessionManager.getSessionId()` normalized
 as `pi:<session_id>`. The LLM or user prompt must not provide, remember, infer,
@@ -518,16 +554,16 @@ or override runtime session ids.
 
 ### Returns and Auto-Return
 
-Auto-return means prompting the owning orchestrator session when workers return.
-Only the all-workers-returned condition should re-enter the orchestrator session
+Auto-return means prompting the owning orchestrator session when subagents return.
+Only the all-subagents-returned condition should re-enter the orchestrator session
 with a consolidated report. Hermes should deliver that final report with
 busy-aware behavior: use non-interrupting `agent.steer(...)` when the
 orchestrator session is actively running, and use `inject_message(...)` only
 when the session is idle and a new turn should begin.
 
-Pi host surfaces may also show per-worker progress notifications when their
+Pi host surfaces may also show per-subagent progress notifications when their
 runtime provides a notification-only API. Hermes host surfaces must not fake
-per-worker progress by injecting prompt messages. Hermes per-worker progress is
+per-subagent progress by injecting prompt messages. Hermes per-subagent progress is
 therefore intentionally disabled unless Hermes exposes a supported non-prompt
 plugin notification API.
 
@@ -547,7 +583,7 @@ orchestra: <run-id> returned <status> (<done>/<total>)
 Core-formatted final orchestrator return:
 
 ```text
-[orchestra: Worker <run-id> success|fail]
+[orchestra: Subagent <run-id> success|fail]
 Request: <original request>
 Result: <summary> [truncated]
 Full result: <return artifact path>
@@ -557,13 +593,13 @@ Log: <absolute-or-configured log path>
 Failures use `Summary: <summary>` instead of `Result: <summary>`. The `[truncated]`
 marker and `Full result:` line appear only when the compact summary was cut.
 
-The default worker return format is:
+The default subagent return format is:
 
 ```text
 Return a concise response with success/fail, files changed/inspected, if fail: exact commands run, results, if blockers: blockers, if risks: risks
 ```
 
-Workers should mention blockers and risks only when present. Core summary cleanup
+Subagents should mention blockers and risks only when present. Core summary cleanup
 strips explicit “none/no blockers/no risks” text while preserving real blockers
 or risks, and strips emoji/non-ASCII from final summaries to keep orchestrator
 context clean.
@@ -576,7 +612,7 @@ tell the orchestrator to read logs unless needed.
 
 Logs should be sparse: omit `None`, empty strings, empty lists/dicts, and false
 optional flags. Successful logs should stay compact. Return artifacts hold the
-full final worker stdout/stderr outside SQLite and JSONL logs.
+full final subagent stdout/stderr outside SQLite and JSONL logs.
 
 Runtime state and log directories for this checkout are visible directories under
 the project:
@@ -651,9 +687,9 @@ canonical editable config.
 
 ### Process Supervision and Scheduling
 
-Worker process supervision is part of core. Stop and timeout must terminate the
+Subagent process supervision is part of core. Stop and timeout must terminate the
 owned process or process group where supported. Terminal run updates must be
-idempotent: late worker exits must not overwrite terminal states. Global and
+idempotent: late subagent exits must not overwrite terminal states. Global and
 per-session concurrency limits are enforced atomically. MVP over-limit behavior
 is fail-fast, not queueing.
 

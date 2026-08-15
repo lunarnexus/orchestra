@@ -43,6 +43,50 @@ Orchestra already has the important MVP spine:
 
 The main differentiator versus Pi-first packages is that Orchestra is an external control plane with multiple host adapters, not just a Pi extension.
 
+## Delegation tool prompt research
+
+A focused review compared current Orchestra wording with five popular open-source
+agent projects. Star counts were observed during the review and will change:
+
+| Project | Stars observed | Relevant prompt pattern |
+|---|---:|---|
+| OpenHands | 84,109 | The child-conversation tool explicitly asks for independent parallel work, a self-contained brief, and non-overlapping sibling scopes. |
+| Cline | 66,229 | Delegation is worthwhile for real decomposition and specialist work; narrow assignments and coordinator synthesis avoid unnecessary overhead. |
+| Microsoft AutoGen | 60,431 | Capability descriptions drive specialist selection; planner assignment precedes dependent subagents; parallel calls are limited to independent operations. |
+| Goose | 52,837 | The delegate tool says read-only research can parallelize freely while writes require strict resource partitioning; plans identify dependencies and branches. |
+| Roo Code | 24,341 | Delegated tasks carry context, scope, and a completion contract; dependent steps use observed prior results and ordered plans. |
+
+Primary evidence:
+
+- OpenHands `launch_child_conversation`: https://github.com/All-Hands-AI/OpenHands/blob/bab1baf2de1028c1d4404358448fb6ab3185755d/src/api/launch-child-conversation-client-tool.ts#L14-L59
+- Cline subagents: https://github.com/cline/cline/blob/main/docs/features/subagents.mdx#L15-L42
+- AutoGen selector/planner guidance: https://github.com/microsoft/autogen/blob/main/python/docs/src/user-guide/agentchat-user-guide/selector-group-chat.ipynb#L135-L177
+- Goose delegate description: https://github.com/block/goose/blob/main/crates/goose/src/agents/platform_extensions/summon.rs#L649-L665
+- Roo Code tool-use sequencing: https://github.com/RooCodeInc/Roo-Code/blob/b867ec9145750d0ae1ff7f02d35406e9bf2a0b16/src/core/prompts/sections/tool-use-guidelines.ts#L4-L8
+- Subagent reports: `state/return-artifacts/f11a2565dc3e.md`, `state/return-artifacts/7891fad2c1ac.md`, `state/return-artifacts/ed0afc11fadd.md`, `state/return-artifacts/7d1df8235b88.md`, `state/return-artifacts/1c7c08d79501.md`.
+
+Conclusions for Orchestra:
+
+- Put required cross-host delegation behavior in shared tool descriptions, not
+  Pi-only snippets or injected skills.
+- Make subagents the default for detailed tasks and explicitly teach lookahead:
+  inspect the whole request, identify every assignable slice, and make one tool
+  call per slice.
+- Require self-contained slices with scope, context/artifact references,
+  boundaries, stop conditions, and return contracts.
+- Always launch all currently unblocked independent work before continuing parent
+  work. Parallelize read-only or file-disjoint slices; sequence tasks with
+  unresolved evidence, planning, implementation, or shared-resource dependencies.
+- Reassess after returns and immediately dispatch newly unblocked slices so weak
+  models do not execute a task list one local step at a time.
+- Describe roles as capabilities in tool metadata; let role skills add strict
+  methodology and workflow rather than carrying basic tool instructions.
+- Keep parent ownership of approvals, project documentation and artifact edits,
+  artifact alignment, synthesis, and final judgment explicit.
+- Subagents inspect documentation but return evidence, documentation implications,
+  proposed wording, and a recommended next step instead of editing project docs;
+  the orchestrator applies and aligns documentation in the main session.
+
 ## Pi extension comparisons
 
 | Package | Key features | Features Orchestra lacks | Notes |
@@ -63,7 +107,7 @@ The main differentiator versus Pi-first packages is that Orchestra is an externa
 | Project | Key features | Features Orchestra lacks | Relevance |
 |---|---|---|---|
 | Agent Orchestrator | Agent IDE/control plane for fleets of coding agents; planning, spawning, CI fixes, merge conflicts, code reviews. | Rich IDE/operator layer, autonomous task management, broader fleet UX. | High. Close category match. |
-| AWS CLI Agent Orchestrator | Hierarchical supervisor/workers over CLI tools; isolated tmux sessions; handoff/assign/send-message patterns. | tmux session isolation, direct inter-agent messaging, named orchestration patterns. | High. Strong architecture reference. |
+| AWS CLI Agent Orchestrator | Hierarchical supervisor/subagents over CLI tools; isolated tmux sessions; handoff/assign/send-message patterns. | tmux session isolation, direct inter-agent messaging, named orchestration patterns. | High. Strong architecture reference. |
 | Codex multi-agent / Symphony | Subagents, custom agent definitions, max thread/depth controls, worktrees, issue tracker as control plane. | Native worktree fan-out, agent config files, issue tracker integration, explicit thread/depth controls. | High conceptually. |
 | awesome-agent-orchestrators list | Catalog of TUI/CLI, desktop/web, kanban, worktree, tmux, dashboard orchestrators. | Many UI/worktree/kanban/fleet-control variants to mine. | High discovery source. |
 | workmux / dmux / claude-squad | tmux panes/sessions plus git worktrees for parallel isolated agents. | First-class tmux/worktree orchestration. | High for terminal-native workflow. |
@@ -74,9 +118,9 @@ The main differentiator versus Pi-first packages is that Orchestra is an externa
 
 ### High-value, aligned
 
-1. Collapsed multi-worker report UX
-   - Add a session-level heading before per-worker blocks.
-   - Example: `[orchestra: 3 workers returned]`.
+1. Collapsed multi-subagent report UX
+   - Add a session-level heading before per-subagent blocks.
+   - Example: `[orchestra: 3 subagents returned]`.
    - Small, directly tied to a real user-visible confusion.
 
 2. Real Hermes integration test
@@ -85,13 +129,12 @@ The main differentiator versus Pi-first packages is that Orchestra is an externa
 
 3. Worktree isolation
    - Common across `pi-crew`, `@onlinechefgroep/pi-agent-orchestrator`, Codex workflows, dmux/workmux/claude-squad.
-   - Most useful when workers edit files in parallel.
+   - Most useful when subagents edit files in parallel.
    - Should be opt-in, not default.
 
-4. Live operator view
-   - Competitors expose `/agents`, dashboards, widgets, panes, or kanban boards.
-   - Orchestra currently has `/orch status` and logs, which is enough for MVP but thin for longer runs.
-   - Good next step could be a simple `orchestra watch` or richer `/orch status --watch`, not a full dashboard.
+4. Live operator status — completed
+   - Orchestra provides live session status through `orch_status` and `/orch status`, with host progress presentation where available.
+   - A separate dashboard is optional product expansion, not a missing live-status capability.
 
 5. Reusable workflow recipes
    - Competitors support chains, review loops, staged pipelines, prompt workflows, and dynamic workflows.
@@ -100,18 +143,18 @@ The main differentiator versus Pi-first packages is that Orchestra is an externa
 ### Worth parking for later
 
 6. Approval pass-through
-   - Useful, but requires an interactive worker mode: ACP, RPC, persistent host session, or similar.
-   - Not viable for pure one-shot subprocess workers.
-   - Should route approvals/clarifications back to the parent session and resume the worker after a decision.
+   - Useful, but requires an interactive subagent mode: ACP, RPC, persistent host session, or similar.
+   - Not viable for pure one-shot subprocess subagents.
+   - Should route approvals/clarifications back to the parent session and resume the subagent after a decision.
 
 7. Schedules / background jobs
    - Many Pi packages include schedules.
-   - Orchestra can already run async workers; durable scheduled orchestration is a separate feature.
+   - Orchestra can already run async subagents; durable scheduled orchestration is a separate feature.
    - Avoid until there is a real recurring workflow.
 
-8. Attach / steer running workers
+8. Attach / steer running subagents
    - Common in Pi-native and tmux/herdr-style systems.
-   - Requires persistent/interactive worker sessions or terminal panes.
+   - Requires persistent/interactive subagent sessions or terminal panes.
    - Not a fit for current simple one-shot harnesses.
 
 9. Goal loops / autonomous judge loops
@@ -133,12 +176,11 @@ The main differentiator versus Pi-first packages is that Orchestra is an externa
 
 ## Recommended next backlog
 
-1. Add multi-worker session report heading.
+1. Add multi-subagent session report heading.
 2. Add real Hermes plugin integration test.
 3. Run documented soak test after the report-heading change.
-4. Prototype opt-in worktree isolation for edit-capable workers.
-5. Design approval pass-through only after choosing an interactive worker protocol.
-6. Explore a small live operator view before considering a full dashboard.
+4. Prototype opt-in worktree isolation for edit-capable subagents.
+5. Design approval pass-through only after choosing an interactive subagent protocol.
 
 ## Notes on source quality
 
@@ -174,7 +216,7 @@ Research date: 2026-07-31; refreshed 2026-08-04
 ### Findings
 
 - OpenCode parity should start with the same pattern as Pi and Hermes: a
-  one-shot worker harness launched from the Orchestra role catalog.
+  one-shot subagent harness launched from the Orchestra role catalog.
 - `opencode run` is the direct one-shot path. Local help confirms flags useful to
   Orchestra roles: `--dir`, `--agent`, `--model`, `--format`, `--session`,
   `--continue`, `--attach`, `--title`, `--file`, `--variant`, and permission
@@ -199,7 +241,7 @@ Research date: 2026-07-31; refreshed 2026-08-04
   - `explore` is a fast read-only codebase exploration subagent.
   - `scout` is read-only external/dependency research.
 - OpenCode supports agent permissions and a `task` permission that controls
-  subagent launches. Orchestra-launched OpenCode workers should avoid unbounded
+  subagent launches. Orchestra-launched OpenCode subagents should avoid unbounded
   nested delegation by using an appropriate agent and, where needed, configuring
   `permission.task` or `subagent_depth`.
 - OpenCode permission defaults are permissive. The OpenCode implementation
@@ -212,7 +254,7 @@ Research date: 2026-07-31; refreshed 2026-08-04
 
 ### Current repo status for OpenCode
 
-- OpenCode one-shot worker support is implemented in the repository through
+- OpenCode one-shot subagent support is implemented in the repository through
   `src/orchestra/harnesses/opencode.py`, lazy harness registry loading, harness
   tests, and catalog schema support.
 - OpenCode host/orchestrator support now has an existing plugin source at
@@ -244,12 +286,12 @@ Research date: 2026-07-31; refreshed 2026-08-04
   or user-provided ids.
 - Do not use shell-string command execution for host dispatch; build tokenized
   argv and execute without a shell.
-- Do not make OpenCode the default worker harness automatically.
+- Do not make OpenCode the default subagent harness automatically.
 - Do not add approval pass-through, attach/steer/live session control, ACP, or
   parallel write-safety as part of the first OpenCode host slice.
 - OpenCode custom commands are useful host UX, but should not become a separate
   orchestration path. If added, they should wrap the same tool/core behavior.
-- Manual smoke for OpenCode worker/model wiring should run direct OpenCode first,
+- Manual smoke for OpenCode subagent/model wiring should run direct OpenCode first,
   then Orchestra. Example order:
 
 ```bash
@@ -259,7 +301,7 @@ orchestra do --session-id manual:opencode-demo --role appsec --goal "Reply with 
 
 - Model names are harness-specific; Pi model strings cannot be copied blindly to
   OpenCode catalogs.
-- Omitting `--dir` remains the shared-catalog default for OpenCode workers so
+- Omitting `--dir` remains the shared-catalog default for OpenCode subagents so
   runs use the caller's current working directory instead of a hardcoded path.
 - OpenCode install should default to global host-plugin installation under
   `~/.config/opencode/`, matching the desired shared-tooling behavior. Project
@@ -271,7 +313,7 @@ orchestra do --session-id manual:opencode-demo --role appsec --goal "Reply with 
 - Auto-return remains required for OpenCode parity. OpenCode
   `client.session.prompt(...)` provides both non-turn injection with
   `noReply:true` and normal prompt submission that triggers an assistant turn;
-  the final all-workers return should preserve Orchestra auto-return behavior
+  the final all-subagents return should preserve Orchestra auto-return behavior
   while using explicit loop, target-session, active-user, and compact-report
   guardrails.
 
@@ -310,10 +352,9 @@ orchestra do --session-id manual:opencode-demo --role appsec --goal "Reply with 
 - OpenCode custom commands are prompt templates, not executable host command
   hooks. They support `$ARGUMENTS` and positional `$1`, `$2`, `$3`, etc., but the
   documented `template` is the prompt sent to the LLM.
-- OpenCode `orch_status` should cover `on`, `status`, `history`, `help`,
-  `doctor`, and `roles`; role updates go through `orchestra roles ROLE SETTING
-  VALUE`, with supported settings `harness`, `enabled`, `model`, `profile`, and
-  `agent`.
+- OpenCode `orch_status` covers `on`, `status`, `history`, `help`, `doctor`,
+  `roles`, and `stop`. Model-callable `roles` is read-only for now; role updates
+  stay on native host or CLI paths where supported.
 - Plugin event names include `command.executed` and `tui.command.execute`, but
   local types show event handlers as observation hooks returning `void`, not a
   command implementation/mutation path. `command.executed` carries `name`,
@@ -350,8 +391,8 @@ orchestra do --session-id manual:opencode-demo --role appsec --goal "Reply with 
   slash metadata and `onSelect`, so real `/orch` commands may be possible but
   require a spike and explicit version-risk acceptance before production use.
 - OpenCode auto-return should preserve existing Orchestra semantics: individual
-  worker returns can notify the UI and optionally add non-turn context with
-  `noReply:true`; once all workers for the owning session finish, the plugin
+  subagent returns can notify the UI and optionally add non-turn context with
+  `noReply:true`; once all subagents for the owning session finish, the plugin
   should send the response prompt to the calling OpenCode agent so it can resume
   orchestration. Prefer session-targeted `client.session.prompt(...)` for the
   wake path, with `promptAsync(...)` only as a fallback when `prompt` is
@@ -365,7 +406,7 @@ orchestra do --session-id manual:opencode-demo --role appsec --goal "Reply with 
   source checkout under `extensions/opencode/orchestra/`; package asset mirrors
   are deferred for non-editable/wheel installs unless release packaging changes
   make them necessary.
-- Preserve one-shot worker behavior and explicit harness selection while adding
+- Preserve one-shot subagent behavior and explicit harness selection while adding
   the host plugin surface.
 - Do not build parallel-write safety as part of OpenCode parity. For now, the
   orchestrator decides which read-only or file-disjoint tasks are safe to run in
@@ -375,7 +416,7 @@ orchestra do --session-id manual:opencode-demo --role appsec --goal "Reply with 
 
 Research date: 2026-08-11
 
-Worker evidence:
+Subagent evidence:
 
 - `state/return-artifacts/7a4d61864388.md` — command API research.
 - `state/return-artifacts/2d53fc564571.md` — session injection API research.
@@ -436,7 +477,7 @@ default.
 
 ### Source groups
 
-Local and adjacent skill sources inspected through worker slices:
+Local and adjacent skill sources inspected through subagent slices:
 
 - Hermes methodology skills:
   - `skills/hermes/test-driven-development/SKILL.md`
@@ -461,7 +502,7 @@ Local and adjacent skill sources inspected through worker slices:
   - `diagnose-root/SKILL.md`
   - `fix-bug/SKILL.md`
   - `spike-prototype/SKILL.md`
-- Web sources captured by worker slices:
+- Web sources captured by subagent slices:
   - Agile Manifesto principles: https://agilemanifesto.org/principles.html
   - Scrum Guide: https://scrumguides.org/scrum-guide.html
   - Agile Alliance Kanban glossary: https://www.agilealliance.org/glossary/kanban/
@@ -474,7 +515,7 @@ Local and adjacent skill sources inspected through worker slices:
   - IBM DevSecOps overview: https://www.ibm.com/think/topics/devsecops
   - IBM Root Cause Analysis overview: https://www.ibm.com/think/topics/root-cause-analysis
 
-Worker return artifacts:
+Subagent return artifacts:
 
 - `state/return-artifacts/7ab02cccb7b6.md` — Hermes TDD and systematic debugging
 - `state/return-artifacts/d8c29d12bd57.md` — Hermes plan and spike
@@ -494,7 +535,7 @@ Worker return artifacts:
 - `state/return-artifacts/332a581a11a7.md` — DevSecOps
 - `state/return-artifacts/ab67d260a8aa.md` — RCA/systematic debugging
 
-Timed-out worker attempts were also informative. Broad multi-topic web prompts
+Timed-out subagent attempts were also informative. Broad multi-topic web prompts
 and broad local scans exceeded timeouts. Smaller one-topic or exact-file-cluster
 research tasks succeeded more reliably.
 
@@ -816,17 +857,17 @@ should preserve reviewability and rollback.
 
 The research process itself produced useful Orchestra-specific dispatch lessons:
 
-- Broad multi-topic worker prompts timed out repeatedly.
+- Broad multi-topic subagent prompts timed out repeatedly.
 - Broad “inspect relevant files” local prompts timed out.
 - Exact local file clusters succeeded.
-- One-topic web research workers succeeded more reliably.
-- Two concurrent workers was not the key factor; scope was.
-- Research workers should be read-only by default.
+- One-topic web research subagents succeeded more reliably.
+- Two concurrent subagents was not the key factor; scope was.
+- Research subagents should be read-only by default.
 - A researcher task should usually include one question, exact scope, preferred
   source type, enough-evidence target, and concise return format.
 - Use rough output limits for lookup/triage tasks when possible, but do not
   force artificial brevity for complex synthesis.
-- If a worker times out once, retry smaller. If repeated timeout occurs on the
+- If a subagent times out once, retry smaller. If repeated timeout occurs on the
   same topic, split to one topic, use main-session tools, or stop.
 - Repo inspection should be requested when context is stale, suspect, or needed
   for correctness; avoid broad reinspections when current context already
@@ -885,13 +926,13 @@ Reviewer:
 - Update active Orchestra skills to use the terminology accurately while keeping
   injected prompts concise.
 - Use the concise active `builder` skill for Orchestra, and refine it after real
-  worker behavior shows missing or bloated guidance.
+  subagent behavior shows missing or bloated guidance.
 
 ## Builder skill behavioral-evaluation evidence
 
 A live builder evaluation used the normal Orchestra dispatch path with an
-isolated repository, hidden verifier, return artifact, and Pi worker trace. The
-worker produced correct behavior and observable Red -> Green sequencing, but
+isolated repository, hidden verifier, return artifact, and Pi subagent trace. The
+subagent produced correct behavior and observable Red -> Green sequencing, but
 also created a commit without an assigned commit slice. Functional and TDD-only
 grading initially missed that policy violation; adding a baseline commit-count
 check changed the verdict to fail.
@@ -904,7 +945,7 @@ Evidence-backed conclusions:
 - Evaluators need regression tests for false passes and false failures.
 - Small-model guidance is more salient when one ownership rule defines the
   default behavior and conditional methodology loads from triggered resources.
-- Natural host -> Orchestra role -> configured worker execution is more
+- Natural host -> Orchestra role -> configured subagent execution is more
   representative than a script that dispatches through a private path.
 
 The reusable method is documented in
@@ -938,4 +979,4 @@ Findings:
 - Hermes supports `pre_tool_call` blocking and `pre_llm_call` context injection, but no exact Pi-style `turn_end` event or elapsed-session budget hook was found. Budget parity should implement only behavior supported by these hooks and keep turn-budget counters in session-local plugin state rather than mutating `os.environ`.
 - No public Hermes plugin API was found for native notifications, footer/status updates, rendered transcript entries, or dynamic completion callbacks. Private CLI references exist but no safe public mutator was proven, so production code should not depend on private UI internals for those features.
 
-Conclusion: implemented source-supported Hermes parity: `/orch on`, static command metadata, lifecycle cleanup, and supported budget hooks. Final stabilization keeps budget state and `/orch on` activation per normalized runtime session, clears that state on lifecycle cleanup, and uses watcher generation guards to suppress late consolidated-report side effects after session cleanup. Hermes `_await-run` per-worker progress handling was removed after live Hermes testing showed that path fails consistently while consolidated auto-return works. Native notification/footer/rendered-entry/dynamic-completion parity remains unsupported by current Hermes public APIs unless new host APIs appear.
+Conclusion: implemented source-supported Hermes parity: `/orch on`, static command metadata, lifecycle cleanup, and supported budget hooks. Final stabilization keeps budget state and `/orch on` activation per normalized runtime session, clears that state on lifecycle cleanup, and uses watcher generation guards to suppress late consolidated-report side effects after session cleanup. Hermes `_await-run` per-subagent progress handling was removed after live Hermes testing showed that path fails consistently while consolidated auto-return works. Native notification/footer/rendered-entry/dynamic-completion parity remains unsupported by current Hermes public APIs unless new host APIs appear.

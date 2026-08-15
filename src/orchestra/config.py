@@ -26,54 +26,77 @@ SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RESERVED_ENV_PREFIXES = ("ORCHESTRA_",)
 DEFAULT_RETURN_FORMAT = (
-    "Return the smallest complete answer. If yes/no is enough, answer yes/no plus "
-    "blockers. For research/options/plans, return concise findings with sources or "
-    "file refs. For changes, return files changed, checks run, results, blockers, "
-    "and risks."
+    "Return the smallest complete result. State the outcome or verdict, concrete "
+    "evidence with file or source references, files changed if any, checks run and "
+    "results, blockers, risks, artifact implications, and the recommended next "
+    "step. Clearly separate completed work from proposed follow-up."
 )
 DEFAULT_TOOL_DESCRIPTION = (
-    "Dispatch one small scoped worker slice. Each slice has one goal, exact scope, "
-    "one stop condition, and one return shape. Research answers one small question "
-    "against one exact source scope, not a topic. The parent keeps sequencing, "
-    "approvals, and final synthesis. Use an exact configured role; omit role for "
-    "the default. {roles}"
+    "Use orch_dispatch as the default way to perform research, planning, "
+    "implementation, debugging, documentation, testing, verification, review, "
+    "security assessment, and follow-up work. Before starting work, inspect the "
+    "whole request and identify every slice that can be assigned to a worker. Call "
+    "orch_dispatch once per slice and make multiple calls when several slices are "
+    "available. Always dispatch all currently unblocked, independent slices in "
+    "parallel before continuing parent work; do not wait for one independent worker "
+    "before dispatching the others. Read-only research, independent analysis, and "
+    "independent reviews should normally run in parallel. Parallel write slices "
+    "must own separate files or resources. Keep dependency-bound work in order: "
+    "dispatch required research before dependent planning or design, implementation "
+    "after the evidence or plan it depends on is available, and verification, "
+    "review, and security assessment after the relevant implementation exists. "
+    "After workers return, reassess the remaining work and immediately dispatch "
+    "every newly unblocked slice. Give each worker a self-contained brief with one "
+    "goal, exact scope, relevant context and artifact references, boundaries, stop "
+    "condition, and expected return. Ask for concrete evidence, artifact "
+    "implications, and a recommended next step. Choose the enabled role that best "
+    "matches the slice. Omit role when no specialized enabled role is a better match "
+    "than the default. Use separate researcher, planner, builder, verifier, "
+    "reviewer, and appsec calls for their respective capabilities so independent "
+    "judgment remains independent. The parent owns decomposition, sequencing, user "
+    "decisions, approvals, artifact alignment, synthesis, and final judgment. "
+    "Workers perform the detailed work and return compact results. Completed worker "
+    "reports return automatically; continue other useful orchestration work instead "
+    "of polling. Use orch_status for status/control. {roles}"
 )
-DEFAULT_TOOL_PROMPT_SNIPPET = (
-    "Dispatch one small scoped worker slice. Research is one small answerable "
-    "question, not a topic. {roles}"
-)
+DEFAULT_TOOL_PROMPT_SNIPPET = "Use Orchestra tools to delegate work."
 DEFAULT_TOOL_PROMPT_GUIDELINES = (
-    "Before calling orch_dispatch, reduce the task to one worker slice: one goal, "
-    "one exact scope, one stop condition, and one return shape.",
-    "For research, ask one small answerable question with one exact source scope: "
-    "one file, one docs page/section, one URL, or one tight file cluster.",
-    "Do not dispatch broad topics such as API support, install behavior, "
-    "notification APIs, or overall design. Convert them into small questions "
-    "first.",
-    "Do not dispatch implementation, verification, or review that depends on "
-    "unresolved research. Wait for the research result, then continue.",
-    "If a research worker times out, shrink to one source and one exact question, "
-    "then re-dispatch once. If the retry times out, record the missing fact as a "
-    "blocker and stop.",
-    "Do not perform failed worker work yourself.",
-    "After dispatch, do not wait or poll. Continue independent work or stop; "
-    "Orchestra will return worker results.",
-    "Use exact enabled roles; omit role for the default.",
+    "Follow the shared orch_dispatch and orch_status descriptions.",
 )
 DEFAULT_TOOL_GOAL_DESCRIPTION = (
     "One small worker slice: goal, exact scope, stop condition, and return shape."
 )
-DEFAULT_TOOL_ROLE_DESCRIPTION = "(Optional) specific role; omit for default. {roles}"
-DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
-DEFAULT_STATUS_DESCRIPTION = "Orchestra session/status/control actions."
-DEFAULT_STATUS_ACTION_DESCRIPTION = (
-    "Action to perform. One of on, status, history, help, doctor, roles, stop."
+DEFAULT_TOOL_ROLE_DESCRIPTION = (
+    "Optional worker capability. Choose the enabled role that best matches the "
+    "slice. Omit role when no specialized enabled role is a better match than the "
+    "default. Use distinct roles for independent research, planning, implementation, "
+    "verification, review, and security judgment. {roles}"
 )
-DEFAULT_STATUS_LIMIT_DESCRIPTION = "Optional limit for history results."
-DEFAULT_STATUS_RUN_ID_DESCRIPTION = "Run id to stop."
-DEFAULT_STATUS_ROLE_DESCRIPTION = "Optional role for roles queries or updates."
-DEFAULT_STATUS_SETTING_DESCRIPTION = "Optional role setting to update."
-DEFAULT_STATUS_VALUE_DESCRIPTION = "Optional role setting value."
+DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
+DEFAULT_STATUS_DESCRIPTION = (
+    "Use orch_status to inspect and control Orchestra for the current session. Use "
+    "status for active workers, history for completed worker results, roles for "
+    "available read-only role information, doctor for setup checks, help for usage, "
+    "on to activate Orchestra orchestration guidance, and stop with a runId to "
+    "cancel an owned active run. Use orch_dispatch to start work. Completed worker "
+    "reports return automatically, so continue other useful work instead of "
+    "repeatedly checking status."
+)
+DEFAULT_STATUS_ACTION_DESCRIPTION = (
+    "Action to perform: help, doctor, roles, status, history, on, or stop. Use "
+    "stop only with a runId for an active run owned by the current host session."
+)
+DEFAULT_STATUS_LIMIT_DESCRIPTION = "Optional positive history limit for action=history."
+DEFAULT_STATUS_RUN_ID_DESCRIPTION = "Required run id when action=stop."
+DEFAULT_STATUS_ROLE_DESCRIPTION = (
+    "Reserved for compatibility; action=roles lists all configured roles."
+)
+DEFAULT_STATUS_SETTING_DESCRIPTION = (
+    "Reserved for role updates; model-callable roles are read-only for now."
+)
+DEFAULT_STATUS_VALUE_DESCRIPTION = (
+    "Reserved for role updates; model-callable roles are read-only for now."
+)
 DEFAULT_HOST_HELP = """Orchestra commands:
   /orch help                         Show this help
   /orch on                           Load the orchestra orchestrator skill

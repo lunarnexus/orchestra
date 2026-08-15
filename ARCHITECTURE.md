@@ -4,16 +4,16 @@ This document describes Orchestra's current technical architecture. `FOUNDATION.
 
 ## System overview
 
-Orchestra is a local coding-agent orchestration layer. A host session or CLI starts focused worker agents through configured harnesses, tracks their runs in lightweight state, and returns compact results to the owning orchestrator session.
+Orchestra is a local coding-agent orchestration layer. A host session or CLI starts focused subagents through configured harnesses, tracks their runs in lightweight state, and returns compact results to the owning orchestrator session.
 
 Core properties:
 
 - Python core with host adapters around it.
 - Thin host extensions/plugins for Pi, Hermes, and OpenCode.
 - Config-driven role and harness selection.
-- Session-scoped ownership for all worker runs.
+- Session-scoped ownership for all subagent runs.
 - Lean SQLite runtime state plus JSONL logs and return artifacts.
-- Skills injected into workers from project-local `skills/` when configured.
+- Skills injected into subagents from project-local `skills/` when configured.
 - Main-session orchestrator skill injection for Pi through `/orch on`.
 
 ## Major components
@@ -25,7 +25,7 @@ Host / CLI
       -> config + agent catalog + prompts
       -> scheduler / process supervisor
       -> harness connector
-        -> worker CLI process
+        -> subagent CLI process
       -> SQLite state + JSONL logs + return artifacts
   -> optional host auto-return to owning orchestrator session
 ```
@@ -38,7 +38,7 @@ The Python core owns reusable orchestration behavior:
 - config/catalog loading and validation
 - role selection
 - skill prompt rendering
-- worker launch and supervision
+- subagent launch and supervision
 - stop/timeout handling
 - state updates
 - consolidated return report generation
@@ -60,14 +60,13 @@ Current host surfaces:
 - packaged OpenCode asset mirror: `src/orchestra/assets/opencode/orchestra/index.ts`
 
 The OpenCode init target installs globally under `~/.config/opencode/plugins/orchestra.ts`; `--copy` uses the packaged asset mirror when a source checkout is unavailable.
-OpenCode's supported surface now includes both `orch_dispatch` and `orch_status`. `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, `roles`, and `stop`, with role updates routed through `orchestra roles ROLE SETTING VALUE` for supported settings `harness`, `enabled`, `model`, `profile`, and `agent`.
-`orch_status roles` is model-callable and read-only for now; it reports configured role env values. `client.session.prompt(...)` is the preferred wake path; `promptAsync(...)` remains fallback-only. `/orch` slash-command and TUI parity are intentionally blocked until a stable host API is proven.
+OpenCode's supported surface includes both `orch_dispatch` and `orch_status`. `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, `roles`, and `stop`. Model-callable `roles` is read-only for now and reports configured role env values; role updates remain on native host/CLI paths where supported. `client.session.prompt(...)` is the preferred wake path; `promptAsync(...)` remains fallback-only. `/orch` slash-command and TUI parity are intentionally limited by the stable host APIs available.
 
 Adapters retrieve runtime session identity from host context and pass it to core. The model or user prompt must not provide session identity.
 
 ### Harnesses
 
-Harness connectors translate a selected role into a worker subprocess invocation.
+Harness connectors translate a selected role into a subagent subprocess invocation. Public documentation calls launched agents **subagents**; internal compatibility identifiers may retain `worker` names.
 
 Current harness configs include:
 
@@ -95,21 +94,40 @@ Role and harness catalog:
 - prompt additions
 - env keys
 - role-level `harness_fallback`
-- worker budget
+- subagent budget
 - enabled/disabled state
 
 The packaged asset at `src/orchestra/assets/agent-catalog.yaml` mirrors root defaults via symlink in the development tree.
 
 ### `prompts.yaml`
 
-Shared prompt text used by core and reports where appropriate.
-The public tool/help wording and parameter descriptions flow from `prompts.yaml` through core `_tool-info` into host plugins.
+Shared prompt text used by core, subagent returns, and public tool/help metadata.
+Public tool wording and parameter descriptions flow from `prompts.yaml` through
+core `_tool-info` into Pi, Hermes, and OpenCode. The common descriptions are the
+cross-host behavior contract; host-specific snippets and guidelines are minimal
+fallback reinforcement, not a second policy source. Host fallback metadata must
+remain aligned for degraded `_tool-info` paths.
+
+`orch_dispatch` metadata makes subagents the default for detailed work and teaches
+lookahead decomposition: scan the whole request, make one call per slice, launch
+all currently unblocked independent slices, keep writes file-disjoint, sequence
+dependencies, and dispatch newly unblocked work as results return. It also covers
+self-contained briefs, role selection, artifact context, return quality, and
+parent integration responsibility.
+`orch_status` metadata explains status, history, read-only roles, setup/help,
+activation, and owned-run cancellation without busy polling.
 
 ## Roles and skills
 
-Roles are routing/config entries. Skills are prompt instructions loaded for a role.
+Roles are routing/capability entries. Their common tool metadata helps the parent
+select the best matching enabled capability, omit a role only when no specialized
+role is better than the default, and use distinct roles for independent judgment. Skills are prompt instructions loaded for a role; they provide the
+stricter workflow, artifact gates, methodology, and role-specific process rather
+than duplicating basic tool operation. Role skills tell subagents to report
+artifact and documentation implications; documentation edits remain with the
+main-session orchestrator.
 
-Current active worker roles:
+Current active subagent roles:
 
 - `builder` — focused implementation
 - `planner` — scope, research coordination, spike decisions, plans
@@ -130,16 +148,16 @@ Current active skills:
 
 Superseded skills are kept under `skills/archive/`. Hermes-specific imported skills live under `skills/hermes/` and are not part of the active Orchestra default role set.
 
-### Worker skill rendering
+### Subagent skill rendering
 
 When a role lists skills, Orchestra searches recursively under `skills/` for `<skill-name>/SKILL.md`.
 
-- If found, the skill content is injected into the initial worker prompt.
-- If absent, the worker prompt tells the harness/model to load the native skill with that name.
+- If found, the skill content is injected into the initial subagent prompt.
+- If absent, the subagent prompt tells the harness/model to load the native skill with that name.
 
 ### Main-session skill injection
 
-Supported host adapters expose `/orch on`, which injects `skills/orchestrator/SKILL.md` into the current main session once. That main session becomes the orchestrator brain: it owns planning, sequencing, approvals, artifact alignment, dispatch, and final judgment.
+Supported host adapters expose `/orch on`, which injects `skills/orchestrator/SKILL.md` into the current main session once. That main session becomes the orchestrator brain: it owns planning, sequencing, approvals, dispatch, project documentation and standard artifact edits, artifact alignment, synthesis, and final judgment. Subagents inspect documentation and return evidence, implications, or proposed text; the orchestrator applies documentation changes.
 
 Pi delivers the skill through its host message API. Hermes delivers the same core skill through `ctx.inject_message(...)`, tracks activation by normalized runtime session id, and clears activation plus watcher/budget state from Hermes lifecycle hooks.
 
@@ -153,6 +171,9 @@ Working artifacts:
 - `PLAN.md` — active execution plan
 - `ROADMAP.md` — TODO and wishlist backlog
 
+The main-session orchestrator edits and aligns these artifacts and other project
+documentation. Subagents inspect them as task context and return evidence,
+documentation implications, and proposed wording without editing documentation.
 Active skills should put long-lived backlog items in `ROADMAP.md`, not `PLAN.md`.
 
 ## Runtime data flow
@@ -162,11 +183,11 @@ Active skills should put long-lived backlog items in `ROADMAP.md`, not `PLAN.md`
 3. Core loads config/catalog/prompts.
 4. Core resolves role and harness config.
 5. Scheduler enforces global and per-session limits.
-6. Harness connector renders the worker prompt and starts a subprocess.
+6. Harness connector renders the subagent prompt and starts a subprocess.
 7. Core records run state and process metadata.
-8. Worker completes, fails, times out, or is stopped.
+8. Subagent completes, fails, times out, or is stopped.
 9. Core writes compact result state and full return artifact.
-10. When no active workers remain for the owning session, core builds one consolidated return report.
+10. When no active subagents remain for the owning session, core builds one consolidated return report.
 11. Host adapter may auto-return that report to the owning orchestrator session.
 
 ## Session ownership
@@ -176,7 +197,7 @@ Every run is keyed by exact `orchestrator_session_id`.
 Examples:
 
 - Pi parent sessions: `pi:<session_id>` from `ctx.sessionManager.getSessionId()`
-- Pi worker sessions: deterministic `orchestra-worker-<run-id>` ids stored as `worker_session_id`
+- Pi subagent sessions: deterministic `orchestra-worker-<run-id>` ids stored as `worker_session_id`
 - Hermes: `hermes:<session_id>` from plugin runtime context
 - OpenCode: `opencode:<session_id>` from `context.sessionID`
 - CLI/manual mode: explicit `--session-id`
@@ -208,7 +229,7 @@ If a requested role fails to start on its primary harness and the role defines `
 - role skills
 - prompt addition
 - env
-- worker budget
+- subagent budget
 
 Fallback may change:
 
@@ -235,16 +256,16 @@ SQLite stores compact operational state:
 - return artifact path
 - fallback metadata when relevant
 
-JSONL logs record lifecycle events and debugging metadata, including worker session ids when harnesses provide them. Return artifacts under `state/return-artifacts/` hold full final worker stdout/stderr when compact summaries are truncated. Pi worker session files can be found under Pi's session directory by the stored `worker_session_id`.
+JSONL logs record lifecycle events and debugging metadata, including subagent session ids when harnesses provide them. Return artifacts under `state/return-artifacts/` hold full final subagent stdout/stderr when compact summaries are truncated. Pi subagent session files can be found under Pi's session directory by the stored `worker_session_id`.
 
 ## Auto-return
 
-Auto-return sends one consolidated completion report to the owning orchestrator session after all active workers for that session finish.
+Auto-return sends one consolidated completion report to the owning orchestrator session after all active subagents for that session finish.
 
 Principles:
 
 - group by orchestrator session, not batch
-- return one session report, not per-worker prompt spam
+- return one session report, not per-subagent prompt spam
 - include compact status/results and artifact paths when needed
 - use host-supported non-prompt notifications only for progress
 

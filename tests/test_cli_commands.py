@@ -1364,18 +1364,36 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert "  ✓  worker [pi]" in tool_info["description"]
     assert "  D  reviewer [hermes]" in tool_info["description"]
     assert "      model: gpt-5" in tool_info["description"]
-    assert tool_info["roleDescription"].startswith("(Optional) specific role; omit for default.")
+    assert tool_info["roleDescription"].startswith("Optional worker capability.")
+    assert "enabled role that best matches" in tool_info["roleDescription"]
     assert "  ✓  worker [pi]" in tool_info["roleDescription"]
     assert "  D  reviewer [hermes]" in tool_info["roleDescription"]
     assert "  ✗  critic" not in tool_info["description"]
     assert "  ✗  critic" not in tool_info["roleDescription"]
-    assert tool_info["statusDescription"].startswith("Orchestra session/status/control actions.")
-    assert "on, status, history, help, doctor, roles, stop" in tool_info["statusActionDescription"]
-    assert tool_info["statusLimitDescription"] == "Optional limit for history results."
-    assert tool_info["statusRunIdDescription"] == "Run id to stop."
-    assert tool_info["statusRoleDescription"] == "Optional role for roles queries or updates."
-    assert tool_info["statusSettingDescription"] == "Optional role setting to update."
-    assert tool_info["statusValueDescription"] == "Optional role setting value."
+    assert tool_info["statusDescription"].startswith(
+        "Use orch_status to inspect and control Orchestra for the current session."
+    )
+    assert "orch_dispatch to start work" in tool_info["statusDescription"]
+    assert "Completed worker reports return automatically" in tool_info[
+        "statusDescription"
+    ]
+    assert "help, doctor, roles, status, history, on, or stop" in tool_info[
+        "statusActionDescription"
+    ]
+    assert "runId" in tool_info["statusActionDescription"]
+    assert tool_info["statusLimitDescription"] == (
+        "Optional positive history limit for action=history."
+    )
+    assert tool_info["statusRunIdDescription"] == "Required run id when action=stop."
+    assert tool_info["statusRoleDescription"] == (
+        "Reserved for compatibility; action=roles lists all configured roles."
+    )
+    assert tool_info["statusSettingDescription"] == (
+        "Reserved for role updates; model-callable roles are read-only for now."
+    )
+    assert tool_info["statusValueDescription"] == (
+        "Reserved for role updates; model-callable roles are read-only for now."
+    )
     assert "timeoutDescription" not in tool_info
 
 

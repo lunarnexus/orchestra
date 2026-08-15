@@ -18,17 +18,17 @@ skills/builder/SKILL.md
 skills/reviewer/SKILL.md
 ```
 
-## Main-session vs worker skills
+## Main-session vs subagent skills
 
 There are two separate skill injection paths:
 
 - **Main session**: in Pi, `/orch on` injects `skills/orchestrator/SKILL.md`
   into the current main session once. This is a manual one-time skill load for
   orchestrator mode. MVP does not include `/orch off`.
-- **Workers**: role config in `agent-catalog.yaml` injects listed skills into
-  worker prompts when Orchestra launches that role.
+- **Subagents**: role config in `agent-catalog.yaml` injects listed skills into
+  subagent prompts when Orchestra launches that role.
 
-## Orchestra worker-skill behavior
+## Orchestra subagent-skill behavior
 
 Role config shape:
 
@@ -46,9 +46,9 @@ Orchestra resolves each configured skill name like this:
 
 1. Search recursively under `skills/` for `<skill-name>/SKILL.md`.
 
-2. If found, inject that full skill into the initial worker prompt before task instructions.
+2. If found, inject that full skill into the initial subagent prompt before task instructions.
 
-3. If not found, fall back to a plain prompt instruction telling the worker to load the named skill natively before doing the task.
+3. If not found, fall back to a plain prompt instruction telling the subagent to load the named skill natively before doing the task.
 
 ## Skill authoring notes
 

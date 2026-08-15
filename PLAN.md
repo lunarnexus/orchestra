@@ -6,12 +6,15 @@ Goal: make model-callable Orchestra tool functionality uniform across Pi, Hermes
 
 User decisions:
 - Expose two model-callable tools where each host API supports tools:
-  - `orch_dispatch(goal, role?, taskLabel?)` starts focused worker tasks only.
+  - `orch_dispatch(goal, role?, taskLabel?)` starts focused subagent tasks only.
   - `orch_status(action, limit?, runId?, role?, setting?, value?)` handles Orchestra session/status/control actions.
 - Add `orch_status` to Pi and Hermes; align OpenCode's existing `orch_status`.
 - Include `stop` in `orch_status`, not `orch_dispatch`.
 - Keep host adapters thin: runtime session identity, host API/tool registration, notifications/injection/rendering only.
 - Centralize public tool descriptions and parameter metadata in `prompts.yaml` and expose them through core `_tool-info`.
+- Common tool descriptions make subagents the default for detailed work and own whole-request lookahead, one-call-per-slice fan-out, role selection, parallelism, dependency sequencing, artifact context, and return expectations.
+- Host-specific prompt snippets stay minimal. Skills own stricter workflow, artifact gates, methodology, approvals, and role-specific process.
+- The main-session orchestrator edits project documentation and standard artifacts. Subagents inspect documentation and return evidence, implications, and proposed wording.
 
 Current evidence:
 - OpenCode currently exposes `orch_status` and conditional `orch_dispatch`: `state/return-artifacts/3d76b0193aac.md`.
@@ -19,6 +22,8 @@ Current evidence:
 - Hermes currently exposes conditional `orch_dispatch` only; `/orch` command separately supports status/history/stop/etc.: `state/return-artifacts/9cfd9eb7cd46.md`.
 - `stop` is a better fit for `orch_status` than `orch_dispatch` because `orch_dispatch` is goal/launch-shaped across hosts: `state/return-artifacts/9ddb68ee0fc5.md`.
 - Implementation plan: `state/return-artifacts/5fa000721985.md`.
+- External delegation prompt research: OpenHands `f11a2565dc3e`, Cline `7891fad2c1ac`, Roo Code `1c7c08d79501`, Goose `7d1df8235b88`, AutoGen `ed0afc11fadd`.
+- Current prompt review: `state/return-artifacts/d0fbe7ddeb82.md`.
 
 ### Planned slices
 
@@ -57,12 +62,12 @@ Current evidence:
 
 5. [x] sequential — Docs and artifact alignment
    - Scope: `FOUNDATION.md`, `ARCHITECTURE.md`, `docs/plugin_creation.md`, `PLAN.md`; update `RESEARCH.md` only if new evidence is collected.
-   - Requirements: document both model-callable tools, supported `orch_status` actions including `stop`, supported role settings, and the prompt metadata path from `prompts.yaml` through `_tool-info` into host plugins.
+   - Requirements: document both model-callable tools, supported `orch_status` actions including `stop`, common-tool versus skill responsibilities, delegation/parallelism objectives, read-only model-callable roles, and the prompt metadata path from `prompts.yaml` through `_tool-info` into host plugins.
    - Verify: inspection plus focused tests above.
    - Risk: P3 — stale public contract/docs.
    - Gates: reviewer.
 
-6. [ ] sequential — Final verification and live end-to-end tests
+6. [x] sequential — Final verification and live end-to-end tests
    - Scope: whole diff after implementation/docs.
    - Automated verification:
      - `python3 -m pytest tests/test_config.py tests/test_cli_commands.py tests/test_pi_extension_source.py tests/test_hermes_plugin_source.py tests/test_opencode_plugin_source.py -q`
@@ -75,8 +80,9 @@ Current evidence:
      - `orchestra init pi --force`, then Pi smoke covering `orch_dispatch`, `orch_status help|doctor|roles|status|history`, and `orch_status stop` against an owned active run.
      - OpenCode install/smoke covering `orch_dispatch`, `orch_status help|doctor|roles|status|history`, and `orch_status stop` against an owned active run.
      - Hermes install/smoke where the configured Hermes host is available, covering the same two-tool behavior and runtime session ownership.
-   - Stop when automated checks and approved live host smoke results are recorded, or host/runtime blockers are documented.
-   - Risk: P1/P0 — cross-host public behavior, model-callable stop, and runtime ownership boundaries.
+   - Completion evidence: YAML config files parse; focused host/config tests pass (`218 passed`); full pytest passes (`357 passed, 1 skipped`); Ruff, mypy, build, and diff checks pass. The stale public `worker` test assertion and prompt whitespace/grammar defects are fixed.
+   - Live host smoke results and host/runtime blockers are recorded in this plan and the associated return artifacts, satisfying the slice stop condition.
+   - Risk: P1/P0 — cross-host public behavior, model-callable stop, runtime ownership boundaries, and prompt/default fallback drift.
    - Gates: verifier + reviewer + appsec; commit approval after all gates.
 
 ### Approval gates
@@ -90,7 +96,7 @@ Current evidence:
 
 Goal: finish the remaining OpenCode host-plugin parity work that is practical under the user's **best host-supported parity** decision, while preserving runtime-session ownership, thin-adapter boundaries, safe auto-return, and the already implemented `orch_dispatch`/auto-return/progress/package baseline.
 
-Current stage: OpenCode `orch_status`, docs/artifact follow-up, command-template install support, and live `/orch` smoke have passed using the configured OpenCode model alias `lmstudio/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved@q6_k`. A live `/orch on` TUI issue caused by irrelevant optional fields has been fixed by ignoring `limit` outside `history` and role fields outside `roles`. User accepted role env display risk for this slice. Executable TUI slash commands remain unproven. Footer/status UI slot API exists in types, but live TUI plugin loading failed; production footer/status UI remains blocked.
+Current stage: OpenCode integration is complete for its supported host APIs. `orch_dispatch`, `orch_status`, command-template install support, session-targeted auto-return, progress toasts, and live `/orch` smoke have passed. A live `/orch on` issue caused by irrelevant optional fields was fixed by ignoring fields outside their actions. OpenCode-specific executable TUI command and footer-slot experiments remain historical host-API research, not parity blockers.
 
 ### Current evidence and constraints
 
@@ -133,7 +139,8 @@ Current stage: OpenCode `orch_status`, docs/artifact follow-up, command-template
    - Verify: dispatch ack, dispatch/progress toast if observable, final report in the same session, and assistant response containing `OPENCODE_E2E_SMOKE_OK`.
    - Risk: P1 — live host/model behavior may differ from source-contract tests.
 
-2. [ ] sequential — Spike executable OpenCode TUI slash-command parity
+2. [x] closed — Spike executable OpenCode TUI slash-command parity
+   - Closure: OpenCode integration is complete through its supported plugin tools and prompt-template command surface; undocumented executable TUI commands are not a parity requirement.
    - Scope: disposable scratch OpenCode TUI plugin only.
    - Goal: prove whether undocumented TUI `command.register` + `slash` + `onSelect` can implement safe executable `/orch` commands with user-visible output and session-targeted injection.
    - Approved spike constraints: use a temporary `OPENCODE_CONFIG_DIR`; do not edit repo files; create disposable TUI plugin files only under the temp config; launch live OpenCode only after the fixture exists.
@@ -151,7 +158,7 @@ Current stage: OpenCode `orch_status`, docs/artifact follow-up, command-template
 
 3. [x] sequential — Implement documented prompt-template `/orch` command and companion `orch_status` tool
    - Scope: OpenCode command template install path, assets, and plugin tools.
-   - User decision: use one companion tool named `orch_status`; keep worker dispatch in existing `orch_dispatch`.
+   - User decision: use one companion tool named `orch_status`; keep subagent dispatch in existing `orch_dispatch`.
    - `orch_status` actions:
      - `on` → run `orchestra _orchestrator-skill` and return the main-session orchestrator skill payload for the model to adopt.
      - `status` → run `orchestra status --session-id opencode:<context.sessionID>`.
@@ -179,10 +186,11 @@ Current stage: OpenCode `orch_status`, docs/artifact follow-up, command-template
    - Stop when a tiny fixture proves `home_footer` or `sidebar_footer` renders from a plugin in live OpenCode, or records unsupported/blocked evidence.
    - Risk: P1 — TUI slot API is type-backed, but the live plugin load path for `tui()` plugins is not proven in this installed OpenCode version.
 
-5. [ ] blocked — Executable TUI slash commands and production footer/status UI
-   - Blocker for executable slash commands: source-backed proof that OpenCode TUI command APIs can register executable slash commands in the current build.
-   - Blocker for production footer/status UI: successful live TUI plugin load/render proof for `home_footer` or `sidebar_footer`; current live fixture was rejected by the OpenCode plugin loader.
-   - Target if accepted: executable `/orch ...` and/or active worker footer/status with cleanup on dispose.
+5. [x] closed — Executable TUI slash commands and production footer/status UI
+   - Closure: unsupported TUI command/footer experiments are optional host-specific ideas, not incomplete OpenCode integration.
+   - Historical blocker for executable slash commands: source-backed proof that OpenCode TUI command APIs can register executable slash commands in the current build.
+   - Historical blocker for production footer/status UI: successful live TUI plugin load/render proof for `home_footer` or `sidebar_footer`; current live fixture was rejected by the OpenCode plugin loader.
+   - Target if accepted: executable `/orch ...` and/or active subagent footer/status with cleanup on dispose.
    - Excluded unless new evidence appears: transcript-entry rendering, stable dynamic completions, Pi-style turn/tool budget hooks.
    - Risk: P1 — lifecycle leaks or dependency on unstable host UI APIs.
 

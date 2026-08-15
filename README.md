@@ -10,23 +10,23 @@ Orchestra is an agent-agnostic orchestration layer for dispatching sub-agents.  
 
 It gives a host agent or CLI a small, consistent way to:
 
-- start focused worker runs through existing agent harnesses
-- keep worker ownership scoped to the invoking session
+- start focused subagent runs through existing agent harnesses
+- keep subagent ownership scoped to the invoking session
 - enforce concurrency, cancellation, and timeouts
 - return compact results without flooding the parent context
 - inspect active and completed runs from a CLI or /slash command surface
-- dispatch workers in the background, leaving your main session open and responsive for multi-tasking.
+- dispatch subagents in the background, leaving your main session open and responsive for multi-tasking.
 
 Some harnesses are fast and light, some are smart but bloated.  Some burn tokens at break-neck speed, some just don't have the features you want.  Well, with Orchestra, you can use all your favorite agent harnesses for what they're good at.  Big and full featured with lots of UI bells and whistles for the orchestrator, and lightweight for coders, smart with heavy memory systems for researchers, whatever you want.  
 
 ## Why Orchestra?
 
-LLM coding agents work best when tasks are small, bounded, and matched to the right tool. Orchestra helps the main agent stay focused while specialized workers handle research, implementation, verification, review, or security checks.
+LLM coding agents work best when tasks are small, bounded, and matched to the right tool. Orchestra helps the main agent stay focused while specialized subagents handle research, implementation, verification, review, or security checks.
 
 Common LLM coding obstacles Orchestra is designed around:
 
-- **Context bloat** — workers return compact summaries while full output stays in artifacts.
-- **Unclear delegation** — roles make worker selection repeatable instead of improvised.
+- **Context bloat** — subagents return compact summaries while full output stays in artifacts.
+- **Unclear delegation** — roles make subagent selection repeatable instead of improvised.
 - **Harness mismatch** — use different agent harnesses for different strengths.
 - **Runaway work** — timeouts, cancellation, and cooperative budgets keep runs bounded.
 - **Parallel confusion** — session ownership and concurrency limits keep results attached to the right parent session.
@@ -37,9 +37,9 @@ Since Orchestra is harness agnostic, it isn't bogged down with the details of sk
 ## Key Features
 
 - Dispatch focused sub-agents from the CLI or supported host integrations.
-- Configure reusable worker roles with harness, model/profile, skills, environment, and prompt additions.
+- Configure reusable subagent roles with harness, model/profile, skills, environment, and prompt additions.
 - Use multiple harnesses from one catalog.
-- Scope worker ownership to the invoking session.
+- Scope subagent ownership to the invoking session.
 - Limit concurrent work globally and per session.
 - Cancel active runs and inspect run history.
 - Return compact summaries automatically while preserving full artifacts.
@@ -50,7 +50,7 @@ Since Orchestra is harness agnostic, it isn't bogged down with the details of sk
 
 - Python 3.11+
 - PyYAML
-- At least one supported agent harness installed for worker execution
+- At least one supported agent harness installed for subagent execution
 - `pipx` recommended for a stable user-facing `orchestra` command
 
 Development extras are installed with `.[dev]`.
@@ -87,7 +87,7 @@ orchestra doctor
 orchestra roles
 ```
 
-Run a manual worker task from the CLI:
+Run a manual subagent task from the CLI:
 
 ```bash
 orchestra do --session-id manual:demo --goal "Summarize the repository status"
@@ -145,9 +145,9 @@ See the config files and `ARCHITECTURE.md` for detailed behavior.
 
 Current support includes:
 
-- **Pi** — host integration and worker harness
-- **Hermes** — host integration and worker harness
-- **OpenCode** — partially supported host integration and one-shot worker harness
+- **Pi** — host integration and subagent harness
+- **Hermes** — host integration and subagent harness
+- **OpenCode** — host integration and one-shot subagent harness
 
 Harness-specific model names, profiles, agents, and command templates belong in `agent-catalog.yaml`.
 
@@ -155,9 +155,9 @@ Compatibility differs by host because each harness exposes different plugin and 
 
 | Feature | Pi | Hermes | OpenCode |
 | --- | --- | --- | --- |
-| Can be worker | ✅ | ✅ | ✅* |
-| Can be orchestrator | ✅ | ✅ | ⚠️* |
-| `/slash` commands | ✅ | ✅ | ⚠️* |
+| Can be subagent | ✅ | ✅ | ✅* |
+| Can be orchestrator | ✅ | ✅ | ✅* |
+| `/slash` commands | ✅ | ✅ | ✅* |
 | Footer/status UI | ✅ | ❌ | ❌ |
 | Hard timeouts | ✅ | ✅ | ✅ |
 | Soft timeouts | ✅ | ✅ | ✅ |
@@ -191,7 +191,7 @@ Common Pi commands:
 /orch history [limit]
 ```
 
-The Pi extension also registers the `orch_dispatch` tool.
+The Pi extension also registers the `orch_dispatch` and `orch_status` tools.
 
 ### Hermes
 
@@ -214,7 +214,7 @@ Common Hermes commands:
 /orch history [limit]
 ```
 
-Hermes also exposes `orch_dispatch` where plugin tools are supported.
+Hermes also exposes `orch_dispatch` and `orch_status`.
 
 ### OpenCode
 
@@ -226,7 +226,7 @@ orchestra init opencode
 orchestra init opencode --copy
 ```
 
-OpenCode is partially supported. Current support includes `orch_dispatch`, `orch_status`, the documented `/orch` prompt template, session-targeted auto-return, and progress toasts when the host UI supports them. OpenCode does not currently provide Orchestra footer/status UI.
+OpenCode support is complete for its supported host APIs. It includes `orch_dispatch`, `orch_status`, the documented `/orch` prompt template, session-targeted auto-return, and progress toasts. OpenCode does not expose the same native footer/status UI API as Pi; that host-specific UI difference is not an incomplete Orchestra integration.
 
 ## Development
 
