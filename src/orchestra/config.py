@@ -712,6 +712,8 @@ def _get_optional_skill_names(
     *,
     context: str,
 ) -> list[str] | None:
+    if data.get(key) == []:
+        return []
     values = _get_optional_string_list(data, key, context=context)
     if values is None:
         return None

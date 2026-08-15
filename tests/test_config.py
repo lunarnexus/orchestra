@@ -494,6 +494,25 @@ roles:
     assert reviewer.env == {"FEATURE_FLAG": "1", "EMPTY_OK": ""}
 
 
+def test_load_agent_catalog_accepts_explicit_empty_skills(tmp_path: Path) -> None:
+    path = tmp_path / "agent-catalog.yaml"
+    path.write_text(
+        "harness_configs:\n"
+        "  pi:\n"
+        "    harness: pi\n"
+        "    command: [pi, -p, '{prompt}']\n"
+        "roles:\n"
+        "  builder:\n"
+        "    harness_config: pi\n"
+        "    skills: []\n",
+        encoding="utf-8",
+    )
+
+    catalog = load_agent_catalog(path)
+
+    assert catalog.roles["builder"].skills == ()
+
+
 def test_load_agent_catalog_rejects_legacy_worker_budget_key(tmp_path: Path) -> None:
     path = tmp_path / "agent-catalog.yaml"
     path.write_text(

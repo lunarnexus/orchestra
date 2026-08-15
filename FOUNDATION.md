@@ -378,7 +378,9 @@ Current subagent roles are `builder`, `planner`, `researcher`, `reviewer`,
 `verifier`, and `appsec`; `critic` remains optional/disabled. The main session
 uses the `orchestrator` skill when Orchestra mode is manually enabled in Pi.
 Subagent prompts should stay minimal: load configured role skills first, then
-pass a normal delegation prompt. Role skills optimize for smaller subagent models:
+pass a normal delegation prompt. A role may explicitly set `skills: []` to disable
+skill injection; this is equivalent to omitting `skills`. Configured entries must
+remain valid non-empty skill names. Role skills optimize for smaller subagent models:
 keep the default workflow and role boundary in `SKILL.md`, put conditional
 methodology in resources with exact triggers, and fix behavioral failures at the
 governing instruction instead of accumulating incident-specific prohibitions.

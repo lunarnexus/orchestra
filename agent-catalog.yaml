@@ -60,7 +60,7 @@ harness_configs:
 #     nested_dispatch_depth: 2        # optional positive integer; child dispatch depth
 #     turn_limit: 20                  # optional positive integer; worker turn budget
 #     soft_timeout: 300               # optional positive integer seconds; worker soft timeout
-#     skills:                         # optional non-empty list of skill names
+#     skills:                         # optional list of skill names; [] disables injection
 #     - builder                       # names may use letters, numbers, _, ., and -
 #     prompt_addition: Extra role instructions.  # optional non-empty string
 #     enabled: true                   # optional boolean; defaults to true
