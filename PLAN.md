@@ -1,6 +1,89 @@
 # Plan
 
-## Active: OpenCode unfinished parity items
+## Active: Uniform Orchestra tools and prompt metadata
+
+Goal: make model-callable Orchestra tool functionality uniform across Pi, Hermes, and OpenCode while keeping the CLI/core as the canonical backend and `prompts.yaml` as the source of public tool/help wording.
+
+User decisions:
+- Expose two model-callable tools where each host API supports tools:
+  - `orch_dispatch(goal, role?, taskLabel?)` starts focused worker tasks only.
+  - `orch_status(action, limit?, runId?, role?, setting?, value?)` handles Orchestra session/status/control actions.
+- Add `orch_status` to Pi and Hermes; align OpenCode's existing `orch_status`.
+- Include `stop` in `orch_status`, not `orch_dispatch`.
+- Keep host adapters thin: runtime session identity, host API/tool registration, notifications/injection/rendering only.
+- Centralize public tool descriptions and parameter metadata in `prompts.yaml` and expose them through core `_tool-info`.
+
+Current evidence:
+- OpenCode currently exposes `orch_status` and conditional `orch_dispatch`: `state/return-artifacts/3d76b0193aac.md`.
+- Pi currently exposes conditional `orch_dispatch` only; `/orch` command separately supports status/history/stop/etc.: `state/return-artifacts/bd70db511572.md`.
+- Hermes currently exposes conditional `orch_dispatch` only; `/orch` command separately supports status/history/stop/etc.: `state/return-artifacts/9cfd9eb7cd46.md`.
+- `stop` is a better fit for `orch_status` than `orch_dispatch` because `orch_dispatch` is goal/launch-shaped across hosts: `state/return-artifacts/9ddb68ee0fc5.md`.
+- Implementation plan: `state/return-artifacts/5fa000721985.md`.
+
+### Planned slices
+
+1. [ ] sequential — Core prompt/schema metadata
+   - Scope: `prompts.yaml`, `src/orchestra/assets/prompts.yaml`, `src/orchestra/config.py`, `src/orchestra/app.py`, `src/orchestra/cli.py` if needed, `tests/test_config.py`, `tests/test_cli_commands.py`.
+   - Goal: add centralized status-tool metadata for `_tool-info` while preserving existing dispatch metadata keys for compatibility.
+   - Status metadata must cover description plus `action`, `limit`, `runId`, `role`, `setting`, and `value` parameter descriptions.
+   - Verify: `python3 -m pytest tests/test_config.py tests/test_cli_commands.py -q`.
+   - Risk: P1 — public prompt/tool metadata affects model behavior.
+   - Gates: reviewer.
+
+2. [ ] sequential — Add Pi `orch_status`
+   - Scope: `extensions/pi/orchestra/index.ts`, `src/orchestra/assets/pi/orchestra/index.ts`, `tests/test_pi_extension_source.py`.
+   - Interface: `orch_status(action, limit?, runId?, role?, setting?, value?)` with actions `on|status|history|help|doctor|roles|stop`.
+   - Requirements: use `ctx.sessionManager.getSessionId()` for session-scoped actions; require `runId` for `stop`; do not add `goal` to `orch_status`; consume metadata from `_tool-info`.
+   - Verify: `python3 -m pytest tests/test_pi_extension_source.py -q`.
+   - Risk: P1 — model-callable stop/control surface.
+   - Gates: reviewer + appsec.
+
+3. [ ] sequential — Add Hermes `orch_status`
+   - Scope: `extensions/hermes/orchestra/__init__.py`, `extensions/hermes/orchestra/plugin.yaml` if it lists tools, `tests/test_hermes_plugin_source.py`.
+   - Interface: same actions/args as Pi; runtime identity comes from Hermes `session_id` kwarg; `stop` requires `runId`; `orch_dispatch` stays dispatch-only with required `goal`.
+   - Verify: `python3 -m pytest tests/test_hermes_plugin_source.py -q`.
+   - Risk: P1 — session ownership and stop control.
+   - Gates: reviewer + appsec.
+
+4. [ ] sequential — Align OpenCode `orch_status`
+   - Scope: `extensions/opencode/orchestra/index.ts`, `src/orchestra/assets/opencode/orchestra/index.ts`, `tests/test_opencode_plugin_source.py`.
+   - Requirements: add `stop` action and `runId`; replace hardcoded status metadata with `_tool-info` metadata; keep current tolerance for irrelevant optional fields outside their action.
+   - Verify: `python3 -m pytest tests/test_opencode_plugin_source.py -q`.
+   - Risk: P1 — model-callable stop/control and metadata drift.
+   - Gates: reviewer + appsec.
+
+5. [ ] sequential — Docs and artifact alignment
+   - Scope: `FOUNDATION.md`, `ARCHITECTURE.md`, `docs/plugin_creation.md`, `PLAN.md`; update `RESEARCH.md` only if new evidence is collected.
+   - Requirements: document both model-callable tools, supported `orch_status` actions including `stop`, supported role settings, and the prompt metadata path from `prompts.yaml` through `_tool-info` into host plugins.
+   - Verify: inspection plus focused tests above.
+   - Risk: P3 — stale public contract/docs.
+   - Gates: reviewer.
+
+6. [ ] sequential — Final verification and live end-to-end tests
+   - Scope: whole diff after implementation/docs.
+   - Automated verification:
+     - `python3 -m pytest tests/test_config.py tests/test_cli_commands.py tests/test_pi_extension_source.py tests/test_hermes_plugin_source.py tests/test_opencode_plugin_source.py -q`
+     - `python3 -m pytest`
+     - `python3 -m ruff check .`
+     - `python3 -m mypy src tests`
+     - `python3 -m build`
+     - source/asset mirror checks where applicable.
+   - Live end-to-end verification, with explicit user approval before execution:
+     - `orchestra init pi --force`, then Pi smoke covering `orch_dispatch`, `orch_status help|doctor|roles|status|history`, and `orch_status stop` against an owned active run.
+     - OpenCode install/smoke covering `orch_dispatch`, `orch_status help|doctor|roles|status|history`, and `orch_status stop` against an owned active run.
+     - Hermes install/smoke where the configured Hermes host is available, covering the same two-tool behavior and runtime session ownership.
+   - Stop when automated checks and approved live host smoke results are recorded, or host/runtime blockers are documented.
+   - Risk: P1/P0 — cross-host public behavior, model-callable stop, and runtime ownership boundaries.
+   - Gates: verifier + reviewer + appsec; commit approval after all gates.
+
+### Approval gates
+
+- Implementation/editing beyond this `PLAN.md` update requires user approval.
+- Model-callable `stop` must preserve runtime-derived session ownership and require explicit `runId`.
+- Live host/model-backed end-to-end tests require explicit user approval before execution.
+- Commit/push require separate approval.
+
+## Previous: OpenCode unfinished parity items
 
 Goal: finish the remaining OpenCode host-plugin parity work that is practical under the user's **best host-supported parity** decision, while preserving runtime-session ownership, thin-adapter boundaries, safe auto-return, and the already implemented `orch_dispatch`/auto-return/progress/package baseline.
 
