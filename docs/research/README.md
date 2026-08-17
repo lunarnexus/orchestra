@@ -12,6 +12,7 @@ Executable evaluation harnesses remain under `evals/`. Raw run artifacts remain 
 | R002 | Skill repository metrics | Complete | `orchestra-skills-research/skill-repo-metrics-research.md` | Downloaded repositories | Reference only |
 | R003 | Future standalone research system | Exploratory | `future-research-system.md` | R001 and R004 | Not approved |
 | R004 | Researcher methods, flows, and ownership | Evaluation complete | `researcher-method-evaluation.md` | `researcher-current-baseline-summary.json`; `researcher-codegraph-overlay-summary.json`; `researcher-method-evaluation-summary.json`; `evals/research_lab/` | Recommendation pending |
+| R005 | Orchestration value benchmarks | Complete | `orchestration_value_benchmarks.md` | External benchmark and framework sources | Input to product positioning |
 
 ## Current R004 recommendation
 
@@ -25,6 +26,20 @@ Executable evaluation harnesses remain under `evals/`. Raw run artifacts remain 
 
 See `researcher-method-evaluation.md` for evidence, results, limitations, operational findings, and terminology.
 
+## Current R005 product-positioning takeaway
+
+Multi-agent orchestration is not inherently a token- or time-saving technique
+when every role uses the same expensive model. The strongest cost case for
+Orchestra is a high-capability remote/frontier main session that delegates
+bounded work to local or cheaper subagents, reducing expensive main-session
+context while receiving compact results.
+
+Default delegation remains useful because per-microtask dispatch reasoning tends
+to under-delegate: each individual task appears small, while the aggregate
+main-session context cost is large. The cost-control mechanism is local-model
+routing, narrow scope, compact returns, timeouts, concurrency limits, and
+artifact-backed details.
+
 ## Organization rules
 
 | Material | Canonical location |
@@ -33,7 +48,7 @@ See `researcher-method-evaluation.md` for evidence, results, limitations, operat
 | Downloaded repositories and bulky source material | `docs/research/orchestra-skills-research/repos/` — ignored |
 | Executable evaluation harnesses and fixtures | `evals/` |
 | Raw traces, artifacts, and repeated runs | `evals/*/runs/` — ignored |
-| Accepted project decisions | Relevant decision document under `docs/` |
-| Approved implementation work | `PLAN.md` |
+| Accepted project decisions | `FOUNDATION.md`, `ARCHITECTURE.md`, `ROADMAP.md`, or another relevant durable project document |
+| Active orchestrator execution state | Optional operational `PLAN.md` in the repository root |
 
 Research findings should be promoted into decision documents only after review and approval.

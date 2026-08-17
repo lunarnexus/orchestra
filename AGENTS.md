@@ -4,8 +4,8 @@ These rules apply to all AI coding agents working on this project.
 
 ## Core Principles
 
-- Keep the implementation aligned with `FOUNDATION.md` and `PLAN.md`.
-- Treat `FOUNDATION.md` and `PLAN.md` as planning records, not casual edit targets.
+- Keep the implementation aligned with `FOUNDATION.md` and any active operational artifacts.
+- Treat `FOUNDATION.md` as a durable decision record. Treat `PLAN.md` and `RESEARCH.md` as Orchestra operational artifacts for the current orchestrator session, not casual edit targets.
 - Favor simple MVP work over speculative framework building.
 - Prefer small, reviewable changes with clear verification.
 - Be explicit about what is implemented now versus only planned.

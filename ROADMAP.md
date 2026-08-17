@@ -7,7 +7,17 @@ Orchestra roadmap items are split into:
 
 ## TODO
 
-1. [ ] Add lightweight workflow/git coordination docs.
+1. [ ] Document recommended frontier-orchestrator/local-subagent setup.
+   - Show how to configure enabled subagent roles for local or cheaper models in `agent-catalog.yaml`.
+   - Explain that the host/orchestrator model is independent from role models.
+   - Keep the guidance focused on reducing expensive main-session context and token use.
+
+2. [ ] Revisit subagent handoffs and artifacts.
+   - Improve handoff prompts for local/weaker subagents without bloating the parent session.
+   - Evaluate richer scoped context, artifact references, parent-context summaries, and harness-native fork behavior where supported.
+   - Keep full transcripts out of normal orchestrator context; use artifacts for verbose evidence.
+
+3. [ ] Add lightweight workflow/git coordination docs.
    - Start with reusable workflow recipes in docs/config before building a workflow engine.
    - Keep workflow source in skills first.
    - Include simple status/commit guidance and conventional commit conventions.

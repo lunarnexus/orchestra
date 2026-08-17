@@ -12,6 +12,7 @@ Core properties:
 - Thin host extensions/plugins for Pi, Hermes, and OpenCode.
 - Config-driven role and harness selection.
 - Session-scoped ownership for all subagent runs.
+- Frontier/remote orchestrator sessions can offload bounded work to local or cheaper subagent models.
 - Lean SQLite runtime state plus JSONL logs and return artifacts.
 - Skills injected into subagents from project-local `skills/` when configured.
 - Main-session orchestrator skill injection for Pi through `/orch on`.
@@ -76,6 +77,20 @@ Current harness configs include:
 
 Harness configuration is explicit and tokenized in `agent-catalog.yaml`. Harnesses are selected by role config rather than by scanning the environment.
 
+### Model routing strategy
+
+The host/orchestrator model is independent from subagent role models. The
+recommended cost-saving architecture is a strong remote/frontier model in the
+main session and local or cheaper models for enabled subagent roles. The main
+session preserves judgment, planning, approvals, synthesis, and user
+communication while subagents consume the larger operational context of bounded
+research, implementation, verification, review, and security checks.
+
+Same-model orchestration remains supported, but it is primarily a quality,
+workflow, or context-isolation tradeoff. The main cost-saving path is reducing
+expensive orchestrator work through local-model offload, compact subagent
+returns, lean state, and artifact references.
+
 ## Configuration files
 
 ### `config.yaml`
@@ -130,11 +145,12 @@ main-session orchestrator.
 Current active subagent roles:
 
 - `builder` — focused implementation
-- `planner` — scope, research coordination, spike decisions, plans
 - `researcher` — read-only evidence gathering
 - `verifier` — independent acceptance verification
 - `reviewer` — implementation quality and merge-readiness review
 - `appsec` — application-security and abuse-path review
+
+Planning is currently owned by the main-session orchestrator. A `planner` role may exist in the catalog as a disabled or optional role, but it is not part of the active default role set.
 
 Current active skills:
 
@@ -163,15 +179,19 @@ Pi delivers the skill through its host message API. Hermes delivers the same cor
 
 ## Standard artifacts
 
-Working artifacts:
+Project artifacts:
 
 - `FOUNDATION.md` — durable decisions and principles
 - `ARCHITECTURE.md` — evolving technical design
-- `RESEARCH.md` — research findings and evidence
-- `PLAN.md` — active execution plan
 - `ROADMAP.md` — TODO and wishlist backlog
+- `docs/research/` — durable research notes, evidence, evaluations, and unapproved future designs
 
-The main-session orchestrator edits and aligns these artifacts and other project
+`PLAN.md` and `RESEARCH.md` are Orchestra operational artifacts used by an active
+orchestrator session to track execution state and working evidence. They are not
+part of Orchestra's public project documentation contract; this repository may
+contain them because Orchestra is being used to develop Orchestra.
+
+The main-session orchestrator edits and aligns project artifacts and other
 documentation. Subagents inspect them as task context and return evidence,
 documentation implications, and proposed wording without editing documentation.
 Active skills should put long-lived backlog items in `ROADMAP.md`, not `PLAN.md`.

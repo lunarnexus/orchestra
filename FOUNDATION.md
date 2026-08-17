@@ -11,7 +11,8 @@ specialized child agents without bloating the parent agent's context.
 The goal is practical multi-agent coordination: decompose work, route slices to
 the right harness, track enough runtime state to supervise progress, return
 compact results, and keep humans or parent agents in control of meaningful
-decisions.
+decisions. The primary value target is preserving expensive main-session context
+by offloading bounded work to local or cheaper subagents.
 
 ## Reference Projects
 
@@ -37,18 +38,22 @@ decisions.
    Native plugins/extensions are required where reliable slash-command UX,
    session ownership, or automatic returns are needed; MCP-only is not
    enough for the full behavior.
-3. **Narrow subagent slices** — child agents receive focused prompts with explicit
+3. **Default delegation with local-model economics** — the orchestrator should
+   offload bounded work by default because per-microtask dispatch decisions cause
+   under-delegation; cost control comes from local or cheaper subagent models,
+   narrow scope, compact returns, timeouts, and concurrency limits.
+4. **Narrow subagent slices** — child agents receive focused prompts with explicit
    scope, stop conditions, and return format.
-4. **Lean state** — store only operational state needed for supervision,
+5. **Lean state** — store only operational state needed for supervision,
    recovery, and status. JSONL operational logs keep compact lifecycle records
    and harness session ids when available; full prompts and raw streams stay in
    harness-owned session logs or return artifacts.
-5. **Deterministic coordination** — code controls run state, queueing,
+6. **Deterministic coordination** — code controls run state, queueing,
    concurrency, cancellation, and routing policy. Agents reason inside assigned
    boundaries.
-6. **Human and parent-agent control** — approvals and risky decisions stay with
+7. **Human and parent-agent control** — approvals and risky decisions stay with
    the orchestrator session or the active host harness whenever possible.
-7. **Simple first** — one-shot subprocess harnesses come before interactive RPC
+8. **Simple first** — one-shot subprocess harnesses come before interactive RPC
    and approval-bridge features.
 
 ## Domain Model
@@ -102,6 +107,7 @@ decisions.
 | Lazy harness loading | Harness implementations/plugins should load only when a configured role actually requests them, keeping startup overhead low. | 2026-07-28 |
 | Agent-agnostic core, harness-specific connectors | Core orchestration should remain runtime-neutral; prompt shaping, argv construction, launch details, and runtime-specific behavior belong in harness connectors. | 2026-07-28 |
 | Explicit harness fallback | If a configured harness is unavailable or broken, any fallback to a default harness must be explicitly configured and observable, never silent. | 2026-07-28 |
+| Frontier orchestrator plus local subagents | Orchestra's main economic value is reducing expensive main-session work by routing bounded subagent roles to local or cheaper models. Same-model orchestration can improve quality or workflow discipline, but it is not the primary savings mode. | 2026-08-17 |
 
 ## Technology Stack
 
@@ -337,7 +343,17 @@ process: explicit per-run timeout when provided, otherwise configured
 waiters, or other host adapter waits must derive their wait budget from that
 effective subagent timeout plus the documented host margin.
 
-### Agent Catalog
+### Model Routing and Agent Catalog
+
+Orchestra keeps the host/orchestrator model independent from subagent role models.
+The recommended cost-saving setup is a high-capability remote/frontier model in
+the main session and local or cheaper models for enabled subagent roles. This
+preserves main-session context while still allowing the orchestrator to delegate
+research, implementation, verification, review, and security checks by default.
+
+Same-model orchestration remains supported, but it should be understood as a
+quality, workflow, or context-isolation tradeoff rather than the primary cost
+savings path.
 
 Agent catalog definitions live in `agent-catalog.yaml` and are split into:
 
@@ -539,12 +555,18 @@ should mention successful fallback.
 
 ### Standard Artifacts
 
-The standard working artifacts are `FOUNDATION.md`, `ARCHITECTURE.md`,
-`RESEARCH.md`, `PLAN.md`, and `ROADMAP.md`. The main-session orchestrator is the
-editor and alignment owner for these artifacts and other project documentation.
-Subagents may inspect them and must report documentation implications or proposed
-text, but they do not edit project documentation. Skills may describe expected
-content. Template work is tracked in `ROADMAP.md`.
+The standard project artifacts are `FOUNDATION.md`, `ARCHITECTURE.md`, and
+`ROADMAP.md`. `PLAN.md` and `RESEARCH.md` are Orchestra operational artifacts
+used by an active orchestrator session to track execution state and working
+evidence; they are not part of Orchestra's public project documentation
+contract. This repository may contain them because Orchestra is being used to
+develop Orchestra. Durable research belongs under `docs/research/`.
+
+The main-session orchestrator is the editor and alignment owner for these
+artifacts and other project documentation. Subagents may inspect them and must
+report documentation implications or proposed text, but they do not edit project
+documentation. Skills may describe expected content. Template work is tracked in
+`ROADMAP.md`.
 
 ### Session Identity
 

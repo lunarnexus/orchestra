@@ -19,10 +19,11 @@ Models used in testing:
 
 Benefits:
 
-- Lightweight on context and tokens, >88% main session token savings when using auxiliary local generation.
-- Simple, deterministic where possible
-- Turn-key install of harness plugins, easy set it and forget it config
-- Very flexible.  It's like a framework, but the demo works perfectly.
+- Reduces expensive main-session context and token use by offloading focused work to local or cheaper subagents.
+- Keeps the frontier orchestrator lean: the main session owns planning, judgment, approvals, synthesis, and user communication while subagents handle bounded evidence, implementation, and checks.
+- Simple, deterministic where possible.
+- Turn-key install of harness plugins, easy set-it-and-forget-it config.
+- Flexible enough to use as a framework while still shipping with practical defaults.
 - Uses common best practice components like your existing agent harnesses, Skills, etc.
 
 It gives a host agent or CLI a small, consistent way to:
@@ -39,23 +40,25 @@ Some harnesses are fast and light, some are smart but bloated.  Some burn tokens
 
 ## Why Orchestra?
 
-LLM coding agents work best when tasks are small, bounded, and matched to the right tool. Orchestra helps the main agent stay focused while specialized subagents handle research, implementation, verification, review, or security checks.
+LLM coding agents work best when tasks are small, bounded, and matched to the right tool. Orchestra helps an expensive, high-capability main agent stay focused while local or cheaper subagents handle research, implementation, verification, review, or security checks.
 
 Common LLM coding obstacles Orchestra is designed around:
 
+- **Expensive main-session context** — offload bounded work to local or cheaper subagents while the frontier orchestrator keeps only compact results.
 - **Context bloat** — subagents return compact summaries while full output stays in artifacts.
 - **Unclear delegation** — roles make subagent selection repeatable instead of improvised.
-- **Harness mismatch** — use different agent harnesses for different strengths.
+- **Harness mismatch** — use different agent harnesses for different strengths and cost profiles.
 - **Runaway work** — timeouts, cancellation, and cooperative budgets keep runs bounded.
 - **Parallel confusion** — session ownership and concurrency limits keep results attached to the right parent session.
 - **Prompt identity mistakes** — host integrations derive session identity from runtime context, not model output.
 
-Since Orchestra is harness agnostic, it isn't bogged down with the details of skill loading (though we do inject some basic workflow skills), memory systems, system prompts, LLM usage, etc., but that also makes it harder to test the effectiveness of Orchestra. I used pi.dev for most of the benchmark testing because it's a minimal harness and has a minimal influence on Orchestra.
+Since Orchestra is harness agnostic, it isn't bogged down with the details of skill loading (though we do inject some basic workflow skills), memory systems, system prompts, LLM usage, etc. The recommended high-value setup is a strong remote/frontier orchestrator with local or cheaper models configured for subagent roles. Same-model orchestration can improve quality or workflow discipline, but the strongest cost case comes from reducing expensive main-session work.
 
 ## Key Features
 
 - Dispatch focused sub-agents from the CLI or supported host integrations.
 - Configure reusable subagent roles with harness, model/profile, skills, environment, and prompt additions.
+- Route subagent roles to local or cheaper models while keeping the host/orchestrator model independent.
 - Use multiple harnesses from one catalog.
 - Scope subagent ownership to the invoking session.
 - Limit concurrent work globally and per session.
@@ -153,7 +156,7 @@ The repository root contains editable defaults for local development and manual 
 
 Most user customization happens in:
 
-- `agent-catalog.yaml` for roles, harness choices, models/profiles, skills, and prompt additions
+- `agent-catalog.yaml` for roles, harness choices, local/remote models, profiles, skills, and prompt additions
 - `config.yaml` for runtime paths, timeouts, and concurrency
 - `prompts.yaml` for shared prompt text
 
@@ -270,7 +273,8 @@ orchestra history --session-id manual:demo
 
 - `ARCHITECTURE.md` — technical design and adapter behavior
 - `FOUNDATION.md` — domain model and durable decisions
-- `PLAN.md` — current implementation plan
+- `docs/research/` — durable research notes and evaluations
+- `PLAN.md` / `RESEARCH.md` — optional Orchestra operational artifacts for the active orchestrator session; not part of the public project documentation contract
 - `ROADMAP.md` — backlog and future work
 - `config.yaml` — runtime configuration
 - `agent-catalog.yaml` — harness and role catalog
