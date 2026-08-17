@@ -1,17 +1,25 @@
 # orchestra
-
-** Through a TON of testing and research, I've found that agentic orchestration is only advantageous in certain circumstances.  Parallel workloads, specialized agents, minimal handoffs, main session context preservation (fewer context compactions), and specialized agent harnesses can all be used to save tokens, save time, or increase quality of the end result, but -- only -- in workloads that can take advantage of these, and typically only 10%-20%.  To be honest the best feature of Orchestra is being able to dispatch subagents in the background and continue working in your main session on other things.
-
-My test harness is orchestra-bench, which is awful to use and difficult to understand, but it did its job.  
-The general results were that quality improvements are seen only after 2 or more main session context compactions.  
-Agentic orchestration almost always uses 2x-5x more tokens, and typically 2x-3x time to completion.
-
-If you would still like to continue this research, try to improve using your own skills, or just use Orchestra for what it's good for, dispatching and tracking subagents, read further ... 
-**
-
 Orchestra is an agent-agnostic orchestration layer for dispatching sub-agents.  Originally designed for pi.dev, but works the same using lots of different harnesses as the orchestrator or sub-agent.  
 
-- Lightweight on context and tokens.
+** Through a TON of testing and research, I've found that agentic orchestration only provides benefits in certain situations.  Parallelism, optimized handoff, main-session context preservation, specialized agent harnesses, specialized model roles, all can provide quality, time, and token gains, but almost exclusively when using local generation.  
+
+Where Orchestra really shines is using cheaper/local models for most or all roles.  If using an expensive model (gpt-5.6 for instance) as the main session orchestrator, and qwen3.6-27b for all other roles, I was able to measure >88% token savings on the expensive model, with little to no quality loss on the end result.  In addition, Orchestra is flexible enough to allow you to simply dispatch subagents in the background and keep working in your main session at your discretion, or use the full "/orch on" orchestration skill and follow a more structured workflow, dispatching subagents for most work items.  You can easily customize the skills, tool descriptions, session prompts, etc., so Orchestra can be used as a framework, and easily improved upon or customized depending on your workload.  
+
+If you use the same model for all Orchestra roles, you can expect a measurable, but slight quality improvement, 2x-5x token consumption, and 2x-3x time to complete.  Most testing was done on orchestra-bench, my terrible, difficult to use, and even more difficult to understand test harness, (also available in the lunarnexus github repo), but it did its job.  Specific long horizon workflows that would normally cause multiple main-session context compactions see the biggest gains, but most gains were simply in quality, and rarely in total time by exploiting parallelism.  By comparison, similar quality gains were observed by setting thinking to high vs low on most models tested.  The bottom line is, it seems to always be a trade-off of using more tokens and time for better quality, no matter which method you use.
+
+Models used in testing:
+- qwen3.6-35b-a3b
+- qwen3.6-27b
+- qwen3.8-27b
+- gpt-5.4
+- gpt-5.5
+- gpt-5.6 sol / luna
+  
+**
+
+Benefits:
+
+- Lightweight on context and tokens, >88% main session token savings when using auxiliary local generation.
 - Simple, deterministic where possible
 - Turn-key install of harness plugins, easy set it and forget it config
 - Very flexible.  It's like a framework, but the demo works perfectly.
@@ -26,6 +34,7 @@ It gives a host agent or CLI a small, consistent way to:
 - inspect active and completed runs from a CLI or /slash command surface
 - dispatch subagents in the background, leaving your main session open and responsive for multi-tasking.
 
+Agent Harness Diversity:
 Some harnesses are fast and light, some are smart but bloated.  Some burn tokens at break-neck speed, some just don't have the features you want.  Well, with Orchestra, you can use all your favorite agent harnesses for what they're good at.  Big and full featured with lots of UI bells and whistles for the orchestrator, and lightweight for coders, smart with heavy memory systems for researchers, whatever you want.  
 
 ## Why Orchestra?
