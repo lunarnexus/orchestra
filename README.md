@@ -1,5 +1,14 @@
 # orchestra
 
+** Through a TON of testing and research, I've found that agentic orchestration is only advantageous in certain circumstances.  Parallel workloads, specialized agents, minimal handoffs, main session context preservation (fewer context compactions), and specialized agent harnesses can all be used to save tokens, save time, or increase quality of the end result, but -- only -- in workloads that can take advantage of these, and typically only 10%-20%.  To be honest the best feature of Orchestra is being able to dispatch subagents in the background and continue working in your main session on other things.
+
+My test harness is orchestra-bench, which is awful to use and difficult to understand, but it did its job.  
+The general results were that quality improvements are seen only after 2 or more main session context compactions.  
+Agentic orchestration almost always uses 2x-5x more tokens, and typically 2x-3x time to completion.
+
+If you would still like to continue this research, try to improve using your own skills, or just use Orchestra for what it's good for, dispatching and tracking subagents, read further ... 
+**
+
 Orchestra is an agent-agnostic orchestration layer for dispatching sub-agents.  Originally designed for pi.dev, but works the same using lots of different harnesses as the orchestrator or sub-agent.  
 
 - Lightweight on context and tokens.
