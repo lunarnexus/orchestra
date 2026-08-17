@@ -810,15 +810,11 @@ def test_root_agent_catalog_assigns_dedicated_appsec_skill() -> None:
     assert catalog.roles["appsec"].skills == ("appsec",)
 
 
-def test_root_agent_catalog_includes_builder_harness_fallback() -> None:
+def test_root_agent_catalog_does_not_include_builder_harness_fallback() -> None:
     catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
 
     builder = catalog.roles["builder"]
-    assert builder.harness_fallback
-    assert builder.harness_fallback[0].harness_config == "hermes"
-    assert builder.harness_fallback[0].profile == "tori"
-    assert builder.harness_fallback[0].model is None
-    assert builder.harness_fallback[0].agent is None
+    assert builder.harness_fallback == ()
 
 
 def test_load_agent_catalog_supports_default_role_and_enabled_flags(tmp_path: Path) -> None:

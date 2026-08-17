@@ -77,9 +77,6 @@ harness_configs:
 roles:
   builder:
     harness_config: pi
-    harness_fallback:
-    - harness_config: hermes
-      profile: tori
     model: lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved
     skills:
     - builder
