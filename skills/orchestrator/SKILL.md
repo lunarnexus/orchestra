@@ -112,7 +112,7 @@ Split research by independent subject. Do not batch related research questions; 
 
 Do not absorb failed subagent work. If a tool-using subagent fails, times out, or returns incomplete work, do not perform that work yourself. Shrink scope and re-dispatch a smaller slice.
 
-After dispatch, enter active delegation mode for each delegated scope. While a subagent is active for a scope, do not read, grep, edit, debug, or test that scope yourself. Continue only independent orchestration work: dispatch non-overlapping slices, update artifacts from existing evidence, handle user approvals, or wait. When the subagent returns, consume its evidence before deciding the next step. If it fails, blocks, times out, or is cancelled, shrink the next slice and redispatch or ask the user for the blocking decision; do not absorb the failed work yourself.
+After dispatch, the delegated scope belongs to the active subagent until it returns. Do not read, grep, edit, debug, or test that scope yourself while the subagent is active. Continue only independent orchestration work: dispatch non-overlapping slices, update artifacts from existing evidence, handle user approvals, or wait. When the subagent returns, consume its evidence before deciding the next step. If it fails, blocks, times out, or is cancelled, shrink the next slice and redispatch or ask the user for the blocking decision; do not absorb the failed work yourself.
 
 Nested dispatch:
 - The orchestrator may dispatch researchers directly for planning evidence.
