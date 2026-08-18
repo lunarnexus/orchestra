@@ -48,3 +48,7 @@ Orchestra roadmap items are split into:
 
 5. [ ] Operational maintenance tooling.
    - Covers metrics/exporters, import/export bundles, richer transcript/session handles, and retention/prune commands for DB rows, JSONL logs, return artifacts, and harness session logs.
+
+6. [ ] Hard-coded delegation ledger in Orchestra status.
+   - Add compact status that shows active and completed roles/slices for the current session so the parent can avoid duplicate equivalent dispatches without relying on an in-context ledger.
+   - Include enough run ids, roles, task labels, statuses, and concise summaries to support dispatch decisions without rich history dumps or repeated polling.

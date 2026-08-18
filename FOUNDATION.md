@@ -50,7 +50,8 @@ by offloading bounded work to local or cheaper subagents.
    harness-owned session logs or return artifacts.
 6. **Deterministic coordination** — code controls run state, queueing,
    concurrency, cancellation, and routing policy. Agents reason inside assigned
-   boundaries.
+   boundaries. Do not rely on in-context-only constructs such as modes, ledgers,
+   or counters for coordination semantics; make them hard-coded state or omit them.
 7. **Human and parent-agent control** — approvals and risky decisions stay with
    the orchestrator session or the active host harness whenever possible.
 8. **Simple first** — one-shot subprocess harnesses come before interactive RPC

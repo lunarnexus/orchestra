@@ -112,7 +112,7 @@ Split research by independent subject. Do not batch related research questions; 
 
 Do not absorb failed subagent work. If a tool-using subagent fails, times out, or returns incomplete work, do not perform that work yourself. Shrink scope and re-dispatch a smaller slice.
 
-After dispatch, the delegated scope belongs to the active subagent until it returns. Do not read, grep, edit, debug, or test that scope yourself while the subagent is active. Continue only independent orchestration work: dispatch non-overlapping slices, update artifacts from existing evidence, handle user approvals, or wait. When the subagent returns, consume its evidence before deciding the next step. If it fails, blocks, times out, or is cancelled, shrink the next slice and redispatch or ask the user for the blocking decision; do not absorb the failed work yourself.
+After dispatching a subagent, the parent stops working on that subagent's assigned files, commands, and acceptance target until the subagent returns. The parent does not read, grep, edit, debug, inspect, or test those targets. The parent only dispatches non-overlapping work, updates artifacts from existing evidence, handles user approvals, or waits. When the subagent returns, use its result for the assigned target. If the result is failed, blocked, timed out, cancelled, or explicitly incomplete, dispatch a smaller follow-up or ask the user for the blocking decision. Do not take over the assigned work in the parent session.
 
 Nested dispatch:
 - The orchestrator may dispatch researchers directly for planning evidence.
@@ -219,11 +219,13 @@ Worktree automation is not required here; use normal git status/diff/commit disc
 - verify after completed behavior or bug fix
 - review at step/phase boundaries and before commit/push/ship
 - security review when each phase is complete.
+- The parent does not run implementation or verification test commands for delegated work. Builders run implementation-focused tests. Verifiers run acceptance checks. Reviewers and appsec inspect evidence and code for their roles. If test evidence is missing or incomplete, dispatch the appropriate subagent; do not run the test in the parent session.
+- Before dispatching a follow-up role for the same assigned files, commands, or acceptance target, use existing active/returned subagent information. Do not dispatch an equivalent follow-up when an active subagent already owns that target or a returned subagent already completed it. Redispatch only for failed, blocked, timed out, cancelled, or explicitly incomplete results.
 - if verification is red, route through debugging: reproduce -> isolate -> RCA -> fix -> re-verify
 
 ## Return handling
 
-Treat subagent results as input to orchestration, not final truth.
+Treat subagent results as authoritative for their assigned scope. If a result reports failure, blocker, timeout, cancellation, or incomplete evidence, dispatch a targeted follow-up or ask for the blocking decision.
 
 Default user-facing update:
 - status
