@@ -22,7 +22,12 @@ from orchestra.app import (
 from orchestra.config import AgentCatalog, ConcurrencyConfig, ModelLimitConfig, RoleConfig
 from orchestra.harnesses.common import ORCHESTRA_DISPATCH_BUDGET_ENV
 from orchestra.state import STATUS_DONE, STATUS_FAILED, ConcurrencyLimitError, RunRecord, StateStore
-from tests.helpers import extract_run_id, wait_for_condition
+from tests.helpers import (
+    default_prompt_config,
+    default_prompts_text,
+    extract_run_id,
+    wait_for_condition,
+)
 from tests.types import RuntimeFilesFactory
 
 
@@ -73,6 +78,7 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
     context = AppContext(
         config=AppConfig(
             default_timeout=30,
+            prompts=default_prompt_config(),
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
             concurrency=ConcurrencyConfig(global_limit=1, per_session_limit=1),
@@ -506,6 +512,7 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
     context = AppContext(
         config=AppConfig(
             default_timeout=30,
+            prompts=default_prompt_config(),
             concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
         ),
         catalog=cast(
@@ -841,7 +848,7 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -916,7 +923,7 @@ def test_roles_command_accepts_common_true_enabled_values(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -976,7 +983,7 @@ def test_roles_command_accepts_common_false_enabled_values(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -1034,7 +1041,7 @@ def test_roles_command_rejects_disabling_default_role(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -1088,7 +1095,7 @@ def test_roles_command_updates_role_routing_settings(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -1154,7 +1161,7 @@ def test_roles_command_rejects_invalid_role_mutations(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -1234,7 +1241,7 @@ def test_role_metadata_lists_unused_harness_configs(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -1299,7 +1306,7 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -1364,7 +1371,7 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert "  ✓  worker [pi]" in tool_info["description"]
     assert "  D  reviewer [hermes]" in tool_info["description"]
     assert "      model: gpt-5" in tool_info["description"]
-    assert tool_info["roleDescription"].startswith("Optional worker capability.")
+    assert tool_info["roleDescription"].startswith("Optional subagent capability.")
     assert "enabled role that best matches" in tool_info["roleDescription"]
     assert "  ✓  worker [pi]" in tool_info["roleDescription"]
     assert "  D  reviewer [hermes]" in tool_info["roleDescription"]
@@ -1374,7 +1381,7 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
         "Use orch_status to inspect and control Orchestra for the current session."
     )
     assert "orch_dispatch to start work" in tool_info["statusDescription"]
-    assert "Completed worker reports return automatically" in tool_info[
+    assert "Completed subagent reports return automatically" in tool_info[
         "statusDescription"
     ]
     assert "help, doctor, roles, status, history, on, or stop" in tool_info[
@@ -1414,7 +1421,7 @@ def test_disabled_role_is_rejected_without_fallback(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -1485,7 +1492,7 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -1619,7 +1626,7 @@ def test_do_without_role_uses_default_role(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {

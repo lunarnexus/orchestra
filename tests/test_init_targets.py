@@ -8,6 +8,7 @@ import pytest
 
 from orchestra.app import AppError, init_all, init_opencode, init_pi
 from orchestra.cli import main
+from tests.helpers import default_prompts_text
 
 OPENCODE_COMMAND_TEMPLATE = """# /orch
 Args: `$ARGUMENTS`
@@ -47,7 +48,7 @@ def _write_source_tree(root: Path, catalog_text: str) -> None:
     opencode_command.parent.mkdir(parents=True)
     opencode_command.write_text(OPENCODE_COMMAND_TEMPLATE, encoding="utf-8")
     (root / "config.yaml").write_text("state_dir: state\n", encoding="utf-8")
-    (root / "prompts.yaml").write_text("{}\n", encoding="utf-8")
+    (root / "prompts.yaml").write_text(default_prompts_text(), encoding="utf-8")
     (root / "agent-catalog.yaml").write_text(catalog_text, encoding="utf-8")
 
 

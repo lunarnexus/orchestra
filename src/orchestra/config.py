@@ -25,137 +25,6 @@ DEFAULT_ROLE_NAME = "builder"
 SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RESERVED_ENV_PREFIXES = ("ORCHESTRA_",)
-DEFAULT_RETURN_FORMAT = (
-    "Return the smallest complete result. State the outcome or verdict, concrete "
-    "evidence with file or source references, files changed if any, checks run and "
-    "results, blockers, risks, artifact implications, and the recommended next "
-    "step. Clearly separate completed work from proposed follow-up."
-)
-DEFAULT_TOOL_DESCRIPTION = (
-    "Use orch_dispatch as the default way to perform research, planning, "
-    "implementation, debugging, documentation, testing, verification, review, "
-    "security assessment, and follow-up work. Before starting work, inspect the "
-    "whole request and identify every slice that can be assigned to a worker. Call "
-    "orch_dispatch once per slice and make multiple calls when several slices are "
-    "available. Always dispatch all currently unblocked, independent slices in "
-    "parallel before continuing parent work; do not wait for one independent worker "
-    "before dispatching the others. Read-only research, independent analysis, and "
-    "independent reviews should normally run in parallel. Parallel write slices "
-    "must own separate files or resources. Keep dependency-bound work in order: "
-    "dispatch required research before dependent planning or design, implementation "
-    "after the evidence or plan it depends on is available, and verification, "
-    "review, and security assessment after the relevant implementation exists. "
-    "After workers return, reassess the remaining work and immediately dispatch "
-    "every newly unblocked slice. Give each worker a self-contained brief with one "
-    "goal, exact scope, relevant context and artifact references, boundaries, stop "
-    "condition, and expected return. Ask for concrete evidence, artifact "
-    "implications, and a recommended next step. Choose the enabled role that best "
-    "matches the slice. Omit role when no specialized enabled role is a better match "
-    "than the default. Use separate researcher, planner, builder, verifier, "
-    "reviewer, and appsec calls for their respective capabilities so independent "
-    "judgment remains independent. The parent owns decomposition, sequencing, user "
-    "decisions, approvals, artifact alignment, synthesis, and final judgment. "
-    "Workers perform the detailed work and return compact results. Completed worker "
-    "reports return automatically; continue other useful orchestration work instead "
-    "of polling. Use orch_status for status/control. {roles}"
-)
-DEFAULT_TOOL_PROMPT_SNIPPET = "Use Orchestra tools to delegate work."
-DEFAULT_TOOL_PROMPT_GUIDELINES = (
-    "Follow the shared orch_dispatch and orch_status descriptions.",
-)
-DEFAULT_TOOL_GOAL_DESCRIPTION = (
-    "One small worker slice: goal, exact scope, stop condition, and return shape."
-)
-DEFAULT_TOOL_ROLE_DESCRIPTION = (
-    "Optional worker capability. Choose the enabled role that best matches the "
-    "slice. Omit role when no specialized enabled role is a better match than the "
-    "default. Use distinct roles for independent research, planning, implementation, "
-    "verification, review, and security judgment. {roles}"
-)
-DEFAULT_TOOL_TASK_LABEL_DESCRIPTION = "Optional short request label."
-DEFAULT_STATUS_DESCRIPTION = (
-    "Use orch_status to inspect and control Orchestra for the current session. Use "
-    "status for active workers, history for completed worker results, roles for "
-    "available read-only role information, doctor for setup checks, help for usage, "
-    "on to activate Orchestra orchestration guidance, and stop with a runId to "
-    "cancel an owned active run. Use orch_dispatch to start work. Completed worker "
-    "reports return automatically, so continue other useful work instead of "
-    "repeatedly checking status."
-)
-DEFAULT_STATUS_ACTION_DESCRIPTION = (
-    "Action to perform: help, doctor, roles, status, history, on, or stop. Use "
-    "stop only with a runId for an active run owned by the current host session."
-)
-DEFAULT_STATUS_LIMIT_DESCRIPTION = "Optional positive history limit for action=history."
-DEFAULT_STATUS_RUN_ID_DESCRIPTION = "Required run id when action=stop."
-DEFAULT_STATUS_ROLE_DESCRIPTION = (
-    "Reserved for compatibility; action=roles lists all configured roles."
-)
-DEFAULT_STATUS_SETTING_DESCRIPTION = (
-    "Reserved for role updates; model-callable roles are read-only for now."
-)
-DEFAULT_STATUS_VALUE_DESCRIPTION = (
-    "Reserved for role updates; model-callable roles are read-only for now."
-)
-DEFAULT_HOST_HELP = """Orchestra commands:
-  /orch help                         Show this help
-  /orch on                           Load the orchestra orchestrator skill
-  /orch doctor                       Check Orchestra setup
-  /orch do <request>                 Dispatch a subagent
-  /orch do --role ROLE <request>     Start a worker with a role
-  /orch do --timeout SEC <request>   Start a worker with a timeout
-  /orch roles                        Show configured roles
-  /orch roles ROLE SETTING VALUE     Update a role setting
-                                     Settings: harness, enabled, model, profile, agent
-                                     VALUE for enabled: true, yes, y, 1, on | false, no, n, 0, off
-  /orch status                       Show active workers for this session
-  /orch stop <run-id>                Stop an active worker.
-  /orch history [limit]              Show recent results for this session
-
-Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, ask a worker,
-or ask another agent.
-auto_return: prompt orchestrator upon return of workers"""
-DEFAULT_BUDGET_EXCEEDED_PROMPT = """Orchestra worker budget exceeded. Stop new work now.
-
-Do not continue implementation, research, review, or tool use except what is absolutely
-necessary to write this handoff.
-
-Return a continuation handoff for the calling agent. Start with:
-
-ORCHESTRA_STATUS: incomplete
-ORCHESTRA_STOP_REASON: budget_exceeded
-
-Then include:
-
-## Budget Handoff
-
-Completed:
-- Specific work completed.
-- Files changed, files inspected, commands run, or evidence gathered.
-
-Current state and data locations:
-- Relevant file paths, logs, artifacts, transcripts, notes, run ids, or database/state locations.
-- Anything the next worker needs to avoid rediscovering or redoing work.
-
-Remaining work:
-- Specific incomplete items.
-- Known decisions still needed.
-
-Suggested smaller redispatch slices:
-- 2-5 minute continuation tasks.
-- Mark slices as sequential, parallel-safe, or blocked.
-- Make the next slice small enough to avoid hitting the same budget.
-
-Verification:
-- Checks already run and results.
-- Checks still needed.
-
-Blockers and risks:
-- Anything that may prevent continuation or require caller approval.
-
-Caller guidance:
-- Tell the calling agent to redispatch from this handoff rather than restarting completed work.
-"""
 
 
 class ConfigError(ValueError):
@@ -170,34 +39,34 @@ class ConcurrencyConfig:
 
 @dataclass(frozen=True)
 class PromptConfig:
-    default_return_format: str = DEFAULT_RETURN_FORMAT
-    tool_description: str = DEFAULT_TOOL_DESCRIPTION
-    tool_prompt_snippet: str = DEFAULT_TOOL_PROMPT_SNIPPET
-    tool_prompt_guidelines: tuple[str, ...] = DEFAULT_TOOL_PROMPT_GUIDELINES
-    tool_goal_description: str = DEFAULT_TOOL_GOAL_DESCRIPTION
-    tool_role_description: str = DEFAULT_TOOL_ROLE_DESCRIPTION
-    tool_task_label_description: str = DEFAULT_TOOL_TASK_LABEL_DESCRIPTION
-    status_description: str = DEFAULT_STATUS_DESCRIPTION
-    status_action_description: str = DEFAULT_STATUS_ACTION_DESCRIPTION
-    status_limit_description: str = DEFAULT_STATUS_LIMIT_DESCRIPTION
-    status_run_id_description: str = DEFAULT_STATUS_RUN_ID_DESCRIPTION
-    status_role_description: str = DEFAULT_STATUS_ROLE_DESCRIPTION
-    status_setting_description: str = DEFAULT_STATUS_SETTING_DESCRIPTION
-    status_value_description: str = DEFAULT_STATUS_VALUE_DESCRIPTION
-    host_help: str = DEFAULT_HOST_HELP
-    budget_exceeded_prompt: str = DEFAULT_BUDGET_EXCEEDED_PROMPT
+    default_return_format: str
+    tool_description: str
+    tool_prompt_snippet: str
+    tool_prompt_guidelines: tuple[str, ...]
+    tool_goal_description: str
+    tool_role_description: str
+    tool_task_label_description: str
+    status_description: str
+    status_action_description: str
+    status_limit_description: str
+    status_run_id_description: str
+    status_role_description: str
+    status_setting_description: str
+    status_value_description: str
+    host_help: str
+    budget_exceeded_prompt: str
 
 
 @dataclass(frozen=True)
 class AppConfig:
     default_timeout: int
+    prompts: PromptConfig
     turn_limit: int | None = None
     soft_timeout: int | None = None
     state_dir: Path = DEFAULT_STATE_DIR
     log_dir: Path = DEFAULT_LOG_DIR
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
     auto_return: bool = DEFAULT_AUTO_RETURN
-    prompts: PromptConfig = field(default_factory=PromptConfig)
 
 
 @dataclass(frozen=True)
@@ -303,58 +172,84 @@ def load_app_config(path: str | Path) -> AppConfig:
 
     prompts_raw = _load_yaml_mapping(_prompts_path_for(path))
     prompts = PromptConfig(
-        default_return_format=_get_optional_string(
-            prompts_raw, "default_return_format"
-        ) or DEFAULT_RETURN_FORMAT,
-        tool_description=_get_optional_string(prompts_raw, "tool_description")
-        or DEFAULT_TOOL_DESCRIPTION,
-        tool_prompt_snippet=_get_optional_string(prompts_raw, "tool_prompt_snippet")
-        or DEFAULT_TOOL_PROMPT_SNIPPET,
+        default_return_format=_get_required_string(
+            prompts_raw,
+            "default_return_format",
+            context="prompts",
+        ),
+        tool_description=_get_required_string(
+            prompts_raw,
+            "tool_description",
+            context="prompts",
+        ),
+        tool_prompt_snippet=_get_required_string(
+            prompts_raw,
+            "tool_prompt_snippet",
+            context="prompts",
+        ),
         tool_prompt_guidelines=tuple(
-            _get_optional_string_list(
+            _get_required_string_list(
                 prompts_raw,
                 "tool_prompt_guidelines",
                 context="prompts",
             )
-            or DEFAULT_TOOL_PROMPT_GUIDELINES
         ),
-        tool_goal_description=_get_optional_string(prompts_raw, "tool_goal_description")
-        or DEFAULT_TOOL_GOAL_DESCRIPTION,
-        tool_role_description=_get_optional_string(prompts_raw, "tool_role_description")
-        or DEFAULT_TOOL_ROLE_DESCRIPTION,
-        tool_task_label_description=_get_optional_string(
-            prompts_raw, "tool_task_label_description"
-        ) or DEFAULT_TOOL_TASK_LABEL_DESCRIPTION,
-        status_description=_get_optional_string(prompts_raw, "status_description")
-        or DEFAULT_STATUS_DESCRIPTION,
-        status_action_description=_get_optional_string(
-            prompts_raw, "status_action_description"
-        )
-        or DEFAULT_STATUS_ACTION_DESCRIPTION,
-        status_limit_description=_get_optional_string(
-            prompts_raw, "status_limit_description"
-        )
-        or DEFAULT_STATUS_LIMIT_DESCRIPTION,
-        status_run_id_description=_get_optional_string(
-            prompts_raw, "status_run_id_description"
-        )
-        or DEFAULT_STATUS_RUN_ID_DESCRIPTION,
-        status_role_description=_get_optional_string(
-            prompts_raw, "status_role_description"
-        )
-        or DEFAULT_STATUS_ROLE_DESCRIPTION,
-        status_setting_description=_get_optional_string(
-            prompts_raw, "status_setting_description"
-        )
-        or DEFAULT_STATUS_SETTING_DESCRIPTION,
-        status_value_description=_get_optional_string(
-            prompts_raw, "status_value_description"
-        )
-        or DEFAULT_STATUS_VALUE_DESCRIPTION,
-        host_help=_get_optional_string(prompts_raw, "host_help") or DEFAULT_HOST_HELP,
-        budget_exceeded_prompt=_get_optional_string(
-            prompts_raw, "budget_exceeded_prompt"
-        ) or DEFAULT_BUDGET_EXCEEDED_PROMPT,
+        tool_goal_description=_get_required_string(
+            prompts_raw,
+            "tool_goal_description",
+            context="prompts",
+        ),
+        tool_role_description=_get_required_string(
+            prompts_raw,
+            "tool_role_description",
+            context="prompts",
+        ),
+        tool_task_label_description=_get_required_string(
+            prompts_raw,
+            "tool_task_label_description",
+            context="prompts",
+        ),
+        status_description=_get_required_string(
+            prompts_raw,
+            "status_description",
+            context="prompts",
+        ),
+        status_action_description=_get_required_string(
+            prompts_raw,
+            "status_action_description",
+            context="prompts",
+        ),
+        status_limit_description=_get_required_string(
+            prompts_raw,
+            "status_limit_description",
+            context="prompts",
+        ),
+        status_run_id_description=_get_required_string(
+            prompts_raw,
+            "status_run_id_description",
+            context="prompts",
+        ),
+        status_role_description=_get_required_string(
+            prompts_raw,
+            "status_role_description",
+            context="prompts",
+        ),
+        status_setting_description=_get_required_string(
+            prompts_raw,
+            "status_setting_description",
+            context="prompts",
+        ),
+        status_value_description=_get_required_string(
+            prompts_raw,
+            "status_value_description",
+            context="prompts",
+        ),
+        host_help=_get_required_string(prompts_raw, "host_help", context="prompts"),
+        budget_exceeded_prompt=_get_required_string(
+            prompts_raw,
+            "budget_exceeded_prompt",
+            context="prompts",
+        ),
     )
 
     return AppConfig(

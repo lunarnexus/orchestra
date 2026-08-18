@@ -1,1 +1,123 @@
-{}
+default_return_format: >-
+  Return the smallest complete result. State the outcome or verdict, concrete
+  evidence with file or source references, files changed if any, checks run and
+  results, blockers, risks, artifact implications, and the recommended next
+  step. Clearly separate completed work from proposed follow-up.
+tool_description: >-
+  Use orch_dispatch as the default way to perform research, planning,
+  implementation, debugging, testing, verification, review,
+  security assessment, and follow-up work using subagents. Before starting work, inspect the
+  whole request and identify every slice that can be assigned to a subagent. Call
+  orch_dispatch once per slice and make multiple calls when several slices are
+  available and do not conflict or depend on each other.  Always dispatch all currently unblocked, independent slices in
+  parallel before continuing parent work; do not wait for one independent subagent
+  before dispatching the others. Read-only research, independent analysis, and
+  independent reviews should normally run in parallel. Parallel write slices
+  must own separate files or resources. Keep dependency-bound work in order:
+  dispatch required research before dependent planning or design, implementation
+  after the evidence or plan it depends on is available, and verification,
+  review, and security assessment after the relevant implementation exists.
+  After subagents return, reassess the remaining work and immediately dispatch
+  every newly unblocked slice. Do not move on to dependent work, verification,
+  review, synthesis, or a final answer until the subagents needed for that step
+  have returned and you have incorporated their results. Give each subagent a self-contained brief with one
+  goal, exact scope, relevant context and artifact references, boundaries, stop
+  condition, and expected return. Ask for concrete evidence, artifact
+  implications, and a recommended next step. Choose the enabled role that best
+  matches the slice. Omit role when no specialized enabled role is a better match
+  than the default.
+  The parent owns decomposition, sequencing, user
+  decisions, approvals, artifact alignment, synthesis, and final judgment.
+  Subagents perform the detailed work and return compact results. Completed subagent reports return automatically; continue other useful orchestration work instead
+  of polling, but do not finalize while any dispatched subagent is still active.
+  Before final response, ensure all dispatched subagents are terminal and their
+  returned results have been consumed; use orch_status if uncertain. Use orch_status for status/control. {roles}
+tool_prompt_snippet: Use Orchestra tools to delegate work.
+tool_prompt_guidelines:
+  - Follow the shared orch_dispatch and orch_status descriptions.
+  - Never provide a final answer while dispatched subagents are still active; wait for their reports or call orch_status first.
+tool_goal_description: >-
+  One small subagent slice: goal, exact scope, stop condition, and return shape.
+tool_role_description: >-
+  Optional subagent capability. Choose the enabled role that best matches the
+  slice. Omit role when no specialized enabled role is a better match than the
+  default. Use distinct roles for independent research, planning, implementation,
+  verification, review, and security judgment. {roles}
+tool_task_label_description: Optional short request label.
+status_description: >-
+  Use orch_status to inspect and control Orchestra for the current session. Use
+  status for active subagents, history for completed subagent results, roles for
+  available read-only role information, doctor for setup checks, help for usage,
+  on to activate Orchestra orchestration guidance, and stop with a runId to
+  cancel an owned active run. Use orch_dispatch to start work. Completed subagent
+  reports return automatically, so continue other useful work instead of
+  repeatedly checking status. Do not finalize the parent response until active
+  dispatched subagents have returned and their results have been incorporated.
+status_action_description: >-
+  Action to perform: help, doctor, roles, status, history, on, or stop. Use stop
+  only with a runId for an active run owned by the current host session.
+status_limit_description: Optional positive history limit for action=history.
+status_run_id_description: Required run id when action=stop.
+status_role_description: Reserved for compatibility; action=roles lists all configured roles.
+status_setting_description: Reserved for role updates; model-callable roles are read-only for now.
+status_value_description: Reserved for role updates; model-callable roles are read-only for now.
+budget_exceeded_prompt: |-
+  [Orchestra subagent budget exceeded]
+  Stop everything you're doing immediately.
+
+  Your only task now, is to create a handoff for the next agent,
+  do not continue any previous work.
+
+  Start with:
+
+  ORCHESTRA_STATUS: incomplete
+  ORCHESTRA_STOP_REASON: budget_exceeded
+
+  Then include:
+
+  ## Budget Handoff
+
+  Completed:
+  - Specific work completed.
+  - Files changed, files inspected, commands run, or evidence gathered.
+
+  Current state and data locations:
+  - Relevant file paths, logs, artifacts, transcripts, notes, run ids, or database/state locations.
+  - Anything the next agent needs to avoid rediscovering or redoing work.
+
+  Remaining work:
+  - Specific incomplete items.
+  - Known decisions still needed.
+
+  Suggested smaller redispatch slices:
+  - 2-5 minute continuation tasks.
+  - Mark slices as sequential, parallel-safe, or blocked.
+  - Make the next slice small enough to avoid hitting the same budget.
+
+  Verification:
+  - Checks already run and results.
+  - Checks still needed.
+
+  Blockers and risks:
+  - Anything that may prevent continuation or require caller approval.
+
+  Caller guidance:
+  - Tell the calling agent to redispatch from this handoff rather than restarting completed work.
+host_help: |-
+  Orchestra commands:
+    /orch help                         Show this help
+    /orch on                           Load the orchestra orchestrator skill
+    /orch doctor                       Check Orchestra setup
+    /orch do <request>                 Dispatch a subagent
+    /orch do --role ROLE <request>     Start a subagent with a role
+    /orch roles                        Show configured roles
+    /orch roles ROLE SETTING VALUE     Update a role setting
+                                       Settings: harness, enabled, model, profile, agent
+                                       VALUE for enabled: true, yes, y, 1, on | false, no, n, 0, off
+    /orch status                       Show active subagents for this session
+    /orch stop <run-id>                Stop an active subagent.
+    /orch history [limit]              Show recent results for this session
+
+  Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, ask a subagent,
+  or ask another agent.
+  auto_return: prompt orchestrator upon return of subagents

@@ -28,7 +28,7 @@ class WorkerRequest:
     budget_exceeded_prompt: str = ""
     log_path: Path | None = None
     skill_roots: tuple[Path, ...] = ()
-    prompts: PromptConfig = PromptConfig()
+    prompts: PromptConfig | None = None
 
 
 @dataclass

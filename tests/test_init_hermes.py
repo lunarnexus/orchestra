@@ -11,6 +11,7 @@ import pytest
 
 from orchestra.app import AppError, init_hermes
 from orchestra.cli import main
+from tests.helpers import default_prompts_text
 
 
 def completed(
@@ -27,7 +28,7 @@ def _write_source_tree(root: Path) -> None:
     extension.parent.mkdir(parents=True)
     extension.write_text("extension", encoding="utf-8")
     (root / "config.yaml").write_text("state_dir: state\n", encoding="utf-8")
-    (root / "prompts.yaml").write_text("{}\n", encoding="utf-8")
+    (root / "prompts.yaml").write_text(default_prompts_text(), encoding="utf-8")
     (root / "agent-catalog.yaml").write_text(
         "harness_configs:\n"
         "  hermes:\n"

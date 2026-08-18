@@ -6,7 +6,7 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 
-from orchestra.config import RoleConfig
+from orchestra.config import ConfigError, RoleConfig
 from orchestra.harnesses.base import WorkerRequest
 
 ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET"
@@ -61,6 +61,8 @@ def worker_subprocess_env(
 
 def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:
     prompts = request.prompts
+    if prompts is None:
+        raise ConfigError("worker prompt rendering requires loaded prompt configuration")
     sections = [
         f"Role: {request.role_name}",
     ]

@@ -129,6 +129,22 @@ A Pi-equivalent command surface includes:
 - Release report run ids with `_release-session-report` if delivery fails after acquiring a report.
 - Derive watcher timeout from the effective subagent timeout plus host margin.
 
+### Parent completion guard
+
+Async dispatch means the parent host session can continue after `orch_dispatch` returns. A host plugin must not rely on background watchers alone as the completion guarantee.
+
+When the host exposes turn, message-finalization, or session-finalization hooks, the plugin should:
+
+- Track that the normalized runtime session dispatched at least one subagent run.
+- Before allowing parent completion, query `orchestra status --session-id <normalized-session-id>` or equivalent active-run state.
+- If active session-owned runs remain, steer or inject the parent session back into a waiting turn instead of allowing a final answer to end the host process.
+- Reinforce in tool descriptions and injected orchestration guidance that parent agents must wait for dispatched subagents before dependent work, synthesis, or final response.
+- Deliver the consolidated `_await-session-report` output before the parent synthesizes final results.
+- Treat `done`, `failed`, `cancelled`, or explicitly abandoned runs as terminal; active runs are not terminal.
+- Continue marking delivered report run ids and releasing failed deliveries exactly once.
+
+If a host has no reliable finalization or steering hook, document that limitation in the plugin mapping and provide best-effort report delivery plus status/history commands.
+
 ### Lifecycle cleanup
 
 - Track background watcher processes, threads, or tasks by normalized session id.
@@ -147,7 +163,7 @@ Implement these when the host supports them:
 
 ## Parity tiers
 
-Required baseline parity for a new host is reliable runtime identity, a native dispatch surface, core helper reuse, consolidated auto-return, delivered/release report handling, and lifecycle cleanup for any background watchers.
+Required baseline parity for a new host is reliable runtime identity, a native dispatch surface, core helper reuse, consolidated auto-return, parent completion guarding when host hooks allow it, delivered/release report handling, and lifecycle cleanup for any background watchers.
 
 Best host-supported parity adds the Pi-equivalent command surface, `/orch on`, progress notifications, status/footer UI, rendered entries, completions, and budget hooks only where the host exposes stable APIs for those behaviors.
 
@@ -161,7 +177,7 @@ The Pi plugin is the reference implementation for host-side behavior. Its Pi-spe
 - `pi.registerEntryRenderer` and `pi.appendEntry` for rendered command/output entries.
 - `ctx.ui.notify` for notifications.
 - `ctx.ui.setStatus` for footer subagent status.
-- `pi.sendUserMessage(..., { deliverAs: "followUp", triggerTurn: true })` for final auto-return and `/orch on` delivery.
+- `pi.sendUserMessage(..., { deliverAs: "followUp", triggerTurn: true })` for final auto-return, pending-subagent completion guards, and `/orch on` delivery.
 - `pi.sendUserMessage(..., { deliverAs: "steer" })` for budget handoff steering.
 - `session_start`, `session_shutdown`, `turn_end`, and `tool_call` event hooks.
 - Global Pi extension installation under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/orchestra/index.ts`.
@@ -179,7 +195,7 @@ OpenCode should follow best host-supported parity rather than copying Pi APIs di
 - Use OpenCode lifecycle disposal hooks to clean up watchers when using TUI plugin surfaces.
 - Treat OpenCode `commands/` files as prompt-template macros. Keep templates concise because OpenCode displays template text in the conversation. Executable `/orch` slash-command parity should use a proven plugin command API, not prompt macros.
 - TUI status/footer slots can provide host UX parity when a TUI plugin is available.
-- Transcript-entry rendering, stable dynamic completions, and Pi-style turn-budget hooks require new host evidence before implementation.
+- Transcript-entry rendering, stable dynamic completions, Pi-style parent completion guards, and Pi-style turn-budget hooks require new host evidence before implementation.
 - Global installation should target OpenCode's global plugin location, for example `~/.config/opencode/plugins/`, unless a project-local install is explicitly requested.
 - `orchestra init opencode` installs there from a source checkout, and `--copy` falls back to the packaged plugin asset when a wheel install has no checkout to link against.
 
@@ -196,7 +212,8 @@ Before implementing a new host plugin, answer these questions.
 7. **Lifecycle** — What session end/shutdown hook can clean up watchers?
 8. **UI** — What native status, notification, output, or completion APIs should be used?
 9. **Install** — Does the host need an `orchestra init <host>` target?
-10. **Config** — How will plugin invocations forward `ORCHESTRA_CONFIG` and `ORCHESTRA_AGENT_CATALOG`?
+10. **Completion guard** — What host hook prevents or interrupts parent completion while session-owned subagents are active?
+11. **Config** — How will plugin invocations forward `ORCHESTRA_CONFIG` and `ORCHESTRA_AGENT_CATALOG`?
 
 ## Minimum viable plugin
 
@@ -206,6 +223,7 @@ A minimal useful host plugin needs:
 - `orch_dispatch` or `/orch do`
 - session-scoped status/history/stop where command support exists
 - consolidated auto-return delivery
+- parent completion guarding when the host exposes suitable lifecycle hooks
 - delivered/release report handling
 - core helper reuse for text and metadata
 
