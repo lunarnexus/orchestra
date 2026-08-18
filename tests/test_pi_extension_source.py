@@ -160,6 +160,6 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert "format_command_echo" in core_source
     assert "tool_info" in core_source
     assert "[orchestra: {run.role}" in core_source
-    assert "Request: {run.task_label}" in core_source
-    assert "Log: {run.log_path}" in core_source
-    assert "{label}: {summary}" in core_source
+    assert "Request: {run.task_label}" not in core_source
+    assert "log: {run.log_path}" in core_source
+    assert "summary: {_format_run_summary(run)}" in core_source

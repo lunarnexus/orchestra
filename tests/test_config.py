@@ -171,15 +171,15 @@ def test_asset_tool_guidance_keeps_orchestrator_context_clean() -> None:
         "Parallel write slices must own separate files or resources",
         "Keep dependency-bound work in order",
         "immediately dispatch every newly unblocked slice",
-        "self-contained brief",
-        "artifact references",
+        "Prefer artifact-first",
+        "artifact path",
         "recommended next step",
         "Omit role when no specialized enabled role is a better match",
-        "parent owns decomposition, sequencing, user decisions, approvals",
+        "orchestrator owns decomposition, sequencing, user decisions, approvals",
         "Completed subagent reports return automatically",
         "do not finalize while any dispatched subagent is still active",
         "Before final response, ensure all dispatched subagents are terminal",
-        "Use orch_status for status/control",
+        "use orch_status only for explicit status/control needs",
         "{roles}",
     ):
         assert expected in tool_description
@@ -187,7 +187,7 @@ def test_asset_tool_guidance_keeps_orchestrator_context_clean() -> None:
     assert prompts["tool_prompt_guidelines"] == [
         "Follow the shared orch_dispatch and orch_status descriptions.",
         "Never provide a final answer while dispatched subagents are still active; "
-        "wait for their reports or call orch_status first.",
+        "wait for their reports and use orch_status only for explicit status/control needs.",
     ]
     assert prompts["tool_goal_description"] == (
         "One small subagent slice: goal, exact scope, stop condition, and return shape."
@@ -205,8 +205,8 @@ def test_asset_tool_guidance_keeps_orchestrator_context_clean() -> None:
         assert expected in status_description
     assert "runId" in prompts["status_action_description"]
     assert "read-only" in prompts["status_setting_description"]
-    assert "artifact implications" in prompts["default_return_format"]
-    assert "recommended next step" in prompts["default_return_format"]
+    assert "artifact path" in prompts["default_return_format"]
+    assert "next required action" in prompts["default_return_format"]
 
 
 @pytest.mark.parametrize(

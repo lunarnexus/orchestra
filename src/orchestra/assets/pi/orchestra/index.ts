@@ -315,7 +315,7 @@ async function loadToolInfo(): Promise<ToolInfoPayload> {
     return JSON.parse(result.stdout) as ToolInfoPayload;
   }
   return {
-    description: "Use orch_dispatch as the default for detailed work. Inspect the whole request, call it once per slice, and always dispatch all unblocked independent slices in parallel. Keep writes file-disjoint and dependencies in order. Choose the best matching role; the parent owns decisions, approvals, artifacts, and synthesis.",
+    description: "Use orch_dispatch as the default for detailed work. Inspect the whole request, call it once per slice, and always dispatch all unblocked independent slices in parallel. Keep writes file-disjoint and dependencies in order. Prefer artifact-first handoffs and compact returns. Choose the best matching role; the orchestrator owns decisions, approvals, artifacts, and synthesis.",
     promptSnippet: "Use Orchestra tools to delegate work.",
     promptGuidelines: ["Follow the shared orch_dispatch and orch_status descriptions."],
     goalDescription: "One worker slice: goal, exact scope, stop condition, and return shape.",
@@ -356,7 +356,7 @@ function parseActiveSessionStatus(output: string): ActiveSessionStatus {
   const roleCounts = new Map<string, number>();
 
   for (const line of output.split(/\r?\n/)) {
-    const match = /^-\s+(\S+)\s+\[[^\]]+\]\s+(\S+)\s+::/.exec(line.trim());
+    const match = /^-\s+(\S+)\s+(\S+)\s+\S+\s+task=/.exec(line.trim());
     if (!match) continue;
     const [, runId, role] = match;
     runIds.add(runId);
@@ -942,7 +942,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       { token: "doctor", description: "Check Orchestra setup" },
       { token: "do ", description: "Dispatch a subagent" },
       { token: "roles ", description: "Show or update configured roles" },
-      { token: "status", description: "Show active workers for this session" },
+      { token: "status", description: "Show active subagents for this session" },
       { token: "stop ", description: "Stop an active worker." },
       { token: "history ", description: "Show recent results for this session" },
     ];

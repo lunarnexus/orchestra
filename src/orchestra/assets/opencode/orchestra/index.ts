@@ -145,7 +145,7 @@ async function loadToolInfo(): Promise<ToolInfoPayload> {
   }
 
   return {
-    description: "Use orch_dispatch as the default for detailed work. Inspect the whole request, call it once per slice, and always dispatch all unblocked independent slices in parallel. Keep writes file-disjoint and dependencies in order. Choose the best matching role; the parent owns decisions, approvals, artifacts, and synthesis.",
+    description: "Use orch_dispatch as the default for detailed work. Inspect the whole request, call it once per slice, and always dispatch all unblocked independent slices in parallel. Keep writes file-disjoint and dependencies in order. Prefer artifact-first handoffs and compact returns. Choose the best matching role; the orchestrator owns decisions, approvals, artifacts, and synthesis.",
     promptSnippet: "Use Orchestra tools to delegate work.",
     promptGuidelines: ["Follow the shared orch_dispatch and orch_status descriptions."],
     goalDescription: "One worker slice: goal, exact scope, stop condition, and return shape.",

@@ -614,24 +614,22 @@ def format_orchestrator_return(runs: list[RunRecord]) -> str:
     blocks = []
     for run in runs:
         outcome = "success" if run.status == STATUS_DONE else "fail"
-        summary = _format_run_summary(run)
-        label = "Result" if outcome == "success" else "Summary"
         lines = [
             f"[orchestra: {run.role} {run.run_id} {outcome}]",
-            f"Request: {run.task_label}",
-            f"{label}: {summary}",
+            f"summary: {_format_run_summary(run)}",
         ]
-        full_result_line = _full_result_line(run)
-        if full_result_line:
-            lines.append(full_result_line)
-        if run.worker_session_id:
-            lines.append(f"Worker session: {run.worker_session_id}")
-        lines.append(f"Log: {run.log_path}")
+        if run.result_artifact_path:
+            lines.append(f"artifact: {run.result_artifact_path}")
+        if outcome != "success":
+            lines.append("next: inspect artifact and dispatch a targeted follow-up if needed")
+            if run.worker_session_id:
+                lines.append(f"worker_session: {run.worker_session_id}")
+            lines.append(f"log: {run.log_path}")
         blocks.append("\n".join(lines))
     report = "\n\n".join(blocks)
     if len(runs) == 1:
         return report
-    return f"[orchestra: {len(runs)} workers returned]\n\n{report}"
+    return f"[orchestra: {len(runs)} subagents returned]\n\n{report}"
 
 
 def _format_run_summary(run: RunRecord) -> str:
@@ -639,12 +637,6 @@ def _format_run_summary(run: RunRecord) -> str:
     if run.result_summary_truncated:
         return f"{summary} [truncated]"
     return summary
-
-
-def _full_result_line(run: RunRecord) -> str | None:
-    if run.result_summary_truncated and run.result_artifact_path:
-        return f"Full result: {run.result_artifact_path}"
-    return None
 
 
 def build_session_report(session_id: str, runs: list[RunRecord], *, active_remaining: int) -> str:
@@ -664,14 +656,13 @@ def build_session_report(session_id: str, runs: list[RunRecord], *, active_remai
         lines.append(
             f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label} :: {summary}"
         )
-        full_result_line = _full_result_line(run)
-        if full_result_line:
-            lines.append(f"  {full_result_line}")
+        if run.result_artifact_path:
+            lines.append(f"  artifact: {run.result_artifact_path}")
         if run.worker_session_id:
             lines.append(f"  worker_session_id: {run.worker_session_id}")
         lines.append(f"  log: {run.log_path}")
     if active_remaining == 0:
-        lines.append("session_report: all active workers for this session are complete")
+        lines.append("session_report: all active subagents for this session are complete")
     return "\n".join(lines)
 
 
@@ -909,14 +900,9 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
             lines.append("status: no active runs")
             return "\n".join(lines)
 
-        lines.append("runs:")
+        lines.append("active:")
         for run in global_runs:
-            pid = f" pid={run.process_id}" if run.process_id is not None else ""
-            lines.append(
-                "- "
-                f"{run.run_id} [{run.status}] {run.role} "
-                f"session={run.orchestrator_session_id} :: {run.task_label}{pid}"
-            )
+            lines.append(_compact_active_run_line(run, include_owner=True))
         return "\n".join(lines)
 
     _require_session_id(session_id)
@@ -941,16 +927,9 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
         lines.append("status: no active runs")
         return "\n".join(lines)
 
-    lines.append("runs:")
+    lines.append("active:")
     for run in runs:
-        pid = f" pid={run.process_id}" if run.process_id is not None else ""
-        owner = (
-            f" session={run.orchestrator_session_id}" if len(lineage_session_ids) > 1 else ""
-        )
-        blocker = f" blocker={run.blocker_text}" if run.blocker_text else ""
-        lines.append(
-            f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label}{pid}{owner}{blocker}"
-        )
+        lines.append(_compact_active_run_line(run, include_owner=len(lineage_session_ids) > 1))
     return "\n".join(lines)
 
 
@@ -1123,8 +1102,8 @@ def format_host_help(context: AppContext) -> str:
 def format_opencode_help() -> str:
     return """OpenCode /orch commands:
 - /orch on — load Orchestra mode
-- /orch status — show active workers for this OpenCode session
-- /orch history [limit] — show recent worker results for this OpenCode session
+- /orch status — show active subagents for this OpenCode session
+- /orch history [limit] — show recent subagent results for this OpenCode session
 - /orch roles — show roles
 - /orch roles ROLE SETTING VALUE — update harness|enabled|model|profile|agent
 - /orch doctor — check setup
@@ -1316,13 +1295,21 @@ def format_history(context: AppContext, session_id: str, limit: int) -> str:
         lines.append(
             f"- {run.run_id} [{run.status}] {run.role}{owner} :: {run.task_label} :: {summary}"
         )
-        full_result_line = _full_result_line(run)
-        if full_result_line:
-            lines.append(f"  {full_result_line}")
+        if run.result_artifact_path:
+            lines.append(f"  artifact: {run.result_artifact_path}")
         if run.worker_session_id:
             lines.append(f"  worker_session_id: {run.worker_session_id}")
         lines.append(f"  log: {run.log_path}")
     return "\n".join(lines)
+
+
+def _compact_active_run_line(run: RunRecord, *, include_owner: bool = False) -> str:
+    parts = [f"- {run.run_id}", run.role, run.status, f"task={json.dumps(run.task_label)}"]
+    if include_owner:
+        parts.append(f"owner={run.orchestrator_session_id}")
+    if run.blocker_text:
+        parts.append(f"blocker={json.dumps(run.blocker_text)}")
+    return " ".join(parts)
 
 
 def _list_active_runs_for_session_ids(

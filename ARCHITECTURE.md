@@ -127,14 +127,15 @@ remain aligned for degraded `_tool-info` paths.
 lookahead decomposition: scan the whole request, make one call per slice, launch
 all currently unblocked independent slices, keep writes file-disjoint, sequence
 dependencies, and dispatch newly unblocked work as results return. It also covers
-self-contained briefs, role selection, artifact context, return quality, and
-parent integration responsibility.
+artifact-first handoff, role selection, compact returns, and orchestrator
+integration responsibility.
 `orch_status` metadata explains status, history, read-only roles, setup/help,
-activation, and owned-run cancellation without busy polling.
+activation, and owned-run cancellation as compact diagnostic/control operations,
+not as a waiting or polling workflow.
 
 ## Roles and skills
 
-Roles are routing/capability entries. Their common tool metadata helps the parent
+Roles are routing/capability entries. Their common tool metadata helps the orchestrator
 select the best matching enabled capability, omit a role only when no specialized
 role is better than the default, and use distinct roles for independent judgment. Skills are prompt instructions loaded for a role; they provide the
 stricter workflow, artifact gates, methodology, and role-specific process rather
@@ -207,8 +208,8 @@ Active skills should put long-lived backlog items in `ROADMAP.md`, not `PLAN.md`
 7. Core records run state and process metadata.
 8. Subagent completes, fails, times out, or is stopped.
 9. Core writes compact result state and full return artifact.
-10. When no active subagents remain for the owning session, core builds one consolidated return report.
-11. Host adapter may auto-return that report to the owning orchestrator session.
+10. When no active subagents remain for the owning session, core builds one minimal consolidated return report with artifact pointers.
+11. Host adapter may auto-return that report to the owning orchestrator session without model-visible polling.
 
 ## Session ownership
 

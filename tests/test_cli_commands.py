@@ -173,7 +173,7 @@ def test_orchestrator_return_includes_worker_roles(tmp_path: Path) -> None:
 
     report = format_orchestrator_return([first, second])
 
-    assert "[orchestra: 2 workers returned]" in report
+    assert "[orchestra: 2 subagents returned]" in report
     assert "[orchestra: appsec 34f3a4324432 success]" in report
     assert "[orchestra: planner 2bfb63e7db3a fail]" in report
 
@@ -527,21 +527,23 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
         ),
     )
 
-    assert format_status(context, "manual:test-session").splitlines()[:6] == [
+    assert format_status(context, "manual:test-session").splitlines()[:7] == [
         "session_id: manual:test-session",
         "active_runs: 1/2",
         "global_active_runs: 1/4",
         "model_active_runs:",
         "- lmstudio/qwen: 1/1",
-        "runs:",
+        "active:",
+        '- run-1 builder running task="test task"',
     ]
-    assert format_status(context).splitlines()[:6] == [
+    assert format_status(context).splitlines()[:7] == [
         "scope: global",
         "active_runs: 1/4",
         "global_active_runs: 1/4",
         "model_active_runs:",
         "- lmstudio/qwen: 1/1",
-        "runs:",
+        "active:",
+        '- run-1 builder running task="test task" owner=manual:test-session',
     ]
 
 
@@ -612,8 +614,8 @@ def test_status_without_session_id_reports_global_active_runs(
     assert status_exit == 0
     assert "scope: global" in status_output
     assert "global_active_runs: 2" in status_output
-    assert "session=manual:first" in status_output
-    assert "session=manual:second" in status_output
+    assert "owner=manual:first" in status_output
+    assert "owner=manual:second" in status_output
     assert first_run_id in status_output
     assert second_run_id in status_output
 

@@ -57,8 +57,9 @@ _FALLBACK_TOOL_INFO = {
         "Use orch_dispatch as the default for detailed work. Inspect the whole "
         "request, call it once per slice, and always dispatch all unblocked "
         "independent slices in parallel. Keep writes file-disjoint and dependencies "
-        "in order. Choose the best matching role; the parent owns decisions, "
-        "approvals, artifacts, and synthesis."
+        "in order. Prefer artifact-first handoffs and compact returns. Choose "
+        "the best matching role; the orchestrator owns decisions, approvals, "
+        "artifacts, and synthesis."
     ),
     "promptSnippet": "Use Orchestra tools to delegate work.",
     "promptGuidelines": [

@@ -155,7 +155,7 @@ def test_status_for_hermes_parent_includes_active_compressed_child(
     ) in output
     assert "active_runs: 1" in output
     assert "run-child-active" in output
-    assert "session=hermes:20260731_115155_9d8c0b" in output
+    assert "owner=hermes:20260731_115155_9d8c0b" in output
 
 
 def test_history_for_hermes_parent_includes_compressed_child_runs(

@@ -17,12 +17,24 @@ Orchestra roadmap items are split into:
    - Explain that the host/orchestrator model is independent from role models.
    - Keep the guidance focused on reducing expensive main-session context and token use.
 
-3. [ ] Revisit subagent handoffs and artifacts.
-   - Improve handoff prompts for local/weaker subagents without bloating the parent session.
-   - Evaluate richer scoped context, artifact references, parent-context summaries, and harness-native fork behavior where supported.
-   - Keep full transcripts out of normal orchestrator context; use artifacts for verbose evidence.
+3. [ ] Revisit subagent handoffs, compact returns, and artifacts.
+   - Prefer task/context artifacts plus short dispatch prompts over reconstructed conversation history.
+   - Keep model-visible terminal returns to compact envelopes with artifact pointers.
+   - Evaluate richer scoped context, artifact references, orchestrator-context summaries, and harness-native fork behavior where supported.
+   - Keep full transcripts, logs, diffs, and verbose evidence out of normal orchestrator context; use artifacts for detail.
 
-4. [ ] Add lightweight workflow/git coordination docs.
+4. [ ] Harden event-driven no-poll completion semantics across supported hosts.
+   - Treat `orch_status` and `history` as manual diagnostic/control surfaces, not orchestrator waiting mechanisms.
+   - Ensure runtime watchers, host callbacks, or auto-return paths detect completion without model-visible status/sleep/history loops.
+   - Coalesce completion returns by orchestrator session so the orchestrator wakes once for required fan-in when possible.
+
+5. [ ] Add runtime dispatch/evidence ledger.
+   - Coalesce equivalent active dispatches by role, normalized scope, success contract, input artifact, and base revision.
+   - Reuse unchanged completed evidence where safe instead of asking the orchestrator to remember returned work.
+   - Track command/test ownership by role and revision so unchanged duplicate command execution is detectable and avoidable.
+   - Keep ledger output compact and operational; do not introduce in-context-only ledgers or counters.
+
+6. [ ] Add lightweight workflow/git coordination docs.
    - Start with reusable workflow recipes in docs/config before building a workflow engine.
    - Keep workflow source in skills first.
    - Include simple status/commit guidance and conventional commit conventions.
@@ -48,7 +60,3 @@ Orchestra roadmap items are split into:
 
 5. [ ] Operational maintenance tooling.
    - Covers metrics/exporters, import/export bundles, richer transcript/session handles, and retention/prune commands for DB rows, JSONL logs, return artifacts, and harness session logs.
-
-6. [ ] Hard-coded delegation ledger in Orchestra status.
-   - Add compact status that shows active and completed roles/slices for the current session so the parent can avoid duplicate equivalent dispatches without relying on an in-context ledger.
-   - Include enough run ids, roles, task labels, statuses, and concise summaries to support dispatch decisions without rich history dumps or repeated polling.

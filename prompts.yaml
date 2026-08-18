@@ -1,8 +1,10 @@
 default_return_format: >-
-  Return the smallest complete result. State the outcome or verdict, concrete
-  evidence with file or source references, files changed if any, checks run and
-  results, blockers, risks, artifact implications, and the recommended next
-  step. Clearly separate completed work from proposed follow-up.
+  Return a compact result. For success: status, one-sentence summary, changed
+  files, checks run with short results, artifact path if available, and next
+  required action. For failed, blocked, timed out, or incomplete work: status,
+  one-sentence summary, completed work, changed files, exact blocker or failed
+  check, artifact path, and where the next subagent should continue. Do not
+  include full stdout, full diffs, logs, or long reasoning in the return.
 tool_description: >-
   Use orch_dispatch as the default way to perform research, planning,
   implementation, debugging, testing, verification, review,
@@ -10,7 +12,7 @@ tool_description: >-
   whole request and identify every slice that can be assigned to a subagent. Call
   orch_dispatch once per slice and make multiple calls when several slices are
   available and do not conflict or depend on each other.  Always dispatch all currently unblocked, independent slices in
-  parallel before continuing parent work; do not wait for one independent subagent
+  parallel before continuing orchestrator work; do not wait for one independent subagent
   before dispatching the others. Read-only research, independent analysis, and
   independent reviews should normally run in parallel. Parallel write slices
   must own separate files or resources. Keep dependency-bound work in order:
@@ -20,26 +22,27 @@ tool_description: >-
   After subagents return, reassess the remaining work and immediately dispatch
   every newly unblocked slice. Do not move on to dependent work, verification,
   review, synthesis, or a final answer until the subagents needed for that step
-  have returned and you have incorporated their results. Give each subagent a self-contained brief with one
-  goal, exact scope, relevant context and artifact references, boundaries, stop
-  condition, and expected return. Ask for concrete evidence, artifact
+  have returned and you have incorporated their results. Prefer artifact-first
+  handoff: write known task context to an artifact, then dispatch with the
+  artifact path, exact scope, boundaries, stop condition, and expected return.
+  Use longer dispatch context only when the subagent cannot succeed from the
+  artifact and scope alone. Ask for concrete evidence, artifact
   implications, and a recommended next step. Choose the enabled role that best
   matches the slice. Omit role when no specialized enabled role is a better match
   than the default.
-  The parent owns decomposition, sequencing, user
+  The orchestrator owns decomposition, sequencing, user
   decisions, approvals, artifact alignment, synthesis, and final judgment. The
-  parent consumes subagent evidence instead of repeating subagent work. Do not
+  orchestrator consumes subagent evidence instead of repeating subagent work. Do not
   rerun checks that already passed after the relevant files changed unless later
   edits made that evidence stale. Full test suites are a final gate or high-risk
   check, not a per-role default.
-  Subagents perform the detailed work and return compact results. Completed subagent reports return automatically; continue other useful orchestration work instead
-  of polling, but do not finalize while any dispatched subagent is still active.
+  Subagents perform the detailed work and return compact results. Completed subagent reports return automatically; never poll for subagent completion, and do not finalize while any dispatched subagent is still active.
   Before final response, ensure all dispatched subagents are terminal and their
-  returned results have been consumed; use orch_status if uncertain. Use orch_status for status/control. {roles}
+  returned results have been consumed; use orch_status only for explicit status/control needs, not polling. {roles}
 tool_prompt_snippet: Use Orchestra tools to delegate work.
 tool_prompt_guidelines:
   - Follow the shared orch_dispatch and orch_status descriptions.
-  - Never provide a final answer while dispatched subagents are still active; wait for their reports or call orch_status first.
+  - Never provide a final answer while dispatched subagents are still active; wait for their reports and use orch_status only for explicit status/control needs.
 tool_goal_description: >-
   One small subagent slice: goal, exact scope, stop condition, and return shape.
 tool_role_description: >-
@@ -54,9 +57,9 @@ status_description: >-
   available read-only role information, doctor for setup checks, help for usage,
   on to activate Orchestra orchestration guidance, and stop with a runId to
   cancel an owned active run. Use orch_dispatch to start work. Completed subagent
-  reports return automatically, so continue other useful work instead of
-  repeatedly checking status. Do not finalize the parent response until active
-  dispatched subagents have returned and their results have been incorporated.
+  reports return automatically, so do not poll for completion. Do not finalize
+  the orchestrator response until active dispatched subagents have returned and
+  their results have been incorporated.
 status_action_description: >-
   Action to perform: help, doctor, roles, status, history, on, or stop. Use stop
   only with a runId for an active run owned by the current host session.

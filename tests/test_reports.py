@@ -53,13 +53,14 @@ def test_consolidated_report_includes_all_unreported_terminal_runs(
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     report = consume_pending_session_report(context, "manual:report")
     assert report is not None
-    assert report.startswith("[orchestra: 2 workers returned]\n\n")
+    assert report.startswith("[orchestra: 2 subagents returned]\n\n")
     assert f"[orchestra: worker {first_id} success]" in report
     assert f"[orchestra: worker {second_id} success]" in report
-    assert "Request: first goal" in report
-    assert "Request: second goal" in report
-    assert "Result: worker ok" in report
-    assert "Log:" in report
+    assert "Request: first goal" not in report
+    assert "Request: second goal" not in report
+    assert "summary: worker ok" in report
+    assert "artifact:" in report
+    assert "log:" not in report
 
     second_report = consume_pending_session_report(context, "manual:report")
     assert second_report is None
@@ -107,11 +108,11 @@ def test_truncated_report_points_to_full_return_artifact(
 
     assert report is not None
     assert "[truncated]" in report
-    assert f"Full result: {record.result_artifact_path}" in report
-    assert f"Log: {record.log_path}" in report
+    assert f"artifact: {record.result_artifact_path}" in report
+    assert f"log: {record.log_path}" not in report
 
 
-def test_short_report_writes_artifact_without_full_result_line(
+def test_short_report_includes_artifact_pointer(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
@@ -148,7 +149,8 @@ def test_short_report_writes_artifact_without_full_result_line(
     report = consume_pending_session_report(context, "manual:short-report")
 
     assert report is not None
-    assert "Result: short ok" in report
+    assert "summary: short ok" in report
+    assert f"artifact: {record.result_artifact_path}" in report
     assert "Full result:" not in report
     assert "[truncated]" not in report
 
@@ -241,8 +243,10 @@ def test_failed_worker_with_long_stdout_and_short_stderr_does_not_mark_summary_t
     report = consume_pending_session_report(context, "manual:failed-short-stderr")
 
     assert report is not None
-    assert "Summary: short stderr" in report
+    assert "summary: short stderr" in report
     assert "[truncated]" not in report
+    assert f"artifact: {record.result_artifact_path}" in report
+    assert "next: inspect artifact and dispatch a targeted follow-up if needed" in report
     assert "Full result:" not in report
 
 
@@ -290,9 +294,9 @@ def test_long_stderr_marks_failed_summary_truncated(
     report = consume_pending_session_report(context, "manual:failed-long-stderr")
 
     assert report is not None
-    assert "Summary: stderr diagnostic" in report
+    assert "summary: stderr diagnostic" in report
     assert "[truncated]" in report
-    assert f"Full result: {record.result_artifact_path}" in report
+    assert f"artifact: {record.result_artifact_path}" in report
 
 
 def test_fallback_note_appears_in_final_report(
@@ -362,4 +366,4 @@ def test_fallback_note_appears_in_final_report(
     note = "fallback: reviewer used harness_config pi after hermes failed to start"
     assert report is not None
     assert f"[orchestra: reviewer {run_id} success]" in report
-    assert f"Result: {note}; worker ok" in report
+    assert f"summary: {note}; worker ok" in report

@@ -99,6 +99,8 @@ Give each subagent:
 - stop point
 - expected return shape
 
+Use artifact-first handoff for implementation, verification, review, and security slices. Write the known task context into an artifact, then dispatch with the artifact path, exact scope, boundaries, stop condition, and expected return. Do not put a long history narrative in the dispatch prompt.
+
 Research dispatch:
 - read-only by default
 - one small question with one expected answer
@@ -112,7 +114,7 @@ Split research by independent subject. Do not batch related research questions; 
 
 Do not absorb failed subagent work. If a tool-using subagent fails, times out, or returns incomplete work, do not perform that work yourself. Shrink scope and re-dispatch a smaller slice.
 
-After dispatching a subagent, the parent stops working on that subagent's assigned files, commands, and acceptance target until the subagent returns. The parent does not read, grep, edit, debug, inspect, or test those targets. The parent only dispatches non-overlapping work, updates artifacts from existing evidence, handles user approvals, or waits. When the subagent returns, use its result for the assigned target. If the result is failed, blocked, timed out, cancelled, or explicitly incomplete, dispatch a smaller follow-up or ask the user for the blocking decision. Do not take over the assigned work in the parent session.
+After dispatching a subagent, the orchestrator stops working on that subagent's assigned files, commands, and acceptance target until the subagent returns. The orchestrator does not read, grep, edit, debug, inspect, or test those targets. The orchestrator only dispatches non-overlapping work, updates artifacts from existing evidence, handles user approvals, or waits. The orchestrator never polls for subagent completion: do not call status/history, sleep, ps, tail, git status, or test commands to wait. When the subagent returns, use its result for the assigned target. If the result is failed, blocked, timed out, cancelled, or explicitly incomplete, dispatch a smaller follow-up or ask the user for the blocking decision. Do not take over the assigned work in the orchestrator session.
 
 Nested dispatch:
 - The orchestrator may dispatch researchers directly for planning evidence.
@@ -219,7 +221,7 @@ Worktree automation is not required here; use normal git status/diff/commit disc
 - verify after completed behavior or bug fix
 - review at step/phase boundaries and before commit/push/ship
 - security review when each phase is complete.
-- The parent does not run implementation or verification test commands for delegated work. Builders run implementation-focused tests. Verifiers run acceptance checks. Reviewers and appsec inspect evidence and code for their roles. If test evidence is missing or incomplete, dispatch the appropriate subagent; do not run the test in the parent session.
+- The orchestrator does not run implementation or verification test commands for delegated work. Builders run implementation-focused tests. Verifiers run acceptance checks. Reviewers and appsec inspect evidence and code for their roles. If test evidence is missing or incomplete, dispatch the appropriate subagent; do not run the test in the orchestrator session.
 - Before dispatching a follow-up role for the same assigned files, commands, or acceptance target, use existing active/returned subagent information. Do not dispatch an equivalent follow-up when an active subagent already owns that target or a returned subagent already completed it. Redispatch only for failed, blocked, timed out, cancelled, or explicitly incomplete results.
 - if verification is red, route through debugging: reproduce -> isolate -> RCA -> fix -> re-verify
 

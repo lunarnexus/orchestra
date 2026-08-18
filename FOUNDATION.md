@@ -4,13 +4,13 @@ Core concepts and architectural decisions for orchestra.
 
 ## Vision
 
-Orchestra is an agent-agnostic orchestration control plane. It lets a parent
-agent, CLI, MCP client, or host-specific extension dispatch focused work to
-specialized child agents without bloating the parent agent's context.
+Orchestra is an agent-agnostic orchestration control plane. It lets an
+orchestrator agent, CLI, MCP client, or host-specific extension dispatch focused
+work to specialized subagents without bloating the orchestrator's context.
 
 The goal is practical multi-agent coordination: decompose work, route slices to
 the right harness, track enough runtime state to supervise progress, return
-compact results, and keep humans or parent agents in control of meaningful
+compact results, and keep humans or orchestrator agents in control of meaningful
 decisions. The primary value target is preserving expensive main-session context
 by offloading bounded work to local or cheaper subagents.
 
@@ -275,8 +275,10 @@ Subagent completions should prod only the owning orchestrator session by
 re-entering as one new host/orchestrator turn with the consolidated session
 report when the host supports it. Auto-prodding/`auto_return` is enabled by
 default, with a simple config toggle to disable it for hosts or users that prefer
-explicit `/orch status` or `/orch history` checks. MVP loop controls should stay
-small: global, per-session, and per-model concurrency limits, required
+explicit manual `/orch status` or `/orch history` diagnostics. The orchestrator
+never polls for subagent completion; waiting, liveness checks, timeout handling,
+and completion detection are runtime responsibilities. MVP loop controls should
+stay small: global, per-session, and per-model concurrency limits, required
 configured subagent timeout, `/orch stop`, and session-scoped consolidated
 returns. Do not add max-turn, max-run, max-time, or compatibility-flag machinery
 until there is a demonstrated need.
@@ -427,24 +429,32 @@ inferring compliance from a successful result.
 
 ### Dispatch Prompt Shape
 
-Dispatch prompts should stay slim and self-contained: one goal, exact scope,
-relevant context and artifact references, explicit boundaries, stop condition,
-acceptance target, and expected return. Default returns should state the outcome,
-evidence, changed files, checks, blockers, risks, artifact implications, and the
-recommended next step while separating completed work from proposed follow-up.
+Dispatch prompts should prefer artifact-first handoff: write known task context,
+scope, selected evidence, acceptance target, boundaries, and expected return into
+an artifact, then dispatch with the artifact path and exact scope. Longer inline
+context is allowed when the subagent cannot succeed from the artifact and scope
+alone, but dispatch prompts should not reconstruct the full conversation history.
+Default returns should be compact. A successful return needs status, a
+one-sentence summary, changed files and checks when relevant, an artifact path,
+and the next required action. Failed, blocked, timed out, or incomplete returns
+need the same compact fields plus completed work, the blocker or failed check,
+and where a follow-up subagent should continue. Full stdout, logs, diffs, and
+long reasoning belong in return artifacts rather than normal orchestrator
+context.
 
 The common `orch_dispatch` tool description, not host-specific prompt additions,
 owns flexible delegation behavior. It makes dispatch the default for detailed
-work, tells the parent to inspect the whole request before starting, requires one
-tool call per slice, and requires all currently unblocked independent slices to
-be dispatched before parent work continues. Read-only and file-disjoint slices
-run in parallel; dependency-bound work stays sequential. As results return, the
-parent reassesses remaining work and dispatches newly unblocked slices. The parent
-retains decomposition, user decisions, sequencing, approvals, project
-documentation and artifact edits, artifact alignment, synthesis, and final
-judgment. Subagents report evidence and documentation implications rather than
-editing project documentation. Skills provide stricter workflow phases,
-methodology, artifact gates, and role-specific process.
+work, tells the orchestrator to inspect the whole request before starting,
+requires one tool call per slice, and requires all currently unblocked
+independent slices to be dispatched before orchestrator work continues. Read-only
+and file-disjoint slices run in parallel; dependency-bound work stays sequential.
+As results return, the orchestrator reassesses remaining work and dispatches
+newly unblocked slices. The orchestrator retains decomposition, user decisions,
+sequencing, approvals, project documentation and artifact edits, artifact
+alignment, synthesis, and final judgment. Subagents report evidence and
+documentation implications rather than editing project documentation. Skills
+provide stricter workflow phases, methodology, artifact gates, and role-specific
+process.
 
 ### Pi Host Extension Installation
 
@@ -514,7 +524,7 @@ through a host tool named `orch_dispatch`. Its common metadata makes subagents t
 default for research, planning, implementation, debugging, testing, verification,
 review, security assessment, and follow-up work. Project documentation remains
 main-session orchestrator work. The
-parent scans the whole request, makes one dispatch call per slice, and always
+orchestrator scans the whole request, makes one dispatch call per slice, and always
 launches all currently unblocked independent slices before continuing. Read-only
 or file-disjoint slices run in parallel; work with unresolved dependencies or
 overlapping resources stays sequential.
@@ -608,21 +618,24 @@ orchestra: <run-id> returned <status> (<done>/<total>)
 Core-formatted final orchestrator return:
 
 ```text
-[orchestra: Subagent <run-id> success|fail]
-Request: <original request>
-Result: <summary> [truncated]
-Full result: <return artifact path>
-Log: <absolute-or-configured log path>
+[orchestra: <role> <run-id> success|fail]
+summary: <summary> [truncated]
+artifact: <return artifact path>
+next: <follow-up hint for failed/incomplete work only>
+log: <log path for failed/incomplete work only>
 ```
 
-Failures use `Summary: <summary>` instead of `Result: <summary>`. The `[truncated]`
-marker and `Full result:` line appear only when the compact summary was cut.
+Successful returns omit the original request, log path, worker session, full
+stdout, diffs, and long reasoning. Failed, blocked, timed-out, or incomplete
+returns include enough compact detail to decide whether to dispatch a targeted
+follow-up. The `[truncated]` marker appears when the compact summary was cut; the
+artifact path is the durable pointer to the full subagent return.
 
-The default subagent return format is:
-
-```text
-Return a concise response with success/fail, files changed/inspected, if fail: exact commands run, results, if blockers: blockers, if risks: risks
-```
+The default subagent return format is compact: success returns include status,
+one-sentence summary, changed files/checks when relevant, artifact path if
+available, and next required action; failed, blocked, timed-out, or incomplete
+returns add completed work, blocker or failed check, and where the next subagent
+should continue.
 
 Subagents should mention blockers and risks only when present. Core summary cleanup
 strips explicit “none/no blockers/no risks” text while preserving real blockers
