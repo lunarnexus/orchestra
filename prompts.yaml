@@ -27,7 +27,11 @@ tool_description: >-
   matches the slice. Omit role when no specialized enabled role is a better match
   than the default.
   The parent owns decomposition, sequencing, user
-  decisions, approvals, artifact alignment, synthesis, and final judgment.
+  decisions, approvals, artifact alignment, synthesis, and final judgment. The
+  parent consumes subagent evidence instead of repeating subagent work. Do not
+  rerun checks that already passed after the relevant files changed unless later
+  edits made that evidence stale. Full test suites are a final gate or high-risk
+  check, not a per-role default.
   Subagents perform the detailed work and return compact results. Completed subagent reports return automatically; continue other useful orchestration work instead
   of polling, but do not finalize while any dispatched subagent is still active.
   Before final response, ensure all dispatched subagents are terminal and their

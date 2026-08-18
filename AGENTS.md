@@ -79,6 +79,7 @@ Source copy for the global Pi host extension lives at `extensions/pi/orchestra/i
 - CLI `--session-id` is local/manual mode only and must not be described as a runtime host identity source.
 - Generic command/help/tool/report wording belongs in the Python core or core config, not duplicated in host adapters.
 - Shared tool descriptions own cross-host capabilities, delegation-by-default, whole-request lookahead, one-call-per-slice fan-out, role selection, parallelism, dependency basics, and return expectations. Host-specific prompt snippets must stay minimal.
+- Do not solve Orchestra cost, time, or repeated-test overhead by weakening delegation-by-default or telling agents to dispatch fewer subagents. Strong default subagent dispatch is required for Orchestra to work reliably. Optimize by eliminating duplicate parent/subagent work, sharpening role boundaries, reusing returned evidence, and avoiding repeated test execution.
 - Skills own stricter workflow, artifact gates, methodology, approvals, and role-specific process; do not rely on a skill for basic tool operation.
 - Host adapters must stay thin: runtime session identity, host UI/rendering, notifications, and host message injection only.
 - If changing public output strings, prompt labels, or tool metadata, update core/config, host fallback metadata, and tests; do not patch only `extensions/pi/orchestra/index.ts`.
