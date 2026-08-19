@@ -112,6 +112,9 @@ After local changes, refresh the pipx command with:
 pipx reinstall orchestra
 ```
 
+Release versions are derived from Git tags with `setuptools-scm`. Tag releases as
+`vMAJOR.MINOR.PATCH`; commits after a tag build as development versions.
+
 ## Quick Start
 
 Check the installation:

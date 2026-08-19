@@ -24,6 +24,7 @@ out/
 logs/
 state/
 *.egg-info/
+/src/orchestra/_version.py
 
 # Caches
 __pycache__/
