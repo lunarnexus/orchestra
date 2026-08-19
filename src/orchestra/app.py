@@ -591,7 +591,10 @@ def _format_concurrency_limit_error(
     context: AppContext,
     session_id: str,
 ) -> str:
-    guidance = "dispatch was not accepted; wait for current workers to return, then re-dispatch."
+    guidance = (
+        "dispatch was not accepted; wait for current subagents to return, "
+        "then re-dispatch. Do not poll while waiting."
+    )
     return f"{message}; {guidance}\n{format_status(context, session_id)}"
 
 
@@ -816,6 +819,10 @@ def reconcile_stale_queued_runs(
     reconciled: list[RunRecord] = []
     now = datetime.now(UTC)
     for run in context.store.list_active_runs():
+        if run.status == STATUS_RUNNING:
+            if _is_stale_running_run(run):
+                reconciled.append(_reconcile_stale_running_run(context, run))
+            continue
         if run.status != STATUS_QUEUED:
             continue
         age = _record_age_seconds(run.created_at, now)
@@ -852,12 +859,46 @@ def reconcile_stale_queued_runs(
     return reconciled
 
 
+def _is_stale_running_run(run: RunRecord) -> bool:
+    return (
+        run.process_id is not None
+        and run.supervisor_pid is not None
+        and not _process_exists(run.process_id)
+        and not _process_exists(run.supervisor_pid)
+    )
+
+
 def _record_age_seconds(created_at: str, now: datetime) -> float:
     try:
         created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
     except ValueError:
         return 0.0
     return max((now - created).total_seconds(), 0.0)
+
+
+def _reconcile_stale_running_run(context: AppContext, run: RunRecord) -> RunRecord:
+    reason = "worker process exited/disappeared without terminal status"
+    _append_run_event(
+        context,
+        run.run_id,
+        "worker.reconciled",
+        {
+            "reason": reason,
+            "process_id": run.process_id,
+            "supervisor_pid": run.supervisor_pid,
+            "supervisor_output_path": str(run.supervisor_output_path)
+            if run.supervisor_output_path
+            else None,
+        },
+    )
+    return context.store.update_run(
+        run.run_id,
+        RunUpdate(
+            status=STATUS_FAILED,
+            error_text=reason,
+            blocker_text="stale running worker reconciled",
+        ),
+    )
 
 
 def _reconcile_queued_run(

@@ -4,13 +4,15 @@ from pathlib import Path
 
 import yaml
 
-from orchestra.app import load_context
+from orchestra.app import format_status, load_context, start_run
 from orchestra.state import (
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_FAILED,
     STATUS_INCOMPLETE,
+    STATUS_RUNNING,
     RunRecord,
+    RunUpdate,
     StateStore,
 )
 from tests.helpers import extract_run_id, run_cli, wait_for_condition
@@ -162,6 +164,120 @@ def test_status_reconciles_stale_queued_run_without_supervisor_owner(
     assert record.error_text == "Worker supervisor ownership was not recorded"
     assert "active_runs: 0" in status.stdout
     assert "supervisor.reconciled" in (tmp_path / "logs" / "stalequeued1.jsonl").read_text()
+
+
+def test_status_reconciles_stale_running_run_with_dead_worker_and_supervisor(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+    monkeypatch,
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "unused"],
+    )
+    context = load_context(config_path=config_path, catalog_path=catalog_path)
+    context.store.create_run(
+        RunRecord(
+            run_id="stalerunning1",
+            orchestrator_session_id="manual:stale-running",
+            harness="pi",
+            role="worker",
+            task_label="stale running",
+            log_path=tmp_path / "logs" / "stalerunning1.jsonl",
+            created_at="2000-01-01T00:00:00Z",
+            model="stale-model",
+        )
+    )
+    context.store.update_run(
+        "stalerunning1",
+        RunUpdate(status=STATUS_RUNNING, process_id=111_111, supervisor_pid=222_222),
+    )
+    monkeypatch.setattr("orchestra.app._process_exists", lambda _pid: False)
+
+    status = format_status(context, "manual:stale-running")
+
+    record = StateStore(db_path).get_run("stalerunning1")
+    assert record.status == STATUS_FAILED
+    assert record.ended_at is not None
+    assert record.error_text == "worker process exited/disappeared without terminal status"
+    assert record.blocker_text == "stale running worker reconciled"
+    assert "active_runs: 0" in status
+    assert "worker.reconciled" in (tmp_path / "logs" / "stalerunning1.jsonl").read_text()
+
+
+def test_start_run_reconciles_stale_running_model_slot_before_reserve(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+    monkeypatch,
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "unused"],
+    )
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "worker",
+                "model_limits": {"limited-model": {"concurrency": 1}},
+                "roles": {
+                    "worker": {
+                        "harness": "pi",
+                        "model": "limited-model",
+                        "command": [
+                            python_executable,
+                            str(fake_worker_script),
+                            "success",
+                            "--output",
+                            "unused",
+                        ],
+                    }
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    context = load_context(config_path=config_path, catalog_path=catalog_path)
+    context.store.create_run(
+        RunRecord(
+            run_id="stalemodel1",
+            orchestrator_session_id="manual:stale-model",
+            harness="pi",
+            role="worker",
+            task_label="stale model",
+            log_path=tmp_path / "logs" / "stalemodel1.jsonl",
+            created_at="2000-01-01T00:00:00Z",
+            model="limited-model",
+        )
+    )
+    context.store.update_run(
+        "stalemodel1",
+        RunUpdate(status=STATUS_RUNNING, process_id=111_111, supervisor_pid=222_222),
+    )
+    monkeypatch.setattr("orchestra.app._process_exists", lambda _pid: False)
+    monkeypatch.setattr("orchestra.app._spawn_supervisor", lambda *_args, **_kwargs: None)
+
+    started = start_run(
+        context,
+        session_id="manual:stale-model",
+        role_name=None,
+        goal="new work",
+        approved_context="",
+        boundaries="",
+        acceptance_target="",
+        return_format="summary",
+        timeout_seconds=None,
+        task_label="",
+        batch_id=None,
+    )
+
+    store = StateStore(db_path)
+    assert store.get_run("stalemodel1").status == STATUS_FAILED
+    assert store.get_run(started.record.run_id).status == "queued"
 
 
 def test_zero_exit_empty_output_marks_run_failed_for_pi_hermes_and_opencode(

@@ -129,8 +129,9 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
     with pytest.raises(
         AppError,
         match=(
-            rf"{failure_message}; dispatch was not accepted; wait for current workers to return, "
-            rf"then re-dispatch\.\nsession_id: manual:test-session\nactive_runs: 1/1\n"
+            rf"{failure_message}; dispatch was not accepted; wait for current subagents to return, "
+            rf"then re-dispatch\. Do not poll while waiting\.\n"
+            rf"session_id: manual:test-session\nactive_runs: 1/1\n"
             rf"global_active_runs: 1/1"
         ),
     ):
