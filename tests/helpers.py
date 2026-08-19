@@ -84,6 +84,9 @@ def default_prompt_config() -> PromptConfig:
         status_role_description=prompts["status_role_description"],
         status_setting_description=prompts["status_setting_description"],
         status_value_description=prompts["status_value_description"],
+        dispatch_ack_template=prompts["dispatch_ack_template"],
+        concurrency_limit_hint=prompts["concurrency_limit_hint"],
+        failed_return_next=prompts["failed_return_next"],
         host_help=prompts["host_help"],
         budget_exceeded_prompt=prompts["budget_exceeded_prompt"],
     )

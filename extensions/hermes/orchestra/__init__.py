@@ -54,28 +54,27 @@ _ORCH_ON_ACTIVE_SESSIONS_LOCK = threading.Lock()
 
 _FALLBACK_TOOL_INFO = {
     "description": (
-        "Use orch_dispatch as the default for detailed work. Inspect the whole "
-        "request, call it once per slice, and always dispatch all unblocked "
-        "independent slices in parallel. Keep writes file-disjoint and dependencies "
-        "in order. Prefer artifact-first handoffs and compact returns. Choose "
-        "the best matching role; the orchestrator owns decisions, approvals, "
-        "artifacts, and synthesis."
+        "Use orch_dispatch for all scoped work. The orchestrator plans, prepares "
+        "artifacts, dispatches, sequences, handles decisions, and synthesizes "
+        "returned results. Subagents inspect, implement, debug, test, verify, "
+        "review, and assess security. Dispatch transfers scope ownership; wait "
+        "for automatic returns and use status/history only for diagnostics or control."
     ),
     "promptSnippet": "Use Orchestra tools to delegate work.",
     "promptGuidelines": [
         "Follow the shared orch_dispatch and orch_status descriptions."
     ],
     "goalDescription": (
-        "One worker slice: goal, exact scope, stop condition, and return shape."
+        "One subagent slice: goal, exact scope, stop condition, and return shape."
     ),
     "roleDescription": (
-        "Optional worker capability; choose the best matching enabled role."
+        "Optional subagent capability; choose the best matching enabled role."
     ),
     "taskLabelDescription": "Optional short request label.",
     "statusDescription": (
-        "Use orch_status for status, completed results, read-only roles, setup/help, "
-        "activation, and stopping an owned run. Use orch_dispatch to start work; "
-        "completed reports return automatically."
+        "Use orch_status for explicit diagnostics, completed results, read-only roles, "
+        "setup/help, activation, and stopping an owned run. Use orch_dispatch to "
+        "start work; completed reports return automatically."
     ),
     "statusActionDescription": (
         "Action: help, doctor, roles, status, history, on, or stop; stop requires runId."

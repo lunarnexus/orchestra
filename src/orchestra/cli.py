@@ -96,7 +96,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", metavar="<command>", title="commands")
 
-    do_parser = subparsers.add_parser("do", help="dispatch a worker run")
+    do_parser = subparsers.add_parser("do", help="dispatch a subagent run")
     do_parser.add_argument(
         "--session-id",
         required=True,
@@ -471,7 +471,8 @@ def _print_init_files(files: Sequence[InitFileResult]) -> None:
 
 
 def _handle_dispatch_ack(args: argparse.Namespace) -> int:
-    print(format_dispatch_ack(args.run_id, role=args.role))
+    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    print(format_dispatch_ack(args.run_id, role=args.role, prompts=context.config.prompts))
     return 0
 
 

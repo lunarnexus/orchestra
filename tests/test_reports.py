@@ -246,7 +246,11 @@ def test_failed_worker_with_long_stdout_and_short_stderr_does_not_mark_summary_t
     assert "summary: short stderr" in report
     assert "[truncated]" not in report
     assert f"artifact: {record.result_artifact_path}" in report
-    assert "next: inspect artifact and dispatch a targeted follow-up if needed" in report
+    failed_next = (
+        "next: dispatch a targeted follow-up with this artifact, "
+        "or ask the user if a decision is required"
+    )
+    assert failed_next in report
     assert "Full result:" not in report
 
 

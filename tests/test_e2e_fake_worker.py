@@ -85,4 +85,8 @@ def test_fake_worker_e2e_stop_history_and_pending_report(
     assert f"[orchestra: worker {run_id} fail]" in report.stdout
     assert "Request: long running task" not in report.stdout
     assert "summary: Cancelled by orchestra stop" in report.stdout
-    assert "next: inspect artifact and dispatch a targeted follow-up if needed" in report.stdout
+    failed_next = (
+        "next: dispatch a targeted follow-up with this artifact, "
+        "or ask the user if a decision is required"
+    )
+    assert failed_next in report.stdout

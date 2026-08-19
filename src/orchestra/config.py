@@ -53,6 +53,9 @@ class PromptConfig:
     status_role_description: str
     status_setting_description: str
     status_value_description: str
+    dispatch_ack_template: str
+    concurrency_limit_hint: str
+    failed_return_next: str
     host_help: str
     budget_exceeded_prompt: str
 
@@ -242,6 +245,21 @@ def load_app_config(path: str | Path) -> AppConfig:
         status_value_description=_get_required_string(
             prompts_raw,
             "status_value_description",
+            context="prompts",
+        ),
+        dispatch_ack_template=_get_required_string(
+            prompts_raw,
+            "dispatch_ack_template",
+            context="prompts",
+        ),
+        concurrency_limit_hint=_get_required_string(
+            prompts_raw,
+            "concurrency_limit_hint",
+            context="prompts",
+        ),
+        failed_return_next=_get_required_string(
+            prompts_raw,
+            "failed_return_next",
             context="prompts",
         ),
         host_help=_get_required_string(prompts_raw, "host_help", context="prompts"),

@@ -24,6 +24,7 @@ from orchestra.config import (
     AppConfig,
     ConfigError,
     ModelLimitConfig,
+    PromptConfig,
     RoleConfig,
     default_pi_orchestra_dir,
     load_agent_catalog,
@@ -571,9 +572,21 @@ def format_started_run(started: StartedRun) -> str:
     return "\n".join(lines)
 
 
-def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
-    role_text = f" {role}" if role else ""
-    return f"orchestra dispatched:{role_text} {run_id}"
+def _default_runtime_prompts() -> PromptConfig:
+    return load_app_config(resolve_config_path()).prompts
+
+
+def format_dispatch_ack(
+    run_id: str,
+    *,
+    role: str | None = None,
+    prompts: PromptConfig | None = None,
+) -> str:
+    prompt_config = prompts or _default_runtime_prompts()
+    return prompt_config.dispatch_ack_template.format(
+        role_text=f" {role}" if role else "",
+        run_id=run_id,
+    )
 
 
 def _format_concurrency_limit_error(
@@ -582,7 +595,7 @@ def _format_concurrency_limit_error(
     context: AppContext,
     session_id: str,
 ) -> str:
-    guidance = "dispatch was not accepted; wait for current workers to return, then re-dispatch."
+    guidance = context.config.prompts.concurrency_limit_hint
     return f"{message}; {guidance}\n{format_status(context, session_id)}"
 
 
@@ -608,9 +621,14 @@ def clean_result_summary(summary: str | None) -> str:
     return cleaned or "-"
 
 
-def format_orchestrator_return(runs: list[RunRecord]) -> str:
+def format_orchestrator_return(
+    runs: list[RunRecord],
+    *,
+    prompts: PromptConfig | None = None,
+) -> str:
     if not runs:
         return "[orchestra: all background processes returned]"
+    prompt_config = prompts or _default_runtime_prompts()
     blocks = []
     for run in runs:
         outcome = "success" if run.status == STATUS_DONE else "fail"
@@ -621,7 +639,7 @@ def format_orchestrator_return(runs: list[RunRecord]) -> str:
         if run.result_artifact_path:
             lines.append(f"artifact: {run.result_artifact_path}")
         if outcome != "success":
-            lines.append("next: inspect artifact and dispatch a targeted follow-up if needed")
+            lines.append(f"next: {prompt_config.failed_return_next}")
             if run.worker_session_id:
                 lines.append(f"worker_session: {run.worker_session_id}")
             lines.append(f"log: {run.log_path}")
@@ -675,7 +693,7 @@ def pending_session_report(context: AppContext, session_id: str) -> SessionRepor
         return None
     return SessionReport(
         run_ids=[run.run_id for run in runs],
-        text=format_orchestrator_return(runs),
+        text=format_orchestrator_return(runs, prompts=context.config.prompts),
     )
 
 
@@ -700,7 +718,7 @@ def consume_pending_session_report(context: AppContext, session_id: str) -> str 
     runs = context.store.consume_pending_report_runs(session_id)
     if not runs:
         return None
-    return format_orchestrator_return(runs)
+    return format_orchestrator_return(runs, prompts=context.config.prompts)
 
 
 def await_run_terminal_status(
@@ -1107,7 +1125,7 @@ def format_opencode_help() -> str:
 - /orch roles — show roles
 - /orch roles ROLE SETTING VALUE — update harness|enabled|model|profile|agent
 - /orch doctor — check setup
-- /orch do [--role ROLE] <request> — dispatch a worker
+- /orch do [--role ROLE] <request> — dispatch a subagent
 """.strip()
 
 

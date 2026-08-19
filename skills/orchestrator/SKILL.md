@@ -82,7 +82,7 @@ Research and planning may proceed after the user gives the goal. Do not add appr
 
 ## Roles
 
-Planning is orchestrator-owned. Use researchers for bounded evidence, builders for approved implementation, verifiers for acceptance checks, reviewers for quality, and appsec for security review.
+Planning is orchestrator-owned. All executable work is subagent-owned: use researchers for bounded evidence, builders for approved implementation, verifiers for acceptance checks, reviewers for quality, and appsec for security review.
 
 Reviewer modes:
 - **verify**: requested behavior and acceptance target met?
@@ -112,9 +112,9 @@ Research dispatch:
 
 Split research by independent subject. Do not batch related research questions; if one answer can determine the next question, wait before dispatching the next researcher. Do not bundle unrelated unknowns into one researcher. Separate subjects include APIs, install paths, command surfaces, return injection, and docs.
 
-Do not absorb failed subagent work. If a tool-using subagent fails, times out, or returns incomplete work, do not perform that work yourself. Shrink scope and re-dispatch a smaller slice.
+Subagent ownership is hard scope transfer. If a tool-using subagent fails, times out, or returns incomplete work, shrink scope and re-dispatch a smaller slice.
 
-After dispatching a subagent, the orchestrator stops working on that subagent's assigned files, commands, and acceptance target until the subagent returns. The orchestrator does not read, grep, edit, debug, inspect, or test those targets. The orchestrator only dispatches non-overlapping work, updates artifacts from existing evidence, handles user approvals, or waits. The orchestrator never polls for subagent completion: do not call status/history, sleep, ps, tail, git status, or test commands to wait. When the subagent returns, use its result for the assigned target. If the result is failed, blocked, timed out, cancelled, or explicitly incomplete, dispatch a smaller follow-up or ask the user for the blocking decision. Do not take over the assigned work in the orchestrator session.
+After dispatching a subagent, the orchestrator waits for the automatic return for that scope. The orchestrator continues only by dispatching non-overlapping work, updating artifacts from existing evidence, handling user approvals, or synthesizing returned results. The orchestrator never polls for subagent completion. When the subagent returns, use its result for the assigned target. If the result is failed, blocked, timed out, cancelled, or explicitly incomplete, dispatch a smaller follow-up or ask the user for the blocking decision.
 
 Nested dispatch:
 - The orchestrator may dispatch researchers directly for planning evidence.
@@ -221,7 +221,7 @@ Worktree automation is not required here; use normal git status/diff/commit disc
 - verify after completed behavior or bug fix
 - review at step/phase boundaries and before commit/push/ship
 - security review when each phase is complete.
-- The orchestrator does not run implementation or verification test commands for delegated work. Builders run implementation-focused tests. Verifiers run acceptance checks. Reviewers and appsec inspect evidence and code for their roles. If test evidence is missing or incomplete, dispatch the appropriate subagent; do not run the test in the orchestrator session.
+- Builders run implementation-focused tests. Verifiers get one capped acceptance pass and use builder evidence first, adding only missing, distinct, or adversarial checks. Reviewers get one capped findings pass and run no tests. Appsec gets one capped security pass and runs only security-specific checks when directly relevant. If evidence is missing or incomplete, dispatch the appropriate subagent.
 - Before dispatching a follow-up role for the same assigned files, commands, or acceptance target, use existing active/returned subagent information. Do not dispatch an equivalent follow-up when an active subagent already owns that target or a returned subagent already completed it. Redispatch only for failed, blocked, timed out, cancelled, or explicitly incomplete results.
 - if verification is red, route through debugging: reproduce -> isolate -> RCA -> fix -> re-verify
 
