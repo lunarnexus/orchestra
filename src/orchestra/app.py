@@ -204,6 +204,13 @@ class SessionReport:
 
 
 @dataclass(frozen=True)
+class SessionStatusDetails:
+    descendants_terminal: bool
+    session_report_available: bool
+    session_report_delivered: bool
+
+
+@dataclass(frozen=True)
 class StartedRun:
     record: RunRecord
     request_file: Path
@@ -722,7 +729,7 @@ def await_run_terminal_status(
     run_id: str,
     poll_interval: float = 0.1,
     timeout_seconds: float | None = None,
-) -> tuple[RunRecord, int]:
+) -> tuple[RunRecord, int, SessionStatusDetails]:
     _require_session_id(session_id)
     deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
 
@@ -732,7 +739,13 @@ def await_run_terminal_status(
         if record.orchestrator_session_id != session_id:
             raise AppError("run does not belong to the provided session_id")
         if record.status not in ACTIVE_STATUSES:
-            return record, context.store.count_active_runs(session_id)
+            lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
+            active_runs = _list_active_runs_for_session_ids(context, lineage_session_ids)
+            return record, len(active_runs), session_status_details(
+                context,
+                lineage_session_ids,
+                active_runs=active_runs,
+            )
         if deadline is not None and time.monotonic() >= deadline:
             raise AppError("timed out waiting for run completion")
         time.sleep(poll_interval)
@@ -929,6 +942,57 @@ def _reconcile_queued_run(
     )
 
 
+def session_status_details(
+    context: AppContext,
+    lineage_session_ids: list[str],
+    *,
+    active_runs: list[RunRecord] | None = None,
+) -> SessionStatusDetails:
+    active = active_runs
+    if active is None:
+        active = _list_active_runs_for_session_ids(context, lineage_session_ids)
+    descendants_terminal = len(active) == 0
+    if not descendants_terminal:
+        return SessionStatusDetails(
+            descendants_terminal=False,
+            session_report_available=False,
+            session_report_delivered=False,
+        )
+    pending_report_runs = (
+        [
+            run
+            for lineage_session_id in lineage_session_ids
+            for run in context.store.list_pending_report_runs(lineage_session_id)
+        ]
+        if context.config.auto_return
+        else []
+    )
+    historical_runs = _list_runs_for_session_ids(
+        context,
+        lineage_session_ids,
+        limit=10_000_000,
+    )
+    return SessionStatusDetails(
+        descendants_terminal=True,
+        session_report_available=bool(pending_report_runs),
+        session_report_delivered=any(run.reported_at is not None for run in historical_runs),
+    )
+
+
+def _yes_no(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def _append_session_status_details(lines: list[str], details: SessionStatusDetails) -> None:
+    lines.extend(
+        [
+            f"descendants_terminal: {_yes_no(details.descendants_terminal)}",
+            f"session_report_available: {_yes_no(details.session_report_available)}",
+            f"session_report_delivered: {_yes_no(details.session_report_delivered)}",
+        ]
+    )
+
+
 def format_status(context: AppContext, session_id: str | None = None) -> str:
     reconcile_stale_queued_runs(context)
     global_runs = context.store.list_active_runs()
@@ -973,10 +1037,13 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
         for model in sorted(model_limits):
             active = sum(1 for run in runs if run.model == model)
             lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
+    details = session_status_details(context, lineage_session_ids, active_runs=runs)
     if not runs:
         lines.append("status: no active runs")
+        _append_session_status_details(lines, details)
         return "\n".join(lines)
 
+    _append_session_status_details(lines, details)
     lines.append("active:")
     for run in runs:
         lines.append(_compact_active_run_line(run, include_owner=len(lineage_session_ids) > 1))

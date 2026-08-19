@@ -583,7 +583,7 @@ def _handle_release_session_report(args: argparse.Namespace) -> int:
 
 def _handle_await_run(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
-    record, active_remaining = await_run_terminal_status(
+    record, active_remaining, details = await_run_terminal_status(
         context,
         args.session_id,
         run_id=args.run_id,
@@ -605,4 +605,7 @@ def _handle_await_run(args: argparse.Namespace) -> int:
             "do not redo completed work"
         )
     print(f"active_runs_remaining: {active_remaining}")
+    print(f"descendants_terminal: {'yes' if details.descendants_terminal else 'no'}")
+    print(f"session_report_available: {'yes' if details.session_report_available else 'no'}")
+    print(f"session_report_delivered: {'yes' if details.session_report_delivered else 'no'}")
     return 0

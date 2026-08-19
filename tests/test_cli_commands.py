@@ -27,7 +27,15 @@ from orchestra.config import (
     RoleConfig,
 )
 from orchestra.harnesses.common import ORCHESTRA_DISPATCH_BUDGET_ENV
-from orchestra.state import STATUS_DONE, STATUS_FAILED, ConcurrencyLimitError, RunRecord, StateStore
+from orchestra.state import (
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_RUNNING,
+    ConcurrencyLimitError,
+    RunRecord,
+    RunUpdate,
+    StateStore,
+)
 from tests.helpers import extract_run_id, wait_for_condition
 from tests.types import RuntimeFilesFactory
 
@@ -206,6 +214,144 @@ def test_orchestrator_return_includes_worker_roles(tmp_path: Path) -> None:
     assert "[orchestra: 2 subagents returned]" in report
     assert "[orchestra: appsec 34f3a4324432 success]" in report
     assert "[orchestra: planner 2bfb63e7db3a fail]" in report
+
+
+def test_status_reports_session_lineage_details_for_active_run(
+    tmp_path: Path,
+) -> None:
+    prompts = load_root_prompt_config()
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
+    context = AppContext(
+        config=AppConfig(
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            default_timeout=30,
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+            prompts=prompts,
+        ),
+        catalog=AgentCatalog(
+            roles={"worker": RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])},
+        ),
+        store=store,
+        registry=cast(Any, SimpleNamespace()),
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+    store.create_run(
+        RunRecord(
+            run_id="active001",
+            orchestrator_session_id="manual:lineage",
+            harness="pi",
+            role="worker",
+            task_label="active",
+            log_path=tmp_path / "logs" / "active001.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    store.update_run("active001", RunUpdate(status=STATUS_RUNNING, process_id=1234))
+
+    output = format_status(context, "manual:lineage")
+
+    assert "active_runs: 1/2" in output
+    assert "global_active_runs: 1/4" in output
+    assert "descendants_terminal: no" in output
+    assert "session_report_available: no" in output
+    assert "session_report_delivered: no" in output
+
+
+def test_status_reports_pending_session_report_details(
+    tmp_path: Path,
+) -> None:
+    prompts = load_root_prompt_config()
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
+    context = AppContext(
+        config=AppConfig(
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            default_timeout=30,
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+            prompts=prompts,
+        ),
+        catalog=AgentCatalog(
+            roles={"worker": RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])},
+        ),
+        store=store,
+        registry=cast(Any, SimpleNamespace()),
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+    store.create_run(
+        RunRecord(
+            run_id="pending001",
+            orchestrator_session_id="manual:lineage",
+            harness="pi",
+            role="worker",
+            task_label="pending report",
+            log_path=tmp_path / "logs" / "pending001.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    store.update_run("pending001", RunUpdate(status=STATUS_RUNNING, process_id=1234))
+    store.update_run("pending001", RunUpdate(status=STATUS_DONE, result_summary="done"))
+
+    output = format_status(context, "manual:lineage")
+
+    assert "active_runs: 0/2" in output
+    assert "descendants_terminal: yes" in output
+    assert "session_report_available: yes" in output
+    assert "session_report_delivered: no" in output
+
+
+def test_status_reports_delivered_session_report_details(
+    tmp_path: Path,
+) -> None:
+    prompts = load_root_prompt_config()
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
+    context = AppContext(
+        config=AppConfig(
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            default_timeout=30,
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+            prompts=prompts,
+        ),
+        catalog=AgentCatalog(
+            roles={"worker": RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])},
+        ),
+        store=store,
+        registry=cast(Any, SimpleNamespace()),
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+    store.create_run(
+        RunRecord(
+            run_id="delivered01",
+            orchestrator_session_id="manual:lineage",
+            harness="pi",
+            role="worker",
+            task_label="delivered report",
+            log_path=tmp_path / "logs" / "delivered01.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    store.update_run("delivered01", RunUpdate(status=STATUS_RUNNING, process_id=1234))
+    store.update_run("delivered01", RunUpdate(status=STATUS_DONE, result_summary="done"))
+    store.mark_report_runs_delivered("manual:lineage", ["delivered01"])
+
+    output = format_status(context, "manual:lineage")
+
+    assert "descendants_terminal: yes" in output
+    assert "session_report_available: no" in output
+    assert "session_report_delivered: yes" in output
 
 
 def test_do_output_exposes_effective_timeout_seconds(
@@ -557,12 +703,15 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
         ),
     )
 
-    assert format_status(context, "manual:test-session").splitlines()[:7] == [
+    assert format_status(context, "manual:test-session").splitlines()[:10] == [
         "session_id: manual:test-session",
         "active_runs: 1/2",
         "global_active_runs: 1/4",
         "model_active_runs:",
         "- lmstudio/qwen: 1/1",
+        "descendants_terminal: no",
+        "session_report_available: no",
+        "session_report_delivered: no",
         "active:",
         '- run-1 builder running task="test task"',
     ]
@@ -863,6 +1012,10 @@ def test_internal_await_run_outputs_role(
     assert wait_exit == 0
     assert "status: done" in output
     assert "role: worker" in output
+    assert "active_runs_remaining: 0" in output
+    assert "descendants_terminal: yes" in output
+    assert "session_report_available: yes" in output
+    assert "session_report_delivered: no" in output
 
 
 def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
