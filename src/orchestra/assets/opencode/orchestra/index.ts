@@ -144,21 +144,7 @@ async function loadToolInfo(): Promise<ToolInfoPayload> {
     return JSON.parse(result.stdout) as ToolInfoPayload;
   }
 
-  return {
-    description: "Use orch_dispatch as the default for detailed work. Inspect the whole request, call it once per slice, and always dispatch all unblocked independent slices in parallel. Keep writes file-disjoint and dependencies in order. Prefer artifact-first handoffs and compact returns. Choose the best matching role; the orchestrator owns decisions, approvals, artifacts, and synthesis.",
-    promptSnippet: "Use Orchestra tools to delegate work.",
-    promptGuidelines: ["Follow the shared orch_dispatch and orch_status descriptions."],
-    goalDescription: "One worker slice: goal, exact scope, stop condition, and return shape.",
-    roleDescription: "Optional worker capability; choose the best matching enabled role.",
-    taskLabelDescription: "Optional short request label.",
-    statusDescription: "Use orch_status for status, completed results, read-only roles, setup/help, activation, and stopping an owned run. Use orch_dispatch to start work; completed reports return automatically.",
-    statusActionDescription: "Action: help, doctor, roles, status, history, on, or stop; stop requires runId.",
-    statusLimitDescription: "Optional positive history limit for action=history.",
-    statusRunIdDescription: "Required run id when action=stop.",
-    statusRoleDescription: "Reserved for compatibility; action=roles lists all configured roles.",
-    statusSettingDescription: "Reserved; model-callable roles are read-only.",
-    statusValueDescription: "Reserved; model-callable roles are read-only.",
-  };
+  throw new Error("failed to load orch_dispatch and orch_status metadata from orchestra _tool-info");
 }
 
 function normalizeOpenCodeOwnerId(sessionID: string): string {

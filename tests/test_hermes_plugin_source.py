@@ -119,6 +119,14 @@ def completed(
     return subprocess.CompletedProcess(args=args, returncode=code, stdout=stdout, stderr=stderr)
 
 
+def test_hermes_tool_info_loads_only_from_dynamic_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin = load_plugin()
+    payload = {"description": "dynamic", "goalDescription": "goal", "statusDescription": "status"}
+    monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, json.dumps(payload)))
+
+    assert plugin._load_tool_info() == payload
+
+
 @pytest.fixture(autouse=True)
 def _clear_orchestra_dispatch_budget_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ORCHESTRA_DISPATCH_BUDGET", raising=False)

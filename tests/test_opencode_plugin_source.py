@@ -116,6 +116,7 @@ def test_opencode_plugin_reuses_core_tool_info_and_dispatch_budget_guard() -> No
     assert 'return orchestraDispatchBudget() !== 1;' in source
     assert 'async function loadToolInfo(): Promise<ToolInfoPayload> {' in source
     assert 'const result = await runOrchestra(["orchestra", "_tool-info"]);' in source
+    assert 'throw new Error("failed to load orch_dispatch and orch_status metadata from orchestra _tool-info");' in source
     assert 'const orchStatusTool = tool({' in source
     assert 'if (!canDispatchOrchestraWorker()) {' in source
     assert 'return { tool: { orch_status: orchStatusTool } };' in source
@@ -127,6 +128,7 @@ def test_opencode_plugin_reuses_core_tool_info_and_dispatch_budget_guard() -> No
         'taskLabel: tool.schema.string().optional().describe(toolInfo.taskLabelDescription),'
         in source
     )
+    assert 'promptSnippet: "Use Orchestra tools to delegate work."' not in source
 
 
 def test_opencode_plugin_forwards_orchestra_config_and_catalog_to_cli_calls() -> None:

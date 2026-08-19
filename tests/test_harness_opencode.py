@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from orchestra.config import RoleConfig
+from orchestra.config import RoleConfig, load_app_config
 from orchestra.harnesses import OpenCodeHarness, WorkerProcess, WorkerRequest
 from orchestra.harnesses.common import (
     ORCHESTRA_DISPATCH_BUDGET_ENV,
@@ -13,6 +13,7 @@ from orchestra.harnesses.common import (
     render_worker_prompt,
 )
 
+ROOT_PROMPTS = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml").prompts
 
 @pytest.fixture
 def worker_request(tmp_path: Path) -> WorkerRequest:
@@ -24,6 +25,7 @@ def worker_request(tmp_path: Path) -> WorkerRequest:
         acceptance_target="Return a short status report.",
         timeout_seconds=30,
         log_path=tmp_path / "logs" / "worker.jsonl",
+        prompts=ROOT_PROMPTS,
     )
 
 
@@ -181,6 +183,7 @@ def test_opencode_harness_start_passes_process_group_flag(
         acceptance_target="",
         timeout_seconds=30,
         log_path=None,
+        prompts=ROOT_PROMPTS,
     )
 
     worker: WorkerProcess = harness.start(worker_request, role)

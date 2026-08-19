@@ -7,29 +7,21 @@ import pytest
 from orchestra.config import (
     DEFAULT_AUTO_RETURN,
     DEFAULT_GLOBAL_CONCURRENCY,
-    DEFAULT_HOST_HELP,
     DEFAULT_LOG_DIR,
     DEFAULT_PER_SESSION_CONCURRENCY,
-    DEFAULT_RETURN_FORMAT,
     DEFAULT_STATE_DIR,
-    DEFAULT_STATUS_ACTION_DESCRIPTION,
-    DEFAULT_STATUS_DESCRIPTION,
-    DEFAULT_STATUS_LIMIT_DESCRIPTION,
-    DEFAULT_STATUS_ROLE_DESCRIPTION,
-    DEFAULT_STATUS_RUN_ID_DESCRIPTION,
-    DEFAULT_STATUS_SETTING_DESCRIPTION,
-    DEFAULT_STATUS_VALUE_DESCRIPTION,
-    DEFAULT_TOOL_DESCRIPTION,
-    DEFAULT_TOOL_GOAL_DESCRIPTION,
-    DEFAULT_TOOL_PROMPT_GUIDELINES,
-    DEFAULT_TOOL_PROMPT_SNIPPET,
-    DEFAULT_TOOL_ROLE_DESCRIPTION,
     ConfigError,
     load_agent_catalog,
     load_app_config,
     resolve_agent_catalog_path,
     resolve_config_path,
 )
+
+ROOT_PROMPTS = Path(__file__).resolve().parents[1] / "prompts.yaml"
+
+
+def write_root_prompts(path: Path) -> None:
+    path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
 
 
 def test_resolve_config_paths_prefer_explicit_then_env_then_pi_global_then_cwd(
@@ -101,7 +93,7 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     path.write_text("default_timeout: 600\n", encoding="utf-8")
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    write_root_prompts(prompts_path)
 
     config = load_app_config(path)
 
@@ -112,18 +104,8 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.auto_return is DEFAULT_AUTO_RETURN
     assert config.turn_limit is None
     assert config.soft_timeout is None
-    assert config.prompts.tool_description == DEFAULT_TOOL_DESCRIPTION
-    assert config.prompts.tool_prompt_snippet == DEFAULT_TOOL_PROMPT_SNIPPET
-    assert config.prompts.tool_prompt_guidelines == DEFAULT_TOOL_PROMPT_GUIDELINES
-    assert config.prompts.tool_goal_description == DEFAULT_TOOL_GOAL_DESCRIPTION
-    assert config.prompts.tool_role_description == DEFAULT_TOOL_ROLE_DESCRIPTION
-    assert config.prompts.status_description == DEFAULT_STATUS_DESCRIPTION
-    assert config.prompts.status_action_description == DEFAULT_STATUS_ACTION_DESCRIPTION
-    assert config.prompts.status_limit_description == DEFAULT_STATUS_LIMIT_DESCRIPTION
-    assert config.prompts.status_run_id_description == DEFAULT_STATUS_RUN_ID_DESCRIPTION
-    assert config.prompts.status_role_description == DEFAULT_STATUS_ROLE_DESCRIPTION
-    assert config.prompts.status_setting_description == DEFAULT_STATUS_SETTING_DESCRIPTION
-    assert config.prompts.status_value_description == DEFAULT_STATUS_VALUE_DESCRIPTION
+    assert config.prompts.tool_description
+    assert config.prompts.host_help
 
 
 def test_load_app_config_expands_tilde_paths(
@@ -140,7 +122,7 @@ def test_load_app_config_expands_tilde_paths(
         "default_timeout: 600\nstate_dir: ~/orchestra/state\nlog_dir: ~/orchestra/logs\n",
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    write_root_prompts(prompts_path)
 
     config = load_app_config(path)
 
@@ -148,66 +130,44 @@ def test_load_app_config_expands_tilde_paths(
     assert config.log_dir == home / "orchestra" / "logs"
 
 
-def test_default_host_help_uses_generic_session_wording() -> None:
+def test_root_host_help_uses_generic_session_wording() -> None:
+    config = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml")
+
     assert (
         "/orch on                           Load the orchestra orchestrator skill"
-        in DEFAULT_HOST_HELP
+        in config.prompts.host_help
     )
-    assert (
-        "/orch do <request>                 Dispatch a subagent"
-        in DEFAULT_HOST_HELP
-    )
-    assert "Pi session" not in DEFAULT_HOST_HELP
-    assert "Configured roles" not in DEFAULT_HOST_HELP
-    assert "Default:" not in DEFAULT_HOST_HELP
-    assert "  ✓  " not in DEFAULT_HOST_HELP
-    assert "  D  " not in DEFAULT_HOST_HELP
+    assert "/orch do <request>                 Dispatch a subagent" in config.prompts.host_help
+    assert "Pi session" not in config.prompts.host_help
+    assert "Configured roles" not in config.prompts.host_help
+    assert "Default:" not in config.prompts.host_help
+    assert "  ✓  " not in config.prompts.host_help
+    assert "  D  " not in config.prompts.host_help
 
 
-def test_default_tool_guidance_keeps_orchestrator_context_clean() -> None:
+def test_root_tool_guidance_enforces_orchestrator_boundaries() -> None:
+    prompts = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml").prompts
+
     for expected in (
-        "Use orch_dispatch as the default way",
-        "inspect the whole request",
-        "Call orch_dispatch once per slice",
-        "make multiple calls",
-        "Always dispatch all currently unblocked, independent slices in parallel",
-        "Parallel write slices must own separate files or resources",
-        "Keep dependency-bound work in order",
-        "immediately dispatch every newly unblocked slice",
-        "self-contained brief",
-        "artifact references",
-        "recommended next step",
-        "Omit role when no specialized enabled role is a better match",
-        "parent owns decomposition, sequencing, user decisions, approvals",
-        "Completed worker reports return automatically",
-        "Use orch_status for status/control",
+        "For any non-orchestration work, call orch_dispatch",
+        "does not perform research, implementation, debugging, testing",
+        "Dispatch transfers ownership",
+        "must not run duplicate commands",
+        "Trust successful subagent returns",
+        "Do not double-test",
+        "Do not poll",
+        "Do not call orch_status unless the user explicitly asks",
         "{roles}",
     ):
-        assert expected in DEFAULT_TOOL_DESCRIPTION
-    assert DEFAULT_TOOL_PROMPT_SNIPPET == "Use Orchestra tools to delegate work."
-    assert DEFAULT_TOOL_PROMPT_GUIDELINES == (
-        "Follow the shared orch_dispatch and orch_status descriptions.",
-    )
-    assert DEFAULT_TOOL_GOAL_DESCRIPTION == (
-        "One small worker slice: goal, exact scope, stop condition, and return shape."
-    )
-    assert "enabled role that best matches" in DEFAULT_TOOL_ROLE_DESCRIPTION
-    assert "no specialized enabled role is a better match" in (
-        DEFAULT_TOOL_ROLE_DESCRIPTION
-    )
-    for expected in (
-        "status for active workers",
-        "history for completed worker results",
-        "roles for available read-only role information",
-        "stop with a runId",
-        "Use orch_dispatch to start work",
-        "Completed worker reports return automatically",
-    ):
-        assert expected in DEFAULT_STATUS_DESCRIPTION
-    assert "runId" in DEFAULT_STATUS_ACTION_DESCRIPTION
-    assert "read-only" in DEFAULT_STATUS_SETTING_DESCRIPTION
-    assert "artifact implications" in DEFAULT_RETURN_FORMAT
-    assert "recommended next step" in DEFAULT_RETURN_FORMAT
+        assert expected in prompts.tool_description
+    assert "Use orch_status for status/control" not in prompts.tool_description
+    assert "should normally" not in prompts.tool_description
+    assert "plans and dispatches only" in prompts.tool_prompt_snippet
+    assert any("Do not perform delegated work" in item for item in prompts.tool_prompt_guidelines)
+    assert "artifact implications" in prompts.default_return_format
+    assert "recommended next step" in prompts.default_return_format
+    assert "Use orch_status only when the user explicitly asks" in prompts.status_description
+    assert "Do not poll" in prompts.status_description
 
 
 @pytest.mark.parametrize(
@@ -229,7 +189,7 @@ def test_load_app_config_keeps_yaml_native_boolean_parsing(
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     path.write_text(f"default_timeout: 30\nauto_return: {raw_value}\n", encoding="utf-8")
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    write_root_prompts(prompts_path)
 
     config = load_app_config(path)
 
@@ -242,7 +202,7 @@ def test_load_app_config_missing_default_timeout_raises_config_error(
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     path.write_text("{}\n", encoding="utf-8")
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    write_root_prompts(prompts_path)
 
     with pytest.raises(ConfigError, match="'default_timeout' is required"):
         load_app_config(path)
@@ -263,7 +223,7 @@ def test_load_app_config_rejects_zero_and_negative_default_timeout(
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     path.write_text(f"default_timeout: {raw_value}\n", encoding="utf-8")
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    write_root_prompts(prompts_path)
 
     with pytest.raises(ConfigError, match="'default_timeout' must be a positive integer"):
         load_app_config(path)
@@ -273,7 +233,7 @@ def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     path.write_text("default_timeout: 120\n", encoding="utf-8")
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    write_root_prompts(prompts_path)
 
     config = load_app_config(path)
 
@@ -394,10 +354,13 @@ def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
     prompts_path.write_text(
         """
 default_return_format: Custom return.
+tool_description: Custom tool description.
+tool_prompt_snippet: Custom prompt snippet.
 tool_prompt_guidelines:
   - Custom guideline.
-host_help: Custom help {roles}
-budget_exceeded_prompt: Custom budget handoff.
+tool_goal_description: Custom goal.
+tool_role_description: Custom role.
+tool_task_label_description: Custom label.
 status_description: Custom status description.
 status_action_description: Custom action description.
 status_limit_description: Custom limit description.
@@ -405,6 +368,8 @@ status_run_id_description: Custom run id description.
 status_role_description: Custom role description.
 status_setting_description: Custom setting description.
 status_value_description: Custom value description.
+host_help: Custom help {roles}
+budget_exceeded_prompt: Custom budget handoff.
 """.lstrip(),
         encoding="utf-8",
     )
@@ -414,7 +379,12 @@ status_value_description: Custom value description.
     assert config.turn_limit == 7
     assert config.soft_timeout == 20
     assert config.prompts.default_return_format == "Custom return."
+    assert config.prompts.tool_description == "Custom tool description."
+    assert config.prompts.tool_prompt_snippet == "Custom prompt snippet."
     assert config.prompts.tool_prompt_guidelines == ("Custom guideline.",)
+    assert config.prompts.tool_goal_description == "Custom goal."
+    assert config.prompts.tool_role_description == "Custom role."
+    assert config.prompts.tool_task_label_description == "Custom label."
     assert config.prompts.host_help == "Custom help {roles}"
     assert config.prompts.budget_exceeded_prompt == "Custom budget handoff."
     assert config.prompts.status_description == "Custom status description."
@@ -424,6 +394,52 @@ status_value_description: Custom value description.
     assert config.prompts.status_role_description == "Custom role description."
     assert config.prompts.status_setting_description == "Custom setting description."
     assert config.prompts.status_value_description == "Custom value description."
+
+
+def test_load_app_config_rejects_missing_prompt_values(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text("default_timeout: 30\n", encoding="utf-8")
+    prompts_path.write_text("default_return_format: ok\n", encoding="utf-8")
+
+    with pytest.raises(
+        ConfigError, match="prompts.yaml is missing required prompt 'tool_description'"
+    ):
+        load_app_config(path)
+
+
+def test_load_app_config_rejects_empty_prompt_values(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text("default_timeout: 30\n", encoding="utf-8")
+    prompts_path.write_text(
+        """
+default_return_format: ok
+tool_description: ''
+tool_prompt_snippet: ok
+tool_prompt_guidelines:
+  - ok
+tool_goal_description: ok
+tool_role_description: ok
+tool_task_label_description: ok
+status_description: ok
+status_action_description: ok
+status_limit_description: ok
+status_run_id_description: ok
+status_role_description: ok
+status_setting_description: ok
+status_value_description: ok
+host_help: ok
+budget_exceeded_prompt: ok
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ConfigError,
+        match="'tool_description' must be a non-empty string when provided",
+    ):
+        load_app_config(path)
 
 
 def test_load_agent_catalog_supports_optional_fields(tmp_path: Path) -> None:

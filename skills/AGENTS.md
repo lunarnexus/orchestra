@@ -19,7 +19,7 @@ For substantial skill creation or refactoring, use `skills/skill-author/SKILL.md
 - Avoid negative-space documentation. Describe the intended behavior, not every behavior to avoid.
 - If a failure path matters, make it deterministic: what to do first, what to do once, and when to stop.
 - Do not give an agent permission to absorb another role’s work as a fallback.
-- Keep role boundaries sharp: planner plans, researcher researches, builder builds, reviewer checks.
+- Keep role boundaries sharp: planner plans, researcher researches, builder builds, verifier verifies acceptance, reviewer reviews quality, appsec reviews security.
 - Make task slicing explicit. A slice should be small, executable, scoped, and independently checkable.
 - Use exact words for important concepts and repeat them consistently across skills.
 - Use compact anchors the model understands: tight loop, tracer bullet, root cause, regression test, blocker, acceptance criteria.

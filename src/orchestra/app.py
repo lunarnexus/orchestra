@@ -573,7 +573,10 @@ def format_started_run(started: StartedRun) -> str:
 
 def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
     role_text = f" {role}" if role else ""
-    return f"orchestra dispatched:{role_text} {run_id}"
+    return (
+        f"orchestra dispatched:{role_text} {run_id}\n"
+        "subagent will auto-return when finished. Do not poll while waiting."
+    )
 
 
 def _format_concurrency_limit_error(

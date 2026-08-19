@@ -52,42 +52,6 @@ _BUDGET_STATES_LOCK = threading.Lock()
 _ORCH_ON_ACTIVE_SESSIONS: set[str] = set()
 _ORCH_ON_ACTIVE_SESSIONS_LOCK = threading.Lock()
 
-_FALLBACK_TOOL_INFO = {
-    "description": (
-        "Use orch_dispatch as the default for detailed work. Inspect the whole "
-        "request, call it once per slice, and always dispatch all unblocked "
-        "independent slices in parallel. Keep writes file-disjoint and dependencies "
-        "in order. Prefer artifact-first handoffs and compact returns. Choose "
-        "the best matching role; the orchestrator owns decisions, approvals, "
-        "artifacts, and synthesis."
-    ),
-    "promptSnippet": "Use Orchestra tools to delegate work.",
-    "promptGuidelines": [
-        "Follow the shared orch_dispatch and orch_status descriptions."
-    ],
-    "goalDescription": (
-        "One worker slice: goal, exact scope, stop condition, and return shape."
-    ),
-    "roleDescription": (
-        "Optional worker capability; choose the best matching enabled role."
-    ),
-    "taskLabelDescription": "Optional short request label.",
-    "statusDescription": (
-        "Use orch_status for status, completed results, read-only roles, setup/help, "
-        "activation, and stopping an owned run. Use orch_dispatch to start work; "
-        "completed reports return automatically."
-    ),
-    "statusActionDescription": (
-        "Action: help, doctor, roles, status, history, on, or stop; stop requires runId."
-    ),
-    "statusLimitDescription": "Optional positive history limit for action=history.",
-    "statusRunIdDescription": "Required run id when action=stop.",
-    "statusRoleDescription": (
-        "Reserved for compatibility; action=roles lists all configured roles."
-    ),
-    "statusSettingDescription": "Reserved; model-callable roles are read-only.",
-    "statusValueDescription": "Reserved; model-callable roles are read-only.",
-}
 _ORCH_COMMAND_ARGS_HINT = (
     "help | on | do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal> | "
     "roles ... | status | stop <run-id> | doctor | history [LIMIT]"
@@ -259,16 +223,15 @@ def _run_orchestra(
 
 
 def _load_tool_info() -> dict[str, Any]:
+    error = "failed to load orch_dispatch and orch_status metadata from orchestra _tool-info"
     result = _run_orchestra(["_tool-info"])
     if result.returncode != 0 or not result.stdout.strip():
-        return dict(_FALLBACK_TOOL_INFO)
+        raise RuntimeError(error)
     try:
         payload = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return dict(_FALLBACK_TOOL_INFO)
-    info = dict(_FALLBACK_TOOL_INFO)
-    info.update({key: payload[key] for key in info if key in payload})
-    return info
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(error) from exc
+    return payload
 
 
 def _schema(tool_info: dict[str, Any]) -> dict[str, Any]:

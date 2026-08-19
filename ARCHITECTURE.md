@@ -119,19 +119,23 @@ The packaged asset at `src/orchestra/assets/agent-catalog.yaml` mirrors root def
 Shared prompt text used by core, subagent returns, and public tool/help metadata.
 Public tool wording and parameter descriptions flow from `prompts.yaml` through
 core `_tool-info` into Pi, Hermes, and OpenCode. The common descriptions are the
-cross-host behavior contract; host-specific snippets and guidelines are minimal
-fallback reinforcement, not a second policy source. Host fallback metadata must
-remain aligned for degraded `_tool-info` paths.
+cross-host behavior contract. User-changeable prompt text must not be duplicated
+as code defaults in core or host adapters. If required prompt metadata is
+missing, empty, unavailable, or invalid, core and host adapters fail clearly
+rather than registering tools with stale fallback prose.
 
-`orch_dispatch` metadata makes subagents the default for detailed work and teaches
-lookahead decomposition: scan the whole request, make one call per slice, launch
-all currently unblocked independent slices, keep writes file-disjoint, sequence
-dependencies, and dispatch newly unblocked work as results return. It also covers
-artifact-first handoff, role selection, compact returns, and orchestrator
-integration responsibility.
-`orch_status` metadata explains status, history, read-only roles, setup/help,
-activation, and owned-run cancellation as compact diagnostic/control operations,
-not as a waiting or polling workflow.
+`orch_dispatch` metadata makes subagents mandatory for non-orchestration work
+and teaches lookahead decomposition: scan the whole request only to identify
+slices, make one call per slice, launch all currently unblocked independent
+slices, keep writes file-disjoint, sequence dependencies, and dispatch newly
+unblocked work as results return. It also covers artifact-first handoff, role
+selection, compact returns, and orchestrator integration responsibility.
+Successful subagent returns are authoritative for their assigned scope; the
+orchestrator does not double-test, re-read, re-run, or confirm delegated work.
+`orch_status` is not part of normal orchestration flow. It is exposed for
+explicit user diagnostics and control only. Dispatch remains asynchronous: the
+model-visible dispatch result acknowledges that a run was queued, while normal
+completion is delivered by the consolidated auto-return path.
 
 ## Roles and skills
 
@@ -197,6 +201,13 @@ documentation. Subagents inspect them as task context and return evidence,
 documentation implications, and proposed wording without editing documentation.
 Active skills should put long-lived backlog items in `ROADMAP.md`, not `PLAN.md`.
 
+Dispatch transfers ownership of the assigned slice to the subagent. The main
+session does not duplicate or confirm subagent-owned research, implementation,
+debugging, verification, review, security assessment, file inspection, command
+execution, or tests. Checker roles are capped: verifier runs one
+acceptance-evidence pass, reviewer runs one quality findings pass, and appsec
+runs one security pass for the assigned scope.
+
 ## Runtime data flow
 
 1. User or model invokes Orchestra through CLI, slash command, or host tool.
@@ -209,7 +220,7 @@ Active skills should put long-lived backlog items in `ROADMAP.md`, not `PLAN.md`
 8. Subagent completes, fails, times out, or is stopped.
 9. Core writes compact result state and full return artifact.
 10. When no active subagents remain for the owning session, core builds one minimal consolidated return report with artifact pointers.
-11. Host adapter may auto-return that report to the owning orchestrator session without model-visible polling.
+11. Host adapter may auto-return that report to the owning orchestrator session without model-visible polling or repeated active-run prompt injections.
 
 ## Session ownership
 

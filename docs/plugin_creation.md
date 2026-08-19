@@ -49,7 +49,7 @@ These features already live in Orchestra core or core CLI helpers. New plugins s
 - `help-host` — core-formatted Pi-equivalent `/orch` help.
 - `help-opencode` — core-formatted OpenCode prompt-template `/orch` help.
 - `_command-echo` — core-formatted command echo.
-- `_tool-info` — tool description, prompt snippet, guidelines, and parameter descriptions.
+- `_tool-info` — tool description, prompt snippet, guidelines, and parameter descriptions loaded from `prompts.yaml`.
 - `_role-metadata` — role and harness-config metadata for completions and tool refresh.
 - `_dispatch-ack` — core-formatted dispatch acknowledgement.
 - `_progress-message` — core-formatted progress notification text.
@@ -67,6 +67,12 @@ Plugins should forward these environment-driven core config selectors when invok
 - `ORCHESTRA_AGENT_CATALOG`
 
 Plugins should also honor `ORCHESTRA_DISPATCH_BUDGET` for dispatch-budget handling when the host adapter launches work on behalf of the current session.
+
+Plugins must not embed fallback prompt prose for model-callable tools. Adapters
+load tool metadata from core `_tool-info`. If loading fails, the adapter fails
+clearly or skips registration with an actionable error. Do not silently register
+stale descriptions, prompt snippets, role guidance, status wording, or return
+format instructions.
 
 ## Host-plugin responsibilities
 
@@ -95,7 +101,7 @@ The Pi-equivalent `orch_dispatch` contract is:
 - `role?: string`
 - `taskLabel?: string`
 
-The tool should reject identity overrides and unsupported dispatch overrides. In the current Pi model, `timeout` is not accepted by `orch_dispatch`; the configured default timeout applies. Manual `/orch do --timeout` may still be supported when the command surface exists.
+The tool should reject identity overrides and unsupported dispatch overrides. In the current Pi model, `timeout` is not accepted by `orch_dispatch`; the configured default timeout applies. Manual `/orch do --timeout` may still be supported when the command surface exists. `orch_dispatch` must remain asynchronous: return the core dispatch acknowledgement promptly, then deliver completion through the consolidated auto-return watcher.
 
 ### Slash command surface
 
@@ -124,10 +130,11 @@ A Pi-equivalent command surface includes:
 - Use `_progress-message` for per-subagent progress text.
 - Prefer non-prompt notifications for per-subagent progress.
 - Start a session-report watcher with `_await-session-report` for consolidated auto-return.
-- Deliver the returned report to the owning runtime session.
+- Deliver the returned report to the owning runtime session only when the consolidated report is available.
 - Mark delivered report run ids with `_mark-session-report-delivered` after successful delivery.
 - Release report run ids with `_release-session-report` if delivery fails after acquiring a report.
 - Derive watcher timeout from the effective subagent timeout plus host margin.
+- Do not inject repeated prompt/user messages merely because active subagents still exist; active-run visibility belongs in status UI or explicit diagnostics.
 
 ### Lifecycle cleanup
 

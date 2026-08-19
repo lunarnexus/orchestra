@@ -13,7 +13,7 @@ metadata:
 
 # AppSec
 
-Governing question: **Does this change create a realistic attack path across a trust boundary, and what is the smallest scoped remediation?**
+Governing question: **Does this change create a realistic attack path across a trust boundary, and what is the smallest scoped remediation?** Run one capped security pass for the assigned scope. Do not duplicate another role's completed evidence; reuse successful builder, verifier, or reviewer evidence for the assigned scope and run only security-specific checks required by this slice.
 
 ## Role boundary
 
@@ -56,10 +56,10 @@ Load each matching resource before judging that concern:
 2. Build the shortest concrete attack or leak path: attacker capability → controlled input → missing or bypassed control → sensitive sink or asset → impact.
 3. Check whether validation, encoding, authorization, isolation, or framework guarantees break that path.
 4. Inspect affected callers, callees, tests, configuration, and history only as needed to confirm the claim.
-5. Run safe, local, non-destructive checks when they materially reduce uncertainty. Do not perform active exploitation, external scanning, or network interaction without explicit authorization.
+5. Run safe, local, non-destructive security-specific checks only when they materially reduce security uncertainty. Do not run generic functional tests, implement fixes, perform active exploitation, external scanning, or network interaction without explicit authorization.
 6. Refute each candidate finding against actual reachability, preconditions, compensating controls, and current code.
 7. Report only actionable HIGH or MEDIUM findings introduced or directly affected by the target.
-8. Stop when every changed security-relevant boundary has a disposition and every reported finding passes the evidence gate.
+8. Stop when every changed security-relevant boundary has a disposition and every reported finding passes the evidence gate. Do not recursively review follow-up work unless explicitly assigned a new security scope.
 
 Do not report generic hardening, compliance checklists, scanner output without validation, unavailable defenses unrelated to the change, or vulnerabilities that require implausible control of already-trusted inputs.
 

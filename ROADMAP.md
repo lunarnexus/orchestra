@@ -7,21 +7,45 @@ Orchestra roadmap items are split into:
 
 ## TODO
 
-1. [ ] Document recommended frontier-orchestrator/local-subagent setup.
-   - Show how to configure enabled subagent roles for local or cheaper models in `agent-catalog.yaml`.
-   - Explain that the host/orchestrator model is independent from role models.
-   - Keep the guidance focused on reducing expensive main-session context and token use.
+1. [ ] Enforce main-agent non-duplication after dispatch.
+   - Skill and tool text now state hard boundaries: the orchestrator plans, dispatches, handles approvals/artifacts, and synthesizes only.
+   - Successful subagent returns are trusted; no parent double-testing, re-reading, re-running, or confirmation.
+   - `orch_status` is user-requested diagnostics/control only; no polling.
+   - Prompt text is YAML-owned; missing prompt metadata fails clearly instead of silently falling back to code defaults.
+   - Remaining work: live host behavioral tests with and without `/orch on`, then decide whether runtime enforcement is needed.
 
-2. [ ] Revisit subagent handoffs and artifacts.
-   - Improve handoff prompts for local/weaker subagents without bloating the parent session.
-   - Evaluate richer scoped context, artifact references, parent-context summaries, and harness-native fork behavior where supported.
-   - Keep full transcripts out of normal orchestrator context; use artifacts for verbose evidence.
+5. [x] Clarify subagent slice ownership in skills and docs.
+   - State that dispatch transfers the assigned scope to the subagent.
+   - Consume successful subagent returns directly for that scope.
+   - Route missing, failed, or blocked evidence to a smaller follow-up subagent or user decision instead of parent takeover.
 
-3. [ ] Add lightweight workflow/git coordination docs.
-   - Start with reusable workflow recipes in docs/config before building a workflow engine.
-   - Keep workflow source in skills first.
-   - Include simple status/commit guidance and conventional commit conventions.
-   - Leave PR helpers and filesystem isolation for later evidence-backed work.
+6. [ ] Prevent polling and prompt-injection loops.
+   - Keep `orch_status` as explicit user-requested diagnostics/control, not the normal wait path.
+   - Dispatch acknowledgement is plain tool/command output only: `orchestra dispatched: <role> <run-id>` plus `subagent will auto-return when finished. Do not poll while waiting.`
+   - Do not inject repeated user prompts while active subagents are running.
+   - Preserve async dispatch: `orch_dispatch` returns promptly and completion arrives through the existing automatic return path.
+   - Validate with live host end-to-end tests, not only unit/source tests.
+
+9. [ ] Centralize shared tool and response wording safely.
+   - Keep generic tool descriptions, dispatch acknowledgements, capacity hints, and failed-return next-step text in core config where useful.
+   - Do not make tests depend on exact editable prompt wording; test schema, placeholders, and runtime wiring instead.
+   - Keep host adapters thin and avoid duplicating common public strings in plugins.
+
+10. [ ] Strengthen default dispatch guidance without breaking async behavior.
+    - Orchestrator skill now reinforces dispatch-by-default and thin main-session behavior.
+    - Remaining work: update base tool descriptions without repeated injected reminders.
+    - Preserve async dispatch: `orch_dispatch` must return promptly after queuing work.
+    - Confirm changes against live Pi, Hermes, and OpenCode host flows before release.
+
+11. [ ] Reassess hard runtime enforcement after benchmarks.
+    - Consider a real runtime-backed active-subagent/delegation ledger or strict mode only after prompt/config changes are measured.
+    - Avoid in-context-only modes, ledgers, counters, or other fake enforcement constructs.
+    - Keep enforcement opt-in until behavior is proven across hosts.
+
+12. [ ] Preserve Git-tag-derived package versioning.
+    - Keep package versions derived from tags like `vMAJOR.MINOR.PATCH` via `setuptools-scm`.
+    - Keep generated version files out of source control.
+    - Verify source distributions and wheels include only intended package assets.
 
 ## Wishlist
 

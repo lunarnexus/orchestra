@@ -1,5 +1,5 @@
 # orchestra
-Orchestra is an agent-agnostic orchestration layer for dispatching sub-agents.  Originally designed for pi.dev, but works the same using lots of different harnesses as the orchestrator or sub-agent.  
+Orchestra is an agent-agnostic orchestration layer for dispatching subagents.  Originally designed for pi.dev, but works the same using lots of different harnesses as the orchestrator or subagent.
 
 ##Preamble:
 
@@ -12,9 +12,9 @@ Through a TON of research and testing, I've found that agent orchestration only 
 - specialized model roles
 - offloading tasks to local models
 
-Where Orchestra really shines, is using cheaper/local models for most or all roles.  If using an expensive model (gpt-5.6 for instance) as the main session orchestrator, and qwen3.6-27b for all other roles, I was able to measure >88% token savings on the expensive model, with little to no quality loss on the end result.  In addition, Orchestra is flexible enough to allow you to simply dispatch subagents in the background and keep working in your main session at your discretion, or use the full "/orch on" orchestration skill and follow a more structured workflow, dispatching subagents for most work items.  You can easily customize the skills, tool descriptions, session prompts, etc., so Orchestra can be used as a framework, and easily improved upon or customized depending on your workload.  
+Where Orchestra really shines, is using cheaper/local models for most or all roles.  If using an expensive model (gpt-5.6 for instance) as the main session orchestrator, and qwen3.6-27b for all other roles, I was able to measure >88% token savings on the expensive model, with little to no quality loss on the end result.  Manual use can dispatch subagents in the background while the user continues working. Structured `/orch on` mode is stricter: the main session plans, dispatches, handles approvals, updates artifacts/docs, and synthesizes returns. It does not perform delegated research, implementation, debugging, testing, verification, review, or security work. You can customize the skills, tool descriptions, session prompts, etc., so Orchestra can be used as a framework, and easily improved upon or customized depending on your workload.
 
-If you use the same model for all Orchestra roles, you can expect a measurable, but slight quality improvement, 2x-5x token consumption, and 2x-3x time to complete.  Most testing was done on orchestra-bench, my terrible, difficult to use, and even more difficult to understand test harness, (also available in the lunarnexus github repo), but it did its job.  Specific long horizon workflows that would normally cause multiple main-session context compactions see the biggest gains, but most gains were simply in quality, and rarely in total time by exploiting parallelism.  By comparison, similar quality gains were observed by setting thinking to high vs low on most models tested.  
+If you use the same model for all Orchestra roles, you can expect a measurable, but slight quality improvement, 2x-5x token consumption, and 2x-3x time to complete.  Most testing was done on orchestra-bench, my terrible, difficult to use, and even more difficult to understand test harness, (also available in the lunarnexus github repo), but it did its job.  Specific long horizon workflows that would normally cause multiple main-session context compactions see the biggest gains, but most gains were simply in quality, and rarely in total time by exploiting parallelism.  By comparison, similar quality gains were observed by setting thinking to high vs low on most models tested.
 
 The bottom line is, it seems to always be a trade-off of using more tokens and time for better quality, no matter which method you use.
 
@@ -25,7 +25,7 @@ Models used in testing:
 - gpt-5.4
 - gpt-5.5
 - gpt-5.6 sol / luna
-  
+
 **
 
 Benefits:
@@ -46,10 +46,10 @@ It gives a host agent or CLI a small, consistent way to:
 - inspect active and completed runs from a CLI or /slash command surface
 - dispatch subagents in the background, leaving your main session open and responsive for multi-tasking in casual/manual use.
 
-In structured `/orch on` workflows, the orchestrator should not duplicate subagent-owned work and should never poll for completion; runtime auto-return or explicit user diagnostics provide completion visibility.
+In structured `/orch on` workflows, the orchestrator does not duplicate subagent-owned work and never polls for completion. It trusts successful subagent returns, does not double-test or confirm delegated scopes, and calls `orch_status` only when the user explicitly asks for status/control/help. Runtime auto-return provides normal completion visibility. `orch_dispatch` stays asynchronous and returns promptly after queuing work.
 
 Agent Harness Diversity:
-Some harnesses are fast and light, some are smart but bloated.  Some burn tokens at break-neck speed, some just don't have the features you want.  Well, with Orchestra, you can use all your favorite agent harnesses for what they're good at.  Big and full featured with lots of UI bells and whistles for the orchestrator, and lightweight for coders, smart with heavy memory systems for researchers, whatever you want.  
+Some harnesses are fast and light, some are smart but bloated.  Some burn tokens at break-neck speed, some just don't have the features you want.  Well, with Orchestra, you can use all your favorite agent harnesses for what they're good at.  Big and full featured with lots of UI bells and whistles for the orchestrator, and lightweight for coders, smart with heavy memory systems for researchers, whatever you want.
 
 ## Why Orchestra?
 
@@ -69,7 +69,7 @@ Since Orchestra is harness agnostic, it isn't bogged down with the details of sk
 
 ## Key Features
 
-- Dispatch focused sub-agents from the CLI or supported host integrations.
+- Dispatch focused subagents from the CLI or supported host integrations.
 - Configure reusable subagent roles with harness, model/profile, skills, environment, and prompt additions.
 - Route subagent roles to local or cheaper models while keeping the host/orchestrator model independent.
 - Use multiple harnesses from one catalog.

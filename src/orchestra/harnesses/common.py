@@ -61,6 +61,11 @@ def worker_subprocess_env(
 
 def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:
     prompts = request.prompts
+    if prompts is None:
+        raise ValueError(
+            "WorkerRequest.prompts is required; "
+            "load prompts.yaml before building a subagent prompt"
+        )
     sections = [
         f"Role: {request.role_name}",
     ]

@@ -109,6 +109,9 @@ by offloading bounded work to local or cheaper subagents.
 | Agent-agnostic core, harness-specific connectors | Core orchestration should remain runtime-neutral; prompt shaping, argv construction, launch details, and runtime-specific behavior belong in harness connectors. | 2026-07-28 |
 | Explicit harness fallback | If a configured harness is unavailable or broken, any fallback to a default harness must be explicitly configured and observable, never silent. | 2026-07-28 |
 | Frontier orchestrator plus local subagents | Orchestra's main economic value is reducing expensive main-session work by routing bounded subagent roles to local or cheaper models. Same-model orchestration can improve quality or workflow discipline, but it is not the primary savings mode. | 2026-08-17 |
+| Subagent scope ownership | Dispatch is a hard ownership transfer. The main session plans, dispatches, handles approvals/blockers, updates project artifacts, and synthesizes returned results; it does not perform or confirm subagent-owned research, implementation, debugging, verification, review, security assessment, file inspection, command execution, or tests. Successful subagent returns are authoritative for their assigned scope. Missing, failed, blocked, timed-out, cancelled, or incomplete evidence is routed to a smaller follow-up subagent or user decision, not parent takeover. | 2026-08-19 |
+| Async completion contract | `orch_dispatch` remains asynchronous and returns promptly. Completion is delivered through consolidated auto-return or explicit user-requested diagnostic/status surfaces. The orchestrator does not poll and must not call `orch_status` unless the user explicitly asks for status, history, roles, help, doctor, activation, or stop. Do not add prompt-injection guards that re-enter the model while subagents are merely active. | 2026-08-19 |
+| Capped checker roles | Verifier, reviewer, and appsec roles run one capped pass for their assigned scope, reuse existing evidence where appropriate, and avoid duplicate broad test/review loops unless explicitly assigned distinct evidence. | 2026-08-19 |
 
 ## Technology Stack
 
@@ -538,6 +541,14 @@ independent judgment remains independent. Available configured roles and their r
 host adapters stay consistent. Host-specific prompt snippets remain minimal and
 must not carry behavior absent from the common descriptions.
 
+Dispatch transfers scope ownership for the assigned target. While a subagent owns
+files, commands, or acceptance criteria, the main session must not inspect,
+debug, test, review, or otherwise perform that delegated work. It may dispatch
+non-overlapping work, handle user decisions, update artifacts from existing
+evidence, or wait for the automatic return. Failed, blocked, timed-out,
+cancelled, or explicitly incomplete results should be followed by a smaller
+subagent slice or a user decision, not parent-session takeover.
+
 ### Main-Session Orchestration Mode and Skills
 
 The main session is the orchestrator brain. It owns planning, sequencing,
@@ -608,6 +619,9 @@ Core-formatted dispatch acknowledgement:
 orchestra dispatched: <run-id>
 ```
 
+This acknowledgement is the immediate asynchronous dispatch result. It must not
+be replaced by a blocking wait for the final report.
+
 Core-formatted Pi progress notification, when the host supports notification-only
 updates:
 
@@ -661,6 +675,12 @@ the project:
 Avoid hidden `.orchestra` directories for this project’s default install.
 
 ### Configuration and Install
+
+All user-changeable prompt text lives in `prompts.yaml`. Core and host adapters
+must not carry silent fallback prompt prose for model-callable tools, host help,
+subagent return formats, or budget handoff text. Missing, empty, unavailable, or
+invalid prompt metadata fails clearly with an actionable configuration error
+instead of substituting built-in prompt text.
 
 Editable default Orchestra config for this checkout lives in the repo root:
 

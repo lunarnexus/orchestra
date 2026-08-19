@@ -288,7 +288,8 @@ Decision:
 - The main-session skill is named `orchestrator`.
 - `/orch on` injects the `orchestrator` skill into the main session once.
 - `/orch off` is deferred.
-- Use the same host message injection style as worker return prompts. In Pi, this means `sendUserMessage(..., { deliverAs: "followUp", triggerTurn: true })` or equivalent host API.
+- Use the same host message injection style as consolidated subagent return prompts. In Pi, this means `sendUserMessage(..., { deliverAs: "followUp", triggerTurn: true })` or equivalent host API after the final active subagent for that session returns.
+- Do not inject repeated active-subagent guard prompts; active-run visibility belongs in status UI or explicit diagnostics.
 - Repeated or compaction-aware reinjection is deferred until evidence shows it is needed.
 
 Possible structure:

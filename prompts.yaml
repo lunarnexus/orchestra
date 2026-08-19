@@ -4,33 +4,45 @@ default_return_format: >-
   results, blockers, risks, artifact implications, and the recommended next
   step. Clearly separate completed work from proposed follow-up.
 tool_description: >-
-  Use orch_dispatch as the default way to perform research, planning,
-  implementation, debugging, testing, verification, review,
-  security assessment, and follow-up work using subagents. Before starting work, inspect the
-  whole request and identify every slice that can be assigned to a subagent. Call
-  orch_dispatch once per slice and make multiple calls when several slices are
-  available and do not conflict or depend on each other.  Always dispatch all currently unblocked, independent slices in
-  parallel before continuing parent work; do not wait for one independent subagent
-  before dispatching the others. Read-only research, independent analysis, and
-  independent reviews should normally run in parallel. Parallel write slices
-  must own separate files or resources. Keep dependency-bound work in order:
-  dispatch required research before dependent planning or design, implementation
-  after the evidence or plan it depends on is available, and verification,
-  review, and security assessment after the relevant implementation exists.
-  After subagents return, reassess the remaining work and immediately dispatch
-  every newly unblocked slice. Give each subagent a self-contained brief with one
-  goal, exact scope, relevant context and artifact references, boundaries, stop
-  condition, and expected return. Ask for concrete evidence, artifact
-  implications, and a recommended next step. Choose the enabled role that best
-  matches the slice. Omit role when no specialized enabled role is a better match
-  than the default.
-  The parent owns decomposition, sequencing, user
-  decisions, approvals, artifact alignment, synthesis, and final judgment.
-  Subagents perform the detailed work and return compact results. Completed subagent reports return automatically; continue other useful orchestration work instead
-  of polling. Use orch_status for status/control. {roles}
-tool_prompt_snippet: Use Orchestra tools to delegate work.
+  For any non-orchestration work, call orch_dispatch. The orchestrator session
+  does not perform research, implementation, debugging, testing, verification,
+  review, security assessment, or detailed follow-up work itself. The
+  orchestrator session only decomposes requests, plans slices, sequences
+  dispatches, handles user decisions and approvals, updates project artifacts and
+  documentation, and synthesizes returned results.
+
+  Inspect the whole request only to identify dispatch slices, dependencies,
+  blockers, and approval needs. Dispatch one subagent per slice. Dispatch every
+  currently unblocked independent slice before doing anything else. Keep
+  dependency order strict: research before dependent design, implementation
+  after approved plan/evidence, verification after implementation, review after
+  coherent change, and appsec after security-relevant change exists.
+
+  Dispatch transfers ownership of the assigned scope to the subagent. While a
+  subagent owns a scope, the orchestrator must not read, grep, inspect, edit,
+  debug, test, verify, review, or security-assess that scope. The orchestrator
+  must not run duplicate commands or repeat checks that a subagent already ran.
+  Trust successful subagent returns for their assigned scope. Do not double-test,
+  re-read, or confirm successful subagent work. If evidence is missing, failed,
+  blocked, timed out, cancelled, or explicitly incomplete, dispatch a smaller
+  follow-up subagent or ask the user for the blocking decision. Do not take over
+  the work.
+
+  Give each subagent a self-contained brief with one goal, exact scope,
+  boundaries, artifact references, stop condition, and compact return format.
+  Choose the enabled role matching the slice. Use distinct roles for research,
+  implementation, verification, review, and appsec when those gates are needed.
+  Completed subagent reports return automatically. Do not poll. Do not call
+  orch_status unless the user explicitly asks for status, history, roles, help,
+  doctor, activation, or stop. {roles}
+tool_prompt_snippet: >-
+  The orchestrator session plans and dispatches only; subagents perform all
+  non-orchestration work.
 tool_prompt_guidelines:
-  - Follow the shared orch_dispatch and orch_status descriptions.
+  - Do not perform delegated work in the orchestrator session.
+  - Trust successful subagent returns; do not double-test, re-read, rerun, or confirm their assigned scope.
+  - Do not call orch_status unless the user explicitly asks for a status/control/help action.
+  - If a result is missing, failed, blocked, timed out, cancelled, or incomplete, dispatch a smaller follow-up or ask for the blocking decision.
 tool_goal_description: >-
   One small subagent slice: goal, exact scope, stop condition, and return shape.
 tool_role_description: >-
@@ -40,13 +52,12 @@ tool_role_description: >-
   verification, review, and security judgment. {roles}
 tool_task_label_description: Optional short request label.
 status_description: >-
-  Use orch_status to inspect and control Orchestra for the current session. Use
-  status for active subagents, history for completed subagent results, roles for
-  available read-only role information, doctor for setup checks, help for usage,
-  on to activate Orchestra orchestration guidance, and stop with a runId to
-  cancel an owned active run. Use orch_dispatch to start work. Completed subagent
-  reports return automatically, so continue other useful work instead of
-  repeatedly checking status.
+  Use orch_status only when the user explicitly asks for an Orchestra
+  status/control/help action in the current session. Use status for active
+  subagents, history for completed subagent results, roles for read-only role
+  information, doctor for setup checks, help for usage, on to activate Orchestra
+  orchestration guidance, and stop with a runId to cancel an owned active run.
+  Do not poll for completion. Completed subagent reports return automatically.
 status_action_description: >-
   Action to perform: help, doctor, roles, status, history, on, or stop. Use stop
   only with a runId for an active run owned by the current host session.
