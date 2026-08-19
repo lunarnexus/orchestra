@@ -60,9 +60,3 @@ Orchestra roadmap items are split into:
 
 5. [ ] Operational maintenance tooling.
    - Covers metrics/exporters, import/export bundles, richer transcript/session handles, and retention/prune commands for DB rows, JSONL logs, return artifacts, and harness session logs.
-
-6. [ ] Runtime active-subagent enforcement.
-   - Explore opt-in strict mode after prompt and acknowledgement behavior is benchmarked.
-   - When structured orchestration is active and subagents own scopes, host/runtime guards may block main-session tool use that duplicates delegated work.
-   - Preserve user diagnostics, cancellation, approvals, and non-overlapping dispatch.
-   - Keep enforcement scope-aware where host APIs expose enough context; avoid broad blocking that prevents useful orchestration decisions.

@@ -163,30 +163,31 @@ def test_asset_tool_guidance_keeps_orchestrator_context_clean() -> None:
     tool_description = prompts["tool_description"]
     status_description = prompts["status_description"]
     for expected in (
-        "Use orch_dispatch for all scoped work",
-        "The orchestrator plans, prepares artifacts",
-        "Subagents inspect sources, implement, debug, test, verify",
+        "Use orch_dispatch as the default way",
         "inspect the whole request",
         "Call orch_dispatch once per slice",
         "make multiple calls",
         "Always dispatch all currently unblocked, independent slices in parallel",
         "Parallel write slices must own separate files or resources",
         "Keep dependency-bound work in order",
-        "artifact-first handoff",
-        "Calling orch_dispatch transfers ownership",
-        "Trust returned subagent results",
-        "Specialist caps",
-        "Verifiers run only missing, distinct, or adversarial checks",
-        "Subagent reports return automatically",
-        "Status/history are explicit diagnostic/control tools",
+        "immediately dispatch every newly unblocked slice",
+        "Prefer artifact-first",
+        "artifact path",
+        "recommended next step",
+        "Omit role when no specialized enabled role is a better match",
+        "orchestrator owns decomposition, sequencing, user decisions, approvals",
+        "Completed subagent reports return automatically",
+        "do not finalize while any dispatched subagent is still active",
+        "Before final response, ensure all dispatched subagents are terminal",
+        "use orch_status only for explicit status/control needs",
         "{roles}",
     ):
         assert expected in tool_description
     assert prompts["tool_prompt_snippet"] == "Use Orchestra tools to delegate work."
     assert prompts["tool_prompt_guidelines"] == [
         "Follow the shared orch_dispatch and orch_status descriptions.",
-        "After dispatch, wait for automatic subagent returns for transferred scopes; "
-        "use orch_status only for explicit status/control needs.",
+        "Never provide a final answer while dispatched subagents are still active; "
+        "wait for their reports and use orch_status only for explicit status/control needs.",
     ]
     assert prompts["tool_goal_description"] == (
         "One small subagent slice: goal, exact scope, stop condition, and return shape."
@@ -206,9 +207,6 @@ def test_asset_tool_guidance_keeps_orchestrator_context_clean() -> None:
     assert "read-only" in prompts["status_setting_description"]
     assert "artifact path" in prompts["default_return_format"]
     assert "next required action" in prompts["default_return_format"]
-    assert "automatic subagent return" in prompts["dispatch_ack_template"]
-    assert "capacity is full" in prompts["concurrency_limit_hint"]
-    assert "targeted follow-up" in prompts["failed_return_next"]
 
 
 @pytest.mark.parametrize(
@@ -406,9 +404,6 @@ def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
             "status_role_description": "Custom role description.",
             "status_setting_description": "Custom setting description.",
             "status_value_description": "Custom value description.",
-            "dispatch_ack_template": "Custom dispatch {role_text} {run_id}",
-            "concurrency_limit_hint": "Custom capacity hint.",
-            "failed_return_next": "Custom failed next.",
         }
     )
     prompts_path.write_text(yaml.safe_dump(prompts), encoding="utf-8")
@@ -428,9 +423,6 @@ def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
     assert config.prompts.status_role_description == "Custom role description."
     assert config.prompts.status_setting_description == "Custom setting description."
     assert config.prompts.status_value_description == "Custom value description."
-    assert config.prompts.dispatch_ack_template == "Custom dispatch {role_text} {run_id}"
-    assert config.prompts.concurrency_limit_hint == "Custom capacity hint."
-    assert config.prompts.failed_return_next == "Custom failed next."
 
 
 def test_load_agent_catalog_supports_optional_fields(tmp_path: Path) -> None:

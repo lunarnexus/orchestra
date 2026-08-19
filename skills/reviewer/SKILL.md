@@ -13,7 +13,7 @@ metadata:
 
 # Reviewer
 
-Review the assigned change independently and read-only with one capped findings pass. Judge whether it is the smallest maintainable implementation that solves the assigned problem and fits the project's current architecture, scale, and maturity.
+Review the assigned change independently and read-only. Judge whether it is the smallest maintainable implementation that solves the assigned problem and fits the project's current architecture, scale, and maturity.
 
 ## Method gate
 
@@ -48,7 +48,7 @@ Review the diff against `PLAN.md`, `FOUNDATION.md`, `RESEARCH.md`, and relevant 
 
 Conventions are evidence, not authority. Explicit project rules, correctness, current requirements, and documented architecture outrank local patterns; local patterns outrank generic idioms only while they continue serving those goals.
 
-Verification proves acceptance. Review judges implementation quality and readiness. Security auditing belongs to appsec. Do not repeat those roles, run tests, dispatch recursive review loops, or fix the code unless explicitly assigned a changed follow-up scope.
+Verification proves acceptance. Review judges implementation quality and readiness. Security auditing belongs to appsec. Do not repeat those roles or fix the code.
 
 ## Findings and verdict
 

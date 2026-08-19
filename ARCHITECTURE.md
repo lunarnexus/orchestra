@@ -116,19 +116,19 @@ The packaged asset at `src/orchestra/assets/agent-catalog.yaml` mirrors root def
 
 ### `prompts.yaml`
 
-Shared prompt text used by core, subagent returns, tool-response hints, and
-public tool/help metadata. Public tool wording and parameter descriptions flow
-from `prompts.yaml` through core `_tool-info` into Pi, Hermes, and OpenCode. The
-common descriptions are the cross-host behavior contract; host-specific snippets
-and guidelines are minimal fallback reinforcement, not a second policy source.
-Host fallback metadata must remain aligned for degraded `_tool-info` paths.
+Shared prompt text used by core, subagent returns, and public tool/help metadata.
+Public tool wording and parameter descriptions flow from `prompts.yaml` through
+core `_tool-info` into Pi, Hermes, and OpenCode. The common descriptions are the
+cross-host behavior contract; host-specific snippets and guidelines are minimal
+fallback reinforcement, not a second policy source. Host fallback metadata must
+remain aligned for degraded `_tool-info` paths.
 
-`orch_dispatch` metadata makes subagents the owner of all scoped work and teaches
+`orch_dispatch` metadata makes subagents the default for detailed work and teaches
 lookahead decomposition: scan the whole request, make one call per slice, launch
 all currently unblocked independent slices, keep writes file-disjoint, sequence
 dependencies, and dispatch newly unblocked work as results return. It also covers
-artifact-first handoff, hard scope transfer, role selection, specialist caps,
-compact returns, and orchestrator integration responsibility.
+artifact-first handoff, role selection, compact returns, and orchestrator
+integration responsibility.
 `orch_status` metadata explains status, history, read-only roles, setup/help,
 activation, and owned-run cancellation as compact diagnostic/control operations,
 not as a waiting or polling workflow.

@@ -100,9 +100,8 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
     with pytest.raises(
         AppError,
         match=(
-            rf"{failure_message}; Dispatch was not accepted because capacity is full\. "
-            rf"Wait for active subagent returns, then dispatch the next ready slice\.\n"
-            rf"session_id: manual:test-session\nactive_runs: 1/1\n"
+            rf"{failure_message}; dispatch was not accepted; wait for current workers to return, "
+            rf"then re-dispatch\.\nsession_id: manual:test-session\nactive_runs: 1/1\n"
             rf"global_active_runs: 1/1"
         ),
     ):
@@ -710,11 +709,7 @@ def test_internal_dispatch_ack_includes_role(capsys: pytest.CaptureFixture[str])
 
     output = capsys.readouterr().out
     assert exit_code == 0
-    assert output.strip() == (
-        "orchestra dispatched: critic abc123\n"
-        "Next: wait for the automatic subagent return. The subagent owns this scope.\n"
-        "You may dispatch other independent slices now; otherwise wait."
-    )
+    assert output.strip() == "orchestra dispatched: critic abc123"
 
 
 def test_internal_progress_message_includes_role(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1385,7 +1380,7 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert "  ✗  critic" not in tool_info["description"]
     assert "  ✗  critic" not in tool_info["roleDescription"]
     assert tool_info["statusDescription"].startswith(
-        "Use orch_status for explicit user-requested diagnostics"
+        "Use orch_status to inspect and control Orchestra for the current session."
     )
     assert "orch_dispatch to start work" in tool_info["statusDescription"]
     assert "Completed subagent reports return automatically" in tool_info[

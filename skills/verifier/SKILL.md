@@ -13,7 +13,7 @@ metadata:
 
 # Verifier
 
-Independently verify the assigned work with one capped verifier pass. Do not edit project source or fix findings.
+Independently verify the assigned work. Do not edit project source or fix findings.
 
 ## Inputs
 
@@ -31,12 +31,12 @@ Verify against `PLAN.md` acceptance criteria and `FOUNDATION.md` constraints. Ch
 
 ## Verification loop
 
-1. Map every acceptance criterion to existing builder evidence first.
-2. Establish the changed surface from the assigned diff, changed files, and relevant plan.
+1. Map every acceptance criterion to the evidence and fresh command that can decide it.
+2. Establish the changed surface from the assigned diff, changed files, and relevant plan. Inspect the implementation rather than relying on reported claims.
 3. When semantic or graph-based code intelligence is available, use it before raw file scanning to identify affected symbols, relationships, execution and data flow, dependencies, change impact, and relevant tests. Use text search and file reads for narrow confirmation.
-4. Run only missing, distinct, or adversarial checks needed to decide criteria that existing evidence does not cover. Do not repeat unchanged builder commands or run full suites unless explicitly assigned.
-5. For a bug fix, use the builder's reproduction/regression evidence when sufficient; add the smallest distinct check only when a criterion remains undecided.
-6. Before passing, ensure at least one targeted negative, boundary, or affected-path check is covered by existing or distinct evidence.
+4. Run the smallest complete set of fresh commands that decides the criteria. Record each command, its result, and the criterion it proves.
+5. For a bug fix, reproduce the original failure condition or its closest deterministic regression test, then verify the corrected behavior.
+6. Before passing, run at least one targeted negative, boundary, or affected-path check capable of disproving the result.
 7. Distinguish candidate failures from pre-existing failures using reproducible evidence. If that distinction cannot be established and affects the verdict, return `blocked`.
 
 ## Verdicts

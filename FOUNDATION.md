@@ -443,17 +443,18 @@ long reasoning belong in return artifacts rather than normal orchestrator
 context.
 
 The common `orch_dispatch` tool description, not host-specific prompt additions,
-owns the hard delegation contract. It assigns scoped work to subagents, tells the
-orchestrator to inspect the whole request before starting, requires one tool call
-per slice, and requires all currently unblocked independent slices to be
-dispatched before orchestrator work continues. Read-only and file-disjoint slices
-run in parallel; dependency-bound work stays sequential. As results return, the
-orchestrator reassesses remaining work and dispatches newly unblocked slices. The
-orchestrator retains decomposition, user decisions, sequencing, approvals,
-project documentation and artifact edits, artifact alignment, synthesis, and
-final judgment. Subagents report evidence and documentation implications rather
-than editing project documentation. Skills provide stricter workflow phases,
-methodology, artifact gates, and role-specific process.
+owns flexible delegation behavior. It makes dispatch the default for detailed
+work, tells the orchestrator to inspect the whole request before starting,
+requires one tool call per slice, and requires all currently unblocked
+independent slices to be dispatched before orchestrator work continues. Read-only
+and file-disjoint slices run in parallel; dependency-bound work stays sequential.
+As results return, the orchestrator reassesses remaining work and dispatches
+newly unblocked slices. The orchestrator retains decomposition, user decisions,
+sequencing, approvals, project documentation and artifact edits, artifact
+alignment, synthesis, and final judgment. Subagents report evidence and
+documentation implications rather than editing project documentation. Skills
+provide stricter workflow phases, methodology, artifact gates, and role-specific
+process.
 
 ### Pi Host Extension Installation
 
@@ -528,11 +529,8 @@ launches all currently unblocked independent slices before continuing. Read-only
 or file-disjoint slices run in parallel; work with unresolved dependencies or
 overlapping resources stays sequential.
 
-The tool description is a hard orchestration contract: scoped work transfers to
-subagents, while the orchestrator plans, dispatches, sequences, handles
-user decisions/approvals, edits project documentation and standard artifacts, and
-synthesizes returned results. Role skills define how each role performs its work.
-If a role is omitted, the
+The tool description explains flexible role selection and coordination basics.
+Role skills define how each role performs its work. If a role is omitted, the
 catalog default applies; callers should choose the best matching enabled role and
 omit it when no specialized role is a better match. Research, planning,
 implementation, verification, review, and security should use distinct roles so
@@ -604,13 +602,10 @@ per-subagent progress by injecting prompt messages. Hermes per-subagent progress
 therefore intentionally disabled unless Hermes exposes a supported non-prompt
 plugin notification API.
 
-Core-formatted dispatch acknowledgement is prompt-configured in `prompts.yaml`.
-The default acknowledgement confirms scope transfer and gives the next-step hint:
+Core-formatted dispatch acknowledgement:
 
 ```text
-orchestra dispatched: <role> <run-id>
-Next: wait for the automatic subagent return. The subagent owns this scope.
-You may dispatch other independent slices now; otherwise wait.
+orchestra dispatched: <run-id>
 ```
 
 Core-formatted Pi progress notification, when the host supports notification-only
@@ -633,9 +628,8 @@ log: <log path for failed/incomplete work only>
 Successful returns omit the original request, log path, worker session, full
 stdout, diffs, and long reasoning. Failed, blocked, timed-out, or incomplete
 returns include enough compact detail to decide whether to dispatch a targeted
-follow-up or ask the user for a decision. Return next-step hints are configured in
-`prompts.yaml`. The `[truncated]` marker appears when the compact summary was cut;
-the artifact path is the durable pointer to the full subagent return.
+follow-up. The `[truncated]` marker appears when the compact summary was cut; the
+artifact path is the durable pointer to the full subagent return.
 
 The default subagent return format is compact: success returns include status,
 one-sentence summary, changed files/checks when relevant, artifact path if
