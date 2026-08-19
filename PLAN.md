@@ -33,22 +33,23 @@ Current duplicated or risky candidates:
 - Plugins currently load model-facing tool metadata through `_tool-info`, which is correct.
 - Host UI strings such as labels, toasts, completions, command registration descriptions, and host-specific session errors are adapter details and can remain local.
 
-## Proposed slices
+## Completed slices
 
-1. `sequential` — Core metadata
-   - Add shared dispatch timeout error to core `ToolInfo` or a small core helper command.
-   - Ensure `_tool-info` exposes it if used by model-callable tool schemas/adapters.
-   - Keep it out of `prompts.yaml` unless it becomes user-tunable prompt text.
+1. `done` — Core metadata
+   - Added shared dispatch timeout error to core `ToolInfo`.
+   - `_tool-info` exposes `dispatchTimeoutError` for host adapters.
+   - Kept the operational error out of `prompts.yaml`.
 
-2. `sequential` — Adapter cleanup
-   - Update Pi, Hermes, OpenCode source and packaged asset mirrors to consume the core timeout error.
-   - Remove synthesized dispatch-ack fallback prose. If `_dispatch-ack` fails, return a clear error instead of fabricating ack text.
-   - Leave native slash usage and host UI strings local.
+2. `done` — Adapter cleanup
+   - Updated Pi and OpenCode source plus packaged asset mirrors to consume core `dispatchTimeoutError`.
+   - Updated Hermes to use core `_tool-info` for the timeout error path.
+   - Removed synthesized dispatch-ack fallback prose; adapters now fail clearly if `_dispatch-ack` fails or returns empty output.
+   - Left native slash usage and host UI strings local.
 
-3. `sequential` — Tests
-   - Add/update tests proving adapters do not contain duplicated dispatch ack fallback text.
-   - Add/update tests proving timeout error comes from core metadata/helper.
-   - Keep tests focused on schema/runtime wiring, not exact editable prompt paragraphs.
+3. `done` — Tests
+   - Updated focused source tests proving adapters do not contain duplicated dispatch ack fallback text.
+   - Updated focused tests proving timeout error comes from core metadata/helper.
+   - Kept tests focused on schema/runtime wiring rather than exact editable prompt paragraphs.
 
 ## Verification
 

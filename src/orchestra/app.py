@@ -102,6 +102,11 @@ class AppError(ValueError):
     """Raised for user-facing application errors."""
 
 
+DISPATCH_TIMEOUT_ERROR = (
+    "timeout is not accepted by orch_dispatch; configured default_timeout applies."
+)
+
+
 @dataclass(frozen=True)
 class OrchestraPaths:
     config_path: Path
@@ -175,6 +180,7 @@ class ToolInfo:
     status_role_description: str
     status_setting_description: str
     status_value_description: str
+    dispatch_timeout_error: str
 
 
 @dataclass(frozen=True)
@@ -1138,6 +1144,7 @@ def tool_info(context: AppContext) -> ToolInfo:
         status_role_description=prompts.status_role_description,
         status_setting_description=prompts.status_setting_description,
         status_value_description=prompts.status_value_description,
+        dispatch_timeout_error=DISPATCH_TIMEOUT_ERROR,
     )
 
 

@@ -19,17 +19,9 @@ Orchestra roadmap items are split into:
    - Consume successful subagent returns directly for that scope.
    - Route missing, failed, or blocked evidence to a smaller follow-up subagent or user decision instead of parent takeover.
 
-6. [ ] Prevent polling and prompt-injection loops.
-   - Keep `orch_status` as explicit user-requested diagnostics/control, not the normal wait path.
-   - Dispatch acknowledgement is plain tool/command output only: `orchestra dispatched: <role> <run-id>` plus `subagent will auto-return when finished. Do not poll while waiting.`
-   - Do not inject repeated user prompts while active subagents are running.
-   - Preserve async dispatch: `orch_dispatch` returns promptly and completion arrives through the existing automatic return path.
-   - Validate with live host end-to-end tests, not only unit/source tests.
-
 9. [ ] Centralize shared tool and response wording safely.
-   - Keep generic tool descriptions, dispatch acknowledgements, capacity hints, and failed-return next-step text in core config where useful.
-   - Do not make tests depend on exact editable prompt wording; test schema, placeholders, and runtime wiring instead.
-   - Keep host adapters thin and avoid duplicating common public strings in plugins.
+   - Keep common public strings in core where useful.
+   - Keep host adapters thin and host-specific UX local.
 
 10. [ ] Strengthen default dispatch guidance without breaking async behavior.
     - Orchestrator skill now reinforces dispatch-by-default and thin main-session behavior.

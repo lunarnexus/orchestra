@@ -116,7 +116,10 @@ def test_opencode_plugin_reuses_core_tool_info_and_dispatch_budget_guard() -> No
     assert 'return orchestraDispatchBudget() !== 1;' in source
     assert 'async function loadToolInfo(): Promise<ToolInfoPayload> {' in source
     assert 'const result = await runOrchestra(["orchestra", "_tool-info"]);' in source
-    assert 'throw new Error("failed to load orch_dispatch and orch_status metadata from orchestra _tool-info");' in source
+    assert (
+        'throw new Error("failed to load orch_dispatch and orch_status metadata from '
+        'orchestra _tool-info");' in source
+    )
     assert 'const orchStatusTool = tool({' in source
     assert 'if (!canDispatchOrchestraWorker()) {' in source
     assert 'return { tool: { orch_status: orchStatusTool } };' in source
@@ -157,7 +160,12 @@ def test_opencode_plugin_executes_with_session_identity_guardrails() -> None:
     assert '"session_id"' in source
     assert '"sessionId"' in source
     assert '"orchestrator_session_id"' in source
-    assert 'timeout is not accepted by orch_dispatch; configured default_timeout applies.' in source
+    assert 'dispatchTimeoutError: string;' in source
+    assert 'throw new Error(toolInfo.dispatchTimeoutError);' in source
+    assert (
+        "timeout is not accepted by orch_dispatch; configured default_timeout applies."
+        not in source
+    )
     assert 'Object.prototype.hasOwnProperty.call(args, "timeout")' in source
     assert 'const goal = args.goal.trim();' in source
     assert 'if (!goal) {' in source
@@ -216,13 +224,9 @@ def test_opencode_plugin_executes_tokenized_dispatch_with_execfile_and_wires_del
     assert queue_call in source
     assert ack_call in source
     assert 'timeout_seconds: timeoutSeconds,' not in source
-    assert (
-        'return ack.stdout.trim() || result.stdout.trim() || '
-        '`orchestra dispatched: ${role} '
-        '${runId}`;'
-        in source
-    )
-    assert 'throw new Error(ack.stderr || "orchestra dispatch ack failed.");' not in source
+    assert 'return ack.stdout.trim();' in source
+    assert 'throw new Error(ack.stderr || "orchestra dispatch ack failed.");' in source
+    assert '`orchestra dispatched: ${role} ${runId}`' not in source
     assert 'command.join(" ")' not in source
     assert 'shell: true' not in source
     assert 'spawn(' not in source
@@ -235,39 +239,23 @@ def test_opencode_plugin_executes_tokenized_dispatch_with_execfile_and_wires_del
     run_id_pos = source.index('const runId = extractRunId(result.stdout);', execute_pos)
     queue_pos = source.index(queue_call, execute_pos)
     ack_pos = source.index(ack_call, execute_pos)
-    return_pos = source.index(
-        (
-            'return ack.stdout.trim() || result.stdout.trim() || '
-            '`orchestra dispatched: ${role} '
-            '${runId}`;'
-        ),
-        execute_pos,
-    )
+    return_pos = source.index('return ack.stdout.trim();', execute_pos)
 
     assert timeout_pos < run_id_pos < queue_pos < ack_pos < return_pos
 
 
-def test_opencode_plugin_falls_back_when_dispatch_ack_fails() -> None:
+def test_opencode_plugin_fails_when_dispatch_ack_fails() -> None:
     source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
 
     ack_call = (
         'const ack = await runOrchestra(["orchestra", "_dispatch-ack", '
         '"--run-id", runId, "--role", role]);'
     )
-    fallback_return = (
-        'return ack.stdout.trim() || result.stdout.trim() || '
-        '`orchestra dispatched: ${role} ${runId}`;'
-    )
 
     assert ack_call in source
-    assert fallback_return in source
-    assert 'throw new Error(ack.stderr || "orchestra dispatch ack failed.");' not in source
-
-    execute_pos = source.index('async execute(args, context) {')
-    ack_pos = source.index(ack_call, execute_pos)
-    fallback_pos = source.index(fallback_return, ack_pos)
-
-    assert ack_pos < fallback_pos
+    assert 'if (ack.returncode !== 0 || !ack.stdout.trim()) {' in source
+    assert 'throw new Error(ack.stderr || "orchestra dispatch ack failed.");' in source
+    assert '`orchestra dispatched: ${role} ${runId}`' not in source
 
 
 def test_opencode_plugin_uses_sparse_toasts_for_dispatch_and_failure() -> None:
@@ -451,14 +439,7 @@ def test_opencode_plugin_queues_report_delivery_in_background() -> None:
         'timeoutSeconds, runOrchestra);'
     )
     queue_pos = source.index(queue_call, execute_pos)
-    return_pos = source.index(
-        (
-            'return ack.stdout.trim() || result.stdout.trim() || '
-            '`orchestra dispatched: ${role} '
-            '${runId}`;'
-        ),
-        execute_pos,
-    )
+    return_pos = source.index('return ack.stdout.trim();', execute_pos)
 
     assert queue_pos < return_pos
 

@@ -119,6 +119,25 @@ def completed(
     return subprocess.CompletedProcess(args=args, returncode=code, stdout=stdout, stderr=stderr)
 
 
+def make_tool_info_payload() -> dict[str, Any]:
+    return {
+        "description": "dynamic description",
+        "promptSnippet": "dynamic prompt snippet",
+        "promptGuidelines": ["guideline one", "guideline two"],
+        "goalDescription": "dynamic goal",
+        "roleDescription": "dynamic role",
+        "taskLabelDescription": "dynamic label",
+        "statusDescription": "dynamic status",
+        "statusActionDescription": "dynamic action",
+        "statusLimitDescription": "dynamic limit",
+        "statusRunIdDescription": "dynamic run id",
+        "statusRoleDescription": "dynamic status role",
+        "statusSettingDescription": "dynamic status setting",
+        "statusValueDescription": "dynamic status value",
+        "dispatchTimeoutError": "dynamic timeout error",
+    }
+
+
 def test_hermes_tool_info_loads_only_from_dynamic_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     plugin = load_plugin()
     payload = {"description": "dynamic", "goalDescription": "goal", "statusDescription": "status"}
@@ -169,7 +188,13 @@ def test_hermes_plugin_registers_dispatch_tool_without_session_id_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
-    monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, code=1))
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(make_tool_info_payload()))
+        return completed(args)
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
     ctx = FakeHermesPluginContext()
 
     plugin.register(ctx)
@@ -225,6 +250,7 @@ def test_hermes_plugin_registers_orch_status_tool_with_tool_info_metadata(
         "statusRoleDescription": "dynamic status role",
         "statusSettingDescription": "dynamic status setting",
         "statusValueDescription": "dynamic status value",
+        "dispatchTimeoutError": "dynamic timeout error",
     }
     monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, json.dumps(payload)))
     ctx = FakeHermesPluginContext()
@@ -282,21 +308,7 @@ def test_hermes_orch_status_routes_session_actions_and_keeps_roles_read_only(
     plugin = load_plugin()
     calls: list[list[str]] = []
 
-    tool_info_payload = {
-        "description": "dynamic description",
-        "promptSnippet": "dynamic prompt snippet",
-        "promptGuidelines": ["guideline"],
-        "goalDescription": "dynamic goal",
-        "roleDescription": "dynamic role",
-        "taskLabelDescription": "dynamic label",
-        "statusDescription": "dynamic status",
-        "statusActionDescription": "dynamic action",
-        "statusLimitDescription": "dynamic limit",
-        "statusRunIdDescription": "dynamic run id",
-        "statusRoleDescription": "dynamic status role",
-        "statusSettingDescription": "dynamic status setting",
-        "statusValueDescription": "dynamic status value",
-    }
+    tool_info_payload = make_tool_info_payload()
 
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
@@ -372,7 +384,7 @@ def test_hermes_orch_status_rejects_model_supplied_identity_args(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -395,7 +407,7 @@ def test_hermes_orch_status_requires_run_id_for_stop(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -482,7 +494,9 @@ def test_hermes_plugin_gates_dispatch_tool_by_nested_dispatch_depth(
     plugin = load_plugin()
     if budget is not None:
         monkeypatch.setenv("ORCHESTRA_DISPATCH_BUDGET", budget)
-    monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, code=1))
+    monkeypatch.setattr(
+        plugin, "_run_orchestra", lambda args: completed(args, json.dumps(make_tool_info_payload()))
+    )
     ctx = FakeHermesPluginContext()
 
     plugin.register(ctx)
@@ -685,9 +699,19 @@ def test_hermes_plugin_uses_dynamic_tool_metadata(monkeypatch: pytest.MonkeyPatc
     plugin = load_plugin()
     payload = {
         "description": "dynamic description",
+        "promptSnippet": "dynamic prompt snippet",
+        "promptGuidelines": ["guideline one"],
         "goalDescription": "dynamic goal",
         "roleDescription": "dynamic role",
         "taskLabelDescription": "dynamic label",
+        "statusDescription": "dynamic status",
+        "statusActionDescription": "dynamic action",
+        "statusLimitDescription": "dynamic limit",
+        "statusRunIdDescription": "dynamic run id",
+        "statusRoleDescription": "dynamic status role",
+        "statusSettingDescription": "dynamic status setting",
+        "statusValueDescription": "dynamic status value",
+        "dispatchTimeoutError": "dynamic timeout error",
     }
     monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, json.dumps(payload)))
     ctx = FakeHermesPluginContext()
@@ -709,7 +733,7 @@ def test_orch_slash_session_scoped_commands_fail_closed_without_runtime_context(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -739,7 +763,7 @@ def test_orch_slash_on_injects_orchestrator_skill_into_current_session(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "_orchestrator-skill":
             return completed(args, "orchestrator skill payload\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -765,7 +789,7 @@ def test_orch_slash_on_is_idempotent_per_session_and_cleared_on_cleanup(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "_orchestrator-skill":
             return completed(args, "orchestrator skill payload\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -799,7 +823,7 @@ def test_orch_slash_on_clears_active_state_if_helper_raises_then_retry_succeeds(
         nonlocal orchestrator_skill_calls
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "_orchestrator-skill":
             orchestrator_skill_calls += 1
             if orchestrator_skill_calls == 1:
@@ -878,7 +902,7 @@ def test_orch_slash_on_reports_deterministic_failures(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "_orchestrator-skill":
             return completed(args, helper_stdout, code=helper_code)
         raise AssertionError(f"unexpected command: {args}")
@@ -932,7 +956,7 @@ def test_orch_slash_cli_private_session_fallback_scopes_roles_status_history_sto
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         return completed(args, "ok\n")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -964,7 +988,7 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_injects_when_
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "do":
             # Extract the --timeout value from args to return matching timeout_seconds
             timeout_value = "600"
@@ -1109,6 +1133,18 @@ def test_orch_dispatch_rejects_timeout_parameter(
     plugin = load_plugin()
 
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args == ["_tool-info"]:
+            return completed(
+                args,
+                json.dumps(
+                    {
+                        "dispatchTimeoutError": (
+                            "timeout is not accepted by orch_dispatch; "
+                            "configured default_timeout applies."
+                        )
+                    }
+                ),
+            )
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1166,7 +1202,7 @@ def test_orch_slash_cli_private_session_fallback_dispatches_hermes_escaped_quote
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "do":
             return completed(args, "run_id: cli-run\ntimeout_seconds: 600\nstatus: queued\n")
         if args[0] == "_await-run":
@@ -1247,7 +1283,7 @@ def test_orch_slash_do_rejects_malformed_quotes_without_dispatch(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1366,7 +1402,7 @@ def test_registered_orch_dispatch_injects_when_idle_and_marks_report_delivered(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "do":
             return completed(args, "run_id: abc123\ntimeout_seconds: 600\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
@@ -1438,7 +1474,7 @@ def test_registered_orch_dispatch_prefers_runtime_tool_context_for_report(
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         if args[0] == "_tool-info":
-            return completed(args, code=1)
+            return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "do":
             return completed(args, "run_id: abc123\ntimeout_seconds: 600\nstatus: queued\n")
         if args[0] == "_dispatch-ack":

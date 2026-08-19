@@ -68,7 +68,9 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert '"roles", role, setting, value' not in extension_source
     assert 'sanitizeRoleListing(output: string): string' in extension_source
     assert 'filter((line) => !/^\\s*env:\\s+/i.test(line))' not in extension_source
-    assert 'timeout is not accepted by orch_dispatch' in extension_source
+    assert 'dispatchTimeoutError: string;' in extension_source
+    assert 'toolInfo.dispatchTimeoutError' in extension_source
+    assert 'timeout is not accepted by orch_dispatch' not in extension_source
     assert 'const ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET"' in extension_source
     assert 'const ORCHESTRA_TURN_BUDGET_ENV = "ORCHESTRA_TURN_BUDGET"' in extension_source
     assert (

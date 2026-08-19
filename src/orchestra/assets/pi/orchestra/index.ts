@@ -5,7 +5,6 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const execFileAsync = promisify(execFile);
-const TOOL_TIMEOUT_ERROR = "timeout is not accepted by orch_dispatch; configured default_timeout applies.";
 const ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET";
 const ORCHESTRA_TURN_BUDGET_ENV = "ORCHESTRA_TURN_BUDGET";
 const ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV = "ORCHESTRA_SOFT_TIMEOUT_SECONDS";
@@ -295,6 +294,7 @@ interface ToolInfoPayload {
   statusRoleDescription: string;
   statusSettingDescription: string;
   statusValueDescription: string;
+  dispatchTimeoutError: string;
 }
 
 async function hostHelp(): Promise<string> {
@@ -709,7 +709,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       const role = extractField(result.stdout, "role") || requestedRole || "worker";
       const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId, "--role", role]);
       await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true });
-      return { code: 0, runId, output: ack.stdout || `orchestra dispatched: ${role} ${runId}` };
+      if (ack.code !== 0 || !ack.stdout) {
+        return { code: ack.code || 1, runId: null, output: ack.stderr || "orchestra dispatch ack failed" };
+      }
+      return { code: 0, runId, output: ack.stdout };
     }
     return { code: result.code, runId: null, output: result.stdout || result.stderr };
   }
@@ -1183,7 +1186,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       async execute(_toolCallId, params: DispatchParams, _signal, _onUpdate, ctx) {
         if (params.timeout !== undefined) {
           return {
-            content: [{ type: "text", text: TOOL_TIMEOUT_ERROR }],
+            content: [{ type: "text", text: toolInfo.dispatchTimeoutError }],
             isError: true,
           };
         }

@@ -19,7 +19,13 @@ from orchestra.app import (
     format_status,
     start_run,
 )
-from orchestra.config import AgentCatalog, ConcurrencyConfig, ModelLimitConfig, RoleConfig
+from orchestra.config import (
+    AgentCatalog,
+    ConcurrencyConfig,
+    ModelLimitConfig,
+    PromptConfig,
+    RoleConfig,
+)
 from orchestra.harnesses.common import ORCHESTRA_DISPATCH_BUDGET_ENV
 from orchestra.state import STATUS_DONE, STATUS_FAILED, ConcurrencyLimitError, RunRecord, StateStore
 from tests.helpers import extract_run_id, wait_for_condition
@@ -30,6 +36,28 @@ ROOT_PROMPTS = Path(__file__).resolve().parents[1] / "prompts.yaml"
 
 def write_root_prompts(path: Path) -> None:
     path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+def load_root_prompt_config() -> PromptConfig:
+    data = yaml.safe_load(ROOT_PROMPTS.read_text(encoding="utf-8"))
+    return PromptConfig(
+        default_return_format=data["default_return_format"],
+        tool_description=data["tool_description"],
+        tool_prompt_snippet=data["tool_prompt_snippet"],
+        tool_prompt_guidelines=tuple(data["tool_prompt_guidelines"]),
+        tool_goal_description=data["tool_goal_description"],
+        tool_role_description=data["tool_role_description"],
+        tool_task_label_description=data["tool_task_label_description"],
+        status_description=data["status_description"],
+        status_action_description=data["status_action_description"],
+        status_limit_description=data["status_limit_description"],
+        status_run_id_description=data["status_run_id_description"],
+        status_role_description=data["status_role_description"],
+        status_setting_description=data["status_setting_description"],
+        status_value_description=data["status_value_description"],
+        host_help=data["host_help"],
+        budget_exceeded_prompt=data["budget_exceeded_prompt"],
+    )
 
 
 def test_model_limits_match_unprefixed_role_model_names() -> None:
@@ -79,6 +107,7 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
     context = AppContext(
         config=AppConfig(
             default_timeout=30,
+            prompts=load_root_prompt_config(),
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
             concurrency=ConcurrencyConfig(global_limit=1, per_session_limit=1),
@@ -512,6 +541,7 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
     context = AppContext(
         config=AppConfig(
             default_timeout=30,
+            prompts=load_root_prompt_config(),
             concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
         ),
         catalog=cast(
@@ -708,7 +738,10 @@ def test_internal_dispatch_ack_includes_role(capsys: pytest.CaptureFixture[str])
 
     output = capsys.readouterr().out
     assert exit_code == 0
-    assert output.strip() == "orchestra dispatched: critic abc123"
+    assert output.strip() == (
+        "orchestra dispatched: critic abc123\n"
+        "subagent will auto-return when finished. Do not poll while waiting."
+    )
 
 
 def test_internal_progress_message_includes_role(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1401,6 +1434,9 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     )
     assert tool_info["statusValueDescription"] == (
         "Reserved for role updates; model-callable roles are read-only for now."
+    )
+    assert tool_info["dispatchTimeoutError"] == (
+        "timeout is not accepted by orch_dispatch; configured default_timeout applies."
     )
     assert "timeoutDescription" not in tool_info
 

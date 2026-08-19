@@ -1,5 +1,28 @@
 # Known Bugs
 
+## One-shot host sessions can exit before async subagents return
+
+**Status:** open
+
+A one-shot host invocation can finish as soon as the orchestrator model settles,
+even when Orchestra subagents launched by that session are still running. In that
+case, host-local report watchers can die with the process before they inject the
+consolidated auto-return report.
+
+This primarily affects automation that starts an orchestrator through a one-shot
+host command. Interactive sessions normally remain alive, so async auto-return can
+arrive later. Bench/CI should use a host mode that keeps the session alive, such
+as RPC/session-managed execution, rather than adding model prompt loops.
+
+**Expected behavior:** asynchronous dispatch remains fire-and-return. Orchestra
+should not inject repeated "wait" prompts or block `orch_dispatch` just to keep a
+one-shot process alive. One-shot callers that need end-to-end completion should
+use an execution mode that owns the session lifecycle until subagent reports are
+returned.
+
+**Impact:** one-shot automation can grade or exit prematurely and report active
+subagents as unfinished even though the subagents may still complete later.
+
 ## Return prompt can be lost when a subagent completes during session compaction
 
 **Status:** open

@@ -499,6 +499,7 @@ def _handle_tool_info(args: argparse.Namespace) -> int:
                 "statusRoleDescription": info.status_role_description,
                 "statusSettingDescription": info.status_setting_description,
                 "statusValueDescription": info.status_value_description,
+                "dispatchTimeoutError": info.dispatch_timeout_error,
             }
         )
     )

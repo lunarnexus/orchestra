@@ -57,9 +57,6 @@ _ORCH_COMMAND_ARGS_HINT = (
     "roles ... | status | stop <run-id> | doctor | history [LIMIT]"
 )
 
-_TOOL_TIMEOUT_ERROR = (
-    "timeout is not accepted by orch_dispatch; configured default_timeout applies."
-)
 _ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET"
 _ORCHESTRA_TURN_BUDGET_ENV = "ORCHESTRA_TURN_BUDGET"
 _ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV = "ORCHESTRA_SOFT_TIMEOUT_SECONDS"
@@ -232,6 +229,10 @@ def _load_tool_info() -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise RuntimeError(error) from exc
     return payload
+
+
+def _tool_timeout_error() -> str:
+    return str(_load_tool_info()["dispatchTimeoutError"])
 
 
 def _schema(tool_info: dict[str, Any]) -> dict[str, Any]:
@@ -670,7 +671,7 @@ def _dispatch_orchestra_run(
     timeout = payload.get("timeout")
     if timeout is not None:
         if not allow_timeout:
-            return _error(_TOOL_TIMEOUT_ERROR)
+            return _error(_tool_timeout_error())
         if type(timeout) is not int or timeout <= 0:
             return _error("timeout must be a positive integer")
 
@@ -706,7 +707,9 @@ def _dispatch_orchestra_run(
     ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", effective_role])
     if ack.returncode != 0:
         return _error((ack.stdout or ack.stderr).strip() or "orchestra dispatch ack failed")
-    return ack.stdout.strip() or f"orchestra dispatched: {effective_role} {run_id}"
+    if not ack.stdout.strip():
+        return _error("orchestra dispatch ack failed")
+    return ack.stdout.strip()
 
 
 def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:

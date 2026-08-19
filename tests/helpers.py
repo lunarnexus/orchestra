@@ -8,6 +8,8 @@ from pathlib import Path
 
 import yaml
 
+ROOT_PROMPTS = Path(__file__).resolve().parents[1] / "prompts.yaml"
+
 
 def write_runtime_files(
     tmp_path: Path,
@@ -35,7 +37,7 @@ def write_runtime_files(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {

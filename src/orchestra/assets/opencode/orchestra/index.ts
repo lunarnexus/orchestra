@@ -4,7 +4,6 @@ import { tool, type Plugin } from "@opencode-ai/plugin";
 
 const FORBIDDEN_IDENTITY_FIELDS = ["session_id", "sessionId", "orchestrator_session_id"] as const;
 const ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET";
-const TOOL_TIMEOUT_ERROR = "timeout is not accepted by orch_dispatch; configured default_timeout applies.";
 const WATCHER_TIMEOUT_MARGIN_SECONDS = 30;
 const execFileAsync = promisify(execFile);
 
@@ -41,6 +40,7 @@ type ToolInfoPayload = {
   statusRoleDescription: string;
   statusSettingDescription: string;
   statusValueDescription: string;
+  dispatchTimeoutError: string;
 };
 
 type OpenCodeToastVariant = "info" | "error";
@@ -155,7 +155,7 @@ function normalizeOpenCodeOwnerId(sessionID: string): string {
   return `opencode:${normalizedSessionID}`;
 }
 
-function rejectOrchDispatchOverrides(args: Record<string, unknown>): void {
+function rejectOrchDispatchOverrides(args: Record<string, unknown>, toolInfo: ToolInfoPayload): void {
   for (const field of FORBIDDEN_IDENTITY_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(args, field)) {
       throw new Error(`${field} is not accepted by orch_dispatch; context.sessionID is the only identity source.`);
@@ -163,7 +163,7 @@ function rejectOrchDispatchOverrides(args: Record<string, unknown>): void {
   }
 
   if (Object.prototype.hasOwnProperty.call(args, "timeout")) {
-    throw new Error(TOOL_TIMEOUT_ERROR);
+    throw new Error(toolInfo.dispatchTimeoutError);
   }
 }
 
@@ -398,7 +398,7 @@ function extractRunId(output: string): string | null {
     // fall through to line-based parsing
   }
 
-  const dispatchedMatch = /^orchestra dispatched:\s+(\S+)$/m.exec(output);
+  const dispatchedMatch = /^orchestra dispatched:(?:\s+\S+)?\s+(\S+)$/m.exec(output);
   if (dispatchedMatch) {
     return dispatchedMatch[1];
   }
@@ -807,7 +807,7 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
             }
 
             ownerId = normalizeOpenCodeOwnerId(rawSessionID);
-            rejectOrchDispatchOverrides(args as Record<string, unknown>);
+            rejectOrchDispatchOverrides(args as Record<string, unknown>, toolInfo);
 
             const goal = args.goal.trim();
             if (!goal) {
@@ -836,7 +836,10 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
             queueSessionReportDelivery(client, rawSessionID, ownerId, runId, timeoutSeconds, runOrchestra);
             const role = extractField(result.stdout, "role") || args.role?.trim() || "worker";
             const ack = await runOrchestra(["orchestra", "_dispatch-ack", "--run-id", runId, "--role", role]);
-            return ack.stdout.trim() || result.stdout.trim() || `orchestra dispatched: ${role} ${runId}`;
+            if (ack.returncode !== 0 || !ack.stdout.trim()) {
+              throw new Error(ack.stderr || "orchestra dispatch ack failed.");
+            }
+            return ack.stdout.trim();
           } catch (error) {
             await notifyFailureToast(client, ownerId, error);
             throw error;
