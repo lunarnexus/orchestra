@@ -11,8 +11,6 @@ const ORCHESTRA_TURN_BUDGET_ENV = "ORCHESTRA_TURN_BUDGET";
 const ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV = "ORCHESTRA_SOFT_TIMEOUT_SECONDS";
 const ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV = "ORCHESTRA_BUDGET_EXCEEDED_PROMPT";
 const WATCHER_TIMEOUT_MARGIN_SECONDS = 30;
-const PENDING_SUBAGENT_GUARD_MESSAGE =
-  "Active Orchestra subagents are still running. Do not finalize yet; wait for their returned reports or call orch_status before answering.";
 
 interface OrchestraFooterTheme {
   bold(text: string): string;
@@ -463,7 +461,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   }
 
   pi.on("turn_end", async () => {
-    await guardPendingSubagentsBeforeCompletion();
     if (budgetPromptInjected) return;
     if (turnBudget > 1) {
       turnBudget -= 1;
@@ -585,14 +582,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     sessionRefreshRequests.delete(sessionId);
     sessionRuns.delete(sessionId);
     sessionCompletedRuns.delete(sessionId);
-  }
-
-  async function guardPendingSubagentsBeforeCompletion(): Promise<void> {
-    const sessionId = currentSessionId;
-    if (!sessionId || !sessionRuns.has(sessionId)) return;
-    const activeCount = await refreshOrchestraWorkerStatus(sessionId, undefined, { fresh: true });
-    if (activeCount === null || activeCount <= 0) return;
-    pi.sendUserMessage(PENDING_SUBAGENT_GUARD_MESSAGE, { deliverAs: "followUp", triggerTurn: true });
   }
 
   function watchRunProgress(

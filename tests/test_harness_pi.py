@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import os
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-from orchestra.config import RoleConfig
+from orchestra.config import PromptConfig, RoleConfig
 from orchestra.harnesses import HarnessRegistry, PiHarness, WorkerRequest
 from orchestra.harnesses.common import (
     ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV,
@@ -22,7 +21,6 @@ from orchestra.harnesses.common import (
     summary_was_truncated,
     worker_subprocess_env,
 )
-from tests.helpers import default_prompt_config
 
 
 @pytest.fixture
@@ -35,7 +33,6 @@ def worker_request(tmp_path: Path) -> WorkerRequest:
         acceptance_target="Return a short status report.",
         timeout_seconds=30,
         log_path=tmp_path / "logs" / "worker.jsonl",
-        prompts=default_prompt_config(),
     )
 
 
@@ -145,7 +142,6 @@ def test_pi_harness_resolves_role_skill_from_catalog_relative_root(
         goal=worker_request.goal,
         timeout_seconds=worker_request.timeout_seconds,
         skill_roots=(child_dir / "skills", catalog_root / "skills"),
-        prompts=worker_request.prompts,
     )
     role = RoleConfig(
         harness="pi",
@@ -187,12 +183,11 @@ def test_pi_harness_falls_back_to_native_skill_instruction(
 def test_pi_harness_uses_configured_default_return_format(worker_request: WorkerRequest) -> None:
     harness = PiHarness()
     role = RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])
-    assert worker_request.prompts is not None
     request = WorkerRequest(
         role_name=worker_request.role_name,
         goal=worker_request.goal,
         timeout_seconds=worker_request.timeout_seconds,
-        prompts=replace(worker_request.prompts, default_return_format="Configured return."),
+        prompts=PromptConfig(default_return_format="Configured return."),
     )
 
     prompt = harness.build_prompt(request, role)
@@ -240,7 +235,6 @@ def test_pi_harness_start_assigns_deterministic_session_id(
         goal=worker_request.goal,
         run_id="abc123",
         timeout_seconds=worker_request.timeout_seconds,
-        prompts=worker_request.prompts,
     )
     role = RoleConfig(harness="pi", command=["pi", "--model", "{model}", "-p", "{prompt}"])
 
@@ -277,7 +271,6 @@ def test_pi_harness_start_removes_no_session_when_assigning_session_id(
         goal=worker_request.goal,
         run_id="def456",
         timeout_seconds=worker_request.timeout_seconds,
-        prompts=worker_request.prompts,
     )
     role = RoleConfig(harness="pi", command=["pi", "--no-session", "-p", "{prompt}"])
 
@@ -379,7 +372,6 @@ def test_pi_harness_start_sets_orchestra_dispatch_budget_env_budget(
         timeout_seconds=worker_request.timeout_seconds,
         log_path=worker_request.log_path,
         nested_dispatch_depth=2,
-        prompts=worker_request.prompts,
     )
     harness = PiHarness()
     role = RoleConfig(

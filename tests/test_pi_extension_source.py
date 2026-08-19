@@ -76,14 +76,6 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
         in extension_source
     )
     assert 'pi.on("turn_end"' in extension_source
-    assert 'await guardPendingSubagentsBeforeCompletion();' in extension_source
-    assert 'PENDING_SUBAGENT_GUARD_MESSAGE' in extension_source
-    assert 'function guardPendingSubagentsBeforeCompletion(): Promise<void>' in extension_source
-    assert (
-        'pi.sendUserMessage(PENDING_SUBAGENT_GUARD_MESSAGE, '
-        '{ deliverAs: "followUp", triggerTurn: true });'
-        in extension_source
-    )
     assert 'pi.on("tool_call"' in extension_source
     assert 'pi.sendUserMessage(`${prompt}' in extension_source
     assert 'function canDispatchOrchestraWorker(): boolean' in extension_source

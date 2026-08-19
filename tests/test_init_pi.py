@@ -6,7 +6,6 @@ import pytest
 
 from orchestra.app import init_pi
 from orchestra.cli import main
-from tests.helpers import default_prompts_text
 
 
 def _write_source_tree(root: Path, extension_text: str = "extension v1") -> None:
@@ -14,7 +13,7 @@ def _write_source_tree(root: Path, extension_text: str = "extension v1") -> None
     extension.parent.mkdir(parents=True)
     extension.write_text(extension_text, encoding="utf-8")
     (root / "config.yaml").write_text("state_dir: state\n", encoding="utf-8")
-    (root / "prompts.yaml").write_text(default_prompts_text(), encoding="utf-8")
+    (root / "prompts.yaml").write_text("{}\n", encoding="utf-8")
     (root / "agent-catalog.yaml").write_text(
         "harness_configs:\n"
         "  pi:\n"

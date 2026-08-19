@@ -8,8 +8,6 @@ from pathlib import Path
 
 import yaml
 
-from orchestra.config import PromptConfig
-
 
 def write_runtime_files(
     tmp_path: Path,
@@ -37,7 +35,7 @@ def write_runtime_files(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text(default_prompts_text(), encoding="utf-8")
+    prompts_path.write_text("{}\n", encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -59,34 +57,6 @@ def write_runtime_files(
         encoding="utf-8",
     )
     return config_path, catalog_path, state_dir / "orchestra.db"
-
-
-def default_prompts_text() -> str:
-    return (Path(__file__).parents[1] / "src/orchestra/assets/prompts.yaml").read_text(
-        encoding="utf-8"
-    )
-
-
-def default_prompt_config() -> PromptConfig:
-    prompts = yaml.safe_load(default_prompts_text())
-    return PromptConfig(
-        default_return_format=prompts["default_return_format"],
-        tool_description=prompts["tool_description"],
-        tool_prompt_snippet=prompts["tool_prompt_snippet"],
-        tool_prompt_guidelines=tuple(prompts["tool_prompt_guidelines"]),
-        tool_goal_description=prompts["tool_goal_description"],
-        tool_role_description=prompts["tool_role_description"],
-        tool_task_label_description=prompts["tool_task_label_description"],
-        status_description=prompts["status_description"],
-        status_action_description=prompts["status_action_description"],
-        status_limit_description=prompts["status_limit_description"],
-        status_run_id_description=prompts["status_run_id_description"],
-        status_role_description=prompts["status_role_description"],
-        status_setting_description=prompts["status_setting_description"],
-        status_value_description=prompts["status_value_description"],
-        host_help=prompts["host_help"],
-        budget_exceeded_prompt=prompts["budget_exceeded_prompt"],
-    )
 
 
 def wait_for_condition(

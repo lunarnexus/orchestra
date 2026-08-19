@@ -12,7 +12,6 @@ from orchestra.harnesses.common import (
     expand_command_template,
     render_worker_prompt,
 )
-from tests.helpers import default_prompt_config
 
 
 @pytest.fixture
@@ -25,7 +24,6 @@ def worker_request(tmp_path: Path) -> WorkerRequest:
         acceptance_target="Return a short status report.",
         timeout_seconds=30,
         log_path=tmp_path / "logs" / "worker.jsonl",
-        prompts=default_prompt_config(),
     )
 
 
@@ -183,7 +181,6 @@ def test_opencode_harness_start_passes_process_group_flag(
         acceptance_target="",
         timeout_seconds=30,
         log_path=None,
-        prompts=default_prompt_config(),
     )
 
     worker: WorkerProcess = harness.start(worker_request, role)
