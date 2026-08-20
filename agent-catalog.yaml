@@ -13,9 +13,9 @@
 default_role: builder
 model_limits:
   lmstudio/llmfan46/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved:
-    concurrency: 1
+    concurrency: 2
   lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved:
-    concurrency: 1
+    concurrency: 2
 harness_configs:
   pi:
     harness: pi
