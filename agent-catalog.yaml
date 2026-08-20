@@ -78,6 +78,7 @@ roles:
   builder:
     harness_config: pi
     model: openai-codex/gpt-5.4-mini
+    pass_context: true
     skills:
     - builder
     prompt_addition: Implement the assigned task only. Stay in scope. Run focused
@@ -123,6 +124,7 @@ roles:
   researcher:
     harness_config: pi
     model: lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved
+    pass_context: true
     prompt_addition: Gather evidence with sources from docs, web, or code. Do not
       change code. Update only the assigned RESEARCH.md section when requested. Return
       the compact schema only.
