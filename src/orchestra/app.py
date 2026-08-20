@@ -78,6 +78,39 @@ WORKER_BUDGET_EXCEEDED_BLOCKER = (
     "Worker budget exceeded; redispatch from continuation handoff"
 )
 SUPERVISOR_STARTUP_TIMEOUT_SECONDS = 30
+PARENT_CONTEXT_BRIEFING_LABEL = "Parent context briefing"
+CONTEXT_COMPACTION_SYSTEM_PROMPT = (
+    "You are a conversation compaction assistant for a coding workflow. "
+    "Produce a continuation-safe summary that preserves the exact technical context "
+    "needed to continue the work.\n\n"
+    "Return structured markdown with these sections:\n\n"
+    "## Goal\n"
+    "## Constraints & Preferences\n"
+    "## Progress\n"
+    "### Done\n"
+    "### In Progress\n"
+    "### Blocked\n"
+    "## Key Decisions\n"
+    "## Next Steps\n"
+    "## Critical Context\n\n"
+    "Preserve exact file paths, function names, command names, test names, error text, "
+    "and user constraints. Be concise but do not omit information needed to continue."
+)
+CONTEXT_COMPACTION_RETURN_FORMAT = """## Goal
+## Constraints & Preferences
+## Progress
+### Done
+### In Progress
+### Blocked
+## Key Decisions
+## Next Steps
+## Critical Context
+
+<read-files>
+</read-files>
+
+<modified-files>
+</modified-files>"""
 ROLE_USAGE = """Usage:
   /orch roles
   /orch roles ROLE SETTING VALUE
@@ -261,6 +294,7 @@ def start_run(
     timeout_seconds: int | None,
     task_label: str,
     batch_id: str | None,
+    parent_context: str = "",
 ) -> StartedRun:
     _require_session_id(session_id)
     if not orchestra_can_dispatch():
@@ -279,11 +313,19 @@ def start_run(
     if effective_soft_timeout is not None and effective_soft_timeout >= effective_timeout:
         raise AppError("soft_timeout must be less than effective worker timeout")
 
+    effective_approved_context = _effective_approved_context(
+        context,
+        selected_role,
+        goal=goal,
+        approved_context=approved_context,
+        parent_context=parent_context,
+    )
+
     pending_request = PendingRunRequest(
         run_id=run_id,
         role_name=selected_role.name,
         goal=goal,
-        approved_context=approved_context,
+        approved_context=effective_approved_context,
         boundaries=boundaries,
         acceptance_target=acceptance_target,
         return_format=return_format,
@@ -590,6 +632,82 @@ def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
         f"orchestra dispatched:{role_text} {run_id}\n"
         "subagent will auto-return when finished. Do not poll while waiting."
     )
+
+
+def _effective_approved_context(
+    context: AppContext,
+    selected_role: SelectedRole,
+    *,
+    goal: str,
+    approved_context: str,
+    parent_context: str,
+) -> str:
+    if not selected_role.config.pass_context or not parent_context.strip():
+        return approved_context
+    briefing = _build_parent_context_briefing(
+        context,
+        goal=goal,
+        parent_context=parent_context,
+    )
+    if not briefing:
+        return approved_context
+    if approved_context.strip():
+        return (
+            f"{approved_context.strip()}\n\n"
+            f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}"
+        )
+    return f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}"
+
+
+def _build_parent_context_briefing(
+    context: AppContext,
+    *,
+    goal: str,
+    parent_context: str,
+) -> str:
+    role_name = _context_compaction_role_name(context.catalog)
+    selected_role = _select_role(context.catalog, role_name)
+    role = selected_role.config
+    try:
+        harness = context.registry.get(role.harness)
+    except (HarnessLoadError, KeyError):
+        return ""
+    prompt_goal = (
+        f"{CONTEXT_COMPACTION_SYSTEM_PROMPT}\n\n"
+        f"Focus the summary on this task:\n\n<focus>\n{goal.strip()}\n</focus>"
+    )
+    request = WorkerRequest(
+        role_name=selected_role.name,
+        goal=prompt_goal,
+        approved_context=(
+            "Summarize the following conversation for compaction. Preserve all context needed "
+            f"to continue the work.\n\n<conversation>\n{parent_context.strip()}\n</conversation>"
+        ),
+        return_format=CONTEXT_COMPACTION_RETURN_FORMAT,
+        timeout_seconds=context.config.default_timeout,
+        nested_dispatch_depth=1,
+        turn_limit=role.turn_limit or context.config.turn_limit,
+        soft_timeout=role.soft_timeout or context.config.soft_timeout,
+        budget_exceeded_prompt=context.config.prompts.budget_exceeded_prompt,
+        skill_roots=_worker_skill_roots(context.paths.catalog_path),
+        prompts=context.config.prompts,
+    )
+    try:
+        worker = harness.start(request, role)
+        stdout, stderr = worker.process.communicate(timeout=request.timeout_seconds)
+    except Exception:
+        return ""
+    result = _result_from_completed_worker(worker, stdout, stderr)
+    if result.status != STATUS_DONE:
+        return ""
+    return _meaningful_worker_output(result.stdout).strip()
+
+
+def _context_compaction_role_name(catalog: AgentCatalog) -> str | None:
+    summary_role = catalog.roles.get("summary")
+    if summary_role is not None and summary_role.enabled:
+        return "summary"
+    return catalog.default_role
 
 
 def _format_concurrency_limit_error(

@@ -285,6 +285,26 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
     assert builder.command == ["pi", "--model", "{model}", "-p", "{prompt}"]
     assert builder.skills == ()
     assert builder.env == {}
+    assert builder.pass_context is False
+
+
+def test_load_agent_catalog_reads_role_pass_context(tmp_path: Path) -> None:
+    path = tmp_path / "agent-catalog.yaml"
+    path.write_text(
+        """
+default_role: builder
+roles:
+  builder:
+    harness: pi
+    command: [pi, -p, '{prompt}']
+    pass_context: true
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    catalog = load_agent_catalog(path)
+
+    assert catalog.roles["builder"].pass_context is True
 
 
 @pytest.mark.parametrize(

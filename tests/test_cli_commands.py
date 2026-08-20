@@ -13,6 +13,7 @@ from orchestra.app import (
     AppContext,
     AppError,
     OrchestraPaths,
+    _context_compaction_role_name,
     _debug_transcript_section,
     _expanded_model_limits,
     format_orchestrator_return,
@@ -352,6 +353,86 @@ def test_status_reports_delivered_session_report_details(
     assert "descendants_terminal: yes" in output
     assert "session_report_available: no" in output
     assert "session_report_delivered: yes" in output
+
+
+def test_context_compaction_role_prefers_enabled_summary_else_default() -> None:
+    catalog = AgentCatalog(
+        roles={
+            "builder": RoleConfig(harness="shell", command=["echo"]),
+            "summary": RoleConfig(harness="shell", command=["echo"], enabled=True),
+        },
+        default_role="builder",
+    )
+    assert _context_compaction_role_name(catalog) == "summary"
+
+    no_summary_catalog = AgentCatalog(
+        roles={
+            "builder": RoleConfig(harness="shell", command=["echo"]),
+            "summary": RoleConfig(harness="shell", command=["echo"], enabled=False),
+        },
+        default_role="builder",
+    )
+    assert _context_compaction_role_name(no_summary_catalog) == "builder"
+
+
+def test_start_run_passes_focused_parent_context_briefing_when_enabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts = load_root_prompt_config()
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
+    context = AppContext(
+        config=AppConfig(
+            default_timeout=30,
+            prompts=prompts,
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+        ),
+        catalog=AgentCatalog(
+            roles={
+                "builder": RoleConfig(
+                    harness="shell",
+                    command=["echo"],
+                    pass_context=True,
+                )
+            },
+            default_role="builder",
+        ),
+        store=store,
+        registry=cast(Any, SimpleNamespace()),
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+    monkeypatch.setattr("orchestra.app.orchestra_can_dispatch", lambda: True)
+    monkeypatch.setattr("orchestra.app._spawn_supervisor", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "orchestra.app._build_parent_context_briefing",
+        lambda *_args, **_kwargs: "## Goal\nFocused summary",
+    )
+
+    started = start_run(
+        context,
+        session_id="manual:test-session",
+        role_name=None,
+        goal="Implement feature",
+        approved_context="User-approved facts",
+        boundaries="",
+        acceptance_target="",
+        return_format="",
+        timeout_seconds=10,
+        task_label="",
+        batch_id=None,
+        parent_context="[User]: previous context",
+    )
+
+    payload = json.loads(started.request_file.read_text(encoding="utf-8"))
+    assert payload["approved_context"] == (
+        "User-approved facts\n\nParent context briefing:\n## Goal\nFocused summary"
+    )
 
 
 def test_do_output_exposes_effective_timeout_seconds(

@@ -94,6 +94,7 @@ class RoleConfig:
     nested_dispatch_depth: int | None = None
     turn_limit: int | None = None
     soft_timeout: int | None = None
+    pass_context: bool = False
     enabled: bool = True
     skills: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
@@ -294,6 +295,7 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                 turn_limit=_get_optional_positive_int_or_none(role_raw, "turn_limit"),
                 soft_timeout=_get_optional_positive_int_or_none(role_raw, "soft_timeout"),
                 enabled=_get_optional_bool(role_raw, "enabled", True),
+                pass_context=_get_optional_bool(role_raw, "pass_context", False),
                 skills=tuple(
                     _get_optional_skill_names(
                         role_raw,
@@ -331,6 +333,7 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
             turn_limit=_get_optional_positive_int_or_none(role_raw, "turn_limit"),
             soft_timeout=_get_optional_positive_int_or_none(role_raw, "soft_timeout"),
             enabled=_get_optional_bool(role_raw, "enabled", True),
+            pass_context=_get_optional_bool(role_raw, "pass_context", False),
             skills=tuple(
                 _get_optional_skill_names(
                     role_raw,
@@ -509,6 +512,7 @@ def _validate_role_keys(
         "turn_limit",
         "soft_timeout",
         "enabled",
+        "pass_context",
         "skills",
         "env",
     }
