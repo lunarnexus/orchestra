@@ -78,6 +78,16 @@ Prefer existing patterns and helpers, direct code, clear data flow, and explicit
 
 Self-checking prepares the handoff; it does not replace independent Orchestra verification or review.
 
+## Test economy and stop rules
+
+Builders run implementation-focused tests only. For each fix attempt:
+- run the focused repro or failing test once before patching when it is not already proven by returned evidence;
+- run the exact focused check once after each patch;
+- run one broader final check only when the assignment, plan, or project rules require it;
+- do not repeatedly run unchanged broad suites while debugging.
+
+If the same focused command fails twice without new diagnostic evidence, stop editing and return a blocker or budget handoff with the failing command, output summary, hypothesis, files changed, and next smallest slice. If a broader final check fails after the focused check passes, capture the failure once, distinguish whether it is in scope, and return rather than entering an open-ended verification loop.
+
 ## Failure handling
 
 Separate baseline failures and warnings from those introduced by the task. For a new failure, read `resources/systematic-debugging.md` and follow its stop rule.

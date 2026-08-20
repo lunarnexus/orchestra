@@ -256,6 +256,7 @@ Worktree automation is not required here; use normal git status/diff/commit disc
 - The orchestrator does not run implementation or verification test commands for delegated work. Builders run implementation-focused tests. Verifiers run acceptance checks. Reviewers and appsec inspect evidence and code for their roles. If test evidence is missing or incomplete, dispatch the appropriate subagent; do not run the test in the orchestrator session.
 - Before dispatching a follow-up role for the same assigned files, commands, or acceptance target, use existing active/returned subagent information. Do not dispatch an equivalent follow-up when an active subagent already owns that target or a returned subagent already completed it. Redispatch only for failed, blocked, timed out, cancelled, or explicitly incomplete results.
 - if verification is red, route through debugging: reproduce -> isolate -> RCA -> fix -> re-verify
+- When a verifier reports a specific bug or failing command, dispatch one narrow fixer rather than an open-ended builder. The fixer brief must include the exact failing evidence, exact file/symbol scope, allowed patch boundary, and this stop condition: run the failing check once if needed, patch minimally, run the exact focused check once, run the required final check once if specified, then stop and return. If the same focused check fails twice without new diagnostic evidence, return a blocker/handoff instead of continuing.
 
 ## Return handling
 
