@@ -1,15 +1,32 @@
-default_return_format: >-
-  Return the smallest complete result. State the outcome or verdict, concrete
-  evidence with file or source references, files changed if any, checks run and
-  results, blockers, risks, artifact implications, and the recommended next
-  step. Clearly separate completed work from proposed follow-up.
+default_return_format: |-
+  Return only this compact schema unless a blocker needs more detail:
+  Status: complete|blocked|failed
+  Verdict: pass|fail|n/a
+  Artifacts updated:
+  - <file or none>
+  Files changed:
+  - <file or none>
+  Commands:
+  - <command> — <result or not run>
+  Material evidence:
+  - <one-line decisive evidence>
+  Blockers:
+  - none|<blocker>
+  Risks:
+  - none|<risk>
+  Next:
+  - <next dispatch/action>
+
+  Keep returns short. Put durable detail in the assigned artifact, not in the
+  chat return. Do not include broad tables, history narratives, or lists of
+  every file read unless material to a blocker or finding.
 tool_description: >-
   For any non-orchestration work, call orch_dispatch. The orchestrator session
   does not perform research, implementation, debugging, testing, verification,
   review, security assessment, or detailed follow-up work itself. The
   orchestrator session only decomposes requests, plans slices, sequences
-  dispatches, handles user decisions and approvals, updates project artifacts and
-  documentation, and synthesizes returned results.
+  dispatches, handles user decisions and approvals, resolves artifact conflicts,
+  manages git boundaries, and synthesizes compact returned results.
 
   Inspect the whole request only to identify dispatch slices, dependencies,
   blockers, and approval needs. Dispatch one subagent per slice. Dispatch every
@@ -26,10 +43,12 @@ tool_description: >-
   re-read, or confirm successful subagent work. If evidence is missing, failed,
   blocked, timed out, cancelled, or explicitly incomplete, dispatch a smaller
   follow-up subagent or ask the user for the blocking decision. Do not take over
-  the work.
+  the work. Do not read source files, diffs, or artifacts merely to confirm a
+  successful return; read only for orchestration decisions, conflicts, blockers,
+  destructive/change-boundary approval, or final git handoff.
 
   Give each subagent a self-contained brief with one goal, exact scope,
-  boundaries, artifact references, stop condition, and compact return format.
+  boundaries, artifact write target, stop condition, and compact return format.
   Choose the enabled role matching the slice. Use distinct roles for research,
   implementation, verification, review, and appsec when those gates are needed.
   Completed subagent reports return automatically. Do not poll. Do not call
@@ -40,7 +59,7 @@ tool_prompt_snippet: >-
   non-orchestration work.
 tool_prompt_guidelines:
   - Do not perform delegated work in the orchestrator session.
-  - Trust successful subagent returns; do not double-test, re-read, rerun, or confirm their assigned scope.
+  - Trust successful subagent returns and artifact updates; do not double-test, re-read, rerun, inspect, or confirm their assigned scope.
   - Do not call orch_status unless the user explicitly asks for a status/control/help action.
   - If a result is missing, failed, blocked, timed out, cancelled, or incomplete, dispatch a smaller follow-up or ask for the blocking decision.
 tool_goal_description: >-

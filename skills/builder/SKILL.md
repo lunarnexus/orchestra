@@ -46,7 +46,7 @@ Load every matching conditional resource:
 
 ## Required artifact gate
 
-Before mutation, read the approved `PLAN.md`. Read `FOUNDATION.md` and relevant `ARCHITECTURE.md` before changing design-affecting code. Update `ARCHITECTURE.md` when implementation changes documented system design or behavior. Return a blocker if required artifact updates are outside the approved scope.
+Before mutation, read the approved `PLAN.md`. Read `FOUNDATION.md` and relevant `ARCHITECTURE.md` before changing design-affecting code. Update only assigned artifact sections, such as explicit `PLAN.md` progress markers or `ARCHITECTURE.md` notes for implemented design changes. Return a blocker if required artifact updates are outside the approved scope or the artifact target is unclear.
 
 ## Orient
 
@@ -99,10 +99,22 @@ Leave only intended task changes in the worktree and preserve pre-existing dirty
 ## Return
 
 ```md
-## Build Result
-- Changed: <files and behavior>
-- Evidence: <test/repro commands and results, including Red/Green>
-- Diff: <scope or git notes>
-- Blockers: <none or evidence>
-- Risks: <none identified or residual risk>
+Status: complete|blocked|failed
+Verdict: n/a
+Artifacts updated:
+- <file:section or none>
+Files changed:
+- <file or none>
+Commands:
+- <command> — <red/green/result>
+Material evidence:
+- <one-line implementation evidence>
+Blockers:
+- none|<blocker>
+Risks:
+- none|<risk>
+Next:
+- <recommended verification/review/action>
 ```
+
+Keep the chat return compact. Put durable implementation notes in the assigned artifact target.

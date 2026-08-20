@@ -164,8 +164,8 @@ def test_root_tool_guidance_enforces_orchestrator_boundaries() -> None:
     assert "should normally" not in prompts.tool_description
     assert "plans and dispatches only" in prompts.tool_prompt_snippet
     assert any("Do not perform delegated work" in item for item in prompts.tool_prompt_guidelines)
-    assert "artifact implications" in prompts.default_return_format
-    assert "recommended next step" in prompts.default_return_format
+    assert "Artifacts updated:" in prompts.default_return_format
+    assert "Material evidence:" in prompts.default_return_format
     assert "Use orch_status only when the user explicitly asks" in prompts.status_description
     assert "Do not poll" in prompts.status_description
 
@@ -293,15 +293,17 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
         (
             "builder",
             (
-                "Implement the assigned task only. Stay in scope. Return files changed, "
-                "checks run, results, blockers, and risks."
+                "Implement the assigned task only. Stay in scope. Run focused implementation "
+                "checks economically; do not repeatedly run unchanged broad suites. Update "
+                "only assigned artifact sections. Return the compact schema only."
             ),
         ),
         (
             "researcher",
             (
-                "Gather evidence with sources from docs, web, or code. Do not change "
-                "code. Return concise findings, sources, blockers, and risks."
+                "Gather evidence with sources from docs, web, or code. Do not change code. "
+                "Update only the assigned RESEARCH.md section when requested. Return the "
+                "compact schema only."
             ),
         ),
         (
@@ -324,16 +326,18 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
             "reviewer",
             (
                 "Independently review whether the change is correct, maintainable, "
-                "appropriately scoped, and ready to merge. Stay read-only. Return only "
-                "evidence-backed material findings and readiness."
+                "appropriately scoped, and ready to merge. Stay read-only for source code. "
+                "Do not run tests unless the assignment explicitly asks because material "
+                "evidence is missing. Update only the assigned REVIEW.md section. Return "
+                "the compact schema only."
             ),
         ),
         (
             "appsec",
             (
                 "Independently identify realistic vulnerabilities across changed trust "
-                "boundaries. Stay read-only. Return only evidence-backed material findings "
-                "and security readiness."
+                "boundaries. Stay read-only for source code. Update only the assigned "
+                "APPSEC.md section. Return the compact schema only."
             ),
         ),
     ],

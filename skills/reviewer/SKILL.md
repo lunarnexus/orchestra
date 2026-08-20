@@ -13,7 +13,7 @@ metadata:
 
 # Reviewer
 
-Review the assigned change independently and read-only in one capped findings pass. Judge whether it is the smallest maintainable implementation that solves the assigned problem and fits the project's current architecture, scale, and maturity. Do not duplicate another role's completed evidence; reuse successful builder, verifier, or checker evidence for the assigned scope and inspect only what this review slice requires.
+Review the assigned change independently in one capped findings pass. Judge whether it is the smallest maintainable implementation that solves the assigned problem and fits the project's current architecture, scale, and maturity. Do not duplicate another role's completed evidence; reuse successful builder, verifier, or checker evidence for the assigned scope and inspect only what this review slice requires. When assigned, write the review verdict/findings to `REVIEW.md` and return only a compact status.
 
 ## Method gate
 
@@ -48,7 +48,7 @@ Review the diff against `PLAN.md`, `FOUNDATION.md`, `RESEARCH.md`, and relevant 
 
 Conventions are evidence, not authority. Explicit project rules, correctness, current requirements, and documented architecture outrank local patterns; local patterns outrank generic idioms only while they continue serving those goals.
 
-Verification proves acceptance. Review judges implementation quality and readiness. Security auditing belongs to appsec. Do not repeat those roles or fix the code. Do not run tests, implement fixes, or recursively review follow-up work unless explicitly assigned a new changed scope.
+Verification proves acceptance. Review judges implementation quality and readiness. Security auditing belongs to appsec. Do not repeat those roles or fix the code. Do not run tests, implement fixes, or recursively review follow-up work unless explicitly assigned a new changed scope. If test evidence is missing, record missing evidence instead of running tests unless the dispatch explicitly assigns a test command.
 
 ## Findings and verdict
 
@@ -64,16 +64,18 @@ Verdict:
 ## Return
 
 ```md
-Mode: review
+Status: complete|blocked
 Verdict: pass|fail|blocked
-Intent: <one sentence>
-Coverage:
-- <changed files and affected paths inspected>
-Findings:
-- HIGH|MEDIUM — `file:line` — <problem> — <evidence and impact> — <smallest fix>
-Missing evidence:
-- <only when blocked or materially limiting review>
-Residual risk:
-- <evidence-backed risk or none identified>
-Readiness: ready|not ready|blocked
+Artifacts updated:
+- REVIEW.md:<section> or none
+Material evidence:
+- <readiness or one material finding pointer>
+Blockers:
+- none|<blocker>
+Risks:
+- none|<residual risk>
+Next:
+- <merge/fix/security/appsec action>
 ```
+
+Write detailed findings to the assigned `REVIEW.md` section. Keep chat returns compact.

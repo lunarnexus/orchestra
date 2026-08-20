@@ -82,7 +82,7 @@ roles:
     - builder
     prompt_addition: Implement the assigned task only. Stay in scope. Run focused
       implementation checks economically; do not repeatedly run unchanged broad suites.
-      Return files changed, checks run, results, blockers, and risks.
+      Update only assigned artifact sections. Return the compact schema only.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
@@ -105,9 +105,9 @@ roles:
     skills:
     - reviewer
     prompt_addition: Independently review whether the change is correct, maintainable,
-      appropriately scoped, and ready to merge. Stay read-only. Do not run tests unless
-      the assignment explicitly asks because material evidence is missing. Return only
-      evidence-backed material findings and readiness.
+      appropriately scoped, and ready to merge. Stay read-only for source code. Do not
+      run tests unless the assignment explicitly asks because material evidence is
+      missing. Update only the assigned REVIEW.md section. Return the compact schema only.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
@@ -124,7 +124,8 @@ roles:
     harness_config: pi
     model: lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved
     prompt_addition: Gather evidence with sources from docs, web, or code. Do not
-      change code. Return concise findings, sources, blockers, and risks.
+      change code. Update only the assigned RESEARCH.md section when requested. Return
+      the compact schema only.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
@@ -145,8 +146,8 @@ roles:
     skills:
     - appsec
     prompt_addition: Independently identify realistic vulnerabilities across changed
-      trust boundaries. Stay read-only. Return only evidence-backed material findings
-      and security readiness.
+      trust boundaries. Stay read-only for source code. Update only the assigned
+      APPSEC.md section. Return the compact schema only.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
