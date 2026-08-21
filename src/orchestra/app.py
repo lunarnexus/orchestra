@@ -658,7 +658,10 @@ def _return_hint(run: RunRecord) -> str | None:
     if run.status == STATUS_DONE:
         return "advance the plan using this subagent return; do not repeat its work"
     if run.status == STATUS_INCOMPLETE:
-        return "redispatch from the continuation handoff; preserve completed work"
+        return (
+            "redispatch from this continuation handoff before verification, review, "
+            "or final judgment"
+        )
     if run.status == STATUS_CANCELLED:
         return None
     return "inspect the debug trace and dispatch one targeted recovery"

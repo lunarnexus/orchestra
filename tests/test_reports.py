@@ -27,7 +27,8 @@ from tests.types import RuntimeFilesFactory
         ),
         (
             STATUS_INCOMPLETE,
-            "redispatch from the continuation handoff; preserve completed work",
+            "redispatch from this continuation handoff before verification, review, "
+            "or final judgment",
         ),
         (STATUS_FAILED, "inspect the debug trace and dispatch one targeted recovery"),
         (STATUS_CANCELLED, None),
