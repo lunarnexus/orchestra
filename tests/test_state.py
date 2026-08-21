@@ -12,11 +12,13 @@ import pytest
 
 from orchestra.logs import append_jsonl_event
 from orchestra.state import (
+    _SCHEMA_VERSION,
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_FAILED,
     STATUS_QUEUED,
     STATUS_RUNNING,
+    STATUS_WAITING,
     ConcurrencyLimitError,
     RunRecord,
     RunUpdate,
@@ -53,7 +55,7 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == 7
+    assert row[0] == _SCHEMA_VERSION
 
 
 def test_connect_retries_transient_sqlite_open_failure(
@@ -149,6 +151,33 @@ def test_update_run_tracks_state_transitions_and_metadata(
     assert done.result_summary == "Completed successfully"
     assert done.result_artifact_path == tmp_path / "state" / "return-artifacts" / "run-2.md"
     assert done.result_summary_truncated is True
+
+
+def test_update_run_applies_dependency_and_internal_fields(
+    state_store: StateStore,
+    tmp_path: Path,
+) -> None:
+    record = replace(
+        make_run(tmp_path, run_id="run-4", session_id="pi:session-a"),
+        status=STATUS_WAITING,
+    )
+    state_store.create_run(record)
+
+    updated = state_store.update_run(
+        "run-4",
+        RunUpdate(status=STATUS_WAITING, depends_on_run_id="summary-run-1", internal=True),
+    )
+    released = state_store.update_run("run-4", RunUpdate(status=STATUS_QUEUED))
+
+    assert updated.depends_on_run_id == "summary-run-1"
+    assert updated.internal is True
+    assert released.status == STATUS_QUEUED
+    reloaded = state_store.get_run("run-4")
+    assert (reloaded.status, reloaded.depends_on_run_id, reloaded.internal) == (
+        STATUS_QUEUED,
+        "summary-run-1",
+        True,
+    )
 
 
 def test_late_terminal_update_is_ignored(state_store: StateStore, tmp_path: Path) -> None:

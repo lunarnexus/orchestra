@@ -534,7 +534,7 @@ def test_start_run_records_parent_context_without_pre_reserve_compaction(
         ),
     )
     monkeypatch.setattr("orchestra.app.orchestra_can_dispatch", lambda: True)
-    monkeypatch.setattr("orchestra.app._spawn_supervisor", _spawn_context_supervisor_inline)
+    monkeypatch.setattr("orchestra.app._spawn_supervisor", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         "orchestra.app._build_parent_context_briefing",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("pre-reserve compaction")),
@@ -557,8 +557,18 @@ def test_start_run_records_parent_context_without_pre_reserve_compaction(
 
     payload = json.loads(started.request_file.read_text(encoding="utf-8"))
     assert payload["approved_context"] == "User-approved facts"
-    assert payload["parent_context"] == "[User]: previous context"
-    assert store.get_run(started.record.run_id).status == "queued"
+    assert payload["parent_context"] == ""
+    target = store.get_run(started.record.run_id)
+    assert target.status == "waiting"
+    assert target.depends_on_run_id == f"{started.record.run_id}-context"
+
+    summary_payload = json.loads(
+        (context.config.state_dir / "requests" / f"{started.record.run_id}-context.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "[User]: previous context" in summary_payload["approved_context"]
+    assert store.get_run(f"{started.record.run_id}-context").status == "queued"
 
 
 def _spawn_context_supervisor_inline(context: AppContext, request_file: Path, run_id: str) -> None:

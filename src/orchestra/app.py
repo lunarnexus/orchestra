@@ -57,6 +57,7 @@ from orchestra.state import (
     STATUS_INCOMPLETE,
     STATUS_QUEUED,
     STATUS_RUNNING,
+    STATUS_WAITING,
     ConcurrencyLimitError,
     RunRecord,
     RunUpdate,
@@ -230,6 +231,7 @@ class PendingRunRequest:
     task_label: str
     request_file: Path
     parent_context: str = ""
+    context_briefing_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -341,6 +343,16 @@ def start_run(
         created_at=utc_now(),
     )
 
+    if role.pass_context and parent_context.strip():
+        return _start_context_dependent_run(
+            context,
+            session_id=session_id,
+            selected_role=selected_role,
+            role=role,
+            pending_request=pending_request,
+            record=record,
+        )
+
     reconcile_stale_queued_runs(context)
 
     try:
@@ -368,6 +380,7 @@ def start_run(
                 "timeout_seconds": pending_request.timeout_seconds,
                 "task_label": pending_request.task_label,
                 "parent_context": pending_request.parent_context,
+                "context_briefing_note": pending_request.context_briefing_note,
             }
         ),
         encoding="utf-8",
@@ -634,6 +647,127 @@ def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
         "subagent will auto-return when finished. Do not poll while waiting."
     )
 
+
+
+def _write_pending_request(request: PendingRunRequest) -> None:
+    request.request_file.parent.mkdir(parents=True, exist_ok=True)
+    request.request_file.write_text(
+        json.dumps(
+            {
+                "run_id": request.run_id,
+                "role_name": request.role_name,
+                "goal": request.goal,
+                "approved_context": request.approved_context,
+                "boundaries": request.boundaries,
+                "acceptance_target": request.acceptance_target,
+                "return_format": request.return_format,
+                "timeout_seconds": request.timeout_seconds,
+                "task_label": request.task_label,
+                "parent_context": request.parent_context,
+                "context_briefing_note": request.context_briefing_note,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _start_context_dependent_run(
+    context: AppContext,
+    *,
+    session_id: str,
+    selected_role: SelectedRole,
+    role: RoleConfig,
+    pending_request: PendingRunRequest,
+    record: RunRecord,
+) -> StartedRun:
+    summary_role_name = _context_compaction_role_name(context.catalog)
+    fallback_warning = None
+    if summary_role_name != "summary":
+        fallback_warning = (
+            "Parent context briefing fallback: summary role unavailable; "
+            f"using {summary_role_name}"
+        )
+    summary_role = _select_role(context.catalog, summary_role_name)
+    summary_config = summary_role.config
+    summary_run_id = f"{pending_request.run_id}-context"
+    summary_request = PendingRunRequest(
+        run_id=summary_run_id,
+        role_name=summary_role.name,
+        goal=(
+            f"{CONTEXT_COMPACTION_SYSTEM_PROMPT}\n\n"
+            f"Focus the summary on this task:\n\n<focus>\n{pending_request.goal.strip()}\n</focus>"
+        ),
+        approved_context=(
+            "Summarize the following conversation for compaction. Preserve all context needed "
+            "to continue the work.\n\n"
+            f"<conversation>\n{pending_request.parent_context.strip()}\n</conversation>"
+        ),
+        boundaries="",
+        acceptance_target="",
+        return_format=CONTEXT_COMPACTION_RETURN_FORMAT,
+        timeout_seconds=context.config.pass_context_timeout,
+        task_label="parent context briefing",
+        request_file=context.config.state_dir / "requests" / f"{summary_run_id}.json",
+        parent_context="",
+    )
+    summary_record = RunRecord(
+        run_id=summary_run_id,
+        orchestrator_session_id=session_id,
+        harness=summary_config.harness,
+        role=summary_role.name,
+        model=summary_config.model,
+        status=STATUS_QUEUED,
+        task_label="parent context briefing",
+        log_path=record.log_path.with_name(f"{summary_run_id}.jsonl"),
+        created_at=utc_now(),
+        reported_at=utc_now(),
+        internal=True,
+    )
+    waiting_record = replace(
+        record,
+        status=STATUS_WAITING,
+        depends_on_run_id=summary_run_id,
+    )
+
+    reconcile_stale_queued_runs(context)
+    try:
+        context.store.reserve_run(
+            summary_record,
+            global_limit=context.config.concurrency.global_limit,
+            per_session_limit=context.config.concurrency.per_session_limit,
+            per_model_limits=_expanded_model_limits(context.catalog.model_limits),
+        )
+        context.store.reserve_run(
+            waiting_record,
+            global_limit=context.config.concurrency.global_limit,
+            per_session_limit=context.config.concurrency.per_session_limit,
+            per_model_limits=_expanded_model_limits(context.catalog.model_limits),
+        )
+    except ConcurrencyLimitError as exc:
+        raise AppError(
+            _format_concurrency_limit_error(str(exc), context=context, session_id=session_id)
+        ) from exc
+
+    _write_pending_request(summary_request)
+    _write_pending_request(
+        replace(
+            pending_request,
+            parent_context="",
+            context_briefing_note=fallback_warning or "",
+        )
+    )
+    _append_run_event(
+        context,
+        pending_request.run_id,
+        "parent_context.dependency_created",
+        {"summary_run_id": summary_run_id, "summary_role": summary_role.name},
+    )
+    _spawn_supervisor(context, summary_request.request_file, summary_run_id)
+    return StartedRun(
+        record=waiting_record,
+        request_file=pending_request.request_file,
+        timeout_seconds=pending_request.timeout_seconds,
+    )
 
 
 def _effective_approved_context(
@@ -1101,7 +1235,11 @@ def reconcile_stale_queued_runs(
 ) -> list[RunRecord]:
     reconciled: list[RunRecord] = []
     now = datetime.now(UTC)
-    for run in context.store.list_active_runs():
+    try:
+        active_runs = context.store.list_active_runs(include_internal=True)
+    except TypeError:
+        active_runs = context.store.list_active_runs()
+    for run in active_runs:
         if run.status == STATUS_RUNNING:
             if _is_stale_running_run(run):
                 reconciled.append(_reconcile_stale_running_run(context, run))
@@ -2528,6 +2666,7 @@ def _load_pending_request(run_id: str, request_file: Path) -> PendingRunRequest:
         task_label=str(payload["task_label"]),
         request_file=request_file,
         parent_context=str(payload.get("parent_context", "")),
+        context_briefing_note=str(payload.get("context_briefing_note", "")),
     )
 
 
@@ -2578,6 +2717,7 @@ def _start_worker_process(
         parent_context=pending_request.parent_context,
         log_path=log_path,
     )
+    context_briefing_note = context_briefing_note or pending_request.context_briefing_note or None
     request = WorkerRequest(
         role_name=selected_role.name,
         goal=pending_request.goal,
@@ -2766,7 +2906,7 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
     result_summary_truncated = (
         result.result_summary_truncated if not effective_blocker_text else False
     )
-    return context.store.update_run(
+    finalized = context.store.update_run(
         run_id,
         RunUpdate(
             status=terminal_status,
@@ -2780,6 +2920,75 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
             approval_needed=result.approval_needed,
         ),
     )
+    _release_context_dependents(context, finalized)
+    return finalized
+
+
+def _release_context_dependents(context: AppContext, summary: RunRecord) -> None:
+    dependents = context.store.list_waiting_dependents(summary.run_id)
+    if not dependents:
+        return
+    for dependent in dependents:
+        request_file = context.config.state_dir / "requests" / f"{dependent.run_id}.json"
+        pending = _load_pending_request(dependent.run_id, request_file)
+        briefing = (
+            _context_briefing_output(summary).strip() if summary.status == STATUS_DONE else ""
+        )
+        note = None
+        if summary.status != STATUS_DONE:
+            detail = (
+                summary.error_text or summary.blocker_text or "summary role returned no briefing"
+            )
+            note = f"Parent context briefing skipped: {detail}"
+        elif not briefing:
+            note = "Parent context briefing skipped: summary role returned empty briefing"
+        note = _combine_context_warnings(pending.context_briefing_note, note)
+        if briefing:
+            approved_context = _append_parent_context_briefing(
+                pending.approved_context,
+                briefing,
+            )
+        else:
+            approved_context = pending.approved_context
+        _write_pending_request(
+            replace(
+                pending,
+                approved_context=approved_context,
+                parent_context="",
+                context_briefing_note=note or "",
+            )
+        )
+        _append_run_event(
+            context,
+            dependent.run_id,
+            "parent_context.completed",
+            {
+                "summary_run_id": summary.run_id,
+                "status": summary.status,
+                "worker_session_id": summary.worker_session_id,
+                "transcript_path": str(summary.transcript_path)
+                if summary.transcript_path
+                else None,
+            },
+        )
+        _append_run_event(
+            context,
+            dependent.run_id,
+            "parent_context.dependency_released",
+            {"summary_run_id": summary.run_id, "summary_status": summary.status},
+        )
+        released = context.store.update_run(dependent.run_id, RunUpdate(status=STATUS_QUEUED))
+        if released.status == STATUS_QUEUED:
+            _spawn_supervisor(context, request_file, dependent.run_id)
+
+
+def _append_parent_context_briefing(approved_context: str, briefing: str) -> str:
+    if approved_context.strip():
+        return (
+            f"{approved_context.strip()}\n\n"
+            f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}"
+        )
+    return f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}"
 
 
 def _write_return_artifact(
