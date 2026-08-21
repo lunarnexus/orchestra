@@ -1414,7 +1414,8 @@ def _append_session_status_details(lines: list[str], details: SessionStatusDetai
 
 def format_status(context: AppContext, session_id: str | None = None) -> str:
     reconcile_stale_queued_runs(context)
-    global_runs = context.store.list_active_runs()
+    global_capacity_runs = context.store.list_active_runs()
+    global_runs = context.store.list_active_runs(include_waiting=True)
     global_limit = context.config.concurrency.global_limit
     per_session_limit = context.config.concurrency.per_session_limit
     model_limits = context.catalog.model_limits
@@ -1422,12 +1423,12 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
         lines = [
             "scope: global",
             f"active_runs: {len(global_runs)}/{global_limit}",
-            f"global_active_runs: {len(global_runs)}/{global_limit}",
+            f"global_active_runs: {len(global_capacity_runs)}/{global_limit}",
         ]
         if model_limits:
             lines.append("model_active_runs:")
             for model in sorted(model_limits):
-                active = sum(1 for run in global_runs if run.model == model)
+                active = sum(1 for run in global_capacity_runs if run.model == model)
                 lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
         if not global_runs:
             lines.append("status: no active runs")
@@ -1448,13 +1449,17 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
     lines.extend(
         [
             f"active_runs: {len(runs)}/{per_session_limit}",
-            f"global_active_runs: {len(global_runs)}/{global_limit}",
+            f"global_active_runs: {len(global_capacity_runs)}/{global_limit}",
         ]
     )
     if model_limits:
         lines.append("model_active_runs:")
         for model in sorted(model_limits):
-            active = sum(1 for run in runs if run.model == model)
+            active = sum(
+                1
+                for run in runs
+                if run.model == model and run.status in {STATUS_QUEUED, STATUS_RUNNING}
+            )
             lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
     details = session_status_details(context, lineage_session_ids, active_runs=runs)
     if not runs:
@@ -1896,11 +1901,14 @@ def _list_active_runs_for_session_ids(
     session_ids: list[str],
 ) -> list[RunRecord]:
     if len(session_ids) == 1:
-        return context.store.list_active_runs(session_ids[0])
+        return context.store.list_active_runs(session_ids[0], include_waiting=True)
     runs = [
         run
         for lineage_session_id in session_ids
-        for run in context.store.list_active_runs(lineage_session_id)
+        for run in context.store.list_active_runs(
+            lineage_session_id,
+            include_waiting=True,
+        )
     ]
     return sorted(runs, key=lambda run: (run.created_at, run.run_id))
 

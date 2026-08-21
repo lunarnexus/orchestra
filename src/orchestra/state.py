@@ -393,16 +393,19 @@ class StateStore:
         orchestrator_session_id: str | None = None,
         *,
         include_internal: bool = False,
+        include_waiting: bool = False,
     ) -> list[RunRecord]:
-        query = "SELECT * FROM runs WHERE status IN (?, ?)"
-        params: tuple[str, ...] | tuple[str, str, str]
+        statuses = [STATUS_QUEUED, STATUS_RUNNING]
+        if include_waiting:
+            statuses.append(STATUS_WAITING)
+        placeholders = ", ".join("?" for _ in statuses)
+        query = f"SELECT * FROM runs WHERE status IN ({placeholders})"
+        params: tuple[str, ...] = tuple(statuses)
         if not include_internal:
             query += " AND internal = 0"
-        if orchestrator_session_id is None:
-            params = (STATUS_QUEUED, STATUS_RUNNING)
-        else:
+        if orchestrator_session_id is not None:
             query += " AND orchestrator_session_id = ?"
-            params = (STATUS_QUEUED, STATUS_RUNNING, orchestrator_session_id)
+            params = (*params, orchestrator_session_id)
         query += " ORDER BY created_at, run_id"
 
         with self._connect() as connection:

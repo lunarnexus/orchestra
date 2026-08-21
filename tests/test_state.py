@@ -244,18 +244,31 @@ def test_count_and_list_active_runs_are_session_scoped(
     run_a = make_run(tmp_path, run_id="run-a", session_id="pi:session-a")
     run_b = make_run(tmp_path, run_id="run-b", session_id="pi:session-a")
     run_c = make_run(tmp_path, run_id="run-c", session_id="pi:session-b")
+    waiting_run = replace(
+        make_run(tmp_path, run_id="run-waiting", session_id="pi:session-a"),
+        status=STATUS_WAITING,
+    )
+    internal_waiting_run = replace(
+        make_run(tmp_path, run_id="run-internal", session_id="pi:session-a"),
+        status=STATUS_WAITING,
+        internal=True,
+    )
 
     state_store.create_run(run_a)
     state_store.create_run(run_b)
     state_store.create_run(run_c)
+    state_store.create_run(waiting_run)
+    state_store.create_run(internal_waiting_run)
     state_store.update_run("run-b", RunUpdate(status=STATUS_RUNNING, process_id=77))
     state_store.update_run("run-c", RunUpdate(status=STATUS_RUNNING, process_id=88))
     state_store.update_run("run-c", RunUpdate(status=STATUS_FAILED, error_text="boom"))
 
     active_a = state_store.list_active_runs("pi:session-a")
+    visible_a = state_store.list_active_runs("pi:session-a", include_waiting=True)
     active_all = state_store.list_active_runs()
 
     assert [run.run_id for run in active_a] == ["run-a", "run-b"]
+    assert [run.run_id for run in visible_a] == ["run-a", "run-b", "run-waiting"]
     assert [run.run_id for run in active_all] == ["run-a", "run-b"]
     assert state_store.count_active_runs("pi:session-a") == 2
     assert state_store.count_active_runs("pi:session-b") == 0

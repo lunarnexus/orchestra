@@ -97,22 +97,30 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
     def reserve_run(*args: object, **kwargs: object) -> None:
         raise ConcurrencyLimitError(failure_message)
 
+    def list_active_runs(
+        session_id: str | None = None,
+        *,
+        include_waiting: bool = False,
+    ) -> list[RunRecord]:
+        del session_id, include_waiting
+        return [
+            RunRecord(
+                run_id="run-1",
+                orchestrator_session_id="manual:test-session",
+                harness="shell",
+                role="builder",
+                task_label="test task",
+                log_path=Path("/tmp/run-1.jsonl"),
+                created_at="2026-08-07T00:00:00Z",
+                status="running",
+                model="lmstudio/qwen",
+            )
+        ]
+
     store = cast(
         Any,
         SimpleNamespace(
-            list_active_runs=lambda session_id=None: [
-                RunRecord(
-                    run_id="run-1",
-                    orchestrator_session_id="manual:test-session",
-                    harness="shell",
-                    role="builder",
-                    task_label="test task",
-                    log_path=Path("/tmp/run-1.jsonl"),
-                    created_at="2026-08-07T00:00:00Z",
-                    status="running",
-                    model="lmstudio/qwen",
-                )
-            ],
+            list_active_runs=list_active_runs,
             reserve_run=reserve_run,
         ),
     )
@@ -1089,6 +1097,25 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
         status="running",
         model="lmstudio/qwen",
     )
+    waiting_run = RunRecord(
+        run_id="run-2",
+        orchestrator_session_id="manual:test-session",
+        harness="shell",
+        role="builder",
+        task_label="waiting task",
+        log_path=Path("/tmp/run-2.jsonl"),
+        created_at="2026-08-07T00:00:01Z",
+        status="waiting",
+        model="lmstudio/qwen",
+    )
+
+    def list_active_runs(
+        session_id: str | None = None,
+        *,
+        include_waiting: bool = False,
+    ) -> list[RunRecord]:
+        del session_id
+        return [active_run, waiting_run] if include_waiting else [active_run]
     context = AppContext(
         config=AppConfig(
             default_timeout=30,
@@ -1099,7 +1126,7 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
             Any,
             SimpleNamespace(model_limits={"lmstudio/qwen": ModelLimitConfig(concurrency=1)}),
         ),
-        store=cast(Any, SimpleNamespace(list_active_runs=lambda session_id=None: [active_run])),
+        store=cast(Any, SimpleNamespace(list_active_runs=list_active_runs)),
         registry=cast(Any, SimpleNamespace()),
         paths=OrchestraPaths(
             config_path=Path("/tmp/config.yaml"),
@@ -1107,9 +1134,9 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
         ),
     )
 
-    assert format_status(context, "manual:test-session").splitlines()[:10] == [
+    assert format_status(context, "manual:test-session").splitlines()[:11] == [
         "session_id: manual:test-session",
-        "active_runs: 1/2",
+        "active_runs: 2/2",
         "global_active_runs: 1/4",
         "model_active_runs:",
         "- lmstudio/qwen: 1/1",
@@ -1118,15 +1145,17 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
         "session_report_delivered: no",
         "active:",
         '- run-1 builder running task="test task"',
+        '- run-2 builder waiting task="waiting task"',
     ]
-    assert format_status(context).splitlines()[:7] == [
+    assert format_status(context).splitlines()[:8] == [
         "scope: global",
-        "active_runs: 1/4",
+        "active_runs: 2/4",
         "global_active_runs: 1/4",
         "model_active_runs:",
         "- lmstudio/qwen: 1/1",
         "active:",
         '- run-1 builder running task="test task" owner=manual:test-session',
+        '- run-2 builder waiting task="waiting task" owner=manual:test-session',
     ]
 
 
