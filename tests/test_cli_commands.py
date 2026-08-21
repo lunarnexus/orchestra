@@ -377,6 +377,67 @@ def test_context_compaction_role_prefers_enabled_summary_else_default() -> None:
     assert _context_compaction_role_name(no_summary_catalog) == "builder"
 
 
+def test_run_supervisor_reports_parent_context_role_fallback_to_caller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts = load_root_prompt_config()
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
+    harness = _CapturingHarness()
+    registry = cast(Any, SimpleNamespace(get=lambda _name: harness))
+    context = AppContext(
+        config=AppConfig(
+            default_timeout=30,
+            prompts=prompts,
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+        ),
+        catalog=AgentCatalog(
+            roles={
+                "builder": RoleConfig(harness="capture", command=["capture"], pass_context=True),
+            },
+            default_role="builder",
+        ),
+        store=store,
+        registry=registry,
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+    monkeypatch.setattr("orchestra.app.orchestra_can_dispatch", lambda: True)
+    monkeypatch.setattr("orchestra.app._spawn_supervisor", lambda *_args, **_kwargs: None)
+
+    started = start_run(
+        context,
+        session_id="manual:test-session",
+        role_name=None,
+        goal="Implement feature",
+        approved_context="User-approved facts",
+        boundaries="",
+        acceptance_target="",
+        return_format="",
+        timeout_seconds=10,
+        task_label="",
+        batch_id=None,
+        parent_context="[User]: previous context",
+    )
+
+    record = run_supervisor(
+        context,
+        run_id=started.record.run_id,
+        request_file=started.request_file,
+    )
+
+    assert record.result_summary is not None
+    assert "Parent context briefing fallback: summary role unavailable; using builder" in (
+        record.result_summary
+    )
+    assert "worker done" in record.result_summary
+
+
 def test_start_run_records_parent_context_without_pre_reserve_compaction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

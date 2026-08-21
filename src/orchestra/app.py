@@ -654,9 +654,9 @@ def _effective_approved_context(
         return (
             f"{approved_context.strip()}\n\n"
             f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}",
-            None,
+            warning,
         )
-    return f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}", None
+    return f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}", warning
 
 
 def _build_parent_context_briefing(
@@ -666,6 +666,12 @@ def _build_parent_context_briefing(
     parent_context: str,
 ) -> tuple[str, str | None]:
     role_name = _context_compaction_role_name(context.catalog)
+    fallback_warning = None
+    if role_name != "summary":
+        fallback_warning = (
+            "Parent context briefing fallback: summary role unavailable; "
+            f"using {role_name}"
+        )
     selected_role = _select_role(context.catalog, role_name)
     role = selected_role.config
     try:
@@ -715,7 +721,7 @@ def _build_parent_context_briefing(
     briefing = _meaningful_worker_output(result.stdout).strip()
     if not briefing:
         return "", "Parent context briefing skipped: summary role returned empty briefing"
-    return briefing, None
+    return briefing, fallback_warning
 
 
 def _context_compaction_role_name(catalog: AgentCatalog) -> str | None:

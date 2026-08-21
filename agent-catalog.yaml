@@ -88,6 +88,16 @@ roles:
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
       HINDSIGHT4PI_AUTO_RECALL: '0'
+  summary:
+    harness_config: pi
+    model: openai-codex/gpt-5.4-mini
+    turn_limit: 4
+    soft_timeout: 90
+    prompt_addition: Summarize conversation context for handoff. Return only the compact briefing.
+    enabled: true
+    env:
+      HINDSIGHT4PI_AUTO_RETAIN: '0'
+      HINDSIGHT4PI_AUTO_RECALL: '0'
   verifier:
     harness_config: pi
     model: openai-codex/gpt-5.4-mini
