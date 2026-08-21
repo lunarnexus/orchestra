@@ -60,6 +60,9 @@ def worker_subprocess_env(
 
 
 def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:
+    if request.role_name == "summary":
+        return request.goal.strip()
+
     prompts = request.prompts
     if prompts is None:
         raise ValueError(

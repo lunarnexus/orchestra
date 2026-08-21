@@ -82,14 +82,7 @@ WORKER_BUDGET_EXCEEDED_BLOCKER = (
 SUPERVISOR_STARTUP_TIMEOUT_SECONDS = 30
 PARENT_CONTEXT_BRIEFING_LABEL = "Parent context briefing"
 INTERNAL_ROLE_NAMES = frozenset({"summary"})
-CONTEXT_COMPACTION_SYSTEM_PROMPT = (
-    "You are a context summarization assistant. Your task is to read a "
-    "conversation between a user and an AI assistant, then produce a structured "
-    "summary following the exact format specified.\n\n"
-    "Do NOT continue the conversation. Do NOT respond to any questions in the "
-    "conversation. ONLY output the structured summary."
-)
-CONTEXT_COMPACTION_RETURN_FORMAT = (
+CONTEXT_COMPACTION_PROMPT = (
     "The messages above are a conversation to summarize. Create a structured context "
     "checkpoint summary that another LLM will use to continue the work.\n\n"
     "Use this EXACT format:\n\n"
@@ -115,6 +108,16 @@ CONTEXT_COMPACTION_RETURN_FORMAT = (
     "- [Or \"(none)\" if not applicable]\n\n"
     "Keep each section concise. Preserve exact file paths, function names, and error messages."
 )
+
+
+def _context_compaction_prompt(conversation: str, focus: str) -> str:
+    prompt = (
+        f"<conversation>\n{conversation.strip()}\n</conversation>\n\n"
+        f"{CONTEXT_COMPACTION_PROMPT}"
+    )
+    if focus.strip():
+        prompt = f"{prompt}\n\nAdditional focus: {focus.strip()}"
+    return prompt
 ROLE_USAGE = """Usage:
   /orch roles
   /orch roles ROLE SETTING VALUE
@@ -695,15 +698,14 @@ def _start_context_dependent_run(
     summary_request = PendingRunRequest(
         run_id=summary_run_id,
         role_name=summary_role.name,
-        goal=CONTEXT_COMPACTION_SYSTEM_PROMPT,
-        approved_context=(
-            f"<conversation>\n{pending_request.parent_context.strip()}\n</conversation>\n\n"
-            f"{CONTEXT_COMPACTION_RETURN_FORMAT}\n\n"
-            f"Additional focus: {pending_request.goal.strip()}"
+        goal=_context_compaction_prompt(
+            pending_request.parent_context,
+            pending_request.goal,
         ),
+        approved_context="",
         boundaries="",
         acceptance_target="",
-        return_format=CONTEXT_COMPACTION_RETURN_FORMAT,
+        return_format="",
         timeout_seconds=context.config.pass_context_timeout,
         task_label="parent context briefing",
         request_file=context.config.state_dir / "requests" / f"{summary_run_id}.json",
@@ -871,7 +873,7 @@ def _build_parent_context_briefing(
     if context_record is None:
         return "", _combine_context_warnings(fallback_warning, reserve_warning)
 
-    prompt_goal = CONTEXT_COMPACTION_SYSTEM_PROMPT
+    prompt_goal = _context_compaction_prompt(parent_context, goal)
     request_file = context.config.state_dir / "requests" / f"{context_run_id}.json"
     request_file.parent.mkdir(parents=True, exist_ok=True)
     request_file.write_text(
@@ -880,14 +882,10 @@ def _build_parent_context_briefing(
                 "run_id": context_run_id,
                 "role_name": selected_role.name,
                 "goal": prompt_goal,
-                "approved_context": (
-                    f"<conversation>\n{parent_context.strip()}\n</conversation>\n\n"
-                    f"{CONTEXT_COMPACTION_RETURN_FORMAT}\n\n"
-                    f"Additional focus: {goal.strip()}"
-                ),
+                "approved_context": "",
                 "boundaries": "",
                 "acceptance_target": "",
-                "return_format": CONTEXT_COMPACTION_RETURN_FORMAT,
+                "return_format": "",
                 "timeout_seconds": context.config.default_timeout,
                 "task_label": "parent context briefing",
                 "parent_context": "",

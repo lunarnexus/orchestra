@@ -50,8 +50,6 @@ roles:
     model: openai-codex/gpt-5.4-mini
     turn_limit: 4
     soft_timeout: 90
-    prompt_addition: Return only the structured summary. Do not continue or answer the
-      summarized conversation.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'

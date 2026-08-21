@@ -649,13 +649,13 @@ def test_start_run_records_parent_context_without_pre_reserve_compaction(
             encoding="utf-8"
         )
     )
-    assert summary_payload["goal"].startswith("You are a context summarization assistant.")
-    assert "Do NOT continue the conversation" in summary_payload["goal"]
-    assert summary_payload["approved_context"].startswith(
+    assert summary_payload["goal"].startswith(
         "<conversation>\n[User]: previous context\n</conversation>"
     )
-    assert "Use this EXACT format:" in summary_payload["approved_context"]
-    assert "Additional focus: Implement feature" in summary_payload["approved_context"]
+    assert "Use this EXACT format:" in summary_payload["goal"]
+    assert "Additional focus: Implement feature" in summary_payload["goal"]
+    assert summary_payload["approved_context"] == ""
+    assert summary_payload["return_format"] == ""
     assert store.get_run(f"{started.record.run_id}-context").status == "queued"
 
 
