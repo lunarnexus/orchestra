@@ -18,6 +18,7 @@ from orchestra.app import (
     _expanded_model_limits,
     format_debug_run,
     format_orchestrator_return,
+    format_roles,
     format_status,
     run_supervisor,
     start_run,
@@ -364,6 +365,79 @@ def test_status_reports_delivered_session_report_details(
     assert "descendants_terminal: yes" in output
     assert "session_report_available: no" in output
     assert "session_report_delivered: yes" in output
+
+
+def test_user_dispatch_rejects_internal_summary_role(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts = load_root_prompt_config()
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
+    context = AppContext(
+        config=AppConfig(
+            default_timeout=30,
+            prompts=prompts,
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+        ),
+        catalog=AgentCatalog(
+            roles={
+                "builder": RoleConfig(harness="shell", command=["echo"]),
+                "summary": RoleConfig(harness="shell", command=["echo"]),
+            },
+            default_role="builder",
+        ),
+        store=store,
+        registry=cast(Any, SimpleNamespace()),
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+    monkeypatch.setattr("orchestra.app.orchestra_can_dispatch", lambda: True)
+
+    with pytest.raises(AppError, match="role is internal-only: summary"):
+        start_run(
+            context,
+            session_id="manual:test-session",
+            role_name="summary",
+            goal="Write a haiku",
+            approved_context="",
+            boundaries="",
+            acceptance_target="",
+            return_format="",
+            timeout_seconds=10,
+            task_label="haiku",
+            batch_id=None,
+        )
+
+    assert store.list_runs("manual:test-session") == []
+
+
+def test_enabled_roles_hide_internal_summary_role() -> None:
+    context = AppContext(
+        config=AppConfig(default_timeout=30, prompts=load_root_prompt_config()),
+        catalog=AgentCatalog(
+            roles={
+                "builder": RoleConfig(harness="shell", command=["echo"]),
+                "summary": RoleConfig(harness="shell", command=["echo"]),
+            },
+            default_role="builder",
+        ),
+        store=cast(Any, SimpleNamespace()),
+        registry=cast(Any, SimpleNamespace()),
+        paths=OrchestraPaths(
+            config_path=Path("/tmp/config.yaml"),
+            catalog_path=Path("/tmp/catalog.yaml"),
+        ),
+    )
+
+    output = format_roles(context)
+
+    assert "builder" in output
+    assert "summary" not in output
 
 
 def test_context_compaction_role_prefers_enabled_summary_else_default() -> None:

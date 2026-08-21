@@ -81,6 +81,7 @@ WORKER_BUDGET_EXCEEDED_BLOCKER = (
 )
 SUPERVISOR_STARTUP_TIMEOUT_SECONDS = 30
 PARENT_CONTEXT_BRIEFING_LABEL = "Parent context briefing"
+INTERNAL_ROLE_NAMES = frozenset({"summary"})
 CONTEXT_COMPACTION_SYSTEM_PROMPT = (
     "You are a context summarization assistant. Your task is to read a "
     "conversation between a user and an AI assistant, then produce a structured "
@@ -304,7 +305,7 @@ def start_run(
     _require_session_id(session_id)
     if not orchestra_can_dispatch():
         raise AppError("ORCHESTRA_DISPATCH_BUDGET dispatch budget exhausted")
-    selected_role = _select_role(context.catalog, role_name)
+    selected_role = _select_dispatch_role(context.catalog, role_name)
     role = selected_role.config
 
     run_id = uuid.uuid4().hex[:12]
@@ -3093,8 +3094,15 @@ def _enabled_roles(catalog: AgentCatalog) -> list[tuple[str, RoleConfig]]:
     return [
         (role_name, role)
         for role_name, role in sorted(catalog.roles.items())
-        if role.enabled
+        if role.enabled and role_name not in INTERNAL_ROLE_NAMES
     ]
+
+
+def _select_dispatch_role(catalog: AgentCatalog, role_name: str | None) -> SelectedRole:
+    selected_role = _select_role(catalog, role_name)
+    if selected_role.name in INTERNAL_ROLE_NAMES:
+        raise AppError(f"role is internal-only: {selected_role.name}")
+    return selected_role
 
 
 def _select_role(catalog: AgentCatalog, role_name: str | None) -> SelectedRole:
