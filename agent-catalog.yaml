@@ -4,6 +4,8 @@ model_limits:
     concurrency: 2
   lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved:
     concurrency: 2
+  lmstudio/qwen/qwen3.8-27b:
+    concurrency: 2
 harness_configs:
   pi:
     harness: pi
@@ -35,7 +37,7 @@ roles:
   builder:
     harness_config: pi
     model: lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved
-    pass_context: true
+    pass_context: false
     skills:
     - builder
     prompt_addition: Implement the assigned task only. Stay in scope. Run focused
@@ -90,7 +92,7 @@ roles:
   researcher:
     harness_config: pi
     model: lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved
-    pass_context: true
+    pass_context: false
     prompt_addition: Gather evidence with sources from docs, web, or code. Do not
       change code. Update only the assigned RESEARCH.md section when requested. Return
       the compact schema only.
