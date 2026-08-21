@@ -12,13 +12,11 @@ import pytest
 
 from orchestra.logs import append_jsonl_event
 from orchestra.state import (
-    _SCHEMA_VERSION,
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_FAILED,
     STATUS_QUEUED,
     STATUS_RUNNING,
-    STATUS_WAITING,
     ConcurrencyLimitError,
     RunRecord,
     RunUpdate,
@@ -55,7 +53,7 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == _SCHEMA_VERSION
+    assert row[0] == 9
 
 
 def test_connect_retries_transient_sqlite_open_failure(
@@ -153,33 +151,6 @@ def test_update_run_tracks_state_transitions_and_metadata(
     assert done.result_summary_truncated is True
 
 
-def test_update_run_applies_dependency_and_internal_fields(
-    state_store: StateStore,
-    tmp_path: Path,
-) -> None:
-    record = replace(
-        make_run(tmp_path, run_id="run-4", session_id="pi:session-a"),
-        status=STATUS_WAITING,
-    )
-    state_store.create_run(record)
-
-    updated = state_store.update_run(
-        "run-4",
-        RunUpdate(status=STATUS_WAITING, depends_on_run_id="summary-run-1", internal=True),
-    )
-    released = state_store.update_run("run-4", RunUpdate(status=STATUS_QUEUED))
-
-    assert updated.depends_on_run_id == "summary-run-1"
-    assert updated.internal is True
-    assert released.status == STATUS_QUEUED
-    reloaded = state_store.get_run("run-4")
-    assert (reloaded.status, reloaded.depends_on_run_id, reloaded.internal) == (
-        STATUS_QUEUED,
-        "summary-run-1",
-        True,
-    )
-
-
 def test_late_terminal_update_is_ignored(state_store: StateStore, tmp_path: Path) -> None:
     record = make_run(tmp_path, run_id="run-3", session_id="pi:session-a")
     state_store.create_run(record)
@@ -244,31 +215,18 @@ def test_count_and_list_active_runs_are_session_scoped(
     run_a = make_run(tmp_path, run_id="run-a", session_id="pi:session-a")
     run_b = make_run(tmp_path, run_id="run-b", session_id="pi:session-a")
     run_c = make_run(tmp_path, run_id="run-c", session_id="pi:session-b")
-    waiting_run = replace(
-        make_run(tmp_path, run_id="run-waiting", session_id="pi:session-a"),
-        status=STATUS_WAITING,
-    )
-    internal_waiting_run = replace(
-        make_run(tmp_path, run_id="run-internal", session_id="pi:session-a"),
-        status=STATUS_WAITING,
-        internal=True,
-    )
 
     state_store.create_run(run_a)
     state_store.create_run(run_b)
     state_store.create_run(run_c)
-    state_store.create_run(waiting_run)
-    state_store.create_run(internal_waiting_run)
     state_store.update_run("run-b", RunUpdate(status=STATUS_RUNNING, process_id=77))
     state_store.update_run("run-c", RunUpdate(status=STATUS_RUNNING, process_id=88))
     state_store.update_run("run-c", RunUpdate(status=STATUS_FAILED, error_text="boom"))
 
     active_a = state_store.list_active_runs("pi:session-a")
-    visible_a = state_store.list_active_runs("pi:session-a", include_waiting=True)
     active_all = state_store.list_active_runs()
 
     assert [run.run_id for run in active_a] == ["run-a", "run-b"]
-    assert [run.run_id for run in visible_a] == ["run-a", "run-b", "run-waiting"]
     assert [run.run_id for run in active_all] == ["run-a", "run-b"]
     assert state_store.count_active_runs("pi:session-a") == 2
     assert state_store.count_active_runs("pi:session-b") == 0

@@ -51,9 +51,6 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert 'await refreshOrchDispatchToolRegistration(toolInfo);' in extension_source
     assert 'ctx.sessionManager.getSessionId()' in extension_source
     assert 'normalizePiSessionId(ctx.sessionManager.getSessionId())' in extension_source
-    assert 'ctx.sessionManager.buildContextEntries()' in extension_source
-    assert 'serializeConversation(convertToLlm(messages))' in extension_source
-    assert 'command.push("--parent-context", params.parentContext.trim());' in extension_source
     assert '["status", "--session-id", sessionId]' in extension_source
     assert '["history", "--session-id", sessionId, "--limit", limitValue]' in extension_source
     assert '["stop", "--session-id", sessionId, "--run-id", runId]' in extension_source

@@ -7,20 +7,6 @@ Orchestra roadmap items are split into:
 
 ## TODO
 
-1. [ ] Role-gated focused parent-context briefing.
-   - Add `pass_context: true|false` to role config in `agent-catalog.yaml`; default disabled.
-   - When enabled, compact the parent session before dispatch and pass the focused summary to the subagent.
-   - Use the child dispatch goal/prompt as the compaction focus.
-   - Reuse the existing Pi/offload-router compaction wording and structured format; do not invent new prompt text.
-   - Use the configured `summary` role for compaction when enabled; otherwise use the default role.
-   - Keep disabled for reviewer, verifier, and appsec roles by default so they retain independent judgment.
-   - Skip focused parent-context briefing below the Pi-like 20k-token threshold so trivial sessions do not get summarized.
-
-2. [ ] Keep loaded skills and system-style steering out of pass-through parent context.
-   - Treat skills like turn/system steering inputs rather than durable conversational content when building context for subagent handoff.
-   - Prevent orchestrator skill text from leaking into builder/reviewer/verifier/appsec context through raw parent-context passing or compaction inputs.
-   - Preserve task-relevant conversation state while filtering framework/process instructions that belong only to the parent role.
-
 ## Wishlist
 
 1. [ ] Queued subagent requests instead of MVP fail-fast over-limit behavior.

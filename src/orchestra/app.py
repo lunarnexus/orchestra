@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 import shutil
@@ -58,7 +57,6 @@ from orchestra.state import (
     STATUS_INCOMPLETE,
     STATUS_QUEUED,
     STATUS_RUNNING,
-    STATUS_WAITING,
     ConcurrencyLimitError,
     RunRecord,
     RunUpdate,
@@ -81,55 +79,6 @@ WORKER_BUDGET_EXCEEDED_BLOCKER = (
     "Worker budget exceeded; redispatch from continuation handoff"
 )
 SUPERVISOR_STARTUP_TIMEOUT_SECONDS = 30
-PARENT_CONTEXT_BRIEFING_LABEL = "Parent context briefing"
-PARENT_CONTEXT_COMPACTION_MIN_TOKENS = 20_000
-INTERNAL_ROLE_NAMES = frozenset({"summary"})
-CONTEXT_COMPACTION_PROMPT = (
-    "The messages above are a conversation to summarize. Create a structured context "
-    "checkpoint summary that another LLM will use to continue the work.\n\n"
-    "Use this EXACT format:\n\n"
-    "## Goal\n"
-    "[What is the user trying to accomplish? Can be multiple items if the session "
-    "covers different tasks.]\n\n"
-    "## Constraints & Preferences\n"
-    "- [Any constraints, preferences, or requirements mentioned by user]\n"
-    "- [Or \"(none)\" if none were mentioned]\n\n"
-    "## Progress\n"
-    "### Done\n"
-    "- [x] [Completed tasks/changes]\n\n"
-    "### In Progress\n"
-    "- [ ] [Current work]\n\n"
-    "### Blocked\n"
-    "- [Issues preventing progress, if any]\n\n"
-    "## Key Decisions\n"
-    "- **[Decision]**: [Brief rationale]\n\n"
-    "## Next Steps\n"
-    "1. [Ordered list of what should happen next]\n\n"
-    "## Critical Context\n"
-    "- [Any data, examples, or references needed to continue]\n"
-    "- [Or \"(none)\" if not applicable]\n\n"
-    "Keep each section concise. Preserve exact file paths, function names, and error messages."
-)
-
-
-def _context_compaction_prompt(conversation: str, focus: str) -> str:
-    prompt = (
-        f"<conversation>\n{conversation.strip()}\n</conversation>\n\n"
-        f"{CONTEXT_COMPACTION_PROMPT}"
-    )
-    if focus.strip():
-        prompt = f"{prompt}\n\nAdditional focus: {focus.strip()}"
-    return prompt
-
-
-def _estimated_parent_context_tokens(parent_context: str) -> int:
-    return max(0, math.ceil(len(parent_context.strip()) / 4))
-
-
-def _should_compact_parent_context(parent_context: str) -> bool:
-    return _estimated_parent_context_tokens(parent_context) > PARENT_CONTEXT_COMPACTION_MIN_TOKENS
-
-
 ROLE_USAGE = """Usage:
   /orch roles
   /orch roles ROLE SETTING VALUE
@@ -247,8 +196,6 @@ class PendingRunRequest:
     timeout_seconds: int
     task_label: str
     request_file: Path
-    parent_context: str = ""
-    context_briefing_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -315,12 +262,11 @@ def start_run(
     timeout_seconds: int | None,
     task_label: str,
     batch_id: str | None,
-    parent_context: str = "",
 ) -> StartedRun:
     _require_session_id(session_id)
     if not orchestra_can_dispatch():
         raise AppError("ORCHESTRA_DISPATCH_BUDGET dispatch budget exhausted")
-    selected_role = _select_dispatch_role(context.catalog, role_name)
+    selected_role = _select_role(context.catalog, role_name)
     role = selected_role.config
 
     run_id = uuid.uuid4().hex[:12]
@@ -334,27 +280,17 @@ def start_run(
     if effective_soft_timeout is not None and effective_soft_timeout >= effective_timeout:
         raise AppError("soft_timeout must be less than effective worker timeout")
 
-    effective_approved_context = approved_context
-    effective_parent_context = parent_context
-    if (
-        role.pass_context
-        and parent_context.strip()
-        and not _should_compact_parent_context(parent_context)
-    ):
-        effective_parent_context = ""
-
     pending_request = PendingRunRequest(
         run_id=run_id,
         role_name=selected_role.name,
         goal=goal,
-        approved_context=effective_approved_context,
+        approved_context=approved_context,
         boundaries=boundaries,
         acceptance_target=acceptance_target,
         return_format=return_format,
         timeout_seconds=effective_timeout,
         task_label=effective_task_label,
         request_file=request_file,
-        parent_context=effective_parent_context,
     )
 
     record = RunRecord(
@@ -368,20 +304,6 @@ def start_run(
         log_path=log_path,
         created_at=utc_now(),
     )
-
-    if (
-        role.pass_context
-        and effective_parent_context.strip()
-        and _should_compact_parent_context(parent_context)
-    ):
-        return _start_context_dependent_run(
-            context,
-            session_id=session_id,
-            selected_role=selected_role,
-            role=role,
-            pending_request=pending_request,
-            record=record,
-        )
 
     reconcile_stale_queued_runs(context)
 
@@ -409,8 +331,6 @@ def start_run(
                 "return_format": pending_request.return_format,
                 "timeout_seconds": pending_request.timeout_seconds,
                 "task_label": pending_request.task_label,
-                "parent_context": pending_request.parent_context,
-                "context_briefing_note": pending_request.context_briefing_note,
             }
         ),
         encoding="utf-8",
@@ -469,11 +389,10 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         {"harness": selected_role.config.harness, "role": selected_role.name},
     )
     try:
-        started_role, worker, context_briefing_note = _start_worker_process(
+        started_role, worker = _start_worker_process(
             context,
             selected_role,
             pending_request,
-            orchestrator_session_id=record.orchestrator_session_id,
             log_path=record.log_path,
         )
     except AppError as exc:
@@ -482,7 +401,6 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         attempted_role = selected_role
         started_role = None
         worker = None
-        context_briefing_note = None
 
         for fallback_role in _fallback_roles_for(context.catalog, selected_role):
             candidate_note = _fallback_note(
@@ -491,11 +409,10 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
                 failed_harness=attempted_role.config.harness,
             )
             try:
-                started_role, worker, context_briefing_note = _start_worker_process(
+                started_role, worker = _start_worker_process(
                     context,
                     fallback_role,
                     pending_request,
-                    orchestrator_session_id=record.orchestrator_session_id,
                     log_path=record.log_path,
                 )
                 fallback_note = candidate_note
@@ -587,8 +504,6 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         },
     )
 
-    if context_briefing_note:
-        result = _annotate_result_with_fallback(result, context_briefing_note)
     if fallback_note:
         result = _annotate_result_with_fallback(result, fallback_note)
 
@@ -676,345 +591,6 @@ def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
         f"orchestra dispatched:{role_text} {run_id}\n"
         "subagent will auto-return when finished. Do not poll while waiting."
     )
-
-
-
-def _write_pending_request(request: PendingRunRequest) -> None:
-    request.request_file.parent.mkdir(parents=True, exist_ok=True)
-    request.request_file.write_text(
-        json.dumps(
-            {
-                "run_id": request.run_id,
-                "role_name": request.role_name,
-                "goal": request.goal,
-                "approved_context": request.approved_context,
-                "boundaries": request.boundaries,
-                "acceptance_target": request.acceptance_target,
-                "return_format": request.return_format,
-                "timeout_seconds": request.timeout_seconds,
-                "task_label": request.task_label,
-                "parent_context": request.parent_context,
-                "context_briefing_note": request.context_briefing_note,
-            }
-        ),
-        encoding="utf-8",
-    )
-
-
-def _start_context_dependent_run(
-    context: AppContext,
-    *,
-    session_id: str,
-    selected_role: SelectedRole,
-    role: RoleConfig,
-    pending_request: PendingRunRequest,
-    record: RunRecord,
-) -> StartedRun:
-    summary_role_name = _context_compaction_role_name(context.catalog)
-    fallback_warning = None
-    if summary_role_name != "summary":
-        fallback_warning = (
-            "Parent context briefing fallback: summary role unavailable; "
-            f"using {summary_role_name}"
-        )
-    summary_role = _select_role(context.catalog, summary_role_name)
-    summary_config = summary_role.config
-    summary_run_id = f"{pending_request.run_id}-context"
-    summary_request = PendingRunRequest(
-        run_id=summary_run_id,
-        role_name=summary_role.name,
-        goal=_context_compaction_prompt(
-            pending_request.parent_context,
-            pending_request.goal,
-        ),
-        approved_context="",
-        boundaries="",
-        acceptance_target="",
-        return_format="",
-        timeout_seconds=context.config.pass_context_timeout,
-        task_label="parent context briefing",
-        request_file=context.config.state_dir / "requests" / f"{summary_run_id}.json",
-        parent_context="",
-    )
-    summary_record = RunRecord(
-        run_id=summary_run_id,
-        orchestrator_session_id=session_id,
-        harness=summary_config.harness,
-        role=summary_role.name,
-        model=summary_config.model,
-        status=STATUS_QUEUED,
-        task_label="parent context briefing",
-        log_path=record.log_path.with_name(f"{summary_run_id}.jsonl"),
-        created_at=utc_now(),
-        reported_at=utc_now(),
-        internal=True,
-    )
-    waiting_record = replace(
-        record,
-        status=STATUS_WAITING,
-        depends_on_run_id=summary_run_id,
-    )
-
-    reconcile_stale_queued_runs(context)
-    try:
-        context.store.reserve_run(
-            summary_record,
-            global_limit=context.config.concurrency.global_limit,
-            per_session_limit=context.config.concurrency.per_session_limit,
-            per_model_limits=_expanded_model_limits(context.catalog.model_limits),
-        )
-        context.store.reserve_run(
-            waiting_record,
-            global_limit=context.config.concurrency.global_limit,
-            per_session_limit=context.config.concurrency.per_session_limit,
-            per_model_limits=_expanded_model_limits(context.catalog.model_limits),
-        )
-    except ConcurrencyLimitError as exc:
-        raise AppError(
-            _format_concurrency_limit_error(str(exc), context=context, session_id=session_id)
-        ) from exc
-
-    _write_pending_request(summary_request)
-    _write_pending_request(
-        replace(
-            pending_request,
-            parent_context="",
-            context_briefing_note=fallback_warning or "",
-        )
-    )
-    _append_run_event(
-        context,
-        pending_request.run_id,
-        "parent_context.dependency_created",
-        {"summary_run_id": summary_run_id, "summary_role": summary_role.name},
-    )
-    _spawn_supervisor(context, summary_request.request_file, summary_run_id)
-    return StartedRun(
-        record=waiting_record,
-        request_file=pending_request.request_file,
-        timeout_seconds=pending_request.timeout_seconds,
-    )
-
-
-def _effective_approved_context(
-    context: AppContext,
-    selected_role: SelectedRole,
-    *,
-    run_id: str,
-    orchestrator_session_id: str,
-    goal: str,
-    approved_context: str,
-    parent_context: str,
-    log_path: Path,
-) -> tuple[str, str | None]:
-    if not selected_role.config.pass_context or not parent_context.strip():
-        return approved_context, None
-    if not _should_compact_parent_context(parent_context):
-        return approved_context, None
-    briefing, warning = _build_parent_context_briefing(
-        context,
-        run_id=run_id,
-        orchestrator_session_id=orchestrator_session_id,
-        goal=goal,
-        parent_context=parent_context,
-        log_path=log_path,
-    )
-    if not briefing:
-        return approved_context, warning
-    if approved_context.strip():
-        return (
-            f"{approved_context.strip()}\n\n"
-            f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}",
-            warning,
-        )
-    return f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}", warning
-
-
-def _reserve_internal_context_run(
-    context: AppContext,
-    *,
-    run_id: str,
-    parent_run_id: str,
-    orchestrator_session_id: str,
-    role_name: str,
-    role: RoleConfig,
-    parent_log_path: Path,
-) -> tuple[RunRecord | None, str | None]:
-    now = utc_now()
-    record = RunRecord(
-        run_id=run_id,
-        orchestrator_session_id=orchestrator_session_id,
-        harness=role.harness,
-        role=role_name,
-        model=role.model,
-        task_label="parent context briefing",
-        log_path=parent_log_path.with_name(f"{run_id}.jsonl"),
-        created_at=now,
-        reported_at=now,
-    )
-    try:
-        reserved = context.store.reserve_run(
-            record,
-            global_limit=context.config.concurrency.global_limit,
-            per_session_limit=context.config.concurrency.per_session_limit,
-            per_model_limits=_expanded_model_limits(context.catalog.model_limits),
-            exclude_run_id=parent_run_id,
-        )
-    except ConcurrencyLimitError as exc:
-        return (
-            None,
-            "Parent context briefing skipped: summary role could not reserve "
-            f"capacity: {exc}",
-        )
-    return reserved, None
-
-
-def _build_parent_context_briefing(
-    context: AppContext,
-    *,
-    run_id: str,
-    orchestrator_session_id: str,
-    goal: str,
-    parent_context: str,
-    log_path: Path,
-) -> tuple[str, str | None]:
-    role_name = _context_compaction_role_name(context.catalog)
-    fallback_warning = None
-    if role_name != "summary":
-        fallback_warning = (
-            "Parent context briefing fallback: summary role unavailable; "
-            f"using {role_name}"
-        )
-    selected_role = _select_role(context.catalog, role_name)
-    role = selected_role.config
-    context_run_id = f"{run_id}-context"
-    context_record, reserve_warning = _reserve_internal_context_run(
-        context,
-        run_id=context_run_id,
-        parent_run_id=run_id,
-        orchestrator_session_id=orchestrator_session_id,
-        role_name=selected_role.name,
-        role=role,
-        parent_log_path=log_path,
-    )
-    if context_record is None:
-        return "", _combine_context_warnings(fallback_warning, reserve_warning)
-
-    prompt_goal = _context_compaction_prompt(parent_context, goal)
-    request_file = context.config.state_dir / "requests" / f"{context_run_id}.json"
-    request_file.parent.mkdir(parents=True, exist_ok=True)
-    request_file.write_text(
-        json.dumps(
-            {
-                "run_id": context_run_id,
-                "role_name": selected_role.name,
-                "goal": prompt_goal,
-                "approved_context": "",
-                "boundaries": "",
-                "acceptance_target": "",
-                "return_format": "",
-                "timeout_seconds": context.config.default_timeout,
-                "task_label": "parent context briefing",
-                "parent_context": "",
-            }
-        ),
-        encoding="utf-8",
-    )
-    _append_run_event(
-        context,
-        run_id,
-        "parent_context.dispatched",
-        {"context_run_id": context_run_id, "role": selected_role.name, "harness": role.harness},
-    )
-    _spawn_supervisor(context, request_file, context_run_id)
-    try:
-        completed, _, _ = await_run_terminal_status(
-            context,
-            orchestrator_session_id,
-            run_id=context_run_id,
-            timeout_seconds=context.config.pass_context_timeout,
-        )
-    except AppError as exc:
-        _cancel_internal_context_run(context, orchestrator_session_id, context_run_id)
-        return "", _combine_context_warnings(
-            fallback_warning,
-            f"Parent context briefing skipped: summary role did not complete: {exc}",
-        )
-
-    _append_run_event(
-        context,
-        run_id,
-        "parent_context.completed",
-        {
-            "context_run_id": context_run_id,
-            "status": completed.status,
-            "worker_session_id": completed.worker_session_id,
-            "transcript_path": str(completed.transcript_path)
-            if completed.transcript_path
-            else None,
-        },
-    )
-    if completed.status != STATUS_DONE:
-        detail = (
-            completed.error_text or completed.blocker_text or "summary role returned no briefing"
-        )
-        return "", _combine_context_warnings(
-            fallback_warning,
-            f"Parent context briefing skipped: {detail}",
-        )
-    briefing = _context_briefing_output(completed).strip()
-    if not briefing:
-        return "", _combine_context_warnings(
-            fallback_warning,
-            "Parent context briefing skipped: summary role returned empty briefing",
-        )
-    return briefing, fallback_warning
-
-
-def _cancel_internal_context_run(context: AppContext, session_id: str, run_id: str) -> None:
-    try:
-        record = context.store.get_run(run_id)
-    except (AppError, KeyError, ValueError):
-        return
-    if record.status not in ACTIVE_STATUSES:
-        return
-    if record.supervisor_pid is not None:
-        _terminate_owned_process(record.supervisor_pid, None)
-    try:
-        stop_run(context, session_id, run_id)
-    except AppError:
-        pass
-
-
-def _context_briefing_output(record: RunRecord) -> str:
-    if record.result_artifact_path is not None:
-        try:
-            return _return_artifact_stdout(record.result_artifact_path.read_text(encoding="utf-8"))
-        except OSError:
-            pass
-    return record.result_summary or ""
-
-
-def _return_artifact_stdout(text: str) -> str:
-    marker = "## stdout\n\n"
-    if marker not in text:
-        return text
-    stdout = text.split(marker, 1)[1]
-    if "\n## stderr\n" in stdout:
-        stdout = stdout.split("\n## stderr\n", 1)[0]
-    return stdout.strip()
-
-
-def _combine_context_warnings(*warnings: str | None) -> str | None:
-    parts = [warning for warning in warnings if warning]
-    return "; ".join(parts) if parts else None
-
-
-def _context_compaction_role_name(catalog: AgentCatalog) -> str | None:
-    summary_role = catalog.roles.get("summary")
-    if summary_role is not None and summary_role.enabled:
-        return "summary"
-    return catalog.default_role
 
 
 def _format_concurrency_limit_error(
@@ -1256,11 +832,7 @@ def reconcile_stale_queued_runs(
 ) -> list[RunRecord]:
     reconciled: list[RunRecord] = []
     now = datetime.now(UTC)
-    try:
-        active_runs = context.store.list_active_runs(include_internal=True)
-    except TypeError:
-        active_runs = context.store.list_active_runs()
-    for run in active_runs:
+    for run in context.store.list_active_runs():
         if run.status == STATUS_RUNNING:
             if _is_stale_running_run(run):
                 reconciled.append(_reconcile_stale_running_run(context, run))
@@ -1435,8 +1007,7 @@ def _append_session_status_details(lines: list[str], details: SessionStatusDetai
 
 def format_status(context: AppContext, session_id: str | None = None) -> str:
     reconcile_stale_queued_runs(context)
-    global_capacity_runs = context.store.list_active_runs()
-    global_runs = context.store.list_active_runs(include_waiting=True)
+    global_runs = context.store.list_active_runs()
     global_limit = context.config.concurrency.global_limit
     per_session_limit = context.config.concurrency.per_session_limit
     model_limits = context.catalog.model_limits
@@ -1444,12 +1015,12 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
         lines = [
             "scope: global",
             f"active_runs: {len(global_runs)}/{global_limit}",
-            f"global_active_runs: {len(global_capacity_runs)}/{global_limit}",
+            f"global_active_runs: {len(global_runs)}/{global_limit}",
         ]
         if model_limits:
             lines.append("model_active_runs:")
             for model in sorted(model_limits):
-                active = sum(1 for run in global_capacity_runs if run.model == model)
+                active = sum(1 for run in global_runs if run.model == model)
                 lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
         if not global_runs:
             lines.append("status: no active runs")
@@ -1470,17 +1041,13 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
     lines.extend(
         [
             f"active_runs: {len(runs)}/{per_session_limit}",
-            f"global_active_runs: {len(global_capacity_runs)}/{global_limit}",
+            f"global_active_runs: {len(global_runs)}/{global_limit}",
         ]
     )
     if model_limits:
         lines.append("model_active_runs:")
         for model in sorted(model_limits):
-            active = sum(
-                1
-                for run in runs
-                if run.model == model and run.status in {STATUS_QUEUED, STATUS_RUNNING}
-            )
+            active = sum(1 for run in runs if run.model == model)
             lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
     details = session_status_details(context, lineage_session_ids, active_runs=runs)
     if not runs:
@@ -1782,7 +1349,6 @@ def _format_debug_bundle(context: AppContext, record: RunRecord) -> str:
         sections.append(_debug_file_section("Return artifact", record.result_artifact_path))
     else:
         sections.append("## Return artifact\npath: missing")
-    sections.append(_debug_parent_context_transcript_section(record))
     sections.append(_debug_transcript_section(record))
     return "\n\n".join(sections)
 
@@ -1796,47 +1362,6 @@ def _debug_file_section(title: str, path: Path) -> str:
     else:
         lines.extend(["", text.rstrip()])
     return "\n".join(lines)
-
-
-def _debug_parent_context_transcript_section(record: RunRecord) -> str:
-    lines = ["## Parent context transcript"]
-    entries = _parent_context_trace_entries(record.log_path)
-    if not entries:
-        lines.append("transcript_path: not available")
-        return "\n".join(lines)
-    for index, entry in enumerate(entries, start=1):
-        worker_session_id = str(entry.get("worker_session_id") or "")
-        transcript_path = str(entry.get("transcript_path") or "")
-        lines.append(f"parent_context_trace: {index}")
-        if worker_session_id:
-            lines.append(f"worker_session_id: {worker_session_id}")
-        if transcript_path:
-            lines.append(_debug_file_section("Transcript content", Path(transcript_path)))
-            continue
-        if worker_session_id:
-            fallback = _find_pi_transcript(worker_session_id)
-            if fallback is not None:
-                lines.append("transcript_path: discovered by Pi fallback search")
-                lines.append(_debug_file_section("Transcript content", fallback))
-            else:
-                lines.append("transcript_path: not recorded")
-    return "\n".join(lines)
-
-
-def _parent_context_trace_entries(log_path: Path) -> list[dict[str, object]]:
-    try:
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except FileNotFoundError:
-        return []
-    entries: list[dict[str, object]] = []
-    for line in lines:
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if event.get("event") in {"parent_context.started", "parent_context.completed"}:
-            entries.append(event)
-    return entries
 
 
 def _debug_transcript_section(record: RunRecord) -> str:
@@ -1922,14 +1447,11 @@ def _list_active_runs_for_session_ids(
     session_ids: list[str],
 ) -> list[RunRecord]:
     if len(session_ids) == 1:
-        return context.store.list_active_runs(session_ids[0], include_waiting=True)
+        return context.store.list_active_runs(session_ids[0])
     runs = [
         run
         for lineage_session_id in session_ids
-        for run in context.store.list_active_runs(
-            lineage_session_id,
-            include_waiting=True,
-        )
+        for run in context.store.list_active_runs(lineage_session_id)
     ]
     return sorted(runs, key=lambda run: (run.created_at, run.run_id))
 
@@ -2694,8 +2216,6 @@ def _load_pending_request(run_id: str, request_file: Path) -> PendingRunRequest:
         timeout_seconds=int(payload["timeout_seconds"]),
         task_label=str(payload["task_label"]),
         request_file=request_file,
-        parent_context=str(payload.get("parent_context", "")),
-        context_briefing_note=str(payload.get("context_briefing_note", "")),
     )
 
 
@@ -2723,9 +2243,8 @@ def _start_worker_process(
     selected_role: SelectedRole,
     pending_request: PendingRunRequest,
     *,
-    orchestrator_session_id: str,
     log_path: Path,
-) -> tuple[SelectedRole, WorkerProcess, str | None]:
+) -> tuple[SelectedRole, WorkerProcess]:
     role = selected_role.config
     try:
         harness = context.registry.get(role.harness)
@@ -2736,22 +2255,11 @@ def _start_worker_process(
         detail = exc.args[0] if exc.args else str(exc)
         raise AppError(detail) from exc
 
-    effective_approved_context, context_briefing_note = _effective_approved_context(
-        context,
-        selected_role,
-        run_id=pending_request.run_id,
-        orchestrator_session_id=orchestrator_session_id,
-        goal=pending_request.goal,
-        approved_context=pending_request.approved_context,
-        parent_context=pending_request.parent_context,
-        log_path=log_path,
-    )
-    context_briefing_note = context_briefing_note or pending_request.context_briefing_note or None
     request = WorkerRequest(
         role_name=selected_role.name,
         goal=pending_request.goal,
         run_id=pending_request.run_id,
-        approved_context=effective_approved_context,
+        approved_context=pending_request.approved_context,
         boundaries=pending_request.boundaries,
         acceptance_target=pending_request.acceptance_target,
         return_format=pending_request.return_format,
@@ -2767,7 +2275,7 @@ def _start_worker_process(
     )
 
     try:
-        return selected_role, harness.start(request, role), context_briefing_note
+        return selected_role, harness.start(request, role)
     except Exception as exc:
         raise AppError(f"failed to start harness: {role.harness}: {exc}") from exc
 
@@ -2935,7 +2443,7 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
     result_summary_truncated = (
         result.result_summary_truncated if not effective_blocker_text else False
     )
-    finalized = context.store.update_run(
+    return context.store.update_run(
         run_id,
         RunUpdate(
             status=terminal_status,
@@ -2949,75 +2457,6 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
             approval_needed=result.approval_needed,
         ),
     )
-    _release_context_dependents(context, finalized)
-    return finalized
-
-
-def _release_context_dependents(context: AppContext, summary: RunRecord) -> None:
-    dependents = context.store.list_waiting_dependents(summary.run_id)
-    if not dependents:
-        return
-    for dependent in dependents:
-        request_file = context.config.state_dir / "requests" / f"{dependent.run_id}.json"
-        pending = _load_pending_request(dependent.run_id, request_file)
-        briefing = (
-            _context_briefing_output(summary).strip() if summary.status == STATUS_DONE else ""
-        )
-        note = None
-        if summary.status != STATUS_DONE:
-            detail = (
-                summary.error_text or summary.blocker_text or "summary role returned no briefing"
-            )
-            note = f"Parent context briefing skipped: {detail}"
-        elif not briefing:
-            note = "Parent context briefing skipped: summary role returned empty briefing"
-        note = _combine_context_warnings(pending.context_briefing_note, note)
-        if briefing:
-            approved_context = _append_parent_context_briefing(
-                pending.approved_context,
-                briefing,
-            )
-        else:
-            approved_context = pending.approved_context
-        _write_pending_request(
-            replace(
-                pending,
-                approved_context=approved_context,
-                parent_context="",
-                context_briefing_note=note or "",
-            )
-        )
-        _append_run_event(
-            context,
-            dependent.run_id,
-            "parent_context.completed",
-            {
-                "summary_run_id": summary.run_id,
-                "status": summary.status,
-                "worker_session_id": summary.worker_session_id,
-                "transcript_path": str(summary.transcript_path)
-                if summary.transcript_path
-                else None,
-            },
-        )
-        _append_run_event(
-            context,
-            dependent.run_id,
-            "parent_context.dependency_released",
-            {"summary_run_id": summary.run_id, "summary_status": summary.status},
-        )
-        released = context.store.update_run(dependent.run_id, RunUpdate(status=STATUS_QUEUED))
-        if released.status == STATUS_QUEUED:
-            _spawn_supervisor(context, request_file, dependent.run_id)
-
-
-def _append_parent_context_briefing(approved_context: str, briefing: str) -> str:
-    if approved_context.strip():
-        return (
-            f"{approved_context.strip()}\n\n"
-            f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}"
-        )
-    return f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}"
 
 
 def _write_return_artifact(
@@ -3119,15 +2558,8 @@ def _enabled_roles(catalog: AgentCatalog) -> list[tuple[str, RoleConfig]]:
     return [
         (role_name, role)
         for role_name, role in sorted(catalog.roles.items())
-        if role.enabled and role_name not in INTERNAL_ROLE_NAMES
+        if role.enabled
     ]
-
-
-def _select_dispatch_role(catalog: AgentCatalog, role_name: str | None) -> SelectedRole:
-    selected_role = _select_role(catalog, role_name)
-    if selected_role.name in INTERNAL_ROLE_NAMES:
-        raise AppError(f"role is internal-only: {selected_role.name}")
-    return selected_role
 
 
 def _select_role(catalog: AgentCatalog, role_name: str | None) -> SelectedRole:

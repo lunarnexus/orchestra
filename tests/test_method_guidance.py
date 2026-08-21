@@ -38,16 +38,6 @@ def test_default_catalog_reviewer_remains_read_only_without_duplicate_tests() ->
     assert "Run no test commands" in reviewer_prompt
 
 
-def test_default_catalog_defines_summary_role_for_context_compaction() -> None:
-    catalog = yaml.safe_load(Path("agent-catalog.yaml").read_text(encoding="utf-8"))
-
-    summary = catalog["roles"]["summary"]
-    assert summary["harness_config"] == "pi"
-    assert summary["enabled"] is True
-    assert summary["turn_limit"] == 4
-    assert summary["soft_timeout"] == 90
-
-
 def test_orchestrator_artifact_repairs_do_not_run_commands() -> None:
     skill = Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8")
 

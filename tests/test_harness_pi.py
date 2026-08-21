@@ -102,32 +102,6 @@ def test_pi_harness_builds_scoped_prompt(worker_request: WorkerRequest) -> None:
     assert "PI_SESSION_ID" not in prompt
 
 
-def test_summary_prompt_uses_raw_compaction_prompt_without_worker_framing(
-    tmp_path: Path,
-) -> None:
-    request = WorkerRequest(
-        role_name="summary",
-        goal="<conversation>\n[User]: hi\n</conversation>\n\nSummarize this.",
-        approved_context="should not be rendered",
-        return_format="should not be rendered",
-        timeout_seconds=30,
-        log_path=tmp_path / "logs" / "summary.jsonl",
-        prompts=ROOT_PROMPTS,
-    )
-    role = RoleConfig(
-        harness="pi",
-        prompt_addition="should not be rendered",
-        command=["pi", "-p", "{prompt}"],
-    )
-
-    prompt = PiHarness().build_prompt(request, role)
-
-    assert prompt == "<conversation>\n[User]: hi\n</conversation>\n\nSummarize this."
-    assert "Role: summary" not in prompt
-    assert "Goal:" not in prompt
-    assert "Return format:" not in prompt
-
-
 def test_pi_harness_injects_local_role_skill_before_goal(
     worker_request: WorkerRequest,
     tmp_path: Path,

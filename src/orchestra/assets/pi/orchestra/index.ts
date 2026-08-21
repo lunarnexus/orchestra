@@ -1,7 +1,6 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
-import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { convertToLlm, serializeConversation } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
@@ -269,7 +268,6 @@ interface DispatchParams {
   role?: string;
   timeout?: number;
   taskLabel?: string;
-  parentContext?: string;
 }
 
 interface DispatchResult {
@@ -670,25 +668,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     });
   }
 
-  function entryToMessage(entry: SessionEntry): any | undefined {
-    if (entry.type === "message") return entry.message;
-    if (entry.type === "compaction") {
-      return {
-        role: "compactionSummary",
-        summary: entry.summary,
-        tokensBefore: entry.tokensBefore,
-        timestamp: new Date(entry.timestamp).getTime(),
-      };
-    }
-    return undefined;
-  }
-
-  function parentContextSummary(branch: SessionEntry[]): string {
-    const messages = branch.map(entryToMessage).filter((message) => message !== undefined);
-    if (!messages.length) return "";
-    return serializeConversation(convertToLlm(messages));
-  }
-
   async function dispatchWorker(
     sessionId: string,
     params: DispatchParams,
@@ -714,9 +693,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
     if (params.taskLabel?.trim()) {
       command.push("--task-label", params.taskLabel.trim());
-    }
-    if (params.parentContext?.trim()) {
-      command.push("--parent-context", params.parentContext.trim());
     }
 
     const result = await runOrchestra(command);
@@ -1209,12 +1185,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           };
         }
         const runtimeSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
-        const result = await dispatchWorker(
-          runtimeSessionId,
-          { ...params, parentContext: parentContextSummary(ctx.sessionManager.buildContextEntries()) },
-          progressNotifier(ctx),
-          (status) => setOrchestraWorkerStatus(ctx, status),
-        );
+        const result = await dispatchWorker(runtimeSessionId, params, progressNotifier(ctx), (status) => setOrchestraWorkerStatus(ctx, status));
         return {
           content: [{ type: "text", text: result.output }],
           isError: result.code !== 0,
@@ -1332,7 +1303,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
             role: parsed.role,
             timeout: parsed.timeout === null ? undefined : Number(parsed.timeout),
             taskLabel: parsed.taskLabel ?? undefined,
-            parentContext: parentContextSummary(ctx.sessionManager.buildContextEntries()),
           },
           progressNotifier(ctx),
           (status) => setOrchestraWorkerStatus(ctx, status),

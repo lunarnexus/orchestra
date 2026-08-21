@@ -11,7 +11,6 @@ from pathlib import Path
 
 from orchestra.logs import append_jsonl_event, utc_now
 
-STATUS_WAITING = "waiting"
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
 STATUS_DONE = "done"
@@ -19,11 +18,10 @@ STATUS_FAILED = "failed"
 STATUS_CANCELLED = "cancelled"
 STATUS_INCOMPLETE = "incomplete"
 
-ACTIVE_STATUSES = frozenset({STATUS_WAITING, STATUS_QUEUED, STATUS_RUNNING})
-WORKER_ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
+ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
-_SCHEMA_VERSION = 8
+_SCHEMA_VERSION = 9
 _CONNECT_ATTEMPTS = 8
 _CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
 _CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
@@ -31,7 +29,6 @@ _SQLITE_CONNECT_TIMEOUT_SECONDS = 1.0
 _BEGIN_IMMEDIATE_SLOW_LOG_SECONDS = 0.1
 _REPORT_CLAIM_LEASE_SECONDS = 300
 ALLOWED_TRANSITIONS = {
-    STATUS_WAITING: frozenset({STATUS_WAITING, STATUS_QUEUED, STATUS_FAILED, STATUS_CANCELLED}),
     STATUS_QUEUED: frozenset({STATUS_QUEUED, STATUS_RUNNING, STATUS_FAILED, STATUS_CANCELLED}),
     STATUS_RUNNING: frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}),
 }
@@ -72,8 +69,6 @@ class RunRecord:
     worker_session_id: str | None = None
     transcript_path: Path | None = None
     approval_needed: bool = False
-    depends_on_run_id: str | None = None
-    internal: bool = False
     report_claimed_at: str | None = None
     reported_at: str | None = None
 
@@ -98,8 +93,6 @@ class RunUpdate:
     worker_session_id: str | None = None
     transcript_path: Path | None = None
     approval_needed: bool | None = None
-    depends_on_run_id: str | None = None
-    internal: bool | None = None
     reported_at: str | None = None
 
 
@@ -160,8 +153,6 @@ class StateStore:
                     worker_session_id TEXT,
                     transcript_path TEXT,
                     approval_needed INTEGER NOT NULL DEFAULT 0,
-                    depends_on_run_id TEXT,
-                    internal INTEGER NOT NULL DEFAULT 0,
                     report_claimed_at TEXT,
                     reported_at TEXT
                 )
@@ -179,8 +170,6 @@ class StateStore:
                 "result_summary_truncated",
                 "INTEGER NOT NULL DEFAULT 0",
             )
-            self._ensure_column(connection, "runs", "depends_on_run_id", "TEXT")
-            self._ensure_column(connection, "runs", "internal", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(connection, "runs", "report_claimed_at", "TEXT")
             self._ensure_column(connection, "runs", "reported_at", "TEXT")
             connection.execute(
@@ -190,10 +179,6 @@ class StateStore:
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_session_reported "
                 "ON runs(orchestrator_session_id, reported_at)"
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_runs_depends_on "
-                "ON runs(depends_on_run_id, status)"
             )
             connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             connection.commit()
@@ -205,11 +190,10 @@ class StateStore:
         global_limit: int,
         per_session_limit: int,
         per_model_limits: dict[str, int] | None = None,
-        exclude_run_id: str | None = None,
     ) -> RunRecord:
         _validate_status(record.status)
-        if record.status not in {STATUS_WAITING, STATUS_QUEUED}:
-            raise StateError("new runs must start in 'waiting' or 'queued' status")
+        if record.status != STATUS_QUEUED:
+            raise StateError("new runs must start in 'queued' status")
         if not record.run_id.strip():
             raise StateError("run_id must be a non-empty string")
         if not record.orchestrator_session_id.strip():
@@ -217,36 +201,28 @@ class StateStore:
 
         with self._connect() as connection:
             self._begin_immediate(connection, operation="reserve_run")
-            global_query = "SELECT COUNT(*) FROM runs WHERE status IN (?, ?)"
-            global_params: tuple[str, ...] = (STATUS_QUEUED, STATUS_RUNNING)
-            if exclude_run_id:
-                global_query += " AND run_id != ?"
-                global_params = (*global_params, exclude_run_id)
             global_active = int(
-                connection.execute(global_query, global_params).fetchone()[0]
+                connection.execute(
+                    "SELECT COUNT(*) FROM runs WHERE status IN (?, ?)",
+                    (STATUS_QUEUED, STATUS_RUNNING),
+                ).fetchone()[0]
             )
-            if record.status == STATUS_QUEUED and global_active >= global_limit:
+            if global_active >= global_limit:
                 connection.rollback()
                 raise ConcurrencyLimitError("global concurrency limit exceeded")
 
-            session_query = """
+            session_active = int(
+                connection.execute(
+                    """
                     SELECT COUNT(*)
                     FROM runs
                     WHERE orchestrator_session_id = ?
                       AND status IN (?, ?)
-                    """
-            session_params: tuple[str, ...] = (
-                record.orchestrator_session_id,
-                STATUS_QUEUED,
-                STATUS_RUNNING,
+                    """,
+                    (record.orchestrator_session_id, STATUS_QUEUED, STATUS_RUNNING),
+                ).fetchone()[0]
             )
-            if exclude_run_id:
-                session_query += " AND run_id != ?"
-                session_params = (*session_params, exclude_run_id)
-            session_active = int(
-                connection.execute(session_query, session_params).fetchone()[0]
-            )
-            if record.status == STATUS_QUEUED and session_active >= per_session_limit:
+            if session_active >= per_session_limit:
                 connection.rollback()
                 raise ConcurrencyLimitError("per-session concurrency limit exceeded")
 
@@ -260,18 +236,11 @@ class StateStore:
                         FROM runs
                         WHERE model = ?
                           AND status IN (?, ?)
-                          AND (? = '' OR run_id != ?)
                         """,
-                        (
-                            model,
-                            STATUS_QUEUED,
-                            STATUS_RUNNING,
-                            exclude_run_id or "",
-                            exclude_run_id or "",
-                        ),
+                        (model, STATUS_QUEUED, STATUS_RUNNING),
                     ).fetchone()[0]
                 )
-                if record.status == STATUS_QUEUED and model_active >= model_limit:
+                if model_active >= model_limit:
                     connection.rollback()
                     raise ConcurrencyLimitError(
                         f"model concurrency limit exceeded: {model} "
@@ -306,13 +275,11 @@ class StateStore:
                     worker_session_id,
                     transcript_path,
                     approval_needed,
-                    depends_on_run_id,
-                    internal,
                     report_claimed_at,
                     reported_at
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 self._serialize_record(record),
@@ -388,42 +355,18 @@ class StateStore:
         )
         return next_record
 
-    def list_active_runs(
-        self,
-        orchestrator_session_id: str | None = None,
-        *,
-        include_internal: bool = False,
-        include_waiting: bool = False,
-    ) -> list[RunRecord]:
-        statuses = [STATUS_QUEUED, STATUS_RUNNING]
-        if include_waiting:
-            statuses.append(STATUS_WAITING)
-        placeholders = ", ".join("?" for _ in statuses)
-        query = f"SELECT * FROM runs WHERE status IN ({placeholders})"
-        params: tuple[str, ...] = tuple(statuses)
-        if not include_internal:
-            query += " AND internal = 0"
-        if orchestrator_session_id is not None:
+    def list_active_runs(self, orchestrator_session_id: str | None = None) -> list[RunRecord]:
+        query = "SELECT * FROM runs WHERE status IN (?, ?)"
+        params: tuple[str, ...] | tuple[str, str, str]
+        if orchestrator_session_id is None:
+            params = (STATUS_QUEUED, STATUS_RUNNING)
+        else:
             query += " AND orchestrator_session_id = ?"
-            params = (*params, orchestrator_session_id)
+            params = (STATUS_QUEUED, STATUS_RUNNING, orchestrator_session_id)
         query += " ORDER BY created_at, run_id"
 
         with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
-        return [self._row_to_record(row) for row in rows]
-
-    def list_waiting_dependents(self, run_id: str) -> list[RunRecord]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                """
-                SELECT *
-                FROM runs
-                WHERE depends_on_run_id = ?
-                  AND status = ?
-                ORDER BY created_at, run_id
-                """,
-                (run_id, STATUS_WAITING),
-            ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
     def count_active_runs(self, orchestrator_session_id: str) -> int:
@@ -434,7 +377,6 @@ class StateStore:
                 FROM runs
                 WHERE orchestrator_session_id = ?
                   AND status IN (?, ?)
-                  AND internal = 0
                 """,
                 (orchestrator_session_id, STATUS_QUEUED, STATUS_RUNNING),
             ).fetchone()
@@ -740,12 +682,6 @@ class StateStore:
                 if update.approval_needed is not None
                 else current.approval_needed
             ),
-            depends_on_run_id=(
-                update.depends_on_run_id
-                if update.depends_on_run_id is not None
-                else current.depends_on_run_id
-            ),
-            internal=update.internal if update.internal is not None else current.internal,
             report_claimed_at=current.report_claimed_at,
             reported_at=(
                 update.reported_at if update.reported_at is not None else current.reported_at
@@ -786,8 +722,6 @@ class StateStore:
                 worker_session_id = ?,
                 transcript_path = ?,
                 approval_needed = ?,
-                depends_on_run_id = ?,
-                internal = ?,
                 report_claimed_at = ?,
                 reported_at = ?
             WHERE run_id = ?
@@ -812,8 +746,6 @@ class StateStore:
                 record.worker_session_id,
                 str(record.transcript_path) if record.transcript_path else None,
                 int(record.approval_needed),
-                record.depends_on_run_id,
-                int(record.internal),
                 record.report_claimed_at,
                 record.reported_at,
                 record.run_id,
@@ -849,8 +781,6 @@ class StateStore:
             record.worker_session_id,
             str(record.transcript_path) if record.transcript_path else None,
             int(record.approval_needed),
-            record.depends_on_run_id,
-            int(record.internal),
             record.report_claimed_at,
             record.reported_at,
         )
@@ -896,8 +826,6 @@ class StateStore:
                 Path(str(row["transcript_path"])) if row["transcript_path"] is not None else None
             ),
             approval_needed=bool(row["approval_needed"]),
-            depends_on_run_id=_optional_text(row["depends_on_run_id"]),
-            internal=bool(row["internal"]),
             report_claimed_at=_optional_text(row["report_claimed_at"]),
             reported_at=_optional_text(row["reported_at"]),
         )

@@ -108,7 +108,6 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     do_parser.add_argument("--role", default=None, help="worker role name")
     do_parser.add_argument("--goal", required=True, help="goal for the worker")
     do_parser.add_argument("--approved-context", default="", help="approved context for the worker")
-    do_parser.add_argument("--parent-context", default="", help=argparse.SUPPRESS)
     do_parser.add_argument("--boundaries", default="", help="out-of-scope boundaries")
     do_parser.add_argument("--acceptance-target", default="", help="acceptance target")
     do_parser.add_argument("--return-format", default="", help="explicit return format")
@@ -347,7 +346,6 @@ def _handle_do(args: argparse.Namespace) -> int:
         timeout_seconds=args.timeout,
         task_label=args.task_label,
         batch_id=args.batch_id,
-        parent_context=args.parent_context,
     )
     print(format_started_run(started))
     return 0
