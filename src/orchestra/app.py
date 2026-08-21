@@ -82,37 +82,38 @@ WORKER_BUDGET_EXCEEDED_BLOCKER = (
 SUPERVISOR_STARTUP_TIMEOUT_SECONDS = 30
 PARENT_CONTEXT_BRIEFING_LABEL = "Parent context briefing"
 CONTEXT_COMPACTION_SYSTEM_PROMPT = (
-    "You are a conversation compaction assistant for a coding workflow. "
-    "Produce a continuation-safe summary that preserves the exact technical context "
-    "needed to continue the work.\n\n"
-    "Return structured markdown with these sections:\n\n"
+    "You are a context summarization assistant. Your task is to read a "
+    "conversation between a user and an AI assistant, then produce a structured "
+    "summary following the exact format specified.\n\n"
+    "Do NOT continue the conversation. Do NOT respond to any questions in the "
+    "conversation. ONLY output the structured summary."
+)
+CONTEXT_COMPACTION_RETURN_FORMAT = (
+    "The messages above are a conversation to summarize. Create a structured context "
+    "checkpoint summary that another LLM will use to continue the work.\n\n"
+    "Use this EXACT format:\n\n"
     "## Goal\n"
+    "[What is the user trying to accomplish? Can be multiple items if the session "
+    "covers different tasks.]\n\n"
     "## Constraints & Preferences\n"
+    "- [Any constraints, preferences, or requirements mentioned by user]\n"
+    "- [Or \"(none)\" if none were mentioned]\n\n"
     "## Progress\n"
     "### Done\n"
+    "- [x] [Completed tasks/changes]\n\n"
     "### In Progress\n"
+    "- [ ] [Current work]\n\n"
     "### Blocked\n"
+    "- [Issues preventing progress, if any]\n\n"
     "## Key Decisions\n"
+    "- **[Decision]**: [Brief rationale]\n\n"
     "## Next Steps\n"
-    "## Critical Context\n\n"
-    "Preserve exact file paths, function names, command names, test names, error text, "
-    "and user constraints. Be concise but do not omit information needed to continue."
+    "1. [Ordered list of what should happen next]\n\n"
+    "## Critical Context\n"
+    "- [Any data, examples, or references needed to continue]\n"
+    "- [Or \"(none)\" if not applicable]\n\n"
+    "Keep each section concise. Preserve exact file paths, function names, and error messages."
 )
-CONTEXT_COMPACTION_RETURN_FORMAT = """## Goal
-## Constraints & Preferences
-## Progress
-### Done
-### In Progress
-### Blocked
-## Key Decisions
-## Next Steps
-## Critical Context
-
-<read-files>
-</read-files>
-
-<modified-files>
-</modified-files>"""
 ROLE_USAGE = """Usage:
   /orch roles
   /orch roles ROLE SETTING VALUE
@@ -693,14 +694,11 @@ def _start_context_dependent_run(
     summary_request = PendingRunRequest(
         run_id=summary_run_id,
         role_name=summary_role.name,
-        goal=(
-            f"{CONTEXT_COMPACTION_SYSTEM_PROMPT}\n\n"
-            f"Focus the summary on this task:\n\n<focus>\n{pending_request.goal.strip()}\n</focus>"
-        ),
+        goal=CONTEXT_COMPACTION_SYSTEM_PROMPT,
         approved_context=(
-            "Summarize the following conversation for compaction. Preserve all context needed "
-            "to continue the work.\n\n"
-            f"<conversation>\n{pending_request.parent_context.strip()}\n</conversation>"
+            f"<conversation>\n{pending_request.parent_context.strip()}\n</conversation>\n\n"
+            f"{CONTEXT_COMPACTION_RETURN_FORMAT}\n\n"
+            f"Additional focus: {pending_request.goal.strip()}"
         ),
         boundaries="",
         acceptance_target="",
@@ -872,10 +870,7 @@ def _build_parent_context_briefing(
     if context_record is None:
         return "", _combine_context_warnings(fallback_warning, reserve_warning)
 
-    prompt_goal = (
-        f"{CONTEXT_COMPACTION_SYSTEM_PROMPT}\n\n"
-        f"Focus the summary on this task:\n\n<focus>\n{goal.strip()}\n</focus>"
-    )
+    prompt_goal = CONTEXT_COMPACTION_SYSTEM_PROMPT
     request_file = context.config.state_dir / "requests" / f"{context_run_id}.json"
     request_file.parent.mkdir(parents=True, exist_ok=True)
     request_file.write_text(
@@ -885,9 +880,9 @@ def _build_parent_context_briefing(
                 "role_name": selected_role.name,
                 "goal": prompt_goal,
                 "approved_context": (
-                    "Summarize the following conversation for compaction. Preserve all "
-                    "context needed to continue the work.\n\n"
-                    f"<conversation>\n{parent_context.strip()}\n</conversation>"
+                    f"<conversation>\n{parent_context.strip()}\n</conversation>\n\n"
+                    f"{CONTEXT_COMPACTION_RETURN_FORMAT}\n\n"
+                    f"Additional focus: {goal.strip()}"
                 ),
                 "boundaries": "",
                 "acceptance_target": "",
