@@ -314,8 +314,8 @@ roles:
             "builder",
             (
                 "Implement the assigned task only. Stay in scope. Run focused implementation "
-                "checks economically; do not repeatedly run unchanged broad suites. Update "
-                "only assigned artifact sections. Return the compact schema only."
+                "commands. Update only assigned artifact sections. Return the compact schema "
+                "only."
             ),
         ),
         (
@@ -347,8 +347,7 @@ roles:
             (
                 "Independently review whether the change is correct, maintainable, "
                 "appropriately scoped, and ready to merge. Stay read-only for source code. "
-                "Do not run tests unless the assignment explicitly asks because material "
-                "evidence is missing. Update only the assigned REVIEW.md section. Return "
+                "Run no test commands. Update only the assigned REVIEW.md section. Return "
                 "the compact schema only."
             ),
         ),

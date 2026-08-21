@@ -80,11 +80,11 @@ Self-checking prepares the handoff; it does not replace independent Orchestra ve
 
 ## Test economy and stop rules
 
-Builders run implementation-focused tests only. For each fix attempt:
+Builders own implementation commands. Use a single-test or test-filter command in the build loop. For each fix attempt:
 - run the focused repro or failing test once before patching when it is not already proven by returned evidence;
 - run the exact focused check once after each patch;
-- run one broader final check only when the assignment, plan, or project rules require it;
-- do not repeatedly run unchanged broad suites while debugging.
+- if the focused check fails, inspect the new output, patch once, and rerun once;
+- run a suite command once, after focused checks pass, only when the plan assigns that suite to the builder.
 
 If the same focused command fails twice without new diagnostic evidence, stop editing and return a blocker or budget handoff with the failing command, output summary, hypothesis, files changed, and next smallest slice. If a broader final check fails after the focused check passes, capture the failure once, distinguish whether it is in scope, and return rather than entering an open-ended verification loop.
 

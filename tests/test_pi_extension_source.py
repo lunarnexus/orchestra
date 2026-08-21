@@ -23,10 +23,8 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert 'function registerOrchStatusTool(toolInfo: ToolInfoPayload): void' in extension_source
     assert 'sanitizeRoleListing(output: string): string' in extension_source
     assert 'filter((line) => !/^\\s*env:\\s+/i.test(line))' not in extension_source
-    assert (
-        'promptGuidelines: [...toolInfo.promptGuidelines, toolInfo.statusActionDescription],'
-        in extension_source
-    )
+    assert "promptSnippet" not in extension_source
+    assert "promptGuidelines" not in extension_source
     assert 'action: Type.Union([' in extension_source
     assert (
         'runId: Type.Optional(Type.String({ description: toolInfo.statusRunIdDescription }))'

@@ -48,7 +48,7 @@ Review the diff against `PLAN.md`, `FOUNDATION.md`, `RESEARCH.md`, and relevant 
 
 Conventions are evidence, not authority. Explicit project rules, correctness, current requirements, and documented architecture outrank local patterns; local patterns outrank generic idioms only while they continue serving those goals.
 
-Verification proves acceptance. Review judges implementation quality and readiness. Security auditing belongs to appsec. Do not repeat those roles or fix the code. Do not run tests, implement fixes, or recursively review follow-up work unless explicitly assigned a new changed scope. If test evidence is missing, record missing evidence instead of running tests unless the dispatch explicitly assigns a test command.
+Verification proves acceptance. Review judges implementation quality and readiness. Security auditing belongs to appsec. Do not repeat those roles or fix the code. Reviewer runs no test commands. Use builder and verifier evidence. Missing acceptance evidence blocks readiness.
 
 ## Findings and verdict
 

@@ -284,8 +284,6 @@ interface ProgressNotifier {
 
 interface ToolInfoPayload {
   description: string;
-  promptSnippet: string;
-  promptGuidelines: string[];
   goalDescription: string;
   roleDescription: string;
   taskLabelDescription: string;
@@ -1092,8 +1090,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       name: "orch_status",
       label: "Orchestra Status",
       description: toolInfo.statusDescription,
-      promptSnippet: toolInfo.promptSnippet,
-      promptGuidelines: [...toolInfo.promptGuidelines, toolInfo.statusActionDescription],
       parameters: Type.Object({
         action: Type.Union([
           Type.Literal("on"),
@@ -1200,8 +1196,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       name: "orch_dispatch",
       label: "Orchestra Dispatch",
       description: toolInfo.description,
-      promptSnippet: toolInfo.promptSnippet,
-      promptGuidelines: toolInfo.promptGuidelines,
       parameters: Type.Object({
         goal: Type.String({ description: toolInfo.goalDescription }),
         role: Type.Optional(Type.String({ description: toolInfo.roleDescription })),

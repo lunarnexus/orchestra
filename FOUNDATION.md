@@ -453,11 +453,11 @@ independent slices to be dispatched before orchestrator work continues. Read-onl
 and file-disjoint slices run in parallel; dependency-bound work stays sequential.
 As results return, the orchestrator reassesses remaining work and dispatches
 newly unblocked slices. The orchestrator retains decomposition, user decisions,
-sequencing, approvals, project documentation and artifact edits, artifact
-alignment, synthesis, and final judgment. Subagents report evidence and
-documentation implications rather than editing project documentation. Skills
-provide stricter workflow phases, methodology, artifact gates, and role-specific
-process.
+sequencing, approvals, project documentation edits, artifact alignment, synthesis,
+and final judgment. Subagents write assigned operational artifact sections for
+their role and report documentation implications rather than editing project
+documentation. Skills provide stricter workflow phases, methodology, artifact
+gates, and role-specific process.
 
 ### Pi Host Extension Installation
 
@@ -552,13 +552,11 @@ subagent slice or a user decision, not parent-session takeover.
 ### Main-Session Orchestration Mode and Skills
 
 The main session is the orchestrator brain. It owns planning, sequencing,
-approvals, project documentation, standard artifact edits, artifact alignment,
-and final judgment while subagents perform focused research, implementation,
-verification, review, and security work. Subagents inspect relevant documentation
-and return evidence, implications, and recommended edits; the orchestrator
-applies documentation and standard artifact changes in the main session.
-User-facing updates to the main session should stay concise and
-decision-focused.
+approvals, project documentation, artifact alignment, and final judgment while
+subagents perform focused research, implementation, verification, review, and
+security work. Subagents write assigned operational artifact sections for their
+role. The orchestrator applies project documentation changes in the main session.
+User-facing updates to the main session should stay concise and decision-focused.
 
 For supported host adapters, `/orch on` manually injects the `orchestrator`
 skill into the current main session once. The workflow source for that injection
@@ -577,18 +575,21 @@ should mention successful fallback.
 
 ### Standard Artifacts
 
-The standard project artifacts are `FOUNDATION.md`, `ARCHITECTURE.md`, and
-`ROADMAP.md`. `PLAN.md` and `RESEARCH.md` are Orchestra operational artifacts
-used by an active orchestrator session to track execution state and working
-evidence; they are not part of Orchestra's public project documentation
-contract. This repository may contain them because Orchestra is being used to
-develop Orchestra. Durable research belongs under `docs/research/`.
+The standard project documentation artifacts are `FOUNDATION.md`,
+`ARCHITECTURE.md`, and `ROADMAP.md`. `PLAN.md`, `RESEARCH.md`, `VERIFY.md`,
+`REVIEW.md`, and `APPSEC.md` are Orchestra operational artifacts used by an
+active orchestrator session to track execution state, working evidence, and role
+verdicts; they are not part of Orchestra's public project documentation contract.
+This repository may contain them because Orchestra is being used to develop
+Orchestra. Durable research belongs under `docs/research/`.
 
-The main-session orchestrator is the editor and alignment owner for these
-artifacts and other project documentation. Subagents may inspect them and must
-report documentation implications or proposed text, but they do not edit project
-documentation. Skills may describe expected content. Template work is tracked in
-`ROADMAP.md`.
+The main-session orchestrator is the editor and alignment owner for project
+documentation and `PLAN.md`. Researchers, verifiers, reviewers, and AppSec
+subagents write only their assigned operational artifact sections. Builders
+update only explicitly assigned implementation or progress sections. Subagents
+report project-documentation implications or proposed text rather than editing
+project documentation. Skills may describe expected content. Template work is
+tracked in `ROADMAP.md`.
 
 ### Session Identity
 

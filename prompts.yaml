@@ -7,7 +7,9 @@ default_return_format: |-
   Files changed:
   - <file or none>
   Commands:
-  - <command> — <result or not run>
+  - <exact command or none> — <result>
+  Evidence reused:
+  - <artifact path and exact command evidence, or none>
   Material evidence:
   - <one-line decisive evidence>
   Blockers:
@@ -18,8 +20,8 @@ default_return_format: |-
   - <next dispatch/action>
 
   Keep returns short. Put durable detail in the assigned artifact, not in the
-  chat return. Do not include broad tables, history narratives, or lists of
-  every file read unless material to a blocker or finding.
+  chat return. Omit empty fields. Do not include broad tables, history narratives,
+  or lists of every file read unless material to a blocker or finding.
 tool_description: >-
   For any non-orchestration work, call orch_dispatch. The orchestrator session
   does not perform research, implementation, debugging, testing, verification,
