@@ -2,12 +2,62 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
-from orchestra.app import consume_pending_session_report, load_context
-from orchestra.state import STATUS_DONE, STATUS_FAILED, StateStore
+from orchestra.app import consume_pending_session_report, format_orchestrator_return, load_context
+from orchestra.state import (
+    STATUS_CANCELLED,
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_INCOMPLETE,
+    RunRecord,
+    StateStore,
+)
 from tests.helpers import extract_run_id, run_cli, wait_for_condition
 from tests.types import RuntimeFilesFactory
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_hint"),
+    [
+        (
+            STATUS_DONE,
+            "advance the plan using this subagent return; do not repeat its work",
+        ),
+        (
+            STATUS_INCOMPLETE,
+            "redispatch from the continuation handoff; preserve completed work",
+        ),
+        (STATUS_FAILED, "inspect the debug trace and dispatch one targeted recovery"),
+        (STATUS_CANCELLED, None),
+    ],
+)
+def test_return_gives_status_owned_hint(
+    tmp_path: Path,
+    status: str,
+    expected_hint: str | None,
+) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="failed-run",
+                orchestrator_session_id="manual:hints",
+                harness="pi",
+                role="custom-role",
+                task_label="hint test",
+                log_path=tmp_path / "failed-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=status,
+                error_text="provider error",
+            )
+        ]
+    )
+
+    if expected_hint is None:
+        assert "next:" not in report
+    else:
+        assert f"next: {expected_hint}" in report
 
 
 def test_consolidated_report_includes_all_unreported_terminal_runs(
@@ -246,7 +296,7 @@ def test_failed_worker_with_long_stdout_and_short_stderr_does_not_mark_summary_t
     assert "summary: short stderr" in report
     assert "[truncated]" not in report
     assert f"artifact: {record.result_artifact_path}" in report
-    assert "next: inspect artifact and dispatch a targeted follow-up if needed" in report
+    assert "next: inspect the debug trace and dispatch one targeted recovery" in report
     assert "Full result:" not in report
 
 

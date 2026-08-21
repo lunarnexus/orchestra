@@ -640,8 +640,10 @@ def format_orchestrator_return(runs: list[RunRecord]) -> str:
         ]
         if run.result_artifact_path:
             lines.append(f"artifact: {run.result_artifact_path}")
+        hint = _return_hint(run)
+        if hint:
+            lines.append(f"next: {hint}")
         if outcome != "success":
-            lines.append("next: inspect artifact and dispatch a targeted follow-up if needed")
             if run.worker_session_id:
                 lines.append(f"worker_session: {run.worker_session_id}")
             lines.append(f"log: {run.log_path}")
@@ -650,6 +652,16 @@ def format_orchestrator_return(runs: list[RunRecord]) -> str:
     if len(runs) == 1:
         return report
     return f"[orchestra: {len(runs)} subagents returned]\n\n{report}"
+
+
+def _return_hint(run: RunRecord) -> str | None:
+    if run.status == STATUS_DONE:
+        return "advance the plan using this subagent return; do not repeat its work"
+    if run.status == STATUS_INCOMPLETE:
+        return "redispatch from the continuation handoff; preserve completed work"
+    if run.status == STATUS_CANCELLED:
+        return None
+    return "inspect the debug trace and dispatch one targeted recovery"
 
 
 def _format_run_summary(run: RunRecord) -> str:
