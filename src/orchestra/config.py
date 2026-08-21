@@ -15,6 +15,7 @@ DEFAULT_LOG_DIR = Path("logs")
 DEFAULT_CONFIG_FILENAME = "config.yaml"
 DEFAULT_PROMPTS_FILENAME = "prompts.yaml"
 DEFAULT_CATALOG_FILENAME = "agent-catalog.yaml"
+DEFAULT_PASS_CONTEXT_TIMEOUT = 120
 ORCHESTRA_CONFIG_ENV = "ORCHESTRA_CONFIG"
 ORCHESTRA_AGENT_CATALOG_ENV = "ORCHESTRA_AGENT_CATALOG"
 PI_CODING_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
@@ -61,6 +62,7 @@ class AppConfig:
     prompts: PromptConfig
     turn_limit: int | None = None
     soft_timeout: int | None = None
+    pass_context_timeout: int = DEFAULT_PASS_CONTEXT_TIMEOUT
     state_dir: Path = DEFAULT_STATE_DIR
     log_dir: Path = DEFAULT_LOG_DIR
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
@@ -150,6 +152,11 @@ def load_app_config(path: str | Path) -> AppConfig:
     soft_timeout = _get_optional_positive_int_or_none(raw, "soft_timeout")
     if soft_timeout is not None and soft_timeout >= default_timeout:
         raise ConfigError("'soft_timeout' must be less than 'default_timeout'")
+    pass_context_timeout = _get_optional_positive_int(
+        raw,
+        "pass_context_timeout",
+        DEFAULT_PASS_CONTEXT_TIMEOUT,
+    )
     auto_return = _get_optional_bool(raw, "auto_return", DEFAULT_AUTO_RETURN)
 
     concurrency_raw = raw.get("concurrency", {})
@@ -213,6 +220,7 @@ def load_app_config(path: str | Path) -> AppConfig:
         default_timeout=default_timeout,
         turn_limit=turn_limit,
         soft_timeout=soft_timeout,
+        pass_context_timeout=pass_context_timeout,
         concurrency=concurrency,
         auto_return=auto_return,
         prompts=prompts,

@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 import yaml
@@ -228,6 +229,7 @@ class PendingRunRequest:
     timeout_seconds: int
     task_label: str
     request_file: Path
+    parent_context: str = ""
 
 
 @dataclass(frozen=True)
@@ -313,25 +315,18 @@ def start_run(
     if effective_soft_timeout is not None and effective_soft_timeout >= effective_timeout:
         raise AppError("soft_timeout must be less than effective worker timeout")
 
-    effective_approved_context = _effective_approved_context(
-        context,
-        selected_role,
-        goal=goal,
-        approved_context=approved_context,
-        parent_context=parent_context,
-    )
-
     pending_request = PendingRunRequest(
         run_id=run_id,
         role_name=selected_role.name,
         goal=goal,
-        approved_context=effective_approved_context,
+        approved_context=approved_context,
         boundaries=boundaries,
         acceptance_target=acceptance_target,
         return_format=return_format,
         timeout_seconds=effective_timeout,
         task_label=effective_task_label,
         request_file=request_file,
+        parent_context=parent_context,
     )
 
     record = RunRecord(
@@ -372,6 +367,7 @@ def start_run(
                 "return_format": pending_request.return_format,
                 "timeout_seconds": pending_request.timeout_seconds,
                 "task_label": pending_request.task_label,
+                "parent_context": pending_request.parent_context,
             }
         ),
         encoding="utf-8",
@@ -430,7 +426,7 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         {"harness": selected_role.config.harness, "role": selected_role.name},
     )
     try:
-        started_role, worker = _start_worker_process(
+        started_role, worker, context_briefing_note = _start_worker_process(
             context,
             selected_role,
             pending_request,
@@ -442,6 +438,7 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         attempted_role = selected_role
         started_role = None
         worker = None
+        context_briefing_note = None
 
         for fallback_role in _fallback_roles_for(context.catalog, selected_role):
             candidate_note = _fallback_note(
@@ -450,7 +447,7 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
                 failed_harness=attempted_role.config.harness,
             )
             try:
-                started_role, worker = _start_worker_process(
+                started_role, worker, context_briefing_note = _start_worker_process(
                     context,
                     fallback_role,
                     pending_request,
@@ -545,6 +542,8 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         },
     )
 
+    if context_briefing_note:
+        result = _annotate_result_with_fallback(result, context_briefing_note)
     if fallback_note:
         result = _annotate_result_with_fallback(result, fallback_note)
 
@@ -641,22 +640,23 @@ def _effective_approved_context(
     goal: str,
     approved_context: str,
     parent_context: str,
-) -> str:
+) -> tuple[str, str | None]:
     if not selected_role.config.pass_context or not parent_context.strip():
-        return approved_context
-    briefing = _build_parent_context_briefing(
+        return approved_context, None
+    briefing, warning = _build_parent_context_briefing(
         context,
         goal=goal,
         parent_context=parent_context,
     )
     if not briefing:
-        return approved_context
+        return approved_context, warning
     if approved_context.strip():
         return (
             f"{approved_context.strip()}\n\n"
-            f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}"
+            f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}",
+            None,
         )
-    return f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}"
+    return f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}", None
 
 
 def _build_parent_context_briefing(
@@ -664,14 +664,14 @@ def _build_parent_context_briefing(
     *,
     goal: str,
     parent_context: str,
-) -> str:
+) -> tuple[str, str | None]:
     role_name = _context_compaction_role_name(context.catalog)
     selected_role = _select_role(context.catalog, role_name)
     role = selected_role.config
     try:
         harness = context.registry.get(role.harness)
-    except (HarnessLoadError, KeyError):
-        return ""
+    except (HarnessLoadError, KeyError) as exc:
+        return "", f"Parent context briefing skipped: summary harness unavailable: {exc}"
     prompt_goal = (
         f"{CONTEXT_COMPACTION_SYSTEM_PROMPT}\n\n"
         f"Focus the summary on this task:\n\n<focus>\n{goal.strip()}\n</focus>"
@@ -694,13 +694,28 @@ def _build_parent_context_briefing(
     )
     try:
         worker = harness.start(request, role)
-        stdout, stderr = worker.process.communicate(timeout=request.timeout_seconds)
-    except Exception:
-        return ""
+        try:
+            stdout, stderr = worker.process.communicate(
+                timeout=min(request.timeout_seconds, context.config.pass_context_timeout)
+            )
+        except subprocess.TimeoutExpired:
+            pgid = process_group_id(worker.process.pid)
+            _terminate_subprocess(worker.process, pgid)
+            return (
+                "",
+                "Parent context briefing skipped: summary role timed out "
+                f"after {context.config.pass_context_timeout} seconds",
+            )
+    except Exception as exc:
+        return "", f"Parent context briefing skipped: summary role failed to start: {exc}"
     result = _result_from_completed_worker(worker, stdout, stderr)
     if result.status != STATUS_DONE:
-        return ""
-    return _meaningful_worker_output(result.stdout).strip()
+        detail = result.error_text or result.blocker_text or "summary role returned no briefing"
+        return "", f"Parent context briefing skipped: {detail}"
+    briefing = _meaningful_worker_output(result.stdout).strip()
+    if not briefing:
+        return "", "Parent context briefing skipped: summary role returned empty briefing"
+    return briefing, None
 
 
 def _context_compaction_role_name(catalog: AgentCatalog) -> str | None:
@@ -2032,19 +2047,44 @@ def _init_source_paths(source_root: str | Path | None) -> dict[str, Path]:
 def _config_source_paths(source_root: str | Path | None, *, copy: bool) -> dict[str, Path]:
     root = _find_source_root(source_root)
     if root is not None:
-        return {
-            "config": root / "config.yaml",
-            "prompts": root / "prompts.yaml",
-            "catalog": root / "agent-catalog.yaml",
-        }
+        return _root_config_source_paths(root)
     if not copy:
         raise AppError("config link source root not found; rerun with --copy")
-    assets = Path(__file__).resolve().parent / "assets"
+    return _packaged_config_source_paths()
+
+
+def _root_config_source_paths(root: Path) -> dict[str, Path]:
     return {
-        "config": assets / "config.yaml",
-        "prompts": assets / "prompts.yaml",
-        "catalog": assets / "agent-catalog.yaml",
+        "config": root / "config.yaml",
+        "prompts": root / "prompts.yaml",
+        "catalog": root / "agent-catalog.yaml",
     }
+
+
+def _packaged_config_source_paths() -> dict[str, Path]:
+    try:
+        dist = distribution("orchestra")
+    except PackageNotFoundError as exc:
+        raise AppError(
+            "packaged config files not found; install orchestra or use source root"
+        ) from exc
+    files = dist.files or ()
+    paths: dict[str, Path] = {}
+    for key, filename in {
+        "config": "config.yaml",
+        "prompts": "prompts.yaml",
+        "catalog": "agent-catalog.yaml",
+    }.items():
+        suffix = f"share/orchestra/{filename}"
+        match = next((file for file in files if str(file).endswith(suffix)), None)
+        if match is None:
+            root = Path.cwd()
+            root_paths = _root_config_source_paths(root)
+            if all(path.is_file() for path in root_paths.values()):
+                return root_paths
+            raise AppError(f"packaged config file not found: {filename}")
+        paths[key] = Path(dist.locate_file(match))
+    return paths
 
 
 def _opencode_init_source_paths(
@@ -2297,6 +2337,7 @@ def _load_pending_request(run_id: str, request_file: Path) -> PendingRunRequest:
         timeout_seconds=int(payload["timeout_seconds"]),
         task_label=str(payload["task_label"]),
         request_file=request_file,
+        parent_context=str(payload.get("parent_context", "")),
     )
 
 
@@ -2325,7 +2366,7 @@ def _start_worker_process(
     pending_request: PendingRunRequest,
     *,
     log_path: Path,
-) -> tuple[SelectedRole, WorkerProcess]:
+) -> tuple[SelectedRole, WorkerProcess, str | None]:
     role = selected_role.config
     try:
         harness = context.registry.get(role.harness)
@@ -2336,11 +2377,18 @@ def _start_worker_process(
         detail = exc.args[0] if exc.args else str(exc)
         raise AppError(detail) from exc
 
+    effective_approved_context, context_briefing_note = _effective_approved_context(
+        context,
+        selected_role,
+        goal=pending_request.goal,
+        approved_context=pending_request.approved_context,
+        parent_context=pending_request.parent_context,
+    )
     request = WorkerRequest(
         role_name=selected_role.name,
         goal=pending_request.goal,
         run_id=pending_request.run_id,
-        approved_context=pending_request.approved_context,
+        approved_context=effective_approved_context,
         boundaries=pending_request.boundaries,
         acceptance_target=pending_request.acceptance_target,
         return_format=pending_request.return_format,
@@ -2356,7 +2404,7 @@ def _start_worker_process(
     )
 
     try:
-        return selected_role, harness.start(request, role)
+        return selected_role, harness.start(request, role), context_briefing_note
     except Exception as exc:
         raise AppError(f"failed to start harness: {role.harness}: {exc}") from exc
 

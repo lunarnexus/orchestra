@@ -50,7 +50,8 @@ tool_description: >-
   destructive/change-boundary approval, or final git handoff.
 
   Give each subagent a self-contained brief with one goal, exact scope,
-  boundaries, artifact write target, stop condition, and compact return format.
+  boundaries, prior evidence to reuse, artifact write target, stop condition,
+  and compact return format.
   Choose the enabled role matching the slice. Use distinct roles for research,
   implementation, verification, review, and appsec when those gates are needed.
   Completed subagent reports return automatically. Do not poll. Do not call
@@ -65,7 +66,9 @@ tool_prompt_guidelines:
   - Do not call orch_status unless the user explicitly asks for a status/control/help action.
   - If a result is missing, failed, blocked, timed out, cancelled, or incomplete, dispatch a smaller follow-up or ask for the blocking decision.
 tool_goal_description: >-
-  One small subagent slice: goal, exact scope, stop condition, and return shape.
+  One small subagent slice: goal, exact scope, prior artifact/command evidence
+  to reuse, commands allowed or forbidden when relevant, stop condition, and
+  return shape.
 tool_role_description: >-
   Optional subagent capability. Choose the enabled role that best matches the
   slice. Omit role when no specialized enabled role is a better match than the
@@ -122,7 +125,8 @@ budget_exceeded_prompt: |-
 
   Verification:
   - Checks already run and results.
-  - Checks still needed.
+  - Exact prior command evidence the next agent should reuse.
+  - Checks still needed; do not recommend rerunning passed checks unless state changed.
 
   Blockers and risks:
   - Anything that may prevent continuation or require caller approval.

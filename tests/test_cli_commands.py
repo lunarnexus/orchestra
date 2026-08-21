@@ -18,6 +18,7 @@ from orchestra.app import (
     _expanded_model_limits,
     format_orchestrator_return,
     format_status,
+    run_supervisor,
     start_run,
 )
 from orchestra.config import (
@@ -27,6 +28,7 @@ from orchestra.config import (
     PromptConfig,
     RoleConfig,
 )
+from orchestra.harnesses.base import WorkerProcess, WorkerRequest
 from orchestra.harnesses.common import ORCHESTRA_DISPATCH_BUDGET_ENV
 from orchestra.state import (
     STATUS_DONE,
@@ -375,7 +377,7 @@ def test_context_compaction_role_prefers_enabled_summary_else_default() -> None:
     assert _context_compaction_role_name(no_summary_catalog) == "builder"
 
 
-def test_start_run_passes_focused_parent_context_briefing_when_enabled(
+def test_start_run_records_parent_context_without_pre_reserve_compaction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -411,7 +413,7 @@ def test_start_run_passes_focused_parent_context_briefing_when_enabled(
     monkeypatch.setattr("orchestra.app._spawn_supervisor", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         "orchestra.app._build_parent_context_briefing",
-        lambda *_args, **_kwargs: "## Goal\nFocused summary",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("pre-reserve compaction")),
     )
 
     started = start_run(
@@ -430,9 +432,167 @@ def test_start_run_passes_focused_parent_context_briefing_when_enabled(
     )
 
     payload = json.loads(started.request_file.read_text(encoding="utf-8"))
-    assert payload["approved_context"] == (
+    assert payload["approved_context"] == "User-approved facts"
+    assert payload["parent_context"] == "[User]: previous context"
+    assert store.get_run(started.record.run_id).status == "queued"
+
+
+class _CompletedProcess:
+    pid = 12345
+    returncode = 0
+
+    def __init__(self, stdout: str) -> None:
+        self._stdout = stdout
+
+    def communicate(self, timeout: int | float | None = None) -> tuple[str, str]:
+        return self._stdout, ""
+
+
+class _CapturingHarness:
+    name = "capture"
+
+    def __init__(self, summary_stdout: str = "## Goal\nFocused summary") -> None:
+        self.requests: list[WorkerRequest] = []
+        self.summary_stdout = summary_stdout
+
+    def build_prompt(self, request: WorkerRequest, role: RoleConfig) -> str:
+        return request.goal
+
+    def build_command(self, role: RoleConfig, prompt: str) -> list[str]:
+        return ["capture"]
+
+    def start(self, request: WorkerRequest, role: RoleConfig) -> WorkerProcess:
+        self.requests.append(request)
+        if request.role_name == "summary":
+            return WorkerProcess(
+                process=cast(Any, _CompletedProcess(self.summary_stdout)),
+                command=["summary"],
+                prompt=request.goal,
+            )
+        return WorkerProcess(
+            process=cast(Any, _CompletedProcess("worker done")),
+            command=["worker"],
+            prompt=request.goal,
+        )
+
+
+def test_run_supervisor_adds_parent_context_briefing_after_run_is_registered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts = load_root_prompt_config()
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
+    harness = _CapturingHarness()
+    registry = cast(Any, SimpleNamespace(get=lambda _name: harness))
+    context = AppContext(
+        config=AppConfig(
+            default_timeout=30,
+            prompts=prompts,
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+        ),
+        catalog=AgentCatalog(
+            roles={
+                "builder": RoleConfig(harness="capture", command=["capture"], pass_context=True),
+                "summary": RoleConfig(harness="capture", command=["capture"]),
+            },
+            default_role="builder",
+        ),
+        store=store,
+        registry=registry,
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+    monkeypatch.setattr("orchestra.app.orchestra_can_dispatch", lambda: True)
+    monkeypatch.setattr("orchestra.app._spawn_supervisor", lambda *_args, **_kwargs: None)
+
+    started = start_run(
+        context,
+        session_id="manual:test-session",
+        role_name=None,
+        goal="Implement feature",
+        approved_context="User-approved facts",
+        boundaries="",
+        acceptance_target="",
+        return_format="",
+        timeout_seconds=10,
+        task_label="",
+        batch_id=None,
+        parent_context="[User]: previous context",
+    )
+    assert store.get_run(started.record.run_id).status == "queued"
+
+    run_supervisor(context, run_id=started.record.run_id, request_file=started.request_file)
+
+    worker_request = harness.requests[-1]
+    assert worker_request.role_name == "builder"
+    assert worker_request.approved_context == (
         "User-approved facts\n\nParent context briefing:\n## Goal\nFocused summary"
     )
+
+
+def test_run_supervisor_reports_parent_context_briefing_failure_to_caller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts = load_root_prompt_config()
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
+    harness = _CapturingHarness(summary_stdout="")
+    registry = cast(Any, SimpleNamespace(get=lambda _name: harness))
+    context = AppContext(
+        config=AppConfig(
+            default_timeout=30,
+            prompts=prompts,
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+        ),
+        catalog=AgentCatalog(
+            roles={
+                "builder": RoleConfig(harness="capture", command=["capture"], pass_context=True),
+                "summary": RoleConfig(harness="capture", command=["capture"]),
+            },
+            default_role="builder",
+        ),
+        store=store,
+        registry=registry,
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+    monkeypatch.setattr("orchestra.app.orchestra_can_dispatch", lambda: True)
+    monkeypatch.setattr("orchestra.app._spawn_supervisor", lambda *_args, **_kwargs: None)
+
+    started = start_run(
+        context,
+        session_id="manual:test-session",
+        role_name=None,
+        goal="Implement feature",
+        approved_context="User-approved facts",
+        boundaries="",
+        acceptance_target="",
+        return_format="",
+        timeout_seconds=10,
+        task_label="",
+        batch_id=None,
+        parent_context="[User]: previous context",
+    )
+
+    record = run_supervisor(
+        context,
+        run_id=started.record.run_id,
+        request_file=started.request_file,
+    )
+
+    assert record.result_summary is not None
+    assert "Parent context briefing skipped:" in record.result_summary
+    assert "worker done" in record.result_summary
 
 
 def test_do_output_exposes_effective_timeout_seconds(

@@ -6,7 +6,7 @@ from pathlib import Path
 def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
     asset_source = Path("src/orchestra/assets/pi/orchestra/index.ts").read_text(encoding="utf-8")
-    prompts_source = Path("src/orchestra/assets/prompts.yaml").read_text(encoding="utf-8")
+    prompts_source = Path("prompts.yaml").read_text(encoding="utf-8")
 
     assert extension_source == asset_source
     assert (

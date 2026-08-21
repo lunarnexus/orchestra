@@ -44,12 +44,16 @@ tag_regex = "^v(?P<version>\\d+\\.\\d+\\.\\d+)$"
 
 [tool.setuptools.package-data]
 orchestra = [
-  "assets/config.yaml",
-  "assets/prompts.yaml",
-  "assets/agent-catalog.yaml",
   "assets/pi/orchestra/index.ts",
   "assets/opencode/orchestra/index.ts",
   "assets/opencode/orchestra/commands/orch.md",
+]
+
+[tool.setuptools.data-files]
+"share/orchestra" = [
+  "config.yaml",
+  "prompts.yaml",
+  "agent-catalog.yaml",
 ]
 
 [tool.pytest.ini_options]

@@ -8,6 +8,7 @@ from orchestra.config import (
     DEFAULT_AUTO_RETURN,
     DEFAULT_GLOBAL_CONCURRENCY,
     DEFAULT_LOG_DIR,
+    DEFAULT_PASS_CONTEXT_TIMEOUT,
     DEFAULT_PER_SESSION_CONCURRENCY,
     DEFAULT_STATE_DIR,
     ConfigError,
@@ -84,6 +85,7 @@ def test_load_app_config_reads_values_from_fixture(fixture_dir: Path) -> None:
     assert config.default_timeout == 600
     assert config.turn_limit is None
     assert config.soft_timeout is None
+    assert config.pass_context_timeout == DEFAULT_PASS_CONTEXT_TIMEOUT
     assert config.concurrency.global_limit == 4
     assert config.concurrency.per_session_limit == 3
     assert config.auto_return is True
@@ -104,6 +106,7 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.auto_return is DEFAULT_AUTO_RETURN
     assert config.turn_limit is None
     assert config.soft_timeout is None
+    assert config.pass_context_timeout == DEFAULT_PASS_CONTEXT_TIMEOUT
     assert config.prompts.tool_description
     assert config.prompts.host_help
 
@@ -229,15 +232,16 @@ def test_load_app_config_rejects_zero_and_negative_default_timeout(
         load_app_config(path)
 
 
-def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
+def test_load_app_config_accepts_valid_timeouts(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 120\n", encoding="utf-8")
+    path.write_text("default_timeout: 120\npass_context_timeout: 45\n", encoding="utf-8")
     write_root_prompts(prompts_path)
 
     config = load_app_config(path)
 
     assert config.default_timeout == 120
+    assert config.pass_context_timeout == 45
 
 
 @pytest.mark.parametrize(
@@ -247,6 +251,10 @@ def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
         ("default_timeout: 30\nconcurrency: 3\n", "'concurrency' must be a mapping"),
         ("default_timeout: 30\nauto_return: maybe\n", "'auto_return' must be a boolean"),
         ("default_timeout: 30\nturn_limit: 0\n", "'turn_limit' must be a positive integer"),
+        (
+            "default_timeout: 30\npass_context_timeout: 0\n",
+            "'pass_context_timeout' must be a positive integer",
+        ),
         (
             "default_timeout: 30\nsoft_timeout: 30\n",
             "'soft_timeout' must be less than 'default_timeout'",
