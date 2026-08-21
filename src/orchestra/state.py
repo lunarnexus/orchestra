@@ -190,6 +190,7 @@ class StateStore:
         global_limit: int,
         per_session_limit: int,
         per_model_limits: dict[str, int] | None = None,
+        exclude_run_id: str | None = None,
     ) -> RunRecord:
         _validate_status(record.status)
         if record.status != STATUS_QUEUED:
@@ -201,26 +202,34 @@ class StateStore:
 
         with self._connect() as connection:
             self._begin_immediate(connection, operation="reserve_run")
+            global_query = "SELECT COUNT(*) FROM runs WHERE status IN (?, ?)"
+            global_params: tuple[str, ...] = (STATUS_QUEUED, STATUS_RUNNING)
+            if exclude_run_id:
+                global_query += " AND run_id != ?"
+                global_params = (*global_params, exclude_run_id)
             global_active = int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM runs WHERE status IN (?, ?)",
-                    (STATUS_QUEUED, STATUS_RUNNING),
-                ).fetchone()[0]
+                connection.execute(global_query, global_params).fetchone()[0]
             )
             if global_active >= global_limit:
                 connection.rollback()
                 raise ConcurrencyLimitError("global concurrency limit exceeded")
 
-            session_active = int(
-                connection.execute(
-                    """
+            session_query = """
                     SELECT COUNT(*)
                     FROM runs
                     WHERE orchestrator_session_id = ?
                       AND status IN (?, ?)
-                    """,
-                    (record.orchestrator_session_id, STATUS_QUEUED, STATUS_RUNNING),
-                ).fetchone()[0]
+                    """
+            session_params: tuple[str, ...] = (
+                record.orchestrator_session_id,
+                STATUS_QUEUED,
+                STATUS_RUNNING,
+            )
+            if exclude_run_id:
+                session_query += " AND run_id != ?"
+                session_params = (*session_params, exclude_run_id)
+            session_active = int(
+                connection.execute(session_query, session_params).fetchone()[0]
             )
             if session_active >= per_session_limit:
                 connection.rollback()
@@ -236,8 +245,15 @@ class StateStore:
                         FROM runs
                         WHERE model = ?
                           AND status IN (?, ?)
+                          AND (? = '' OR run_id != ?)
                         """,
-                        (model, STATUS_QUEUED, STATUS_RUNNING),
+                        (
+                            model,
+                            STATUS_QUEUED,
+                            STATUS_RUNNING,
+                            exclude_run_id or "",
+                            exclude_run_id or "",
+                        ),
                     ).fetchone()[0]
                 )
                 if model_active >= model_limit:

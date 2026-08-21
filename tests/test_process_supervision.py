@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
-from orchestra.app import format_status, load_context, start_run
+from orchestra.app import format_status, load_context, reconcile_stale_queued_runs, start_run
 from orchestra.state import (
     STATUS_CANCELLED,
     STATUS_DONE,
@@ -164,6 +165,41 @@ def test_status_reconciles_stale_queued_run_without_supervisor_owner(
     assert record.error_text == "Worker supervisor ownership was not recorded"
     assert "active_runs: 0" in status.stdout
     assert "supervisor.reconciled" in (tmp_path / "logs" / "stalequeued1.jsonl").read_text()
+
+
+def test_reconcile_does_not_fail_queued_run_with_live_supervisor_after_startup_deadline(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "unused"],
+    )
+    context = load_context(config_path=config_path, catalog_path=catalog_path)
+    context.store.create_run(
+        RunRecord(
+            run_id="slowstart1",
+            orchestrator_session_id="manual:slow-start",
+            harness="pi",
+            role="worker",
+            task_label="slow startup",
+            log_path=tmp_path / "logs" / "slowstart1.jsonl",
+            created_at="2000-01-01T00:00:00Z",
+            supervisor_pid=222_222,
+        )
+    )
+    monkeypatch.setattr("orchestra.app._process_exists", lambda pid: pid == 222_222)
+
+    reconciled = reconcile_stale_queued_runs(context, startup_timeout_seconds=1)
+
+    record = StateStore(db_path).get_run("slowstart1")
+    assert reconciled == []
+    assert record.status == "queued"
+    assert record.error_text is None
+    assert "supervisor.reconciled" not in (tmp_path / "logs" / "slowstart1.jsonl").read_text()
 
 
 def test_status_reconciles_stale_running_run_with_dead_worker_and_supervisor(

@@ -76,6 +76,8 @@ If the assigned production change cannot be driven by an automated test, return 
 
 Prefer existing patterns and helpers, direct code, clear data flow, and explicit error handling. Do not introduce speculative abstractions, unnecessary dependencies, unrelated API changes, weakened controls, debug output, or commented-out code.
 
+Builder owns implementation setup commands for its assigned slice, including approved package installs, dependency updates, lockfile changes, virtualenv setup, and tool/bootstrap commands needed to build or test the slice. Report every environment/package command run and any files changed by it.
+
 Self-checking prepares the handoff; it does not replace independent Orchestra verification or review.
 
 ## Test economy and stop rules

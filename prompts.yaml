@@ -39,8 +39,10 @@ tool_description: >-
 
   Dispatch transfers ownership of the assigned scope to the subagent. While a
   subagent owns a scope, the orchestrator must not read, grep, inspect, edit,
-  debug, test, verify, review, or security-assess that scope. The orchestrator
-  must not run duplicate commands or repeat checks that a subagent already ran.
+  debug, test, verify, review, security-assess, install packages, update
+  dependencies, create virtualenvs, modify lockfiles, or mutate the tool
+  environment for that scope. The orchestrator must not run duplicate commands
+  or repeat checks that a subagent already ran.
   Trust successful subagent returns for their assigned scope. Do not double-test,
   re-read, or confirm successful subagent work. If evidence is missing, failed,
   blocked, timed out, cancelled, or explicitly incomplete, dispatch a smaller
@@ -61,7 +63,7 @@ tool_prompt_snippet: >-
   The orchestrator session plans and dispatches only; subagents perform all
   non-orchestration work.
 tool_prompt_guidelines:
-  - Do not perform delegated work in the orchestrator session.
+  - Do not perform delegated work in the orchestrator session, including package installation, dependency setup, tests, debugging, or implementation commands.
   - Trust successful subagent returns and artifact updates; do not double-test, re-read, rerun, inspect, or confirm their assigned scope.
   - Do not call orch_status unless the user explicitly asks for a status/control/help action.
   - If a result is missing, failed, blocked, timed out, cancelled, or incomplete, dispatch a smaller follow-up or ask for the blocking decision.

@@ -56,6 +56,19 @@ def test_orchestrator_artifact_repairs_do_not_run_commands() -> None:
     assert "runs no commands" in skill
 
 
+def test_orchestrator_delegates_package_installation_to_builder() -> None:
+    orchestrator_skill = Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8")
+    builder_skill = Path("skills/builder/SKILL.md").read_text(encoding="utf-8")
+    prompts = Path("prompts.yaml").read_text(encoding="utf-8")
+
+    assert "pip install" in orchestrator_skill
+    assert "npm install" in orchestrator_skill
+    assert "dispatch a builder" in orchestrator_skill
+    assert "does not run the install command itself" in orchestrator_skill
+    assert "Builder owns implementation setup commands" in builder_skill
+    assert "package installation, dependency setup" in prompts
+
+
 def test_default_return_format_tracks_reused_evidence() -> None:
     prompts = Path("prompts.yaml").read_text(encoding="utf-8")
 

@@ -430,6 +430,7 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
             context,
             selected_role,
             pending_request,
+            orchestrator_session_id=record.orchestrator_session_id,
             log_path=record.log_path,
         )
     except AppError as exc:
@@ -451,6 +452,7 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
                     context,
                     fallback_role,
                     pending_request,
+                    orchestrator_session_id=record.orchestrator_session_id,
                     log_path=record.log_path,
                 )
                 fallback_note = candidate_note
@@ -633,20 +635,27 @@ def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
     )
 
 
+
 def _effective_approved_context(
     context: AppContext,
     selected_role: SelectedRole,
     *,
+    run_id: str,
+    orchestrator_session_id: str,
     goal: str,
     approved_context: str,
     parent_context: str,
+    log_path: Path,
 ) -> tuple[str, str | None]:
     if not selected_role.config.pass_context or not parent_context.strip():
         return approved_context, None
     briefing, warning = _build_parent_context_briefing(
         context,
+        run_id=run_id,
+        orchestrator_session_id=orchestrator_session_id,
         goal=goal,
         parent_context=parent_context,
+        log_path=log_path,
     )
     if not briefing:
         return approved_context, warning
@@ -659,11 +668,53 @@ def _effective_approved_context(
     return f"{PARENT_CONTEXT_BRIEFING_LABEL}:\n{briefing}", warning
 
 
+def _reserve_internal_context_run(
+    context: AppContext,
+    *,
+    run_id: str,
+    parent_run_id: str,
+    orchestrator_session_id: str,
+    role_name: str,
+    role: RoleConfig,
+    parent_log_path: Path,
+) -> tuple[RunRecord | None, str | None]:
+    now = utc_now()
+    record = RunRecord(
+        run_id=run_id,
+        orchestrator_session_id=orchestrator_session_id,
+        harness=role.harness,
+        role=role_name,
+        model=role.model,
+        task_label="parent context briefing",
+        log_path=parent_log_path.with_name(f"{run_id}.jsonl"),
+        created_at=now,
+        reported_at=now,
+    )
+    try:
+        reserved = context.store.reserve_run(
+            record,
+            global_limit=context.config.concurrency.global_limit,
+            per_session_limit=context.config.concurrency.per_session_limit,
+            per_model_limits=_expanded_model_limits(context.catalog.model_limits),
+            exclude_run_id=parent_run_id,
+        )
+    except ConcurrencyLimitError as exc:
+        return (
+            None,
+            "Parent context briefing skipped: summary role could not reserve "
+            f"capacity: {exc}",
+        )
+    return reserved, None
+
+
 def _build_parent_context_briefing(
     context: AppContext,
     *,
+    run_id: str,
+    orchestrator_session_id: str,
     goal: str,
     parent_context: str,
+    log_path: Path,
 ) -> tuple[str, str | None]:
     role_name = _context_compaction_role_name(context.catalog)
     fallback_warning = None
@@ -674,54 +725,134 @@ def _build_parent_context_briefing(
         )
     selected_role = _select_role(context.catalog, role_name)
     role = selected_role.config
-    try:
-        harness = context.registry.get(role.harness)
-    except (HarnessLoadError, KeyError) as exc:
-        return "", f"Parent context briefing skipped: summary harness unavailable: {exc}"
+    context_run_id = f"{run_id}-context"
+    context_record, reserve_warning = _reserve_internal_context_run(
+        context,
+        run_id=context_run_id,
+        parent_run_id=run_id,
+        orchestrator_session_id=orchestrator_session_id,
+        role_name=selected_role.name,
+        role=role,
+        parent_log_path=log_path,
+    )
+    if context_record is None:
+        return "", _combine_context_warnings(fallback_warning, reserve_warning)
+
     prompt_goal = (
         f"{CONTEXT_COMPACTION_SYSTEM_PROMPT}\n\n"
         f"Focus the summary on this task:\n\n<focus>\n{goal.strip()}\n</focus>"
     )
-    request = WorkerRequest(
-        role_name=selected_role.name,
-        goal=prompt_goal,
-        approved_context=(
-            "Summarize the following conversation for compaction. Preserve all context needed "
-            f"to continue the work.\n\n<conversation>\n{parent_context.strip()}\n</conversation>"
+    request_file = context.config.state_dir / "requests" / f"{context_run_id}.json"
+    request_file.parent.mkdir(parents=True, exist_ok=True)
+    request_file.write_text(
+        json.dumps(
+            {
+                "run_id": context_run_id,
+                "role_name": selected_role.name,
+                "goal": prompt_goal,
+                "approved_context": (
+                    "Summarize the following conversation for compaction. Preserve all "
+                    "context needed to continue the work.\n\n"
+                    f"<conversation>\n{parent_context.strip()}\n</conversation>"
+                ),
+                "boundaries": "",
+                "acceptance_target": "",
+                "return_format": CONTEXT_COMPACTION_RETURN_FORMAT,
+                "timeout_seconds": context.config.default_timeout,
+                "task_label": "parent context briefing",
+                "parent_context": "",
+            }
         ),
-        return_format=CONTEXT_COMPACTION_RETURN_FORMAT,
-        timeout_seconds=context.config.default_timeout,
-        nested_dispatch_depth=1,
-        turn_limit=role.turn_limit or context.config.turn_limit,
-        soft_timeout=role.soft_timeout or context.config.soft_timeout,
-        budget_exceeded_prompt=context.config.prompts.budget_exceeded_prompt,
-        skill_roots=_worker_skill_roots(context.paths.catalog_path),
-        prompts=context.config.prompts,
+        encoding="utf-8",
     )
+    _append_run_event(
+        context,
+        run_id,
+        "parent_context.dispatched",
+        {"context_run_id": context_run_id, "role": selected_role.name, "harness": role.harness},
+    )
+    _spawn_supervisor(context, request_file, context_run_id)
     try:
-        worker = harness.start(request, role)
-        try:
-            stdout, stderr = worker.process.communicate(
-                timeout=min(request.timeout_seconds, context.config.pass_context_timeout)
-            )
-        except subprocess.TimeoutExpired:
-            pgid = process_group_id(worker.process.pid)
-            _terminate_subprocess(worker.process, pgid)
-            return (
-                "",
-                "Parent context briefing skipped: summary role timed out "
-                f"after {context.config.pass_context_timeout} seconds",
-            )
-    except Exception as exc:
-        return "", f"Parent context briefing skipped: summary role failed to start: {exc}"
-    result = _result_from_completed_worker(worker, stdout, stderr)
-    if result.status != STATUS_DONE:
-        detail = result.error_text or result.blocker_text or "summary role returned no briefing"
-        return "", f"Parent context briefing skipped: {detail}"
-    briefing = _meaningful_worker_output(result.stdout).strip()
+        completed, _, _ = await_run_terminal_status(
+            context,
+            orchestrator_session_id,
+            run_id=context_run_id,
+            timeout_seconds=context.config.pass_context_timeout,
+        )
+    except AppError as exc:
+        _cancel_internal_context_run(context, orchestrator_session_id, context_run_id)
+        return "", _combine_context_warnings(
+            fallback_warning,
+            f"Parent context briefing skipped: summary role did not complete: {exc}",
+        )
+
+    _append_run_event(
+        context,
+        run_id,
+        "parent_context.completed",
+        {
+            "context_run_id": context_run_id,
+            "status": completed.status,
+            "worker_session_id": completed.worker_session_id,
+            "transcript_path": str(completed.transcript_path)
+            if completed.transcript_path
+            else None,
+        },
+    )
+    if completed.status != STATUS_DONE:
+        detail = (
+            completed.error_text or completed.blocker_text or "summary role returned no briefing"
+        )
+        return "", _combine_context_warnings(
+            fallback_warning,
+            f"Parent context briefing skipped: {detail}",
+        )
+    briefing = _context_briefing_output(completed).strip()
     if not briefing:
-        return "", "Parent context briefing skipped: summary role returned empty briefing"
+        return "", _combine_context_warnings(
+            fallback_warning,
+            "Parent context briefing skipped: summary role returned empty briefing",
+        )
     return briefing, fallback_warning
+
+
+def _cancel_internal_context_run(context: AppContext, session_id: str, run_id: str) -> None:
+    try:
+        record = context.store.get_run(run_id)
+    except (AppError, KeyError, ValueError):
+        return
+    if record.status not in ACTIVE_STATUSES:
+        return
+    if record.supervisor_pid is not None:
+        _terminate_owned_process(record.supervisor_pid, None)
+    try:
+        stop_run(context, session_id, run_id)
+    except AppError:
+        pass
+
+
+def _context_briefing_output(record: RunRecord) -> str:
+    if record.result_artifact_path is not None:
+        try:
+            return _return_artifact_stdout(record.result_artifact_path.read_text(encoding="utf-8"))
+        except OSError:
+            pass
+    return record.result_summary or ""
+
+
+def _return_artifact_stdout(text: str) -> str:
+    marker = "## stdout\n\n"
+    if marker not in text:
+        return text
+    stdout = text.split(marker, 1)[1]
+    if "\n## stderr\n" in stdout:
+        stdout = stdout.split("\n## stderr\n", 1)[0]
+    return stdout.strip()
+
+
+def _combine_context_warnings(*warnings: str | None) -> str | None:
+    parts = [warning for warning in warnings if warning]
+    return "; ".join(parts) if parts else None
 
 
 def _context_compaction_role_name(catalog: AgentCatalog) -> str | None:
@@ -993,11 +1124,22 @@ def reconcile_stale_queued_runs(
         if age < startup_timeout_seconds:
             continue
         if run.supervisor_pid is not None and _process_exists(run.supervisor_pid):
-            error_text = "Worker supervisor did not start worker before startup deadline"
-            blocker_text = "Worker supervisor startup timed out"
-        else:
-            error_text = "Worker supervisor ownership was not recorded"
-            blocker_text = "Worker supervisor launch state missing"
+            _append_run_event(
+                context,
+                run.run_id,
+                "supervisor.startup_wait_extended",
+                {
+                    "reason": "supervisor still alive before worker start",
+                    "supervisor_pid": run.supervisor_pid,
+                    "queued_age_seconds": round(age, 3),
+                    "supervisor_output_path": str(run.supervisor_output_path)
+                    if run.supervisor_output_path
+                    else None,
+                },
+            )
+            continue
+        error_text = "Worker supervisor ownership was not recorded"
+        blocker_text = "Worker supervisor launch state missing"
         reconciled.append(
             _reconcile_queued_run(
                 context,
@@ -1476,6 +1618,7 @@ def _format_debug_bundle(context: AppContext, record: RunRecord) -> str:
         sections.append(_debug_file_section("Return artifact", record.result_artifact_path))
     else:
         sections.append("## Return artifact\npath: missing")
+    sections.append(_debug_parent_context_transcript_section(record))
     sections.append(_debug_transcript_section(record))
     return "\n\n".join(sections)
 
@@ -1489,6 +1632,47 @@ def _debug_file_section(title: str, path: Path) -> str:
     else:
         lines.extend(["", text.rstrip()])
     return "\n".join(lines)
+
+
+def _debug_parent_context_transcript_section(record: RunRecord) -> str:
+    lines = ["## Parent context transcript"]
+    entries = _parent_context_trace_entries(record.log_path)
+    if not entries:
+        lines.append("transcript_path: not available")
+        return "\n".join(lines)
+    for index, entry in enumerate(entries, start=1):
+        worker_session_id = str(entry.get("worker_session_id") or "")
+        transcript_path = str(entry.get("transcript_path") or "")
+        lines.append(f"parent_context_trace: {index}")
+        if worker_session_id:
+            lines.append(f"worker_session_id: {worker_session_id}")
+        if transcript_path:
+            lines.append(_debug_file_section("Transcript content", Path(transcript_path)))
+            continue
+        if worker_session_id:
+            fallback = _find_pi_transcript(worker_session_id)
+            if fallback is not None:
+                lines.append("transcript_path: discovered by Pi fallback search")
+                lines.append(_debug_file_section("Transcript content", fallback))
+            else:
+                lines.append("transcript_path: not recorded")
+    return "\n".join(lines)
+
+
+def _parent_context_trace_entries(log_path: Path) -> list[dict[str, object]]:
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        return []
+    entries: list[dict[str, object]] = []
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("event") in {"parent_context.started", "parent_context.completed"}:
+            entries.append(event)
+    return entries
 
 
 def _debug_transcript_section(record: RunRecord) -> str:
@@ -2089,7 +2273,7 @@ def _packaged_config_source_paths() -> dict[str, Path]:
             if all(path.is_file() for path in root_paths.values()):
                 return root_paths
             raise AppError(f"packaged config file not found: {filename}")
-        paths[key] = Path(dist.locate_file(match))
+        paths[key] = Path(str(dist.locate_file(match)))
     return paths
 
 
@@ -2371,6 +2555,7 @@ def _start_worker_process(
     selected_role: SelectedRole,
     pending_request: PendingRunRequest,
     *,
+    orchestrator_session_id: str,
     log_path: Path,
 ) -> tuple[SelectedRole, WorkerProcess, str | None]:
     role = selected_role.config
@@ -2386,9 +2571,12 @@ def _start_worker_process(
     effective_approved_context, context_briefing_note = _effective_approved_context(
         context,
         selected_role,
+        run_id=pending_request.run_id,
+        orchestrator_session_id=orchestrator_session_id,
         goal=pending_request.goal,
         approved_context=pending_request.approved_context,
         parent_context=pending_request.parent_context,
+        log_path=log_path,
     )
     request = WorkerRequest(
         role_name=selected_role.name,

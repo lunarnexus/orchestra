@@ -36,6 +36,7 @@ Forbidden in the orchestrator session:
 - verification
 - code review
 - security review
+- dependency/package installation or environment mutation for delegated work (`pip install`, `uv add`, `poetry add`, `npm install`, `pnpm install`, `brew install`, `apt install`, etc.)
 - re-running commands a subagent already ran
 - re-reading files, diffs, or artifacts to confirm a successful subagent result
 - inspecting delegated files while the assigned subagent is active
@@ -143,6 +144,8 @@ Research dispatch:
 Split research by independent subject. Do not batch related research questions; if one answer can determine the next question, wait before dispatching the next researcher. Do not bundle unrelated unknowns into one researcher. Separate subjects include APIs, install paths, command surfaces, return injection, and docs.
 
 Do not absorb failed subagent work. If a tool-using subagent fails, times out, or returns incomplete work, do not perform that work yourself. Shrink scope and re-dispatch a smaller slice.
+
+If implementation, verification, or investigation requires installing packages, creating virtualenvs, modifying lockfiles, or changing the local tool environment, dispatch a builder with the exact requested install/setup goal and approval constraints. The orchestrator may approve or deny requested dependency changes, but does not run the install command itself.
 
 After dispatching a subagent, the orchestrator stops working on that subagent's assigned files, commands, artifact target, and acceptance target until the subagent returns. The orchestrator does not read, grep, edit, debug, inspect, or test those targets. The orchestrator only dispatches non-overlapping work, updates parent-owned decisions from existing evidence, handles user approvals, or waits. The orchestrator never polls for subagent completion: do not call status/history, sleep, ps, tail, git status, or test commands to wait. Completion is delivered by the runtime's automatic return path. When the subagent returns successfully, consume its compact result and trust its artifact updates for the assigned target. If the result is failed, blocked, timed out, cancelled, or explicitly incomplete, dispatch a smaller follow-up or ask the user for the blocking decision. Do not take over the assigned work in the orchestrator session.
 
