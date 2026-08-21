@@ -14,6 +14,12 @@ Orchestra roadmap items are split into:
    - Reuse the existing Pi/offload-router compaction wording and structured format; do not invent new prompt text.
    - Use the configured `summary` role for compaction when enabled; otherwise use the default role.
    - Keep disabled for reviewer, verifier, and appsec roles by default so they retain independent judgment.
+   - Skip focused parent-context briefing below the Pi-like 20k-token threshold so trivial sessions do not get summarized.
+
+2. [ ] Keep loaded skills and system-style steering out of pass-through parent context.
+   - Treat skills like turn/system steering inputs rather than durable conversational content when building context for subagent handoff.
+   - Prevent orchestrator skill text from leaking into builder/reviewer/verifier/appsec context through raw parent-context passing or compaction inputs.
+   - Preserve task-relevant conversation state while filtering framework/process instructions that belong only to the parent role.
 
 ## Wishlist
 

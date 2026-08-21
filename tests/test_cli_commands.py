@@ -505,7 +505,7 @@ def test_run_supervisor_reports_parent_context_role_fallback_to_caller(
         timeout_seconds=10,
         task_label="",
         batch_id=None,
-        parent_context="[User]: previous context",
+        parent_context="[User]: " + ("x" * 90_000),
     )
 
     record = run_supervisor(
@@ -566,7 +566,7 @@ def test_run_supervisor_reports_parent_context_fallback_and_failure_to_caller(
         timeout_seconds=10,
         task_label="",
         batch_id=None,
-        parent_context="[User]: previous context",
+        parent_context="[User]: " + ("x" * 90_000),
     )
 
     record = run_supervisor(
@@ -583,7 +583,7 @@ def test_run_supervisor_reports_parent_context_fallback_and_failure_to_caller(
     assert "worker done" in record.result_summary
 
 
-def test_start_run_records_parent_context_without_pre_reserve_compaction(
+def test_start_run_skips_small_parent_context_without_summary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -619,7 +619,7 @@ def test_start_run_records_parent_context_without_pre_reserve_compaction(
     monkeypatch.setattr("orchestra.app._spawn_supervisor", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         "orchestra.app._build_parent_context_briefing",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("pre-reserve compaction")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected compaction")),
     )
 
     started = start_run(
@@ -641,22 +641,12 @@ def test_start_run_records_parent_context_without_pre_reserve_compaction(
     assert payload["approved_context"] == "User-approved facts"
     assert payload["parent_context"] == ""
     target = store.get_run(started.record.run_id)
-    assert target.status == "waiting"
-    assert target.depends_on_run_id == f"{started.record.run_id}-context"
+    assert target.status == "queued"
+    assert target.depends_on_run_id is None
 
-    summary_payload = json.loads(
-        (context.config.state_dir / "requests" / f"{started.record.run_id}-context.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert summary_payload["goal"].startswith(
-        "<conversation>\n[User]: previous context\n</conversation>"
-    )
-    assert "Use this EXACT format:" in summary_payload["goal"]
-    assert "Additional focus: Implement feature" in summary_payload["goal"]
-    assert summary_payload["approved_context"] == ""
-    assert summary_payload["return_format"] == ""
-    assert store.get_run(f"{started.record.run_id}-context").status == "queued"
+    assert not (
+        context.config.state_dir / "requests" / f"{started.record.run_id}-context.json"
+    ).exists()
 
 
 def _spawn_context_supervisor_inline(context: AppContext, request_file: Path, run_id: str) -> None:
@@ -710,6 +700,80 @@ class _CapturingHarness:
         )
 
 
+def test_start_run_records_large_parent_context_without_pre_reserve_compaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prompts = load_root_prompt_config()
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
+    context = AppContext(
+        config=AppConfig(
+            default_timeout=30,
+            prompts=prompts,
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+        ),
+        catalog=AgentCatalog(
+            roles={
+                "builder": RoleConfig(
+                    harness="shell",
+                    command=["echo"],
+                    pass_context=True,
+                )
+            },
+            default_role="builder",
+        ),
+        store=store,
+        registry=cast(Any, SimpleNamespace()),
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+    monkeypatch.setattr("orchestra.app.orchestra_can_dispatch", lambda: True)
+    monkeypatch.setattr("orchestra.app._spawn_supervisor", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "orchestra.app._build_parent_context_briefing",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("pre-reserve compaction")),
+    )
+
+    started = start_run(
+        context,
+        session_id="manual:test-session",
+        role_name=None,
+        goal="Implement feature",
+        approved_context="User-approved facts",
+        boundaries="",
+        acceptance_target="",
+        return_format="",
+        timeout_seconds=10,
+        task_label="",
+        batch_id=None,
+        parent_context="[User]: " + ("x" * 90_000),
+    )
+
+    payload = json.loads(started.request_file.read_text(encoding="utf-8"))
+    assert payload["approved_context"] == "User-approved facts"
+    assert payload["parent_context"] == ""
+    target = store.get_run(started.record.run_id)
+    assert target.status == "waiting"
+    assert target.depends_on_run_id == f"{started.record.run_id}-context"
+
+    summary_payload = json.loads(
+        (context.config.state_dir / "requests" / f"{started.record.run_id}-context.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert summary_payload["goal"].startswith("<conversation>\n[User]: ")
+    assert "Use this EXACT format:" in summary_payload["goal"]
+    assert "Additional focus: Implement feature" in summary_payload["goal"]
+    assert summary_payload["approved_context"] == ""
+    assert summary_payload["return_format"] == ""
+    assert store.get_run(f"{started.record.run_id}-context").status == "queued"
+
+
 def test_run_supervisor_adds_parent_context_briefing_after_run_is_registered(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -756,7 +820,7 @@ def test_run_supervisor_adds_parent_context_briefing_after_run_is_registered(
         timeout_seconds=10,
         task_label="",
         batch_id=None,
-        parent_context="[User]: previous context",
+        parent_context="[User]: " + ("x" * 90_000),
     )
     assert store.get_run(started.record.run_id).status == "queued"
 
@@ -832,7 +896,7 @@ def test_run_supervisor_reports_parent_context_briefing_failure_to_caller(
         timeout_seconds=10,
         task_label="",
         batch_id=None,
-        parent_context="[User]: previous context",
+        parent_context="[User]: " + ("x" * 90_000),
     )
 
     record = run_supervisor(

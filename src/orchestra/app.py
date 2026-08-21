@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -81,6 +82,7 @@ WORKER_BUDGET_EXCEEDED_BLOCKER = (
 )
 SUPERVISOR_STARTUP_TIMEOUT_SECONDS = 30
 PARENT_CONTEXT_BRIEFING_LABEL = "Parent context briefing"
+PARENT_CONTEXT_COMPACTION_MIN_TOKENS = 20_000
 INTERNAL_ROLE_NAMES = frozenset({"summary"})
 CONTEXT_COMPACTION_PROMPT = (
     "The messages above are a conversation to summarize. Create a structured context "
@@ -118,6 +120,16 @@ def _context_compaction_prompt(conversation: str, focus: str) -> str:
     if focus.strip():
         prompt = f"{prompt}\n\nAdditional focus: {focus.strip()}"
     return prompt
+
+
+def _estimated_parent_context_tokens(parent_context: str) -> int:
+    return max(0, math.ceil(len(parent_context.strip()) / 4))
+
+
+def _should_compact_parent_context(parent_context: str) -> bool:
+    return _estimated_parent_context_tokens(parent_context) > PARENT_CONTEXT_COMPACTION_MIN_TOKENS
+
+
 ROLE_USAGE = """Usage:
   /orch roles
   /orch roles ROLE SETTING VALUE
@@ -322,18 +334,27 @@ def start_run(
     if effective_soft_timeout is not None and effective_soft_timeout >= effective_timeout:
         raise AppError("soft_timeout must be less than effective worker timeout")
 
+    effective_approved_context = approved_context
+    effective_parent_context = parent_context
+    if (
+        role.pass_context
+        and parent_context.strip()
+        and not _should_compact_parent_context(parent_context)
+    ):
+        effective_parent_context = ""
+
     pending_request = PendingRunRequest(
         run_id=run_id,
         role_name=selected_role.name,
         goal=goal,
-        approved_context=approved_context,
+        approved_context=effective_approved_context,
         boundaries=boundaries,
         acceptance_target=acceptance_target,
         return_format=return_format,
         timeout_seconds=effective_timeout,
         task_label=effective_task_label,
         request_file=request_file,
-        parent_context=parent_context,
+        parent_context=effective_parent_context,
     )
 
     record = RunRecord(
@@ -348,7 +369,11 @@ def start_run(
         created_at=utc_now(),
     )
 
-    if role.pass_context and parent_context.strip():
+    if (
+        role.pass_context
+        and effective_parent_context.strip()
+        and _should_compact_parent_context(parent_context)
+    ):
         return _start_context_dependent_run(
             context,
             session_id=session_id,
@@ -783,6 +808,8 @@ def _effective_approved_context(
     log_path: Path,
 ) -> tuple[str, str | None]:
     if not selected_role.config.pass_context or not parent_context.strip():
+        return approved_context, None
+    if not _should_compact_parent_context(parent_context):
         return approved_context, None
     briefing, warning = _build_parent_context_briefing(
         context,
