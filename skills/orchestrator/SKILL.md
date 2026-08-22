@@ -125,7 +125,7 @@ Research dispatch:
 - ask for answer, sources, confidence, gaps, blockers, risks
 - If a research subagent times out, shrink to one source and one exact question, then re-dispatch once. If the retry times out, record the missing fact as a blocker and stop.
 
-Split research by independent subject. Do not batch related research questions; if one answer can determine the next question, wait before dispatching the next researcher. Do not bundle unrelated unknowns into one researcher. Separate subjects include APIs, install paths, command surfaces, return injection, and docs.
+Split research by independent subject. Give each researcher one bounded question; do not bundle questions into one researcher. Dispatch independent research questions in parallel when one answer cannot change another question, scope, or source target. Run dependent research sequentially. Separate subjects include APIs, install paths, command surfaces, return injection, and docs.
 
 Do not absorb failed subagent work. If a tool-using subagent fails, times out, or returns incomplete work, do not perform that work yourself. Shrink scope and re-dispatch a smaller slice.
 
@@ -159,7 +159,7 @@ Classify uncertainty before planning around it: known evidence, local evidence y
 
 Dispatch one researcher per bounded evidence unit when the answer can change scope, interfaces, ordering, tests, risks, or blockers. Each researcher brief must include the exact source scope, evidence acceptance, enough-evidence condition, and return fields. If one research answer can change another question, run the research sequentially. If the missing evidence blocks planning, stop after dispatch until results return.
 
-Prefer vertical, independently verifiable slices. Mark `parallel-safe` only when files/modules are separate, no output dependency exists, and no shared schema, config, public API, migration, or global behavior changes. Mark shared abstractions, schemas, migrations, public APIs, broad refactors, and checker/review work as `sequential`.
+Prefer vertical, independently verifiable slices. Mark build slices `parallel-safe` only when files/modules are separate, no output dependency exists, and no shared schema, config, public API, migration, or global behavior changes. Mark shared abstractions, schemas, migrations, public APIs, and broad refactors as `sequential`. After a coherent build exists, verifier, reviewer, and appsec may run in parallel when each has a distinct role judgment and no role depends on another role's result.
 
 For behavior changes and bug fixes, plan TDD-first when practical: failing test or exact repro, minimal green implementation, safe refactor, and focused verification. Add verifier gates after acceptance-relevant code exists, reviewer gates after coherent steps or phases, and appsec gates for changed trust boundaries or sensitive assets.
 
@@ -174,9 +174,10 @@ Plans may mark work as:
 
 Dispatch rules:
 - run `sequential` work in order
-- batch only `parallel-safe` work with non-overlapping scopes
-- resolve `blocked` work before dispatching it
+- dispatch all currently unblocked `parallel-safe` slices in the same turn before waiting
+- keep each research dispatch to one bounded question even when several researchers run in parallel
 - run checkers after the relevant work exists
+- resolve `blocked` work before dispatching it
 - keep WIP small; concurrency is useful only when scopes are truly independent
 
 Marker updates:
