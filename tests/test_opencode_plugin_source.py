@@ -122,7 +122,7 @@ def test_opencode_plugin_reuses_core_tool_info_and_dispatch_budget_guard() -> No
     )
     assert 'const orchStatusTool = tool({' in source
     assert 'if (!canDispatchOrchestraWorker()) {' in source
-    assert 'return { tool: { orch_status: orchStatusTool } };' in source
+    assert 'disposePluginRuntimeState(runtimeState);' in source
     assert 'const toolInfo = await loadToolInfo();' in source
     assert 'description: toolInfo.description,' in source
     assert 'goal: tool.schema.string().describe(toolInfo.goalDescription),' in source
@@ -215,7 +215,7 @@ def test_opencode_plugin_executes_tokenized_dispatch_with_execfile_and_wires_del
     assert 'await notifyDispatchToast(client, ownerId);' in source
     queue_call = (
         'queueSessionReportDelivery(client, rawSessionID, ownerId, runId, '
-        'timeoutSeconds, runOrchestra);'
+        'timeoutSeconds, runOrchestra, runtimeState);'
     )
     ack_call = (
         'const ack = await runOrchestra(["orchestra", "_dispatch-ack", '
@@ -288,7 +288,7 @@ def test_opencode_plugin_requires_timeout_seconds_and_uses_margin_for_report_wat
     assert watcher_timeout in source
     retrieve_call = (
         'const envelope = await retrieveSessionReport(ownerId, runId, '
-        'watcherTimeoutSeconds, runner);'
+        'watcherTimeoutSeconds, runner, runtimeState);'
     )
     assert retrieve_call in source
     assert 'REPORT_WATCHER_TIMEOUT_SECONDS' not in source
@@ -364,7 +364,7 @@ def test_opencode_plugin_prefers_prompt_and_cleans_up_report_delivery_claims() -
     assert 'finally {' in source
     assert 'if (!preserveClaim) {' in source
     assert 'releaseSessionReportDeliveryClaim(ownerId, envelope.runIds);' in source
-    assert 'if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope))) {' in source
+    assert 'if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope, runtimeState))) {' in source
 
     prompt_pos = source.index('async function promptSessionReport(')
     session_prompt_pos = source.index('function getSessionPrompt(')
@@ -375,7 +375,7 @@ def test_opencode_plugin_prefers_prompt_and_cleans_up_report_delivery_claims() -
     )
     deliver_pos = source.index('async function deliverSessionReport(')
     deliver_null_pos = source.index(
-        'if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope))) {',
+        'if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope, runtimeState))) {',
         deliver_pos,
     )
 
@@ -392,7 +392,7 @@ def test_opencode_plugin_releases_pending_report_when_session_prompt_is_unavaila
         'if (!claimSessionReportDelivery(ownerId, envelope.runIds)) {',
         prompt_pos,
     )
-    release_pos = source.index('releaseSessionReport(ownerId);', prompt_pos)
+    release_pos = source.index('releaseSessionReport(ownerId);', no_prompt_pos)
 
     assert 'if (!sessionPrompt) {' in source
     assert 'releaseSessionReport(ownerId);' in source
@@ -429,14 +429,14 @@ def test_opencode_plugin_queues_report_delivery_in_background() -> None:
     assert 'function queueSessionReportDelivery(' in source
     background_delivery = (
         'void deliverSessionReport(client, rawSessionID, ownerId, runId, '
-        'timeoutSeconds, runner).catch('
+        'timeoutSeconds, runner, runtimeState).catch('
     )
     assert background_delivery in source
 
     execute_pos = source.index('async execute(args, context) {')
     queue_call = (
         'queueSessionReportDelivery(client, rawSessionID, ownerId, runId, '
-        'timeoutSeconds, runOrchestra);'
+        'timeoutSeconds, runOrchestra, runtimeState);'
     )
     queue_pos = source.index(queue_call, execute_pos)
     return_pos = source.index('return ack.stdout.trim();', execute_pos)
@@ -458,7 +458,7 @@ def test_opencode_plugin_queues_progress_notifications_in_background() -> None:
     assert 'function queueRunProgressNotification(' in source
     assert (
         'void deliverRunProgressNotification(client, ownerId, runId, '
-        'timeoutSeconds, runner).catch('
+        'timeoutSeconds, runner, runtimeState).catch('
     ) in source
 
     deliver_pos = source.index('async function deliverRunProgressNotification(')
@@ -484,12 +484,12 @@ def test_opencode_plugin_queues_progress_notifications_in_background() -> None:
     run_id_pos = source.index('const runId = extractRunId(result.stdout);', execute_pos)
     track_pos = source.index('trackSessionRun(ownerId, runId);', execute_pos)
     progress_queue_pos = source.index(
-        'queueRunProgressNotification(client, ownerId, runId, timeoutSeconds, runOrchestra);',
+        'queueRunProgressNotification(client, ownerId, runId, timeoutSeconds, runOrchestra, runtimeState);',
         execute_pos,
     )
     report_queue_pos = source.index(
         'queueSessionReportDelivery(client, rawSessionID, ownerId, runId, '
-        'timeoutSeconds, runOrchestra);',
+        'timeoutSeconds, runOrchestra, runtimeState);',
         execute_pos,
     )
     ack_pos = source.index(
@@ -526,11 +526,11 @@ def test_opencode_plugin_delivers_final_reports_only_after_retrieval_succeeds() 
 
     deliver_pos = source.index('async function deliverSessionReport(')
     watch_pos = source.index(
-        'const envelope = await watchSessionReport(ownerId, runId, timeoutSeconds, runner);',
+        'const envelope = await watchSessionReport(ownerId, runId, timeoutSeconds, runner, runtimeState);',
         deliver_pos,
     )
     prompt_call_pos = source.index(
-        'if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope))) {',
+        'if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope, runtimeState))) {',
         deliver_pos,
     )
     prompt_pos = source.index('await sessionPrompt({')
@@ -546,3 +546,24 @@ def test_opencode_plugin_delivers_final_reports_only_after_retrieval_succeeds() 
     assert watch_pos < prompt_call_pos
     assert prompt_pos < mark_command_pos < mark_pos
     assert prompt_pos < release_command_pos < release_pos
+
+
+def test_opencode_plugin_exposes_dispose_cleanup_and_gates_late_watchers() -> None:
+    source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
+
+    assert 'type OpenCodePluginRuntimeState = {' in source
+    assert 'function createPluginRuntimeState(): OpenCodePluginRuntimeState {' in source
+    assert 'function clearPluginRuntimeState(): void {' in source
+    assert 'deliveredSessionReportRunIds.clear();' in source
+    assert 'pendingSessionReports.clear();' in source
+    assert 'inflightSessionReportDeliveries.clear();' in source
+    assert 'sessionRuns.clear();' in source
+    assert 'sessionCompletedRuns.clear();' in source
+    assert 'function disposePluginRuntimeState(runtimeState: OpenCodePluginRuntimeState): void {' in source
+    assert 'runtimeState.disposed = true;' in source
+    assert 'const runtimeState = createPluginRuntimeState();' in source
+    assert 'dispose: () => {' in source
+    assert 'disposePluginRuntimeState(runtimeState);' in source
+    assert 'if (isPluginRuntimeStateDisposed(runtimeState)) {' in source
+    assert 'return null;' in source
+    assert 'return;' in source

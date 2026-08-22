@@ -282,11 +282,39 @@ type SessionReportRunner = (
   command: string[],
 ) => Promise<SessionReportRunnerResult> | SessionReportRunnerResult;
 
+type OpenCodePluginRuntimeState = {
+  disposed: boolean;
+};
+
 const deliveredSessionReportRunIds = new Set<string>();
 const pendingSessionReports = new Map<string, SessionReportEnvelope>();
 const inflightSessionReportDeliveries = new Set<string>();
 const sessionRuns = new Map<string, Set<string>>();
 const sessionCompletedRuns = new Map<string, Set<string>>();
+
+function createPluginRuntimeState(): OpenCodePluginRuntimeState {
+  return { disposed: false };
+}
+
+function isPluginRuntimeStateDisposed(runtimeState: OpenCodePluginRuntimeState): boolean {
+  return runtimeState.disposed;
+}
+
+function clearPluginRuntimeState(): void {
+  deliveredSessionReportRunIds.clear();
+  pendingSessionReports.clear();
+  inflightSessionReportDeliveries.clear();
+  sessionRuns.clear();
+  sessionCompletedRuns.clear();
+}
+
+function disposePluginRuntimeState(runtimeState: OpenCodePluginRuntimeState): void {
+  if (runtimeState.disposed) {
+    return;
+  }
+  runtimeState.disposed = true;
+  clearPluginRuntimeState();
+}
 
 async function runOrchestra(command: string[]): Promise<SessionReportRunnerResult> {
   const [file, ...args] = command;
@@ -473,7 +501,13 @@ async function promptSessionReport(
   rawSessionID: string,
   ownerId: string,
   envelope: SessionReportEnvelope,
+  runtimeState: OpenCodePluginRuntimeState,
 ): Promise<boolean> {
+  if (isPluginRuntimeStateDisposed(runtimeState)) {
+    releaseSessionReport(ownerId);
+    return false;
+  }
+
   const sessionPrompt = getSessionPrompt(client);
   if (!sessionPrompt) {
     releaseSessionReport(ownerId);
@@ -490,6 +524,10 @@ async function promptSessionReport(
       path: { id: rawSessionID },
       body: { parts: [{ type: "text", text: envelope.report }] },
     });
+    if (isPluginRuntimeStateDisposed(runtimeState)) {
+      releaseSessionReport(ownerId);
+      return false;
+    }
     const markResult = await runOrchestra(buildMarkSessionReportDeliveredCommand(ownerId, envelope.runIds));
     if (markResult.returncode !== 0) {
       throw new Error(markResult.stderr || "failed to mark Orchestra report delivered.");
@@ -526,13 +564,18 @@ async function deliverSessionReport(
   runId: string,
   timeoutSeconds: number,
   runner: SessionReportRunner,
+  runtimeState: OpenCodePluginRuntimeState,
 ): Promise<SessionReportEnvelope | null> {
-  const envelope = await watchSessionReport(ownerId, runId, timeoutSeconds, runner);
+  if (isPluginRuntimeStateDisposed(runtimeState)) {
+    return null;
+  }
+
+  const envelope = await watchSessionReport(ownerId, runId, timeoutSeconds, runner, runtimeState);
   if (!envelope) {
     return null;
   }
 
-  if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope))) {
+  if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope, runtimeState))) {
     return null;
   }
 
@@ -546,9 +589,13 @@ function queueSessionReportDelivery(
   runId: string,
   timeoutSeconds: number,
   runner: SessionReportRunner,
+  runtimeState: OpenCodePluginRuntimeState,
 ): void {
-  void deliverSessionReport(client, rawSessionID, ownerId, runId, timeoutSeconds, runner).catch(
+  void deliverSessionReport(client, rawSessionID, ownerId, runId, timeoutSeconds, runner, runtimeState).catch(
     async (error) => {
+      if (isPluginRuntimeStateDisposed(runtimeState)) {
+        return;
+      }
       console.error("Orchestra report delivery failed:", error);
       await notifyFailureToast(client, ownerId, error);
     },
@@ -560,9 +607,10 @@ async function retrieveSessionReport(
   runId: string,
   timeoutSeconds: number,
   runner: SessionReportRunner,
+  runtimeState: OpenCodePluginRuntimeState,
 ): Promise<SessionReportEnvelope | null> {
   const result = await runner(buildAwaitSessionReportCommand(ownerId, runId, timeoutSeconds));
-  if (result.returncode !== 0) {
+  if (isPluginRuntimeStateDisposed(runtimeState) || result.returncode !== 0) {
     return null;
   }
 
@@ -579,9 +627,13 @@ async function watchSessionReport(
   runId: string,
   timeoutSeconds: number,
   runner: SessionReportRunner,
+  runtimeState: OpenCodePluginRuntimeState,
 ): Promise<SessionReportEnvelope | null> {
   const watcherTimeoutSeconds = timeoutSeconds + WATCHER_TIMEOUT_MARGIN_SECONDS;
-  const envelope = await retrieveSessionReport(ownerId, runId, watcherTimeoutSeconds, runner);
+  const envelope = await retrieveSessionReport(ownerId, runId, watcherTimeoutSeconds, runner, runtimeState);
+  if (isPluginRuntimeStateDisposed(runtimeState)) {
+    return null;
+  }
   return envelope ?? getPendingSessionReport(ownerId);
 }
 
@@ -696,12 +748,16 @@ async function deliverRunProgressNotification(
   runId: string,
   timeoutSeconds: number,
   runner: SessionReportRunner,
+  runtimeState: OpenCodePluginRuntimeState,
 ): Promise<void> {
   const watcherTimeoutSeconds = timeoutSeconds + WATCHER_TIMEOUT_MARGIN_SECONDS;
   let markedCompleted = false;
 
   try {
     const awaitRunResult = await runner(buildAwaitRunCommand(ownerId, runId, watcherTimeoutSeconds));
+    if (isPluginRuntimeStateDisposed(runtimeState)) {
+      return;
+    }
     if (awaitRunResult.returncode !== 0) {
       throw new Error(awaitRunResult.stderr || "orchestra await-run failed.");
     }
@@ -718,6 +774,9 @@ async function deliverRunProgressNotification(
     }
 
     const fallbackMessage = `orchestra:${role ? ` ${role}` : ""} ${runId} returned ${status ?? "done"} (${completedCount}/${totalCount})${blocker ? ` :: ${blocker}` : ""}`;
+    if (isPluginRuntimeStateDisposed(runtimeState)) {
+      return;
+    }
     await notifyProgressToast(client, progressResult.stdout.trim() || fallbackMessage);
   } finally {
     if (!markedCompleted) {
@@ -733,9 +792,13 @@ function queueRunProgressNotification(
   runId: string,
   timeoutSeconds: number,
   runner: SessionReportRunner,
+  runtimeState: OpenCodePluginRuntimeState,
 ): void {
-  void deliverRunProgressNotification(client, ownerId, runId, timeoutSeconds, runner).catch(
+  void deliverRunProgressNotification(client, ownerId, runId, timeoutSeconds, runner, runtimeState).catch(
     async (error) => {
+      if (isPluginRuntimeStateDisposed(runtimeState)) {
+        return;
+      }
       console.error("Orchestra progress delivery failed:", error);
     },
   );
@@ -743,6 +806,7 @@ function queueRunProgressNotification(
 
 export const OrchestraPlugin: Plugin = async ({ client }) => {
   const toolInfo = await loadToolInfo();
+  const runtimeState = createPluginRuntimeState();
   const orchStatusTool = tool({
     description: toolInfo.statusDescription,
     args: {
@@ -784,7 +848,12 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
   });
 
   if (!canDispatchOrchestraWorker()) {
-    return { tool: { orch_status: orchStatusTool } };
+    return {
+      tool: { orch_status: orchStatusTool },
+      dispose: () => {
+        disposePluginRuntimeState(runtimeState);
+      },
+    };
   }
 
   return {
@@ -832,8 +901,8 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
             }
 
             trackSessionRun(ownerId, runId);
-            queueRunProgressNotification(client, ownerId, runId, timeoutSeconds, runOrchestra);
-            queueSessionReportDelivery(client, rawSessionID, ownerId, runId, timeoutSeconds, runOrchestra);
+            queueRunProgressNotification(client, ownerId, runId, timeoutSeconds, runOrchestra, runtimeState);
+            queueSessionReportDelivery(client, rawSessionID, ownerId, runId, timeoutSeconds, runOrchestra, runtimeState);
             const role = extractField(result.stdout, "role") || args.role?.trim() || "worker";
             const ack = await runOrchestra(["orchestra", "_dispatch-ack", "--run-id", runId, "--role", role]);
             if (ack.returncode !== 0 || !ack.stdout.trim()) {
@@ -846,6 +915,9 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
           }
         },
       }),
+    },
+    dispose: () => {
+      disposePluginRuntimeState(runtimeState);
     },
   };
 };
