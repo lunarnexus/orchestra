@@ -66,7 +66,7 @@ Plugins should forward these environment-driven core config selectors when invok
 - `ORCHESTRA_CONFIG`
 - `ORCHESTRA_AGENT_CATALOG`
 
-Plugins should also honor `ORCHESTRA_DISPATCH_BUDGET` for dispatch-budget handling when the host adapter launches work on behalf of the current session.
+Plugins should also honor `ORCHESTRA_DISPATCH_BUDGET` for dispatch-budget handling when the host adapter launches work on behalf of the current session. Pi additionally uses `ORCHESTRA_DISPATCH_BUDGET=1` to withhold `orch_dispatch` registration while leaving `orch_status` available, so hosts with runtime tool registration should decide whether budget gating affects dispatch execution only or dispatch tool visibility as well.
 
 Plugins must not embed fallback prompt prose for model-callable tools. Adapters
 load tool metadata from core `_tool-info`. If loading fails, the adapter fails
@@ -125,7 +125,9 @@ A Pi-equivalent command surface includes:
 
 `/orch off` should remove Orchestra model-callable tools from the host's active tool set for the current session while keeping the native `/orch` command available.
 
-For Pi parity, `/orch on` is two-step after tools have been turned off: the first `/orch on` restores Orchestra tool visibility to the harness, and a second `/orch on` delivers the core `_orchestrator-skill` payload into the current main session. Hosts with runtime tool activation should prefer toggling active tools over unregistering plugin tools.
+For Pi parity, `/orch on` is two-step after tools have been turned off: the first `/orch on` restores Orchestra tool visibility to the harness, and a second `/orch on` delivers the core `_orchestrator-skill` payload into the current main session. Hosts with runtime tool activation should prefer toggling active tools over unregistering plugin tools. The Pi model-callable `orch_status` action `on` is not the same two-step UI flow; it directly injects the core orchestrator-skill payload into the current session.
+
+Slash-command argument parsing should be predictable enough for manual use. Pi supports basic quoted strings for `/orch do` arguments and reports malformed quotes instead of silently changing the goal.
 
 ### Watchers and return delivery
 
@@ -144,6 +146,7 @@ For Pi parity, `/orch on` is two-step after tools have been turned off: the firs
 - Track background watcher processes, threads, or tasks by normalized session id.
 - Stop or detach watchers when the host session shuts down.
 - Clear cached active-run/status state on session changes.
+- Guard watcher callbacks and async status refreshes against stale sessions. The Pi plugin uses per-session generations and refresh request ids so old watchers cannot update a newer session after session changes, shutdown races, or delayed subprocess exits.
 
 ### Optional host UX
 
@@ -153,7 +156,9 @@ Implement these when the host supports them:
 - Rendered command and output entries.
 - Native notifications for dispatch/progress/failure.
 - Argument completions for subcommands, roles, harness configs, active run ids, and common history/timeout values.
+- Short-lived role/harness metadata caching for completions, and short-lived active-status caching for footer/run-id completions, when repeated core calls would be noisy or expensive.
 - Main-session turn or soft-timeout budget enforcement using host turn/tool hooks.
+- No-UI fallback output to stdout/stderr when the host can run without a native UI context.
 
 ## Parity tiers
 
@@ -174,6 +179,9 @@ The Pi plugin is the reference implementation for host-side behavior. Its Pi-spe
 - `pi.sendUserMessage(..., { deliverAs: "followUp", triggerTurn: true })` for final auto-return and second-step `/orch on` delivery.
 - `pi.sendUserMessage(..., { deliverAs: "steer" })` for budget handoff steering.
 - `session_start`, `session_shutdown`, `turn_end`, and `tool_call` event hooks.
+- `ORCHESTRA_TURN_BUDGET`, `ORCHESTRA_SOFT_TIMEOUT_SECONDS`, and `ORCHESTRA_BUDGET_EXCEEDED_PROMPT` for host-side budget handoff behavior. Pi decrements the turn budget on `turn_end`, injects the configured budget prompt as a steer message when the turn limit or soft timeout is reached, and can block subsequent tool calls after soft timeout.
+- Session-generation and refresh-request guards around watcher/status callbacks.
+- Brief in-memory caching for role metadata and active status.
 - Global Pi extension installation under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/orchestra/index.ts`.
 
 ## OpenCode implementation mapping
