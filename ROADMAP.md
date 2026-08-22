@@ -7,6 +7,14 @@ Orchestra roadmap items are split into:
 
 ## TODO
 
+1. [ ] Ensure plugin feature parity with OpenCode, Hermes, Codex, Claude Code, OpenHands, and Qwen Code.
+   - Compare supported commands, status/history/help/doctor behavior, auto-return handling, session identity, role exposure, error reporting, and installation/update flow across plugins.
+   - Move shared behavior into Orchestra core/config where practical; keep host plugins focused on host runtime identity, UI/rendering, and harness-specific integration.
+
+2. [ ] Review the Pi plugin for core/plugin boundary cleanup.
+   - Standardize generic command/help/tool/report wording and orchestration behavior in Orchestra core where it makes sense.
+   - Keep only Pi-specific runtime context retrieval, slash-command plumbing, UI presentation, notifications, and host integration code in the Pi plugin.
+
 ## Wishlist
 
 1. [ ] Queued subagent requests instead of MVP fail-fast over-limit behavior.
