@@ -134,9 +134,10 @@ def test_root_host_help_uses_generic_session_wording() -> None:
     config = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml")
 
     assert (
-        "/orch on                           Load the orchestra orchestrator skill"
+        "/orch on                           Enable Orchestra tools or load the orchestrator skill"
         in config.prompts.host_help
     )
+    assert "/orch off                          Hide Orchestra tools for this session" in config.prompts.host_help
     assert "/orch do <request>                 Dispatch a subagent" in config.prompts.host_help
     assert "Pi session" not in config.prompts.host_help
     assert "Configured roles" not in config.prompts.host_help

@@ -110,6 +110,7 @@ A Pi-equivalent command surface includes:
 ```text
 /orch help
 /orch on
+/orch off
 /orch doctor
 /orch do <request>
 /orch do --role ROLE <request>
@@ -122,7 +123,9 @@ A Pi-equivalent command surface includes:
 /orch history [limit]
 ```
 
-`/orch on` should deliver the core `_orchestrator-skill` payload into the current main session when the host can inject or steer a message into that session.
+`/orch off` should remove Orchestra model-callable tools from the host's active tool set for the current session while keeping the native `/orch` command available.
+
+For Pi parity, `/orch on` is two-step after tools have been turned off: the first `/orch on` restores Orchestra tool visibility to the harness, and a second `/orch on` delivers the core `_orchestrator-skill` payload into the current main session. Hosts with runtime tool activation should prefer toggling active tools over unregistering plugin tools.
 
 ### Watchers and return delivery
 
@@ -164,11 +167,11 @@ The Pi plugin is the reference implementation for host-side behavior. Its Pi-spe
 
 - `ctx.sessionManager.getSessionId()` for runtime identity.
 - `pi.registerCommand` for `/orch`.
-- `pi.registerTool` for `orch_dispatch`.
+- `pi.registerTool` for `orch_dispatch` and `orch_status`.
 - `pi.registerEntryRenderer` and `pi.appendEntry` for rendered command/output entries.
 - `ctx.ui.notify` for notifications.
 - `ctx.ui.setStatus` for footer subagent status.
-- `pi.sendUserMessage(..., { deliverAs: "followUp", triggerTurn: true })` for final auto-return and `/orch on` delivery.
+- `pi.sendUserMessage(..., { deliverAs: "followUp", triggerTurn: true })` for final auto-return and second-step `/orch on` delivery.
 - `pi.sendUserMessage(..., { deliverAs: "steer" })` for budget handoff steering.
 - `session_start`, `session_shutdown`, `turn_end`, and `tool_call` event hooks.
 - Global Pi extension installation under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/orchestra/index.ts`.
@@ -197,7 +200,7 @@ Before implementing a new host plugin, answer these questions.
 1. **Identity** — What host API provides the reliable runtime session id?
 2. **Tool support** — Can the host expose `orch_dispatch(goal, role?, taskLabel?)`?
 3. **Command support** — Can the host expose the `/orch` command surface?
-4. **Main-session skill** — Can the host deliver `_orchestrator-skill` into the current main session?
+4. **Main-session skill** — Can the host restore tool visibility and deliver `_orchestrator-skill` into the current main session?
 5. **Auto-return** — How can the plugin deliver the consolidated session report to the owning session?
 6. **Progress** — Does the host have non-prompt notifications for per-subagent progress?
 7. **Lifecycle** — What session end/shutdown hook can clean up watchers?

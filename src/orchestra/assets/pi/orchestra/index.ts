@@ -408,6 +408,8 @@ function doArgumentContext(tokens: string[]): { expecting: "role" | "timeout" | 
 
 type OrchStatusAction = "on" | "status" | "history" | "help" | "doctor" | "roles" | "stop";
 
+type OrchestraToolName = "orch_status" | "orch_dispatch";
+
 interface OrchStatusParams {
   action: OrchStatusAction;
   limit?: string;
@@ -431,6 +433,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   let softTimeoutSeconds = parseBudgetEnv(ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV);
   let sessionStartedAt = Date.now();
   let budgetPromptInjected = false;
+  let orchestraToolsEnabled = true;
+  let orchOnRequiresSecondStep = false;
 
   function injectBudgetExceededPrompt(reason: "turn_limit" | "soft_timeout"): void {
     if (budgetPromptInjected) return;
@@ -836,6 +840,18 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   const registerDispatchTool = canDispatchOrchestraWorker();
 
+  function orchestraToolNames(): OrchestraToolName[] {
+    return registerDispatchTool ? ["orch_status", "orch_dispatch"] : ["orch_status"];
+  }
+
+  function setOrchestraToolsActive(enabled: boolean): void {
+    const active = pi.getActiveTools();
+    const orchestraTools = new Set<OrchestraToolName>(orchestraToolNames());
+    const withoutOrchestra = active.filter((toolName) => !orchestraTools.has(toolName as OrchestraToolName));
+    pi.setActiveTools(enabled ? [...withoutOrchestra, ...orchestraTools] : withoutOrchestra);
+    orchestraToolsEnabled = enabled;
+  }
+
   async function getRoleMetadata(): Promise<{ roles: string[]; harnessConfigs: string[] }> {
     const now = Date.now();
     if (cachedRoleNames && cachedRoleNames.expiresAt > now) {
@@ -908,13 +924,36 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     return { code: 0, output: "Orchestra orchestrator skill refreshed for this session." };
   }
 
+  async function handleOrchOn(sessionId: string): Promise<{ code: number; output: string }> {
+    if (!orchestraToolsEnabled) {
+      setOrchestraToolsActive(true);
+      orchOnRequiresSecondStep = true;
+      return {
+        code: 0,
+        output: 'Orchestra tools enabled for this session. Run "/orch on" again to load the orchestrator skill.',
+      };
+    }
+    if (orchOnRequiresSecondStep) {
+      orchOnRequiresSecondStep = false;
+      return injectOrchestratorSkill(sessionId);
+    }
+    return injectOrchestratorSkill(sessionId);
+  }
+
+  function handleOrchOff(): { code: number; output: string } {
+    setOrchestraToolsActive(false);
+    orchOnRequiresSecondStep = true;
+    return { code: 0, output: "Orchestra tools hidden for this session. Run /orch on to enable them again." };
+  }
+
   async function getOrchArgumentCompletions(argumentPrefix: string): Promise<Array<{ value: string; label: string; description?: string }> | null> {
     const parsed = tokenizeArgs(argumentPrefix);
     if (parsed.error) return null;
 
     const subcommands = [
       { token: "help", description: "Show Orchestra help" },
-      { token: "on", description: "Load the orchestra orchestrator skill" },
+      { token: "on", description: "Enable Orchestra tools or load the orchestrator skill" },
+      { token: "off", description: "Hide Orchestra tools for this session" },
       { token: "doctor", description: "Check Orchestra setup" },
       { token: "do ", description: "Dispatch a subagent" },
       { token: "roles ", description: "Show or update configured roles" },
@@ -1204,7 +1243,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   await refreshOrchDispatchToolRegistration(toolInfo);
 
   pi.registerCommand("orch", {
-    description: "Orchestra host adapter: /orch help|on|do|roles|status|stop|doctor|history",
+    description: "Orchestra host adapter: /orch help|on|off|do|roles|status|stop|doctor|history",
     getArgumentCompletions: getOrchArgumentCompletions,
     handler: async (args, ctx) => {
       const trimmed = args.trim();
@@ -1225,8 +1264,15 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }
 
       if (subcommand === "on") {
-        const result = await injectOrchestratorSkill(runtimeSessionId);
+        const result = await handleOrchOn(runtimeSessionId);
         emitOutput(ctx, result.output, result.code === 0 ? "info" : "error");
+        return;
+      }
+
+      if (subcommand === "off") {
+        const result = handleOrchOff();
+        setOrchestraWorkerStatus(ctx, null);
+        emitOutput(ctx, result.output, "info");
         return;
       }
 

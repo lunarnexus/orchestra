@@ -138,7 +138,8 @@ budget_exceeded_prompt: |-
 host_help: |-
   Orchestra commands:
     /orch help                         Show this help
-    /orch on                           Load the orchestra orchestrator skill
+    /orch on                           Enable Orchestra tools or load the orchestrator skill
+    /orch off                          Hide Orchestra tools for this session
     /orch doctor                       Check Orchestra setup
     /orch do <request>                 Dispatch a subagent
     /orch do --role ROLE <request>     Start a subagent with a role

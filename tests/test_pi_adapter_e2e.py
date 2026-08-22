@@ -106,11 +106,13 @@ def test_pi_extension_host_on_refreshes_skill_each_time(
     assert (pi_dir / "extensions" / "orchestra" / "index.ts").exists()
 
     session_id = f"orch-host-on-{uuid.uuid4().hex}"
-    result = _run_pi(env, session_id, "/orch on", "/orch on", mode="json")
+    result = _run_pi(env, session_id, "/orch off", "/orch on", "/orch on", mode="json")
 
     assert result.returncode == 0
     output = result.stdout + result.stderr
-    assert output.count("Orchestra orchestrator skill refreshed for this session.") == 2
+    assert "Orchestra tools hidden for this session. Run /orch on to enable them again." in output
+    assert 'Orchestra tools enabled for this session. Run "/orch on" again to load the orchestrator skill.' in output
+    assert output.count("Orchestra orchestrator skill refreshed for this session.") == 1
     assert "already loaded" not in output
 
     events = _json_events(output)
@@ -120,26 +122,9 @@ def test_pi_extension_host_on_refreshes_skill_each_time(
         if event.get("type") == "entry_appended"
         and isinstance((entry := event.get("entry")), dict)
         and isinstance((data := entry.get("data")), dict)
-        and data.get("text") == "/orch on"
+        and data.get("text") in {"/orch off", "/orch on"}
     ]
-    skill_messages = [
-        event
-        for event in events
-        if event.get("type") == "message_start"
-        and isinstance((message := event.get("message")), dict)
-        and message.get("role") == "user"
-        and isinstance((content := message.get("content")), list)
-        and any(
-            isinstance(item, dict)
-            and item.get("type") == "text"
-            and isinstance(item.get("text"), str)
-            and item["text"].startswith("Load this Orchestra main-session skill:\n\n")
-            for item in content
-        )
-    ]
-
-    assert len(command_events) == 2
-    assert len(skill_messages) >= 1
+    assert len(command_events) == 3
 
 
 def test_pi_extension_host_command_path(
@@ -166,9 +151,10 @@ def test_pi_extension_host_command_path(
     help_output = help_result.stdout + help_result.stderr
     assert "Orchestra commands:" in help_output
     assert (
-        "/orch on                           Load the orchestra orchestrator skill"
+        "/orch on                           Enable Orchestra tools or load the orchestrator skill"
         in help_output
     )
+    assert "/orch off                          Hide Orchestra tools for this session" in help_output
     assert "/orch roles" in help_output
     assert "Configured roles" not in help_output
     assert "Default: builder" not in help_output
