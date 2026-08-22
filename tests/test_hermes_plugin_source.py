@@ -5,6 +5,7 @@ import builtins
 import importlib.util
 import json
 import os
+import queue
 import subprocess
 import threading
 from pathlib import Path
@@ -38,6 +39,7 @@ class FakeHermesPluginContext:
         self.steered: list[str] = []
         self.inject_success = True
         self.steer_success = True
+        self.pending_input: queue.Queue[str] = queue.Queue()
 
         def steer(content: str) -> bool:
             self.steered.append(content)
@@ -48,6 +50,7 @@ class FakeHermesPluginContext:
                 session_id=session_id,
                 agent=SimpleNamespace(steer=steer),
                 _agent_running=agent_running,
+                _pending_input=self.pending_input,
             )
         )
 
@@ -812,6 +815,113 @@ def test_orch_slash_on_is_idempotent_per_session_and_cleared_on_cleanup(
     ]
 
 
+def test_orch_slash_off_disables_dispatch_until_reenabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(make_tool_info_payload()))
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+    plugin.register(ctx)
+    calls.clear()
+    slash_handler = ctx.commands[0]["handler"]
+    dispatch_handler = next(
+        tool["handler"] for tool in ctx.tools if tool["name"] == "orch_dispatch"
+    )
+
+    assert slash_handler("off") == (
+        "Hermes /orch off succeeded: Orchestra dispatch disabled for this session"
+    )
+    assert dispatch_handler({"goal": "do work"}, session_id="cli-session") == json.dumps(
+        {
+            "error": (
+                "Hermes orch_dispatch is disabled for this session; "
+                "run /orch on to enable it again"
+            )
+        }
+    )
+    assert calls == []
+
+
+def test_orch_slash_on_after_off_requires_second_call_to_inject_skill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_orchestrator-skill":
+            return completed(args, "orchestrator skill payload\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+    plugin.register(ctx)
+    calls.clear()
+    handler = ctx.commands[0]["handler"]
+
+    assert handler("off") == (
+        "Hermes /orch off succeeded: Orchestra dispatch disabled for this session"
+    )
+    assert handler("on") == (
+        "Hermes /orch on succeeded: Orchestra dispatch enabled for this session. "
+        'Run "/orch on" again to inject the orchestrator skill'
+    )
+    assert handler("on") == "Hermes /orch on succeeded: orchestrator skill injected"
+
+    assert calls == [["_orchestrator-skill"]]
+    assert ctx.injected == [("orchestrator skill payload", "user")]
+
+
+def test_orch_session_cleanup_clears_dispatch_disabled_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "do":
+            return completed(args, "run_id: abc123\nrole: builder\ntimeout_seconds: 60\n")
+        if args[0] == "_dispatch-ack":
+            return completed(args, "orchestra dispatched: builder abc123\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(plugin, "_start_session_report_watcher", lambda *args, **kwargs: None)
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+    plugin.register(ctx)
+    calls.clear()
+    slash_handler = ctx.commands[0]["handler"]
+    dispatch_handler = next(
+        tool["handler"] for tool in ctx.tools if tool["name"] == "orch_dispatch"
+    )
+
+    assert slash_handler("off") == (
+        "Hermes /orch off succeeded: Orchestra dispatch disabled for this session"
+    )
+    plugin._on_session_cleanup(session_id="cli-session")
+    output = dispatch_handler({"goal": "do work"}, session_id="cli-session")
+
+    assert output == "orchestra dispatched: builder abc123"
+    assert calls == [
+        ["do", "--session-id", "hermes:cli-session", "--goal", "do work"],
+        ["_dispatch-ack", "--run-id", "abc123", "--role", "builder"],
+    ]
+
+
 def test_orch_slash_on_clears_active_state_if_helper_raises_then_retry_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1072,6 +1182,72 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_injects_when_
     assert "_progress-message" not in [call[0] for call in calls]
     assert ctx.steered == []
     assert ctx.injected == [("reviewer done", "user")]
+
+
+def test_orch_slash_cli_private_session_fallback_dispatches_do_and_queues_when_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "do":
+            return completed(args, "run_id: cli-run\ntimeout_seconds: 5\nstatus: queued\n")
+        if args[0] == "_await-session-report":
+            return completed(
+                args,
+                json.dumps({"runIds": ["cli-run"], "report": "reviewer done"}),
+            )
+        if args[0] == "_dispatch-ack":
+            return completed(args, "orchestra dispatched: reviewer cli-run\n")
+        if args[0] == "_mark-session-report-delivered":
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="hermes:cli-session", agent_running=True)
+    plugin.register(ctx)
+    calls.clear()
+
+    output = ctx.commands[0]["handler"]('do --role reviewer "ship it"')
+
+    assert output == "orchestra dispatched: reviewer cli-run"
+    assert wait_for_condition(
+        lambda: [call[0] for call in calls].count("_await-session-report") == 1
+        and any(call[0] == "_mark-session-report-delivered" for call in calls)
+    )
+    assert [
+        "do",
+        "--session-id",
+        "hermes:cli-session",
+        "--goal",
+        "ship it",
+        "--role",
+        "reviewer",
+    ] in calls
+    assert [
+        "_await-session-report",
+        "--session-id",
+        "hermes:cli-session",
+        "--run-id",
+        "cli-run",
+        "--timeout",
+        "35",
+        "--json",
+    ] in calls
+    assert [
+        "_mark-session-report-delivered",
+        "--session-id",
+        "hermes:cli-session",
+        "--run-id",
+        "cli-run",
+    ] in calls
+    assert ctx.injected == []
+    assert ctx.steered == []
+    assert list(ctx.pending_input.queue) == ["reviewer done"]
 
 
 def test_orch_slash_fails_closed_without_hook_session_context() -> None:
@@ -1740,7 +1916,7 @@ def test_session_report_watcher_retries_after_transient_failure(
 
 
 
-def test_session_report_busy_uses_steer_and_marks_delivered(
+def test_session_report_busy_queues_next_turn_and_marks_delivered(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -1764,8 +1940,9 @@ def test_session_report_busy_uses_steer_and_marks_delivered(
         ),
     )
 
-    assert ctx.steered == ["worker done"]
+    assert ctx.steered == []
     assert ctx.injected == []
+    assert list(ctx.pending_input.queue) == ["worker done"]
     assert calls == [
         [
             "_mark-session-report-delivered",
@@ -1777,7 +1954,7 @@ def test_session_report_busy_uses_steer_and_marks_delivered(
     ]
 
 
-def test_session_report_busy_steer_failure_releases_without_marking(
+def test_session_report_busy_queue_failure_releases_without_marking(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -1791,7 +1968,7 @@ def test_session_report_busy_steer_failure_releases_without_marking(
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
     ctx = FakeHermesPluginContext(agent_running=True)
-    ctx.steer_success = False
+    delattr(ctx._manager._cli_ref, "_pending_input")
 
     plugin._handle_session_report_result(
         ctx,
@@ -1802,8 +1979,9 @@ def test_session_report_busy_steer_failure_releases_without_marking(
         ),
     )
 
-    assert ctx.steered == ["worker done"]
+    assert ctx.steered == []
     assert ctx.injected == []
+    assert list(ctx.pending_input.queue) == []
     assert calls == [
         [
             "_release-session-report",

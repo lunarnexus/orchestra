@@ -201,6 +201,23 @@ OpenCode should follow best host-supported parity rather than copying Pi APIs di
 - Global installation should target OpenCode's global plugin location, for example `~/.config/opencode/plugins/`, unless a project-local install is explicitly requested.
 - `orchestra init opencode` installs there from a source checkout, and `--copy` falls back to the packaged plugin asset when a wheel install has no checkout to link against.
 
+## Hermes implementation mapping
+
+Hermes should follow best host-supported parity rather than copying Pi APIs directly:
+
+- Use the Hermes runtime session id from host context and normalize it as `hermes:<session-id>`.
+- Register `orch_dispatch(goal, role?, taskLabel?)` and `orch_status(action, limit?, runId?, role?, setting?, value?)` through Hermes model-callable tools.
+- Register native `/orch help|on|off|do|roles|status|stop|doctor|history` through the Hermes command surface.
+- Keep model-callable dispatch timeout-disabled while allowing manual `/orch do --timeout` on the native command surface.
+- Use `_tool-info`, `_dispatch-ack`, `_await-session-report`, `_mark-session-report-delivered`, and `_release-session-report` from core rather than embedding host-local copies of shared wording or report handling.
+- Deliver consolidated idle-session auto-return with `ctx.inject_message(...)`.
+- Deliver consolidated busy-session auto-return by queueing the report into Hermes CLI `_pending_input` so the next user turn is created without interrupting the active turn.
+- Treat Hermes `/orch off` as behavioral session-scoped dispatch disabling. Hermes does not currently expose verified public APIs for Pi-style active-tool hiding/showing, so `/orch` and `orch_status` remain available while `orch_dispatch` returns a disabled error until `/orch on` re-enables it.
+- Hermes `/orch on` is two-step after `/orch off`: first re-enable dispatch for the session, then inject `_orchestrator-skill` on the next `/orch on`.
+- Use session cleanup hooks to clear watcher state, `/orch on` state, and disabled-dispatch state.
+- Hermes budget handoff parity uses host-supported `pre_llm_call` and `pre_tool_call` hooks rather than Pi `turn_end` / `tool_call` events.
+- Footer/status UI, rendered transcript entries, non-prompt progress notifications, and dynamic completions remain host-API-limited until Hermes exposes stable public plugin APIs for them.
+
 ## New plugin delta checklist
 
 Before implementing a new host plugin, answer these questions.

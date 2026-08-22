@@ -51,9 +51,11 @@ _BUDGET_STATES: dict[str, _BudgetState] = {}
 _BUDGET_STATES_LOCK = threading.Lock()
 _ORCH_ON_ACTIVE_SESSIONS: set[str] = set()
 _ORCH_ON_ACTIVE_SESSIONS_LOCK = threading.Lock()
+_ORCH_DISABLED_SESSIONS: set[str] = set()
+_ORCH_DISABLED_SESSIONS_LOCK = threading.Lock()
 
 _ORCH_COMMAND_ARGS_HINT = (
-    "help | on | do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal> | "
+    "help | on | off | do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal> | "
     "roles ... | status | stop <run-id> | doctor | history [LIMIT]"
 )
 
@@ -133,6 +135,24 @@ def _orch_on_mark_active(runtime_session_id: str) -> bool:
 def _orch_on_clear(runtime_session_id: str) -> None:
     with _ORCH_ON_ACTIVE_SESSIONS_LOCK:
         _ORCH_ON_ACTIVE_SESSIONS.discard(runtime_session_id)
+
+
+def _orch_dispatch_disable(runtime_session_id: str) -> None:
+    with _ORCH_DISABLED_SESSIONS_LOCK:
+        _ORCH_DISABLED_SESSIONS.add(runtime_session_id)
+
+
+def _orch_dispatch_enable(runtime_session_id: str) -> bool:
+    with _ORCH_DISABLED_SESSIONS_LOCK:
+        if runtime_session_id not in _ORCH_DISABLED_SESSIONS:
+            return False
+        _ORCH_DISABLED_SESSIONS.discard(runtime_session_id)
+        return True
+
+
+def _orch_dispatch_is_disabled(runtime_session_id: str) -> bool:
+    with _ORCH_DISABLED_SESSIONS_LOCK:
+        return runtime_session_id in _ORCH_DISABLED_SESSIONS
 
 
 def _orchestra_dispatch_budget() -> int:
@@ -480,14 +500,15 @@ def _session_is_busy(ctx: Any) -> bool:
     return bool(getattr(cli_ref, "_agent_running", False))
 
 
-def _steer_report(ctx: Any, message: str) -> bool:
-    """Deliver a report message via Hermes steer without interrupting the active turn."""
+def _queue_report(ctx: Any, message: str) -> bool:
+    """Queue a report as the next Hermes CLI turn without interrupting the active turn."""
     cli_ref = _cli_ref(ctx)
-    agent = getattr(cli_ref, "agent", None)
-    steer = getattr(agent, "steer", None)
-    if not callable(steer):
+    pending_input = getattr(cli_ref, "_pending_input", None)
+    put = getattr(pending_input, "put", None)
+    if not callable(put):
         return False
-    return bool(steer(message))
+    put(message)
+    return True
 
 
 def _inject_report(ctx: Any, message: str) -> bool:
@@ -499,7 +520,7 @@ def _inject_report(ctx: Any, message: str) -> bool:
 
 def _deliver_report(ctx: Any, message: str) -> bool:
     if _session_is_busy(ctx):
-        return _steer_report(ctx, message)
+        return _queue_report(ctx, message)
     return _inject_report(ctx, message)
 
 
@@ -653,6 +674,7 @@ def _on_session_cleanup(**kwargs: Any) -> None:
     _invalidate_session_watcher_generation(runtime_session_id)
     _clear_budget_state(runtime_session_id)
     _orch_on_clear(runtime_session_id)
+    _orch_dispatch_enable(runtime_session_id)
     with _REPORT_WATCHERS_LOCK:
         _REPORT_WATCHERS.discard(runtime_session_id)
 
@@ -664,6 +686,11 @@ def _dispatch_orchestra_run(
     *,
     allow_timeout: bool = False,
 ) -> str:
+    if _orch_dispatch_is_disabled(runtime_session_id):
+        return _error(
+            "Hermes orch_dispatch is disabled for this session; run /orch on to enable it again"
+        )
+
     goal = str(payload.get("goal", "")).strip()
     if not goal:
         return _error("goal is required")
@@ -736,6 +763,13 @@ def _orch_on_error(reason: str) -> str:
 
 
 def _orch_on(ctx: Any | None, runtime_session_id: str) -> str:
+    if _orch_dispatch_enable(runtime_session_id):
+        _orch_on_clear(runtime_session_id)
+        return (
+            'Hermes /orch on succeeded: Orchestra dispatch enabled for this session. '
+            'Run "/orch on" again to inject the orchestrator skill'
+        )
+
     if not _orch_on_mark_active(runtime_session_id):
         return "Hermes /orch on already active for this session"
 
@@ -857,6 +891,11 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
 
     if subcommand == "on":
         return _orch_on(ctx, runtime_session_id)
+
+    if subcommand == "off":
+        _orch_dispatch_disable(runtime_session_id)
+        _orch_on_clear(runtime_session_id)
+        return "Hermes /orch off succeeded: Orchestra dispatch disabled for this session"
 
     if subcommand == "status":
         result = _run_orchestra(["status", "--session-id", runtime_session_id])
@@ -990,7 +1029,7 @@ def register(ctx: Any) -> None:
         "orch",
         handler=command_handler,
         description=(
-            "Orchestra host adapter: /orch help|on|do|roles|status|stop|doctor|history "
+            "Orchestra host adapter: /orch help|on|off|do|roles|status|stop|doctor|history "
             "(use /orch on to inject the orchestrator skill)"
         ),
         args_hint=_ORCH_COMMAND_ARGS_HINT,
