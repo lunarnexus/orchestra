@@ -1,6 +1,6 @@
 # Skill System Research and Decisions
 
-Status: research notes plus implemented-shape updates for Phase 1-3. Historical provisional sections remain for traceability; use the implemented-shape section below and `FOUNDATION.md` for shipped behavior.
+Status: research notes plus implemented-shape updates for Phase 1-3. Historical provisional sections remain for traceability; use the implemented-shape section below, `DECISIONS.md` for owner-approved decisions, and `ARCHITECTURE.md` for current behavior.
 
 ## Purpose
 
@@ -26,7 +26,8 @@ Relevant files:
 - `src/orchestra/harnesses/common.py`
 - `src/orchestra/config.py`
 - `tests/test_harness_pi.py`
-- `FOUNDATION.md`
+- `DECISIONS.md`
+- `ARCHITECTURE.md`
 
 What Orchestra does today:
 
@@ -151,7 +152,7 @@ Important pattern:
 ### Borrow, but adapt
 
 - Planning spine: keep the idea, make it much lighter
-- Handoff state: prefer lightweight continuity, likely centered on `PLAN.md`, `FOUNDATION.md`, repo state, and Orchestra runtime state
+- Handoff state: prefer lightweight continuity, likely centered on `PLAN.md`, `DECISIONS.md`, `ARCHITECTURE.md`, repo state, and Orchestra runtime state
 - Skill taxonomy: keep a compact core, not a large catalog
 - Evaluation culture: add E2E and prompt-flow reporting, but keep it repo-native and lean
 
@@ -187,7 +188,7 @@ There is low enthusiasm for a dedicated resume-heavy system.
 
 Current view:
 
-- `PLAN.md`, `FOUNDATION.md`, `AGENTS.md`, and other stable repo artifacts already provide most of the necessary continuity.
+- `PLAN.md`, `DECISIONS.md`, `ARCHITECTURE.md`, `AGENTS.md`, and other stable repo artifacts already provide most of the necessary continuity.
 - A lightweight orientation check may still help, but a full resume framework may be unnecessary.
 
 ### 3. Specific workflow
@@ -245,7 +246,7 @@ Confirmed direction:
 
 Decision direction:
 
-- `FOUNDATION.md` stores stable user decisions and principles. It changes rarely.
+- `DECISIONS.md` is the authoritative record of owner-approved project decisions. Recorded decisions change only with explicit owner approval.
 - `ARCHITECTURE.md` should describe current technical design and can change during the build.
 - `RESEARCH.md` should store research findings, sources, options, and evidence.
 - `PLAN.md` should store the active execution plan. It can be cleared or replaced after completion.
@@ -258,7 +259,7 @@ Decision direction:
 
 Working default flow:
 
-1. Capture stable user decisions in `FOUNDATION.md`.
+1. Add stable project decisions to `DECISIONS.md` only after explicit owner approval.
 2. Put research findings in `RESEARCH.md`.
 3. Ask numbered planning questions.
 4. Iterate until unknowns are resolved.
@@ -325,8 +326,8 @@ roles:
 
 Prefer lightweight continuity over a heavy workflow cockpit:
 
-- `FOUNDATION.md` for durable user decisions and principles
-- `ARCHITECTURE.md` for evolving technical design
+- `DECISIONS.md` for authoritative owner-approved project decisions
+- `ARCHITECTURE.md` for current technical design
 - `RESEARCH.md` for research findings and evidence
 - `PLAN.md` for active work plan
 - Orchestra runtime/history state for runs and worker outcomes
@@ -387,7 +388,7 @@ Shipped behavior:
   `harness_config` plus optional runtime overrides such as `model`, `profile`,
   or `agent`.
 - Successful fallback is surfaced in final reports/history.
-- Standard artifacts are `FOUNDATION.md`, `ARCHITECTURE.md`, `RESEARCH.md`,
+- Standard artifacts are `DECISIONS.md`, `ARCHITECTURE.md`, `RESEARCH.md`,
   and `PLAN.md`.
 - Planner may dispatch researchers initially; other roles do not nested-dispatch
   in MVP.

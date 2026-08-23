@@ -25,7 +25,7 @@ Governing question: **Does this change create a realistic attack path across a t
 
 ## Required artifact gate
 
-Read `FOUNDATION.md` for security and secret-handling constraints. Read relevant `ARCHITECTURE.md` trust boundaries before judging risk. Flag missing architecture or security documentation for changed trust boundaries as security evidence or findings according to impact.
+Read `DECISIONS.md` for authoritative security and secret-handling decisions. Read relevant `ARCHITECTURE.md` trust boundaries before judging risk. Flag missing architecture or security documentation for changed trust boundaries as security evidence or findings according to impact.
 
 ## Establish the target
 

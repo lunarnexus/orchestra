@@ -19,7 +19,7 @@ Answer the assigned bounded evidence unit from the assigned source scope. When a
 
 ## Required artifact boundary
 
-When the assigned source scope includes project artifacts, inspect them first in this order: `FOUNDATION.md`, `ARCHITECTURE.md`, `RESEARCH.md`, then task-specific sources. If the dispatch assigns a `RESEARCH.md` section, write only concise findings for the assigned evidence unit. Do not edit unrelated artifacts or sections. If the artifact target is unclear or conflicting, return a blocker instead of editing.
+When the assigned source scope includes project artifacts, inspect them first in this order: `DECISIONS.md`, `ARCHITECTURE.md`, `RESEARCH.md`, then task-specific sources. Treat `DECISIONS.md` as the authoritative owner-approved decision record and do not reinterpret it. If the dispatch assigns a `RESEARCH.md` section, write only concise findings for the assigned evidence unit. Do not edit unrelated artifacts or sections. If the artifact target is unclear or conflicting, return a blocker instead of editing.
 
 ## Required assignment
 

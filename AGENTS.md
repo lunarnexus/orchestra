@@ -4,8 +4,8 @@ These rules apply to all AI coding agents working on this project.
 
 ## Core Principles
 
-- Keep the implementation aligned with `FOUNDATION.md` and any active operational artifacts.
-- Treat `FOUNDATION.md` as a durable decision record. Treat `PLAN.md` and `RESEARCH.md` as Orchestra operational artifacts for the current orchestrator session, not casual edit targets.
+- Keep the implementation aligned with `DECISIONS.md`, `ARCHITECTURE.md`, and any active operational artifacts.
+- Treat `DECISIONS.md` as the authoritative record of owner-approved project decisions. Do not remove, weaken, reinterpret, or supersede a recorded decision without explicit owner approval. Treat `ARCHITECTURE.md` as the current implementation map. Treat `PLAN.md` and `RESEARCH.md` as Orchestra operational artifacts for the current orchestrator session, not casual edit targets.
 - Favor simple MVP work over speculative framework building.
 - Prefer small, reviewable changes with clear verification.
 - Be explicit about what is implemented now versus only planned.
@@ -14,7 +14,7 @@ These rules apply to all AI coding agents working on this project.
 
 ## Schema & Data Changes
 
-- Document schema changes in `FOUNDATION.md` or relevant docs before applying.
+- Record owner-approved schema decisions in `DECISIONS.md` and document the current schema design in `ARCHITECTURE.md` or relevant technical docs before applying changes.
 - Run migrations/validations immediately after data structure changes.
 
 ## Destructive Work

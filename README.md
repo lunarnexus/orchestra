@@ -301,8 +301,8 @@ orchestra history --session-id manual:demo
 
 ## Further Reading
 
-- `ARCHITECTURE.md` — technical design and adapter behavior
-- `FOUNDATION.md` — domain model and durable decisions
+- `DECISIONS.md` — authoritative owner-approved project decisions
+- `ARCHITECTURE.md` — current technical design and adapter behavior
 - `docs/research/` — durable research notes and evaluations
 - `PLAN.md` / `RESEARCH.md` — optional Orchestra operational artifacts for the active orchestrator session; not part of the public project documentation contract
 - `ROADMAP.md` — backlog and future work

@@ -8,7 +8,7 @@ Research date: 2026-07-29
 - Parallel capacity is global/per-session and fail-fast. There is no queue. `src/orchestra/state.py:133-214`
 - No workflow DAG, dependencies, retries, reducers, or native fan-out/fan-in exist yet. `batch_id` is stored but does not control execution. `src/orchestra/app.py:176,203`, `src/orchestra/state.py:50,97,602`
 - Existing `planner`, `reviewer`, `critic`, `researcher`, and `appsec` roles are routing configuration, not enforced gates. `agent-catalog.yaml:15-66`, `src/orchestra/config.py:117-127`
-- Current design favors thin host adapters, host-derived session identity, compact returns, and a one-shot subprocess MVP. `FOUNDATION.md:35,51,91-94,216,231-234`
+- Current design favors thin host adapters, host-derived session identity, compact returns, and a one-shot subprocess MVP. See `DECISIONS.md` and `ARCHITECTURE.md`.
 - Existing research already identifies worktree isolation, watch/status views, reusable recipes, and approval pass-through as future directions. `research.md:86-105,139-141`
 
 ## External Patterns

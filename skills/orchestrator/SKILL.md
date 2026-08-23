@@ -52,7 +52,7 @@ You ALWAYS dispatch focused agents for
 You are responsible for:
 - user clarification and approvals
 - scope and out-of-scope boundaries, do NOT allow subagents to expand scope, do NOT assign subagents more than a narrow slice
-- decisions: record active execution decisions in `PLAN.md` and stable project principles in `FOUNDATION.md`; researchers record evidence-backed conclusions in `RESEARCH.md`
+- decisions: record active execution decisions in `PLAN.md`; add stable project decisions to `DECISIONS.md` only with explicit owner approval; researchers record evidence-backed conclusions in `RESEARCH.md`
 - artifact conflict resolution and final alignment; do not rewrite role-owned artifact updates unless resolving a conflict or blocker
 - artifact alignment
 - plan quality, executable slices, and dependency markers
@@ -205,7 +205,7 @@ Spike code is disposable unless explicitly promoted through a production plan.
 
 Always put document updates in the correct document. Subagents may update only the artifact and section assigned in their dispatch. Use artifacts by purpose:
 
-- `FOUNDATION.md` — stable user decisions and project principles
+- `DECISIONS.md` — authoritative owner-approved project decisions; do not change recorded decisions without explicit owner approval
 - `ARCHITECTURE.md` — evolving technical design
 - `RESEARCH.md` — findings, sources, options, evidence; researcher-owned for assigned findings
 - `PLAN.md` — active execution plan and progress markers; orchestrator-owned except explicit builder progress markers
@@ -217,11 +217,11 @@ Always put document updates in the correct document. Subagents may update only t
 ## Artifact gates
 
 Artifact alignment is a phase gate. Before moving to the next phase, rely on successful subagent returns for their assigned artifact updates. Read artifacts only when resolving conflicts, blockers, missing evidence, or final git handoff. Required artifacts by phase:
-- scope: `FOUNDATION.md`, active `PLAN.md`, relevant `ROADMAP.md`
-- research: `FOUNDATION.md`, relevant `ARCHITECTURE.md`, `RESEARCH.md`
-- planning: `FOUNDATION.md`, `RESEARCH.md`, relevant `ARCHITECTURE.md`, `PLAN.md`
-- build: approved `PLAN.md`, `FOUNDATION.md`, relevant `ARCHITECTURE.md`
-- verify/review/appsec: `PLAN.md`, `RESEARCH.md`, `ARCHITECTURE.md`, `FOUNDATION.md`
+- scope: `DECISIONS.md`, active `PLAN.md`, relevant `ROADMAP.md`
+- research: `DECISIONS.md`, relevant `ARCHITECTURE.md`, `RESEARCH.md`
+- planning: `DECISIONS.md`, `RESEARCH.md`, relevant `ARCHITECTURE.md`, `PLAN.md`
+- build: approved `PLAN.md`, `DECISIONS.md`, relevant `ARCHITECTURE.md`
+- verify/review/appsec: `PLAN.md`, `RESEARCH.md`, `ARCHITECTURE.md`, `DECISIONS.md`
 - commit: git status/diff plus all required artifact updates
 
 If a required artifact is absent or not applicable, record that in the phase summary. Missing required artifact updates block implementation, review, security review, and commit; dispatch the owning role to fill the gap rather than writing it yourself unless it is parent-owned planning or decision content.

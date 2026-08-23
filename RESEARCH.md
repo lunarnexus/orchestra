@@ -227,7 +227,7 @@ Research date: 2026-07-31; refreshed 2026-08-04
 - OpenCode plugins and custom tools are JavaScript/TypeScript. Custom tools can
   call any language and receive a context object containing `sessionID`,
   `messageID`, `directory`, `worktree`, and `agent`. This matches the existing
-  `FOUNDATION.md` decision that an OpenCode host adapter should derive runtime
+  `DECISIONS.md` decision that an OpenCode host adapter should derive runtime
   identity from `context.sessionID`.
 - OpenCode custom commands can be defined in JSON config or markdown files under
   `.opencode/commands/` or `~/.config/opencode/commands/`. Commands support an

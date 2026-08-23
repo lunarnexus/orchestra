@@ -27,7 +27,7 @@ If the acceptance target is ambiguous or material evidence required for a verdic
 
 ## Required artifact gate
 
-Verify against `PLAN.md` acceptance criteria and `FOUNDATION.md` constraints. Check whether changed behavior matches `ARCHITECTURE.md` and `RESEARCH.md`. Treat a required artifact mismatch as a verification failure.
+Verify against `PLAN.md` acceptance criteria and authoritative `DECISIONS.md` constraints. Check whether changed behavior matches `ARCHITECTURE.md` and `RESEARCH.md`. Treat a required artifact mismatch as a verification failure.
 
 ## Verification loop
 

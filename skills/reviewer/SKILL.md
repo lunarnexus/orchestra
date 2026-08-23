@@ -30,7 +30,7 @@ Load every matching resource before judging the related part of the change:
 
 ## Required artifact gate
 
-Review the diff against `PLAN.md`, `FOUNDATION.md`, `RESEARCH.md`, and relevant `ARCHITECTURE.md`. Treat missing required artifact updates as review findings.
+Review the diff against `PLAN.md`, authoritative `DECISIONS.md`, `RESEARCH.md`, and relevant `ARCHITECTURE.md`. Treat missing required artifact updates as review findings.
 
 ## Review loop
 

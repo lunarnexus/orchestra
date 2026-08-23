@@ -143,7 +143,7 @@ extensions/qwen/orchestra/
 
 ### D. Docs and verification targets
 - `docs/plugin_creation.md`: new "Qwen Code implementation mapping" section — identity mechanisms, MCP-as-tool-channel host fact, monitor-based auto-return as the delivery primitive, behavioral `/orch off`, template (non-handler) command surface, blocked items (footer UI, completions, proactive injection).
-- `FOUNDATION.md`: decision record for the qwen harness + plugin (schema/state additions: watcher pidfile convention, `~/.qwen/orchestra` runtime dir).
+- `DECISIONS.md`: authoritative decision record for the qwen harness + plugin (schema/state additions: watcher pidfile convention, `~/.qwen/orchestra` runtime dir).
 - `AGENTS.md`: add qwen verification targets (init/link check, fresh-session `/orch doctor`, headless intern dispatch smoke once enabled).
 
 ## Parity Positioning
@@ -386,7 +386,7 @@ Tests — additions to `tests/test_init_targets.py`, mirroring the codex test se
 ### Workstream D — Docs & verification targets (detail)
 
 - `docs/plugin_creation.md`: new "Qwen Code implementation mapping" section recording: identity via sessions-PID file + hook stdin; MCP-as-only-tool-channel host fact (with env-stripping evidence); NDJSON/protocol-version contract; monitor-based auto-return as the delivery primitive with per-session pidfile guard; behavioral `/orch off`; template-not-handler command surface; budget-hook stretch status; blocked items.
-- `FOUNDATION.md`: decision entries — qwen harness config + intern role re-point (schema: no new fields, catalog data change), watcher pidfile convention under `$TMPDIR/orchestra-qwen-<session>/`, `~/.qwen/orchestra` runtime dir, `QWEN_HOME` env override.
+- `DECISIONS.md`: owner-approved decision entries — qwen harness config + intern role re-point (schema: no new fields, catalog data change), watcher pidfile convention under `$TMPDIR/orchestra-qwen-<session>/`, `~/.qwen/orchestra` runtime dir, `QWEN_HOME` env override.
 - `AGENTS.md`: append qwen verification targets to the host-extension section:
   ```bash
   orchestra init qwen            # from source checkout; piped consent
@@ -423,6 +423,6 @@ tests/test_init_targets.py                          modify (5 qwen init tests)
 pyproject.toml                                      modify (package-data entries)
 MANIFEST.in                                         modify if it lists asset paths for sdist
 docs/plugin_creation.md                             modify (Qwen Code mapping section)
-FOUNDATION.md                                       modify (decision record)
+DECISIONS.md                                        modify (owner-approved decision record)
 AGENTS.md                                           modify (verification targets)
 ```

@@ -367,7 +367,7 @@ Your existing builder skill already identifies security-, concurrency-, schema-,
 
 Orchestra has a potentially strong architectural idea: workers are isolated and return compact results rather than sharing one ever-growing conversation. The README explicitly describes compact returns, session scoping and lean state. citeturn1view0turn2view2
 
-But several current skills ask workers to orient themselves by reading standard artifacts such as `FOUNDATION.md`, `ARCHITECTURE.md`, `RESEARCH.md`, and `PLAN.md` under various conditions. citeturn14view1turn15view0turn15view1
+But several current skills ask subagents to orient themselves by reading standard artifacts such as `DECISIONS.md`, `ARCHITECTURE.md`, `RESEARCH.md`, and `PLAN.md` under various conditions. citeturn14view1turn15view0turn15view1
 
 If every worker repeatedly rehydrates the same project state, isolation can merely move context cost from one large prompt to many medium prompts.
 

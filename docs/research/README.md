@@ -53,7 +53,8 @@ manual status/history remain diagnostic and control surfaces.
 | Downloaded repositories and bulky source material | `docs/research/orchestra-skills-research/repos/` — ignored |
 | Executable evaluation harnesses and fixtures | `evals/` |
 | Raw traces, artifacts, and repeated runs | `evals/*/runs/` — ignored |
-| Accepted project decisions | `FOUNDATION.md`, `ARCHITECTURE.md`, `ROADMAP.md`, or another relevant durable project document |
+| Owner-approved project decisions | `DECISIONS.md` |
+| Current technical design | `ARCHITECTURE.md` |
 | Active orchestrator execution state | Optional operational `PLAN.md` in the repository root |
 
 Research findings should be promoted into decision documents only after review and approval.

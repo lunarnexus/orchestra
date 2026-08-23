@@ -25,7 +25,7 @@ Governing question: **Can a builder execute this plan without inventing requirem
 
 ## Required artifact gate
 
-Before returning `ready`, read `FOUNDATION.md`, `RESEARCH.md`, and relevant `ARCHITECTURE.md`. Return a complete proposed `PLAN.md` update for active execution work; the main-session orchestrator applies it. State whether `FOUNDATION.md`, `ARCHITECTURE.md`, `RESEARCH.md`, or `ROADMAP.md` requires an update and provide proposed wording.
+Before returning `ready`, read authoritative `DECISIONS.md`, `RESEARCH.md`, and relevant `ARCHITECTURE.md`. Return a complete proposed `PLAN.md` update for active execution work; the main-session orchestrator applies it. State whether an owner-approved `DECISIONS.md` addition, or an `ARCHITECTURE.md`, `RESEARCH.md`, or `ROADMAP.md` update is required and provide proposed wording.
 
 ## Planning workflow
 
