@@ -90,7 +90,7 @@ harness_configs:
 roles:
   builder:
     harness_config: pi
-    model: lmstudio/LOADED
+    model: openai-codex/gpt-5.4-mini
     skills:
     - builder
     prompt_addition: Implement the assigned task only. Stay in scope. Run focused
@@ -102,7 +102,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   verifier:
     harness_config: pi
-    model: lmstudio/LOADED
+    model: openai-codex/gpt-5.4-mini
     skills:
     - verifier
     prompt_addition: Independently prove whether the work satisfies its scope and
@@ -114,7 +114,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   reviewer:
     harness_config: pi
-    model: lmstudio/LOADED
+    model: openai-codex/gpt-5.4
     skills:
     - reviewer
     prompt_addition: Independently review whether the change is correct, maintainable,
@@ -125,17 +125,9 @@ roles:
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
       HINDSIGHT4PI_AUTO_RECALL: '0'
-  critic:
-    harness_config: hermes
-    profile: mina
-    prompt_addition: Focus on the assigned task and return a compact result.
-    enabled: false
-    env:
-      HINDSIGHT4PI_AUTO_RETAIN: '0'
-      HINDSIGHT4PI_AUTO_RECALL: '0'
   researcher:
     harness_config: pi
-    model: lmstudio/LOADED
+    model: openai-codex/gpt-5.4
     prompt_addition: Gather evidence with sources from docs, web, or code. Do not
       change code. Update only the assigned RESEARCH.md section when requested. Return
       the compact schema only.
@@ -147,7 +139,7 @@ roles:
     - researcher
   intern:
     harness_config: qwen
-    model: lmstudio/qwen/qwen3.8-27b
+    model: openai-codex/gpt-5.4-mini
     prompt_addition: Focus on the assigned task and return a compact result.
     enabled: true
     env:
@@ -155,7 +147,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   appsec:
     harness_config: pi
-    model: lmstudio/LOADED
+    model: openai-codex/gpt-5.4
     skills:
     - appsec
     prompt_addition: Independently identify realistic vulnerabilities across changed
@@ -178,3 +170,11 @@ roles:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
       HINDSIGHT4PI_AUTO_RECALL: '0'
     nested_dispatch_depth: 2
+  critic:
+    harness_config: hermes
+    profile: mina
+    prompt_addition: Focus on the assigned task and return a compact result.
+    enabled: false
+    env:
+      HINDSIGHT4PI_AUTO_RETAIN: '0'
+      HINDSIGHT4PI_AUTO_RECALL: '0'

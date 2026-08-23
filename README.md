@@ -117,20 +117,6 @@ Release versions are derived from Git tags with `setuptools-scm`. Tag releases a
 
 ## Quick Start
 
-Check the installation:
-
-```bash
-orchestra doctor
-orchestra roles
-```
-
-Run a manual subagent task from the CLI:
-
-```bash
-orchestra do --session-id manual:demo --goal "Summarize the repository status"
-orchestra history --session-id manual:demo --limit 10
-```
-
 Install a host integration, then use Orchestra from inside that host:
 
 ```bash
@@ -139,9 +125,24 @@ orchestra init pi
 orchestra init hermes
 # or
 orchestra init opencode
-# or
-orchestra init codex
 ```
+
+Adjust agent-catalog.yaml to your liking.
+
+From pi:
+```bash
+/orch status
+/orch do tell me a haiku
+#or 
+dispatch a builder to tell me a haiku
+```
+#or if you want the full orchestrator experience
+
+```bash
+/orch on  # Loads the primary orchestrator skill
+I'd like to build a .... project
+```
+The beauty is that it uses your already setup agent harnesses, with your skills, memory, SOUL.md.
 
 ## Basic Usage
 
@@ -167,7 +168,7 @@ Orchestra is configured with YAML files:
 ```text
 config.yaml
 prompts.yaml
-agent-catalog.yaml
+agent-catalog.yaml  <-- This is your primary roles/models config
 ```
 
 The repository root contains editable defaults for local development and manual CLI use. Host install commands materialize runtime config for the selected host.

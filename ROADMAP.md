@@ -86,3 +86,4 @@ Orchestra roadmap items are split into:
 13. [ ] Batch dispatch with decomposition-first fan-out.
     - Decompose the goal into independent slices first, then fan out one subagent per slice as a grouped batch in a single dispatch round.
     - Study oh-my-pi's parallel decomposed-work approach as prior art before designing the Orchestra equivalent.  
+14. [ ] Git commit integration.
