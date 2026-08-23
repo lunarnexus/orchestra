@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Set model for every enabled role in agent-catalog.yaml.
+
+Usage:
+  ./set-enabled-role-models [model]
+
+Default model:
+  lmstudio/llmfan46/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
+"""
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+DEFAULT_MODEL = "lmstudio/llmfan46/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved"
+#DEFAULT_MODEL = "lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved"
+#DEFAULT_MODEL = "lmstudio/qwen/qwen3.8-27b"
+CATALOG = Path(__file__).with_name("agent-catalog.yaml")
+
+
+def _set_enabled_role_models(text: str, model: str) -> tuple[str, int]:
+    marker = "roles:\n"
+    if marker not in text:
+        raise SystemExit("agent-catalog.yaml does not contain a roles: section")
+
+    head, roles_body = text.split(marker, 1)
+    chunks: list[str] = []
+    current: list[str] = [marker]
+
+    for line in roles_body.splitlines(True):
+        is_role_header = (
+            line.startswith("  ")
+            and not line.startswith("    ")
+            and line.strip().endswith(":")
+        )
+        if is_role_header and current:
+            chunks.append("".join(current))
+            current = []
+        current.append(line)
+    if current:
+        chunks.append("".join(current))
+
+    changed = 0
+    out: list[str] = []
+    for chunk in chunks:
+        if chunk == marker or "    enabled: true" not in chunk:
+            out.append(chunk)
+            continue
+        new_chunk, count = re.subn(
+            r"(^    model: ).*$",
+            rf"\g<1>{model}",
+            chunk,
+            count=1,
+            flags=re.MULTILINE,
+        )
+        if count:
+            changed += 1
+            chunk = new_chunk
+        out.append(chunk)
+
+    return head + "".join(out), changed
+
+
+def main() -> int:
+    model = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
+    if not model.strip() or model.startswith("-"):
+        print("usage: set-enabled-role-models [model]", file=sys.stderr)
+        return 2
+
+    text = CATALOG.read_text()
+    new_text, changed = _set_enabled_role_models(text, model)
+    CATALOG.write_text(new_text)
+    print(f"updated {changed} enabled role model line(s) in {CATALOG}")
+    print(f"model: {model}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
