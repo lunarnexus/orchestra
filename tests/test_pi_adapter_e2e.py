@@ -111,7 +111,11 @@ def test_pi_extension_host_on_refreshes_skill_each_time(
     assert result.returncode == 0
     output = result.stdout + result.stderr
     assert "Orchestra tools hidden for this session. Run /orch on to enable them again." in output
-    assert 'Orchestra tools enabled for this session. Run "/orch on" again to load the orchestrator skill.' in output
+    enabled_message = (
+        'Orchestra tools enabled for this session. '
+        'Run "/orch on" again to load the orchestrator skill.'
+    )
+    assert enabled_message in output
     assert output.count("Orchestra orchestrator skill refreshed for this session.") == 1
     assert "already loaded" not in output
 

@@ -27,6 +27,25 @@ interface ActiveSessionStatus {
   runIds: string[];
 }
 
+interface DispatchPayload {
+  run_id?: string;
+  role?: string;
+  timeout_seconds?: number;
+  message?: string;
+}
+
+interface StatusPayload {
+  active_runs?: { count?: number; runs?: Array<{ run_id?: string; role?: string }> };
+  role_counts?: Array<{ role?: string; count?: number }>;
+}
+
+interface AwaitRunPayload {
+  status?: string;
+  role?: string;
+  blocker?: string;
+  active_runs_remaining?: number;
+}
+
 function renderOrchestraWorkerStatus(theme: OrchestraFooterTheme, roleCounts: ActiveRoleCount[]): string | undefined {
   if (roleCounts.length === 0) return undefined;
   return roleCounts
@@ -236,23 +255,8 @@ function extractField(output: string, field: string): string | null {
   return null;
 }
 
-function extractRunId(output: string): string | null {
-  return extractField(output, "run_id");
-}
-
-function extractDispatchTimeoutSeconds(output: string): number {
-  const timeoutText = extractField(output, "timeout_seconds");
-  if (!timeoutText) {
-    throw new Error("orchestra do output did not include timeout_seconds.");
-  }
-  if (!/^\d+$/.test(timeoutText)) {
-    throw new Error("orchestra do timeout_seconds must be a positive integer.");
-  }
-  const timeoutSeconds = Number.parseInt(timeoutText, 10);
-  if (timeoutSeconds <= 0) {
-    throw new Error("orchestra do timeout_seconds must be a positive integer.");
-  }
-  return timeoutSeconds;
+function parseDispatchPayload(output: string): DispatchPayload {
+  return JSON.parse(output) as DispatchPayload;
 }
 
 interface OrchestraCommandEntry {
@@ -337,21 +341,21 @@ function parseRoleMetadata(output: string): { roles: string[]; harnessConfigs: s
 }
 
 function parseActiveSessionStatus(output: string): ActiveSessionStatus {
-  const runIds = new Set<string>();
-  const roleCounts = new Map<string, number>();
-
-  for (const line of output.split(/\r?\n/)) {
-    const match = /^-\s+(\S+)\s+(\S+)\s+\S+\s+task=/.exec(line.trim());
-    if (!match) continue;
-    const [, runId, role] = match;
-    runIds.add(runId);
-    roleCounts.set(role, (roleCounts.get(role) ?? 0) + 1);
-  }
+  const payload = JSON.parse(output) as StatusPayload;
+  const runs = Array.isArray(payload.active_runs?.runs) ? payload.active_runs?.runs : [];
+  const roleCounts = Array.isArray(payload.role_counts)
+    ? payload.role_counts
+      .filter((entry): entry is { role: string; count: number } => typeof entry.role === "string" && typeof entry.count === "number")
+      .map(({ role, count }) => ({ role, count }))
+    : [];
+  const runIds = runs
+    .map((run) => (typeof run.run_id === "string" ? run.run_id : null))
+    .filter((runId): runId is string => runId !== null);
 
   return {
-    activeCount: runIds.size,
-    roleCounts: [...roleCounts.entries()].map(([role, count]) => ({ role, count })),
-    runIds: [...runIds],
+    activeCount: typeof payload.active_runs?.count === "number" ? payload.active_runs.count : runIds.length,
+    roleCounts,
+    runIds,
   };
 }
 
@@ -596,6 +600,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         "--run-id",
         runId,
         ...(timeout !== undefined ? ["--timeout", String(timeout)] : []),
+        "--json",
       ],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
@@ -647,7 +652,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       const completed = sessionCompletedRuns.get(sessionId) ?? new Set<string>();
       completed.add(runId);
       sessionCompletedRuns.set(sessionId, completed);
-      const { status, role, blocker, activeRemaining } = parseAwaitRunOutput(stdout);
+      const awaitPayload = JSON.parse(stdout) as AwaitRunPayload;
+      const status = awaitPayload.status ?? null;
+      const role = awaitPayload.role ?? null;
+      const blocker = awaitPayload.blocker ?? null;
+      const activeRemaining = typeof awaitPayload.active_runs_remaining === "number" ? awaitPayload.active_runs_remaining : null;
       const total = sessionRuns.get(sessionId)?.size ?? completed.size + (activeRemaining ?? 0);
       const command = [
         "_progress-message",
@@ -690,6 +699,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       sessionId,
       "--goal",
       goal,
+      "--json",
     ];
     const requestedRole = params.role?.trim();
     if (requestedRole) {
@@ -703,15 +713,16 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
 
     const result = await runOrchestra(command);
-    const runId = result.code === 0 ? extractRunId(result.stdout) : null;
+    const dispatch = result.code === 0 ? parseDispatchPayload(result.stdout) : null;
+    const runId = typeof dispatch?.run_id === "string" ? dispatch.run_id : null;
     if (runId) {
       trackRun(sessionId, runId);
-      const effectiveTimeout = result.code === 0
-        ? extractDispatchTimeoutSeconds(result.stdout)
+      const effectiveTimeout = typeof dispatch?.timeout_seconds === "number"
+        ? dispatch.timeout_seconds
         : undefined;
       watchRunProgress(sessionId, runId, notifier, updateStatus, effectiveTimeout);
       watchSessionReport(sessionId, runId, effectiveTimeout);
-      const role = extractField(result.stdout, "role") || requestedRole || "worker";
+      const role = typeof dispatch?.role === "string" && dispatch.role.trim() ? dispatch.role : (requestedRole || "worker");
       const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId, "--role", role]);
       await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true });
       if (ack.code !== 0 || !ack.stdout) {
@@ -719,7 +730,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }
       return { code: 0, runId, output: ack.stdout };
     }
-    return { code: result.code, runId: null, output: result.stdout || result.stderr };
+    return { code: result.code, runId: null, output: (dispatch?.message || result.stdout || result.stderr) };
   }
 
   function watchSessionReport(
@@ -881,7 +892,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     ) {
       return cachedActiveStatus.status;
     }
-    const result = await runOrchestra(["status", "--session-id", sessionId]);
+    const result = await runOrchestra(["status", "--session-id", sessionId, "--json"]);
     const status = result.code === 0 ? parseActiveSessionStatus(result.stdout) : { activeCount: 0, roleCounts: [], runIds: [] };
     cachedActiveStatus = { expiresAt: now + 2_000, sessionId, status };
     return status;
@@ -1159,7 +1170,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           if (!sessionId) {
             return failure("Pi session_id is required for orch_status status.");
           }
-          const result = await runOrchestra(["status", "--session-id", sessionId]);
+          const result = await runOrchestra(["status", "--session-id", sessionId, "--json"]);
           return success(result.stdout || result.stderr);
         }
 
@@ -1282,10 +1293,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }
 
       if (subcommand === "status") {
-        const result = await runOrchestra(["status", "--session-id", runtimeSessionId]);
-        emitEntryOutput(ctx, result.stdout || result.stderr);
-        if (result.code === 0) {
-          const status = parseActiveSessionStatus(result.stdout);
+        const displayResult = await runOrchestra(["status", "--session-id", runtimeSessionId]);
+        emitEntryOutput(ctx, displayResult.stdout || displayResult.stderr);
+        const statusResult = await runOrchestra(["status", "--session-id", runtimeSessionId, "--json"]);
+        if (statusResult.code === 0) {
+          const status = parseActiveSessionStatus(statusResult.stdout);
           cachedActiveStatus = { expiresAt: Date.now() + 2_000, sessionId: runtimeSessionId, status };
           setOrchestraWorkerStatus(ctx, status);
         }

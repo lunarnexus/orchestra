@@ -11,10 +11,12 @@ from orchestra.app import (
     ROLE_USAGE,
     AppError,
     InitFileResult,
+    await_run_payload,
     await_run_terminal_status,
     await_session_report,
     await_session_report_payload,
     consume_pending_session_report,
+    dispatch_ack_payload,
     doctor_checks_pass,
     format_command_echo,
     format_debug_run,
@@ -36,13 +38,17 @@ from orchestra.app import (
     init_pi,
     load_context,
     mark_session_report_delivered,
+    progress_notification_payload,
     release_session_report,
     render_orchestrator_skill_message,
     role_metadata,
     run_doctor,
     run_supervisor_guarded,
+    session_report_payload,
     set_role_setting,
     start_run,
+    started_run_payload,
+    status_payload,
     stop_run,
     tool_info,
 )
@@ -115,6 +121,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     do_parser.add_argument("--timeout", type=_positive_int, default=None, help="timeout in seconds")
     do_parser.add_argument("--task-label", default="", help="short task label")
     do_parser.add_argument("--batch-id", default=None, help="optional batch id")
+    do_parser.add_argument("--json", action="store_true")
     do_parser.set_defaults(handler=_handle_do)
 
     status_parser = subparsers.add_parser("status", help="show active run status")
@@ -123,6 +130,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         default=None,
         help="local/manual session id for CLI mode",
     )
+    status_parser.add_argument("--json", action="store_true")
     status_parser.set_defaults(handler=_handle_status)
 
     stop_parser = subparsers.add_parser("stop", help="stop a worker run")
@@ -282,11 +290,13 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         wait_run_parser.add_argument("--session-id", required=True)
         wait_run_parser.add_argument("--run-id", required=True)
         wait_run_parser.add_argument("--timeout", type=float, default=None)
+        wait_run_parser.add_argument("--json", action="store_true")
         wait_run_parser.set_defaults(handler=_handle_await_run)
 
         dispatch_ack_parser = subparsers.add_parser("_dispatch-ack", help=argparse.SUPPRESS)
         dispatch_ack_parser.add_argument("--run-id", required=True)
         dispatch_ack_parser.add_argument("--role", default=None)
+        dispatch_ack_parser.add_argument("--json", action="store_true")
         dispatch_ack_parser.set_defaults(handler=_handle_dispatch_ack)
 
         progress_parser = subparsers.add_parser("_progress-message", help=argparse.SUPPRESS)
@@ -295,6 +305,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         progress_parser.add_argument("--run-id", required=True)
         progress_parser.add_argument("--status", required=True)
         progress_parser.add_argument("--role", default=None)
+        progress_parser.add_argument("--json", action="store_true")
         progress_parser.set_defaults(handler=_handle_progress_message)
 
         echo_parser = subparsers.add_parser("_command-echo", help=argparse.SUPPRESS)
@@ -364,13 +375,19 @@ def _handle_do(args: argparse.Namespace) -> int:
         task_label=args.task_label,
         batch_id=args.batch_id,
     )
-    print(format_started_run(started))
+    if args.json:
+        print(json.dumps(started_run_payload(started)))
+    else:
+        print(format_started_run(started))
     return 0
 
 
 def _handle_status(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
-    print(format_status(context, args.session_id))
+    if args.json:
+        print(json.dumps(status_payload(context, args.session_id)))
+    else:
+        print(format_status(context, args.session_id))
     return 0
 
 
@@ -503,7 +520,10 @@ def _print_init_files(files: Sequence[InitFileResult]) -> None:
 
 
 def _handle_dispatch_ack(args: argparse.Namespace) -> int:
-    print(format_dispatch_ack(args.run_id, role=args.role))
+    if args.json:
+        print(json.dumps(dispatch_ack_payload(args.run_id, role=args.role)))
+    else:
+        print(format_dispatch_ack(args.run_id, role=args.role))
     return 0
 
 
@@ -551,15 +571,28 @@ def _handle_orchestrator_skill(args: argparse.Namespace) -> int:
 
 
 def _handle_progress_message(args: argparse.Namespace) -> int:
-    print(
-        format_progress_notification(
-            completed_count=args.completed,
-            total_count=args.total,
-            run_id=args.run_id,
-            status=args.status,
-            role=args.role,
+    if args.json:
+        print(
+            json.dumps(
+                progress_notification_payload(
+                    completed_count=args.completed,
+                    total_count=args.total,
+                    run_id=args.run_id,
+                    status=args.status,
+                    role=args.role,
+                )
+            )
         )
-    )
+    else:
+        print(
+            format_progress_notification(
+                completed_count=args.completed,
+                total_count=args.total,
+                run_id=args.run_id,
+                status=args.status,
+                role=args.role,
+            )
+        )
     return 0
 
 
@@ -587,7 +620,7 @@ def _handle_await_session_report(args: argparse.Namespace) -> int:
             timeout_seconds=args.timeout,
         )
         if report:
-            print(json.dumps({"runIds": report.run_ids, "report": report.text}))
+            print(json.dumps(session_report_payload(report)))
         return 0
 
     report_text = await_session_report(
@@ -621,6 +654,17 @@ def _handle_await_run(args: argparse.Namespace) -> int:
         run_id=args.run_id,
         timeout_seconds=args.timeout,
     )
+    if args.json:
+        print(
+            json.dumps(
+                await_run_payload(
+                    record,
+                    active_remaining=active_remaining,
+                    details=details,
+                )
+            )
+        )
+        return 0
     print(f"run_id: {record.run_id}")
     print(f"status: {record.status}")
     print(f"role: {record.role}")

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
 import subprocess
 import sys
@@ -14,7 +13,6 @@ from pathlib import Path
 from typing import Any
 
 _IDENTITY_ARG_NAMES = frozenset({"session_id", "identity", "orchestrator_session_id"})
-_RUN_ID_RE = re.compile(r"^run_id:\s*(?P<run_id>\S+)\s*$")
 _SUBPROCESS_TIMEOUT_SECONDS = 300
 _WATCHER_TIMEOUT_MARGIN_SECONDS = 30
 _REPORT_WATCHER_ATTEMPTS = 8
@@ -349,6 +347,13 @@ def _orch_status_runtime_session_id(raw_session_id: Any) -> str | None:
 
 
 def _extract_dispatch_timeout_seconds(output: str) -> int:
+    try:
+        payload = _parse_dispatch_payload(output)
+        timeout_seconds = payload.get("timeout_seconds")
+        if type(timeout_seconds) is int and timeout_seconds > 0:
+            return timeout_seconds
+    except ValueError:
+        pass
     timeout_text = _extract_field(output, "timeout_seconds")
     if not timeout_text:
         raise ValueError("orchestra do output did not include timeout_seconds")
@@ -358,11 +363,21 @@ def _extract_dispatch_timeout_seconds(output: str) -> int:
 
 
 def _extract_run_id(output: str) -> str | None:
-    for line in output.splitlines():
-        match = _RUN_ID_RE.match(line.strip())
-        if match:
-            return match.group("run_id")
-    return None
+    try:
+        payload = _parse_dispatch_payload(output)
+        run_id = payload.get("run_id")
+        if isinstance(run_id, str) and run_id.strip():
+            return run_id.strip()
+    except ValueError:
+        pass
+    return _extract_field(output, "run_id")
+
+
+def _parse_dispatch_payload(output: str) -> dict[str, Any]:
+    payload = json.loads(output)
+    if not isinstance(payload, dict):
+        raise ValueError("dispatch payload must be a JSON object")
+    return payload
 
 
 def _parse_do_args(raw_args: str) -> dict[str, Any]:
@@ -495,9 +510,75 @@ def _cli_ref(ctx: Any) -> Any | None:
     return getattr(manager, "_cli_ref", None)
 
 
-def _session_is_busy(ctx: Any) -> bool:
+def _runtime_session_key(runtime_session_id: str | None) -> str | None:
+    if not runtime_session_id:
+        return None
+    value = runtime_session_id.strip()
+    if value.startswith("hermes:"):
+        value = value[len("hermes:") :]
+    return value or None
+
+
+def _cli_ref_matches_session(cli_ref: Any, runtime_session_id: str | None) -> bool:
+    session_key = _runtime_session_key(runtime_session_id)
+    if session_key is None:
+        return True
+    raw_session_id = getattr(cli_ref, "session_id", None)
+    if not isinstance(raw_session_id, str) or not raw_session_id.strip():
+        return True
+    return _runtime_session_key(raw_session_id) == session_key
+
+
+def _tui_live_session(runtime_session_id: str | None) -> dict[str, Any] | None:
+    session_key = _runtime_session_key(runtime_session_id)
+    if session_key is None:
+        return None
+    try:
+        from tui_gateway import server as tui_server  # type: ignore
+    except Exception:
+        return None
+    find_live = getattr(tui_server, "_find_live_session_by_key", None)
+    if callable(find_live):
+        try:
+            live = find_live(session_key)
+        except Exception:
+            live = None
+        if live is not None:
+            try:
+                return live[1]
+            except Exception:
+                return None
+    sessions = getattr(tui_server, "_sessions", None)
+    if not isinstance(sessions, dict):
+        return None
+    lock = getattr(tui_server, "_sessions_lock", None)
+    try:
+        if lock is None:
+            items = list(sessions.items())
+        else:
+            with lock:
+                items = list(sessions.items())
+    except Exception:
+        return None
+    for sid, session in items:
+        if not isinstance(session, dict) or session.get("_finalized"):
+            continue
+        if sid == session_key or session.get("session_key") == session_key:
+            return session
+        agent = session.get("agent")
+        if getattr(agent, "session_id", None) == session_key:
+            return session
+    return None
+
+
+def _session_is_busy(ctx: Any, runtime_session_id: str | None = None) -> bool:
     cli_ref = _cli_ref(ctx)
-    return bool(getattr(cli_ref, "_agent_running", False))
+    if _cli_ref_matches_session(cli_ref, runtime_session_id) and bool(
+        getattr(cli_ref, "_agent_running", False)
+    ):
+        return True
+    live_session = _tui_live_session(runtime_session_id)
+    return bool(live_session and live_session.get("running"))
 
 
 def _queue_report(ctx: Any, message: str) -> bool:
@@ -511,16 +592,40 @@ def _queue_report(ctx: Any, message: str) -> bool:
     return True
 
 
+def _steer_report(ctx: Any, message: str, runtime_session_id: str | None = None) -> bool:
+    cli_ref = _cli_ref(ctx)
+    if _cli_ref_matches_session(cli_ref, runtime_session_id):
+        agent = getattr(cli_ref, "agent", None)
+        steer = getattr(agent, "steer", None)
+        if callable(steer):
+            try:
+                return bool(steer(message))
+            except Exception:
+                return False
+    live_session = _tui_live_session(runtime_session_id)
+    agent = live_session.get("agent") if live_session else None
+    steer = getattr(agent, "steer", None)
+    if not callable(steer):
+        return False
+    try:
+        return bool(steer(message))
+    except Exception:
+        return False
+
+
 def _inject_report(ctx: Any, message: str) -> bool:
     inject_message = getattr(ctx, "inject_message", None)
     if not callable(inject_message):
         return False
-    return bool(inject_message(message, role="user"))
+    try:
+        return bool(inject_message(message, role="user"))
+    except Exception:
+        return False
 
 
-def _deliver_report(ctx: Any, message: str) -> bool:
-    if _session_is_busy(ctx):
-        return _queue_report(ctx, message)
+def _deliver_report(ctx: Any, runtime_session_id: str, message: str) -> bool:
+    if _session_is_busy(ctx, runtime_session_id):
+        return _steer_report(ctx, message, runtime_session_id) or _queue_report(ctx, message)
     return _inject_report(ctx, message)
 
 
@@ -563,7 +668,7 @@ def _handle_session_report_result(
             return
         if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
             return
-        if not _deliver_report(ctx, message.strip()):
+        if not _deliver_report(ctx, runtime_session_id, message.strip()):
             if _session_watcher_generation_is_current(runtime_session_id, session_generation):
                 _release_session_report(runtime_session_id, run_ids)
             return
@@ -718,6 +823,7 @@ def _dispatch_orchestra_run(
     if task_label:
         command.extend(["--task-label", task_label])
 
+    command.append("--json")
     result = _run_orchestra(command)
     if result.returncode != 0:
         return _error((result.stdout or result.stderr).strip() or "orchestra dispatch failed")
@@ -726,11 +832,24 @@ def _dispatch_orchestra_run(
     if not run_id:
         return _error("orchestra dispatch did not return a run_id")
 
-    dispatch_timeout = _extract_dispatch_timeout_seconds(result.stdout)
+    try:
+        dispatch = _parse_dispatch_payload(result.stdout)
+    except (ValueError, json.JSONDecodeError):
+        dispatch = {}
+
+    try:
+        dispatch_timeout = _extract_dispatch_timeout_seconds(result.stdout)
+    except ValueError as exc:
+        return _error(str(exc))
     wait_budget_seconds = _watcher_wait_budget_seconds(dispatch_timeout)
     _start_session_report_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
 
-    effective_role = _extract_field(result.stdout, "role") or requested_role or "worker"
+    effective_role = str(
+        dispatch.get("role")
+        or _extract_field(result.stdout, "role")
+        or requested_role
+        or "worker"
+    ).strip() or "worker"
     ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", effective_role])
     if ack.returncode != 0:
         return _error((ack.stdout or ack.stderr).strip() or "orchestra dispatch ack failed")
@@ -1036,7 +1155,6 @@ def register(ctx: Any) -> None:
     )
     register_hook = getattr(ctx, "register_hook", None)
     if callable(register_hook):
-        register_hook("on_session_end", _on_session_cleanup)
         register_hook("on_session_finalize", _on_session_cleanup)
         register_hook("on_session_reset", _on_session_cleanup)
         register_hook("on_session_start", on_session_start_handler)

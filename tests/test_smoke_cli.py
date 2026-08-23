@@ -9,6 +9,8 @@ import yaml
 from orchestra.state import STATUS_DONE, StateStore
 from tests.helpers import extract_run_id, run_cli, wait_for_condition
 
+PROMPTS_TEXT = (Path(__file__).resolve().parents[1] / "prompts.yaml").read_text(encoding="utf-8")
+
 
 def _write_cli_runtime(
     tmp_path: Path,
@@ -33,7 +35,7 @@ def _write_cli_runtime(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(PROMPTS_TEXT, encoding="utf-8")
     catalog_path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
     return config_path, catalog_path, tmp_path / "state" / "orchestra.db"
 

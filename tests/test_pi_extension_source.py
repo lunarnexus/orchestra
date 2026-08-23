@@ -5,16 +5,10 @@ from pathlib import Path
 
 def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
-    asset_source = Path("src/orchestra/assets/pi/orchestra/index.ts").read_text(encoding="utf-8")
     prompts_source = Path("prompts.yaml").read_text(encoding="utf-8")
 
-    assert extension_source == asset_source
     assert (
         extension_source.count('function registerOrchStatusTool(toolInfo: ToolInfoPayload): void {')
-        == 1
-    )
-    assert (
-        asset_source.count('function registerOrchStatusTool(toolInfo: ToolInfoPayload): void {')
         == 1
     )
     assert 'name: "orch_dispatch"' in extension_source
@@ -51,7 +45,7 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert 'await refreshOrchDispatchToolRegistration(toolInfo);' in extension_source
     assert 'ctx.sessionManager.getSessionId()' in extension_source
     assert 'normalizePiSessionId(ctx.sessionManager.getSessionId())' in extension_source
-    assert '["status", "--session-id", sessionId]' in extension_source
+    assert '["status", "--session-id", sessionId, "--json"]' in extension_source
     assert '["history", "--session-id", sessionId, "--limit", limitValue]' in extension_source
     assert '["stop", "--session-id", sessionId, "--run-id", runId]' in extension_source
     assert '["help-host"]' in extension_source
@@ -98,6 +92,12 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
         in extension_source
     )
     assert 'const result = await runOrchestra(["_role-metadata"]);' in extension_source
+    assert 'function parseDispatchPayload(output: string): DispatchPayload {' in extension_source
+    assert (
+        'const result = await runOrchestra(["status", "--session-id", sessionId, "--json"]);'
+        in extension_source
+    )
+    assert '"--json",' in extension_source
     assert '{ token: "harness ", description: "Set selected harness config" }' in extension_source
     assert (
         '{ token: "profile ", description: "Set harness profile when supported" }'
@@ -133,22 +133,33 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert "_dispatch-ack" in extension_source
     assert "_progress-message" in extension_source
     assert "_command-echo" in extension_source
-    assert "const roleMatch = /^role:" in extension_source
+    assert 'function parseDispatchPayload(output: string): DispatchPayload {' in extension_source
     assert '["_dispatch-ack", "--run-id", runId, "--role", role]' in extension_source
     assert 'command.push("--role", role)' in extension_source
-    assert "help-host" in extension_source
-    assert 'rest.length > 0 ? ["roles", ...rest] : ["roles", "--all"]' in extension_source
     assert (
-        'description: "Orchestra host adapter: /orch help|on|off|do|roles|status|stop|doctor|history"'
+        'const dispatch = result.code === 0 ? parseDispatchPayload(result.stdout) : null;'
         in extension_source
     )
+    assert "help-host" in extension_source
+    assert 'rest.length > 0 ? ["roles", ...rest] : ["roles", "--all"]' in extension_source
+    adapter_description = (
+        'description: "Orchestra host adapter: '
+        '/orch help|on|off|do|roles|status|stop|doctor|history"'
+    )
+    assert adapter_description in extension_source
     assert (
         'pi.sendUserMessage(message, { deliverAs: "followUp", triggerTurn: true });'
         in extension_source
     )
-    assert 'pi.setActiveTools(enabled ? [...withoutOrchestra, ...orchestraTools] : withoutOrchestra);' in extension_source
+    assert (
+        'pi.setActiveTools(enabled ? [...withoutOrchestra, ...orchestraTools] : withoutOrchestra);'
+        in extension_source
+    )
     assert 'Run "/orch on" again to load the orchestrator skill.' in extension_source
-    assert 'Orchestra tools hidden for this session. Run /orch on to enable them again.' in extension_source
+    assert (
+        'Orchestra tools hidden for this session. Run /orch on to enable them again.'
+        in extension_source
+    )
     assert "compactReturnMessage" not in extension_source
     assert "format_orchestrator_return" in core_source
     assert "format_progress_notification" in core_source

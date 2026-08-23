@@ -6,9 +6,11 @@ from pathlib import Path
 import pytest
 
 from orchestra.app import AppContext, OrchestraPaths, format_history, format_status
-from orchestra.config import AgentCatalog, AppConfig, RoleConfig
+from orchestra.config import AgentCatalog, AppConfig, RoleConfig, load_app_config
 from orchestra.harnesses import HarnessRegistry
 from orchestra.state import STATUS_DONE, STATUS_RUNNING, RunRecord, RunUpdate, StateStore
+
+ROOT_PROMPTS = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml").prompts
 
 
 def make_context(tmp_path: Path) -> AppContext:
@@ -19,6 +21,7 @@ def make_context(tmp_path: Path) -> AppContext:
             default_timeout=600,
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
+            prompts=ROOT_PROMPTS,
         ),
         catalog=AgentCatalog(roles={"worker": RoleConfig(harness="pi")}),
         store=store,

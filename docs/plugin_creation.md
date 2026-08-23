@@ -6,16 +6,18 @@ This document separates Orchestra core behavior from host-plugin responsibilitie
 
 A host plugin should provide a native way for a host session to dispatch and supervise Orchestra subagents while keeping orchestration policy in the Python core.
 
-The plugin should be thin. It owns host identity, host UI, host message delivery, native command/tool registration, and background watcher lifecycle. The core owns dispatch, scheduling, state, formatting, reports, and subagent execution.
+The plugin should be thin. It owns host identity, host UI, host message delivery, native command/tool registration, and background watcher lifecycle. The core owns dispatch, scheduling, state, formatting, reports, subagent execution, and machine-readable protocol output.
 
 ## Core behavior to reuse
 
-These features already live in Orchestra core or core CLI helpers. New plugins should call them rather than reimplementing them.
+These features already live in Orchestra core or core CLI helpers. New plugins should call them rather than reimplementing them. When a plugin needs structured fields such as run ids, timeout budgets, status counts, or report envelopes, it should use the command's `--json` mode instead of parsing prose.
 
 ### User-facing operations
 
 - `orchestra do` — dispatch a subagent run.
+- `orchestra do --json` — machine-readable dispatch metadata for host control flow.
 - `orchestra status` — show active run status.
+- `orchestra status --json` — machine-readable active-run/session status for host control flow.
 - `orchestra stop` — stop an owned active run.
 - `orchestra doctor` — check local setup.
 - `orchestra roles` — list or update configured roles.
@@ -51,10 +53,10 @@ These features already live in Orchestra core or core CLI helpers. New plugins s
 - `_command-echo` — core-formatted command echo.
 - `_tool-info` — tool description, prompt snippet, guidelines, and parameter descriptions loaded from `prompts.yaml`.
 - `_role-metadata` — role and harness-config metadata for completions and tool refresh.
-- `_dispatch-ack` — core-formatted dispatch acknowledgement.
-- `_progress-message` — core-formatted progress notification text.
-- `_await-run` — wait for one run to reach a terminal state.
-- `_await-session-report` — wait for the owning session's consolidated report.
+- `_dispatch-ack` — core-formatted dispatch acknowledgement, with optional `--json`.
+- `_progress-message` — core-formatted progress notification text, with optional `--json`.
+- `_await-run` — wait for one run to reach a terminal state, with optional `--json`.
+- `_await-session-report` — wait for the owning session's consolidated report, with optional `--json`.
 - `_mark-session-report-delivered` — mark report run ids as delivered after successful host delivery.
 - `_release-session-report` — release report run ids after failed host delivery.
 - `_orchestrator-skill` — render the main-session Orchestra skill payload.
@@ -71,8 +73,8 @@ Plugins should also honor `ORCHESTRA_DISPATCH_BUDGET` for dispatch-budget handli
 Plugins must not embed fallback prompt prose for model-callable tools. Adapters
 load tool metadata from core `_tool-info`. If loading fails, the adapter fails
 clearly or skips registration with an actionable error. Do not silently register
-stale descriptions, prompt snippets, role guidance, status wording, or return
-format instructions.
+stale descriptions, prompt snippets, role guidance, status wording, return
+format instructions, or control-flow parsers for prose fields that core already exposes as JSON.
 
 ## Host-plugin responsibilities
 

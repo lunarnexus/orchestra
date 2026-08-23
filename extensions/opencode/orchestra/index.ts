@@ -387,51 +387,15 @@ function parseSessionReportEnvelope(stdout: string): SessionReportEnvelope | nul
   }
 }
 
-function extractField(output: string, field: string): string | null {
-  for (const line of output.split(/\r?\n/)) {
-    const match = new RegExp(`^${field}:\\s+(.+)$`).exec(line.trim());
-    if (match) {
-      return match[1].trim();
-    }
-  }
-  return null;
-}
+type DispatchPayload = {
+  run_id?: string;
+  role?: string;
+  timeout_seconds?: number;
+  message?: string;
+};
 
-function extractDispatchTimeoutSeconds(output: string): number {
-  const timeoutText = extractField(output, "timeout_seconds");
-  if (!timeoutText) {
-    throw new Error("orchestra do output did not include timeout_seconds.");
-  }
-  if (!/^\d+$/.test(timeoutText)) {
-    throw new Error("orchestra do timeout_seconds must be a positive integer.");
-  }
-
-  const timeoutSeconds = Number.parseInt(timeoutText, 10);
-  if (timeoutSeconds <= 0) {
-    throw new Error("orchestra do timeout_seconds must be a positive integer.");
-  }
-  return timeoutSeconds;
-}
-
-function extractRunId(output: string): string | null {
-  try {
-    const payload = JSON.parse(output) as { run_id?: unknown; runId?: unknown };
-    if (typeof payload.run_id === "string" && payload.run_id.trim()) {
-      return payload.run_id.trim();
-    }
-    if (typeof payload.runId === "string" && payload.runId.trim()) {
-      return payload.runId.trim();
-    }
-  } catch {
-    // fall through to line-based parsing
-  }
-
-  const dispatchedMatch = /^orchestra dispatched:(?:\s+\S+)?\s+(\S+)$/m.exec(output);
-  if (dispatchedMatch) {
-    return dispatchedMatch[1];
-  }
-
-  return extractField(output, "run_id") ?? extractField(output, "runId");
+function parseDispatchPayload(output: string): DispatchPayload {
+  return JSON.parse(output) as DispatchPayload;
 }
 
 function hasDeliveredSessionReport(runIds: string[]): boolean {
@@ -684,24 +648,18 @@ function parseAwaitRunOutput(output: string): {
   blocker: string | null;
   activeRemaining: number | null;
 } {
-  let status: string | null = null;
-  let role: string | null = null;
-  let blocker: string | null = null;
-  let activeRemaining: number | null = null;
-
-  for (const line of output.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    const statusMatch = /^status:\s+(.+)$/.exec(trimmed);
-    if (statusMatch) status = statusMatch[1].trim();
-    const roleMatch = /^role:\s+(.+)$/.exec(trimmed);
-    if (roleMatch) role = roleMatch[1].trim();
-    const blockerMatch = /^blocker:\s+(.+)$/.exec(trimmed);
-    if (blockerMatch) blocker = blockerMatch[1].trim();
-    const activeMatch = /^active_runs_remaining:\s+(\d+)$/.exec(trimmed);
-    if (activeMatch) activeRemaining = Number(activeMatch[1]);
-  }
-
-  return { status, role, blocker, activeRemaining };
+  const payload = JSON.parse(output) as {
+    status?: unknown;
+    role?: unknown;
+    blocker?: unknown;
+    active_runs_remaining?: unknown;
+  };
+  return {
+    status: typeof payload.status === "string" ? payload.status : null,
+    role: typeof payload.role === "string" ? payload.role : null,
+    blocker: typeof payload.blocker === "string" ? payload.blocker : null,
+    activeRemaining: typeof payload.active_runs_remaining === "number" ? payload.active_runs_remaining : null,
+  };
 }
 
 function buildAwaitRunCommand(ownerId: string, runId: string, timeoutSeconds: number): string[] {
@@ -714,6 +672,7 @@ function buildAwaitRunCommand(ownerId: string, runId: string, timeoutSeconds: nu
     runId,
     "--timeout",
     String(timeoutSeconds),
+    "--json",
   ];
 }
 
@@ -888,22 +847,24 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
               role: args.role,
               taskLabel: args.taskLabel,
             });
+            command.push("--json");
             const result = await runOrchestra(command);
             if (result.returncode !== 0) {
               throw new Error(result.stderr || "orchestra dispatch failed.");
             }
 
-            const timeoutSeconds = extractDispatchTimeoutSeconds(result.stdout);
-            const runId = extractRunId(result.stdout);
+            const dispatch = parseDispatchPayload(result.stdout);
+            const timeoutSeconds = dispatch.timeout_seconds;
+            const runId = typeof dispatch.run_id === "string" ? dispatch.run_id : null;
             await notifyDispatchToast(client, ownerId);
-            if (!runId) {
-              return result.stdout.trim() || result.stderr.trim();
+            if (!runId || typeof timeoutSeconds !== "number") {
+              return dispatch.message?.trim() || result.stdout.trim() || result.stderr.trim();
             }
 
             trackSessionRun(ownerId, runId);
             queueRunProgressNotification(client, ownerId, runId, timeoutSeconds, runOrchestra, runtimeState);
             queueSessionReportDelivery(client, rawSessionID, ownerId, runId, timeoutSeconds, runOrchestra, runtimeState);
-            const role = extractField(result.stdout, "role") || args.role?.trim() || "worker";
+            const role = typeof dispatch.role === "string" && dispatch.role.trim() ? dispatch.role : (args.role?.trim() || "worker");
             const ack = await runOrchestra(["orchestra", "_dispatch-ack", "--run-id", runId, "--role", role]);
             if (ack.returncode !== 0 || !ack.stdout.trim()) {
               throw new Error(ack.stderr || "orchestra dispatch ack failed.");

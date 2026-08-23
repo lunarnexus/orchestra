@@ -918,6 +918,50 @@ def test_internal_progress_message_includes_role(capsys: pytest.CaptureFixture[s
     assert output.strip() == "orchestra: critic abc123 returned done (1/2)"
 
 
+def test_internal_dispatch_ack_json_contract(capsys: pytest.CaptureFixture[str]) -> None:
+    from orchestra.cli import main
+
+    exit_code = main(["_dispatch-ack", "--run-id", "abc123", "--role", "critic", "--json"])
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["contract_version"] == 1
+    assert output["kind"] == "dispatch_ack"
+    assert output["ok"] is True
+    assert output["run_id"] == "abc123"
+    assert output["role"] == "critic"
+
+
+def test_internal_progress_message_json_contract(capsys: pytest.CaptureFixture[str]) -> None:
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "_progress-message",
+            "--completed",
+            "1",
+            "--total",
+            "2",
+            "--run-id",
+            "abc123",
+            "--status",
+            "done",
+            "--role",
+            "critic",
+            "--json",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert output["contract_version"] == 1
+    assert output["kind"] == "progress_message"
+    assert output["ok"] is True
+    assert output["run_id"] == "abc123"
+    assert output["status"] == "done"
+    assert output["role"] == "critic"
+
+
 def test_internal_orchestrator_skill_renders_project_skill(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

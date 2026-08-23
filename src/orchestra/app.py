@@ -15,7 +15,6 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from importlib.metadata import PackageNotFoundError, distribution
 from pathlib import Path
 
 import yaml
@@ -39,6 +38,7 @@ from orchestra.harnesses import (
     WorkerRequest,
     WorkerResult,
     register_builtin_harnesses,
+    register_catalog_harnesses,
 )
 from orchestra.harnesses.common import (
     SKILL_FILENAME,
@@ -79,6 +79,7 @@ WORKER_BUDGET_EXCEEDED_BLOCKER = (
     "Worker budget exceeded; redispatch from continuation handoff"
 )
 SUPERVISOR_STARTUP_TIMEOUT_SECONDS = 30
+CONTRACT_VERSION = 1
 ROLE_USAGE = """Usage:
   /orch roles
   /orch roles ROLE SETTING VALUE
@@ -238,6 +239,12 @@ def create_default_registry() -> HarnessRegistry:
     return register_builtin_harnesses(HarnessRegistry())
 
 
+def _catalog_harness_names(catalog: AgentCatalog) -> set[str]:
+    names = {config.harness for config in catalog.harness_configs.values() if config.harness}
+    names.update(role.harness for role in catalog.roles.values() if role.harness)
+    return names
+
+
 def load_context(
     *,
     config_path: str | Path | None = None,
@@ -248,13 +255,15 @@ def load_context(
     catalog_file = resolve_agent_catalog_path(catalog_path)
     config = load_app_config(config_file)
     catalog = load_agent_catalog(catalog_file)
+    resolved_registry = registry or create_default_registry()
+    register_catalog_harnesses(resolved_registry, _catalog_harness_names(catalog))
     store = StateStore(config.state_dir / "orchestra.db")
     store.initialize()
     return AppContext(
         config=config,
         catalog=catalog,
         store=store,
-        registry=registry or create_default_registry(),
+        registry=resolved_registry,
         paths=OrchestraPaths(config_path=config_file, catalog_path=catalog_file),
     )
 
@@ -595,6 +604,20 @@ def format_started_run(started: StartedRun) -> str:
     return "\n".join(lines)
 
 
+def started_run_payload(started: StartedRun) -> dict[str, object]:
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "kind": "dispatch",
+        "ok": True,
+        "run_id": started.record.run_id,
+        "role": started.record.role,
+        "status": started.record.status,
+        "timeout_seconds": started.timeout_seconds,
+        "request_file": str(started.request_file),
+        "message": format_started_run(started),
+    }
+
+
 def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
     role_text = f" {role}" if role else ""
     return (
@@ -616,6 +639,17 @@ def _format_concurrency_limit_error(
     return f"{message}; {guidance}\n{format_status(context, session_id)}"
 
 
+def dispatch_ack_payload(run_id: str, *, role: str | None = None) -> dict[str, object]:
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "kind": "dispatch_ack",
+        "ok": True,
+        "run_id": run_id,
+        "role": role,
+        "message": format_dispatch_ack(run_id, role=role),
+    }
+
+
 def format_progress_notification(
     *,
     completed_count: int,
@@ -626,6 +660,33 @@ def format_progress_notification(
 ) -> str:
     role_text = f" {role}" if role else ""
     return f"orchestra:{role_text} {run_id} returned {status} ({completed_count}/{total_count})"
+
+
+def progress_notification_payload(
+    *,
+    completed_count: int,
+    total_count: int,
+    run_id: str,
+    status: str,
+    role: str | None = None,
+) -> dict[str, object]:
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "kind": "progress_message",
+        "ok": True,
+        "run_id": run_id,
+        "status": status,
+        "role": role,
+        "completed": completed_count,
+        "total": total_count,
+        "message": format_progress_notification(
+            completed_count=completed_count,
+            total_count=total_count,
+            run_id=run_id,
+            status=status,
+            role=role,
+        ),
+    }
 
 
 def clean_result_summary(summary: str | None) -> str:
@@ -829,6 +890,16 @@ def _is_transient_session_report_db_open_error(
     return Path(database_path).parent.exists()
 
 
+def session_report_payload(report: SessionReport) -> dict[str, object]:
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "kind": "session_report",
+        "ok": True,
+        "runIds": report.run_ids,
+        "report": report.text,
+    }
+
+
 def await_session_report(
     context: AppContext,
     session_id: str,
@@ -1025,6 +1096,110 @@ def _append_session_status_details(lines: list[str], details: SessionStatusDetai
             f"session_report_delivered: {_yes_no(details.session_report_delivered)}",
         ]
     )
+
+
+def await_run_payload(
+    record: RunRecord,
+    *,
+    active_remaining: int,
+    details: SessionStatusDetails,
+) -> dict[str, object]:
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "kind": "await_run",
+        "ok": True,
+        "run_id": record.run_id,
+        "status": record.status,
+        "role": record.role,
+        "harness": record.harness,
+        "result": record.result_summary,
+        "error": record.error_text,
+        "blocker": record.blocker_text,
+        "next": (
+            "redispatch a smaller continuation task from this handoff; do not redo completed work"
+            if record.status == STATUS_INCOMPLETE
+            else None
+        ),
+        "active_runs_remaining": active_remaining,
+        "descendants_terminal": details.descendants_terminal,
+        "session_report_available": details.session_report_available,
+        "session_report_delivered": details.session_report_delivered,
+    }
+
+
+def status_payload(context: AppContext, session_id: str | None = None) -> dict[str, object]:
+    reconcile_stale_queued_runs(context)
+    global_runs = context.store.list_active_runs()
+    global_limit = context.config.concurrency.global_limit
+    per_session_limit = context.config.concurrency.per_session_limit
+    payload: dict[str, object] = {
+        "contract_version": CONTRACT_VERSION,
+        "kind": "status",
+        "ok": True,
+        "scope": "global" if session_id is None else "session",
+        "active_runs": {
+            "count": len(global_runs) if session_id is None else 0,
+            "limit": global_limit if session_id is None else per_session_limit,
+            "runs": [],
+        },
+        "global_active_runs": {
+            "count": len(global_runs),
+            "limit": global_limit,
+        },
+    }
+    if session_id is None:
+        payload["active_runs"] = {
+            "count": len(global_runs),
+            "limit": global_limit,
+            "runs": [
+                {
+                    "run_id": run.run_id,
+                    "role": run.role,
+                    "status": run.status,
+                    "task_label": run.task_label,
+                    "owner": run.orchestrator_session_id,
+                    "model": run.model,
+                }
+                for run in global_runs
+            ],
+        }
+        return payload
+
+    _require_session_id(session_id)
+    lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
+    runs = _list_active_runs_for_session_ids(context, lineage_session_ids)
+    role_counts: dict[str, int] = {}
+    for run in runs:
+        role_counts[run.role] = role_counts.get(run.role, 0) + 1
+    details = session_status_details(context, lineage_session_ids, active_runs=runs)
+    payload.update(
+        {
+            "session_id": session_id,
+            "lineage_session_ids": lineage_session_ids if len(lineage_session_ids) > 1 else None,
+            "active_runs": {
+                "count": len(runs),
+                "limit": per_session_limit,
+                "runs": [
+                    {
+                        "run_id": run.run_id,
+                        "role": run.role,
+                        "status": run.status,
+                        "task_label": run.task_label,
+                        "model": run.model,
+                    }
+                    for run in runs
+                ],
+            },
+            "role_counts": [
+                {"role": role, "count": count}
+                for role, count in sorted(role_counts.items())
+            ],
+            "descendants_terminal": details.descendants_terminal,
+            "session_report_available": details.session_report_available,
+            "session_report_delivered": details.session_report_delivered,
+        }
+    )
+    return payload
 
 
 def format_status(context: AppContext, session_id: str | None = None) -> str:
@@ -1661,13 +1836,16 @@ def init_hermes(
 ) -> InitHermesResult:
     hermes_profile = _normalized_optional_profile(profile)
     config_source_paths = _config_source_paths(source_root, copy=copy)
-    plugin_source = "lunarnexus/orchestra/extensions/hermes/orchestra"
+    source_root_path = _find_source_root(source_root)
+    if source_root_path is None:
+        raise AppError("hermes init source root not found; rerun from a source checkout")
+    plugin_source = source_root_path / "extensions" / "hermes" / "orchestra"
+    plugin_target = default_hermes_plugins_dir(hermes_profile) / "orchestra"
+    plugin_file = _copy_tree(plugin_source, plugin_target, force=force)
     command = ["hermes"]
     if hermes_profile is not None:
         command.extend(["-p", hermes_profile])
-    command.extend(["plugins", "install", plugin_source, "--enable"])
-    if force:
-        command.append("--force")
+    command.extend(["plugins", "enable", "orchestra"])
 
     try:
         result = runner(
@@ -1680,20 +1858,20 @@ def init_hermes(
     except FileNotFoundError as exc:
         raise AppError("hermes command not found") from exc
     except subprocess.TimeoutExpired as exc:
-        raise AppError("hermes plugin install timed out") from exc
+        raise AppError("hermes plugin enable timed out") from exc
 
     stdout = (result.stdout or "").strip()
     stderr = (result.stderr or "").strip()
     if result.returncode != 0:
         detail = stderr or stdout or f"hermes exited with status {result.returncode}"
-        raise AppError(f"Hermes plugin install failed: {detail}")
+        raise AppError(f"Hermes plugin enable failed: {detail}")
 
-    files = _materialize_runtime_config(
+    files = [plugin_file, *_materialize_runtime_config(
         config_source_paths,
         _runtime_config_targets(default_hermes_orchestra_dir(hermes_profile)),
         force=force,
         copy=copy,
-    )
+    )]
 
     verify_command = (
         f"hermes -p {hermes_profile} plugins list"
@@ -1969,20 +2147,13 @@ def format_doctor_checks(checks: list[DoctorCheck]) -> str:
 
 def _init_source_paths(source_root: str | Path | None) -> dict[str, Path]:
     root = _find_source_root(source_root)
-    if root is not None:
-        return {
-            "extension": root / "extensions" / "pi" / "orchestra" / "index.ts",
-            "config": root / "config.yaml",
-            "prompts": root / "prompts.yaml",
-            "catalog": root / "agent-catalog.yaml",
-        }
-
-    assets = Path(__file__).resolve().parent / "assets"
+    if root is None:
+        raise AppError("init source root not found")
     return {
-        "extension": assets / "pi" / "orchestra" / "index.ts",
-        "config": assets / "config.yaml",
-        "prompts": assets / "prompts.yaml",
-        "catalog": assets / "agent-catalog.yaml",
+        "extension": root / "extensions" / "pi" / "orchestra" / "index.ts",
+        "config": root / "config.yaml",
+        "prompts": root / "prompts.yaml",
+        "catalog": root / "agent-catalog.yaml",
     }
 
 
@@ -1990,9 +2161,9 @@ def _config_source_paths(source_root: str | Path | None, *, copy: bool) -> dict[
     root = _find_source_root(source_root)
     if root is not None:
         return _root_config_source_paths(root)
-    if not copy:
-        raise AppError("config link source root not found; rerun with --copy")
-    return _packaged_config_source_paths()
+    if copy:
+        raise AppError("canonical config source root not found")
+    raise AppError("config link source root not found; rerun from a source checkout")
 
 
 def _root_config_source_paths(root: Path) -> dict[str, Path]:
@@ -2001,32 +2172,6 @@ def _root_config_source_paths(root: Path) -> dict[str, Path]:
         "prompts": root / "prompts.yaml",
         "catalog": root / "agent-catalog.yaml",
     }
-
-
-def _packaged_config_source_paths() -> dict[str, Path]:
-    try:
-        dist = distribution("orchestra")
-    except PackageNotFoundError as exc:
-        raise AppError(
-            "packaged config files not found; install orchestra or use source root"
-        ) from exc
-    files = dist.files or ()
-    paths: dict[str, Path] = {}
-    for key, filename in {
-        "config": "config.yaml",
-        "prompts": "prompts.yaml",
-        "catalog": "agent-catalog.yaml",
-    }.items():
-        suffix = f"share/orchestra/{filename}"
-        match = next((file for file in files if str(file).endswith(suffix)), None)
-        if match is None:
-            root = Path.cwd()
-            root_paths = _root_config_source_paths(root)
-            if all(path.is_file() for path in root_paths.values()):
-                return root_paths
-            raise AppError(f"packaged config file not found: {filename}")
-        paths[key] = Path(str(dist.locate_file(match)))
-    return paths
 
 
 def _opencode_init_source_paths(
@@ -2041,22 +2186,18 @@ def _opencode_init_source_paths(
             "extension": base / "index.ts",
             "command": base / "commands" / "orch.md",
         }
-    if not copy:
-        raise AppError("opencode init source root not found; rerun with --copy")
-    base = Path(__file__).resolve().parent / "assets" / "opencode" / "orchestra"
-    return {
-        "extension": base / "index.ts",
-        "command": base / "commands" / "orch.md",
-    }
+    if copy:
+        raise AppError("canonical opencode source root not found")
+    raise AppError("opencode init source root not found; rerun from a source checkout")
 
 
 def _codex_plugin_source_path(source_root: str | Path | None, *, copy: bool) -> Path:
     root = _find_source_root(source_root)
     if root is not None:
         return root / "extensions" / "codex" / "orchestra"
-    if not copy:
-        raise AppError("codex init source root not found; rerun with --copy")
-    return Path(__file__).resolve().parent / "assets" / "codex" / "orchestra"
+    if copy:
+        raise AppError("canonical codex source root not found")
+    raise AppError("codex init source root not found; rerun from a source checkout")
 
 
 def _find_source_root(source_root: str | Path | None = None) -> Path | None:
@@ -2269,7 +2410,7 @@ def default_hermes_home() -> Path:
     return Path.home() / ".hermes"
 
 
-def default_hermes_orchestra_dir(profile: str | None = None) -> Path:
+def _default_hermes_profile_dir(profile: str | None = None) -> Path:
     root_home = default_hermes_home()
     selected_profile = _normalized_optional_profile(profile)
     if selected_profile is None:
@@ -2278,8 +2419,16 @@ def default_hermes_orchestra_dir(profile: str | None = None) -> Path:
         except OSError:
             selected_profile = "default"
     if selected_profile and selected_profile != "default":
-        return root_home / "profiles" / selected_profile / "orchestra"
-    return root_home / "orchestra"
+        return root_home / "profiles" / selected_profile
+    return root_home
+
+
+def default_hermes_orchestra_dir(profile: str | None = None) -> Path:
+    return _default_hermes_profile_dir(profile) / "orchestra"
+
+
+def default_hermes_plugins_dir(profile: str | None = None) -> Path:
+    return _default_hermes_profile_dir(profile) / "plugins"
 
 
 def default_opencode_home() -> Path:
