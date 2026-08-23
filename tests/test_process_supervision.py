@@ -207,7 +207,7 @@ def test_status_reconciles_stale_running_run_with_dead_worker_and_supervisor(
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
     fake_worker_script: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_path, catalog_path, db_path = runtime_files_factory(
         tmp_path,
@@ -248,7 +248,7 @@ def test_start_run_reconciles_stale_running_model_slot_before_reserve(
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
     fake_worker_script: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_path, catalog_path, db_path = runtime_files_factory(
         tmp_path,
@@ -535,7 +535,7 @@ def test_soft_timeout_must_be_less_than_effective_worker_timeout(
     assert "soft_timeout must be less than effective worker timeout" in result.stdout
 
 
-def test_unknown_harness_marks_run_failed_and_clears_active_queue(
+def test_catalog_defined_harness_name_uses_generic_subprocess_runner(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
@@ -582,14 +582,15 @@ def test_unknown_harness_marks_run_failed_and_clears_active_queue(
     run_id = extract_run_id(result.stdout)
 
     store = StateStore(db_path)
-    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_FAILED, timeout=5)
+    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
 
     record = store.get_run(run_id)
-    assert record.error_text == "unknown harness: missing"
-    assert record.blocker_text == "Worker harness is not configured"
+    assert record.error_text is None
+    assert record.blocker_text is None
+    assert record.harness == "missing"
+    assert record.result_summary == "unused"
     assert store.list_active_runs("manual:missing-harness") == []
     assert store.list_active_runs() == []
-    assert (tmp_path / "state" / "requests" / f"{run_id}.json").exists() is False
 
     status = run_cli(
         "--config",

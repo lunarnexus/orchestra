@@ -42,15 +42,6 @@ where = ["src"]
 version_file = "src/orchestra/_version.py"
 tag_regex = "^v(?P<version>\\d+\\.\\d+\\.\\d+)$"
 
-[tool.setuptools.package-data]
-orchestra = [
-  "assets/pi/orchestra/index.ts",
-  "assets/opencode/orchestra/index.ts",
-  "assets/opencode/orchestra/commands/orch.md",
-  "assets/codex/orchestra/.codex-plugin/plugin.json",
-  "assets/codex/orchestra/skills/orchestra/SKILL.md",
-]
-
 [tool.setuptools.data-files]
 "share/orchestra" = [
   "config.yaml",

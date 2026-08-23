@@ -4,10 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from orchestra.config import RoleConfig
+from orchestra.config import RoleConfig, load_app_config
 from orchestra.harnesses import WorkerRequest
 from orchestra.harnesses.common import ORCHESTRA_DISPATCH_BUDGET_ENV
 from orchestra.harnesses.hermes import HermesHarness
+
+ROOT_PROMPTS = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml").prompts
 
 
 def _worker_request(tmp_path: Path) -> WorkerRequest:
@@ -19,6 +21,7 @@ def _worker_request(tmp_path: Path) -> WorkerRequest:
         acceptance_target="Return concise result.",
         timeout_seconds=30,
         log_path=tmp_path / "worker.jsonl",
+        prompts=ROOT_PROMPTS,
     )
 
 
@@ -67,6 +70,7 @@ def test_hermes_harness_drops_unset_optional_model_and_profile(
         goal="Run minimal Hermes worker.",
         timeout_seconds=30,
         log_path=tmp_path / "worker.jsonl",
+        prompts=ROOT_PROMPTS,
     )
     role = RoleConfig(
         harness="hermes",

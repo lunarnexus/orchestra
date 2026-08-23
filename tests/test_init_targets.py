@@ -47,6 +47,10 @@ def _write_source_tree(root: Path, catalog_text: str) -> None:
     opencode_command = root / "extensions" / "opencode" / "orchestra" / "commands" / "orch.md"
     opencode_command.parent.mkdir(parents=True)
     opencode_command.write_text(OPENCODE_COMMAND_TEMPLATE, encoding="utf-8")
+    hermes_plugin = root / "extensions" / "hermes" / "orchestra" / "plugin.yaml"
+    hermes_plugin.parent.mkdir(parents=True)
+    hermes_plugin.write_text("name: orchestra\n", encoding="utf-8")
+    (hermes_plugin.parent / "__init__.py").write_text("", encoding="utf-8")
     codex_manifest = root / "extensions" / "codex" / "orchestra" / ".codex-plugin" / "plugin.json"
     codex_manifest.parent.mkdir(parents=True)
     codex_manifest.write_text(
@@ -180,7 +184,7 @@ roles:
     assert installed_command.read_text(encoding="utf-8") == OPENCODE_COMMAND_TEMPLATE
 
 
-def test_init_opencode_copy_mode_uses_packaged_asset_when_source_root_missing(
+def test_init_opencode_copy_mode_requires_canonical_source_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -190,15 +194,8 @@ def test_init_opencode_copy_mode_uses_packaged_asset_when_source_root_missing(
 
     monkeypatch.setattr(app, "_find_source_root", lambda source_root=None: None)
 
-    result = init_opencode(copy=True)
-
-    installed_extension = opencode_config / "plugins" / "orchestra.ts"
-    installed_command = opencode_config / "commands" / "orch.md"
-    assert [item.action for item in result.files] == ["created", "created"]
-    assert [item.mode for item in result.files] == ["copy", "copy"]
-    assert result.verification_command == "opencode --help"
-    assert "orch_dispatch" in installed_extension.read_text(encoding="utf-8")
-    assert installed_command.read_text(encoding="utf-8") == OPENCODE_COMMAND_TEMPLATE
+    with pytest.raises(AppError, match="canonical opencode source root not found"):
+        init_opencode(copy=True)
 
 
 def test_cli_init_opencode_uses_current_source_tree(
@@ -464,7 +461,7 @@ roles:
     assert (home / ".agents" / "plugins" / "marketplace.json").exists()
 
 
-def test_init_codex_copy_mode_uses_packaged_asset_when_source_root_missing(
+def test_init_codex_copy_mode_requires_canonical_source_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -479,18 +476,9 @@ def test_init_codex_copy_mode_uses_packaged_asset_when_source_root_missing(
         calls.append(args)
         return completed(args, stdout="installed")
 
-    result = init_codex(copy=True, runner=fake_runner)
-
-    plugin_dir = home / "plugins" / "orchestra"
-    assert [item.action for item in result.files] == ["created"]
-    assert [item.mode for item in result.files] == ["copy"]
-    assert result.marketplace.action == "created"
-    assert not plugin_dir.is_symlink()
-    assert (plugin_dir / ".codex-plugin" / "plugin.json").exists()
-    assert "Current Codex parity boundary" in (
-        plugin_dir / "skills" / "orchestra" / "SKILL.md"
-    ).read_text(encoding="utf-8")
-    assert calls == [["codex", "plugin", "add", "orchestra@personal"]]
+    with pytest.raises(AppError, match="canonical codex source root not found"):
+        init_codex(copy=True, runner=fake_runner)
+    assert calls == []
 
 
 def test_init_all_detects_harnesses_and_deduplicates_targets(
@@ -550,18 +538,16 @@ roles:
         [
             "hermes",
             "plugins",
-            "install",
-            "lunarnexus/orchestra/extensions/hermes/orchestra",
-            "--enable",
+            "enable",
+            "orchestra",
         ],
         [
             "hermes",
             "-p",
             "tori",
             "plugins",
-            "install",
-            "lunarnexus/orchestra/extensions/hermes/orchestra",
-            "--enable",
+            "enable",
+            "orchestra",
         ],
     ]
     assert (pi_dir / "extensions" / "orchestra" / "index.ts").exists()
@@ -570,7 +556,7 @@ roles:
     assert (hermes_home / "profiles" / "tori" / "orchestra" / "config.yaml").is_symlink()
 
 
-def test_init_pi_requires_copy_when_no_source_root_exists(
+def test_init_pi_requires_canonical_source_root_when_no_source_root_exists(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -580,11 +566,11 @@ def test_init_pi_requires_copy_when_no_source_root_exists(
 
     monkeypatch.setattr(app, "_find_source_root", lambda source_root=None: None)
 
-    with pytest.raises(AppError, match="rerun with --copy"):
+    with pytest.raises(AppError, match="init source root not found"):
         init_pi()
 
 
-def test_init_pi_copy_mode_uses_packaged_fallback_when_no_source_root_exists(
+def test_init_pi_copy_mode_requires_canonical_source_root_when_no_source_root_exists(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -594,10 +580,5 @@ def test_init_pi_copy_mode_uses_packaged_fallback_when_no_source_root_exists(
 
     monkeypatch.setattr(app, "_find_source_root", lambda source_root=None: None)
 
-    result = init_pi(copy=True)
-
-    assert [item.mode for item in result.files] == ["copy", "copy", "copy", "copy"]
-    assert (pi_dir / "extensions" / "orchestra" / "index.ts").is_file()
-    assert (pi_dir / "orchestra" / "config.yaml").is_file()
-    assert result.verification_command == 'pi --no-approve -p "/orch doctor"'
-    assert not (pi_dir / "orchestra" / "config.yaml").is_symlink()
+    with pytest.raises(AppError, match="init source root not found"):
+        init_pi(copy=True)

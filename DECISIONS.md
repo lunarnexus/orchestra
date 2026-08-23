@@ -712,11 +712,12 @@ plugin installs use canonical repository-root files by default. Link mode is the
 default when source files are available; `--copy` is an explicit compatibility
 fallback.
 
-### D-INSTALL-004 — Packaged assets are fallback sources
+### D-INSTALL-004 — Root assets are canonical
 
-**Decision:** For packaged or non-source installs, packaged assets are fallback
-install sources used with explicit `--copy`. Default link mode fails clearly when
-there is no source-root link target.
+**Decision:** Repository-root configuration and host integration assets are the
+canonical sources for init and packaging. Orchestra should not maintain parallel
+checked-in packaged fallback copies of those assets. Packaging or init flows that
+need materialized assets derive them from the canonical root sources.
 
 ### D-INSTALL-005 — Doctor validates the resolved installation
 

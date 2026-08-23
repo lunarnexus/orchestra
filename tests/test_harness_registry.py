@@ -21,6 +21,8 @@ from orchestra.harnesses.opencode import OpenCodeHarness
 from orchestra.harnesses.pi import PiHarness
 from orchestra.state import STATUS_FAILED
 
+ROOT_PROMPTS = Path(__file__).resolve().parents[1] / "prompts.yaml"
+
 
 @dataclass
 class DummyHarness:
@@ -44,7 +46,7 @@ def _write_runtime_files(tmp_path: Path, *, harness: str = "dummy") -> tuple[Pat
         f"default_timeout: 600\nstate_dir: {tmp_path / 'state'}\nlog_dir: {tmp_path / 'logs'}\n",
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
     catalog_path.write_text(
         f"""
 default_role: worker
@@ -139,7 +141,7 @@ def test_run_doctor_passes_with_one_usable_enabled_harness(tmp_path: Path) -> No
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text("default_timeout: 600\n", encoding="utf-8")
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
     catalog_path.write_text(
         """
 default_role: worker
@@ -171,7 +173,7 @@ def test_run_doctor_fails_without_enabled_roles(tmp_path: Path) -> None:
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text("default_timeout: 600\n", encoding="utf-8")
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
     catalog_path.write_text(
         """
 default_role: worker
@@ -237,3 +239,13 @@ def test_default_registry_registers_lazy_builtin_loaders() -> None:
     assert isinstance(registry.get("opencode"), OpenCodeHarness)
     assert isinstance(registry.get("pi"), PiHarness)
     assert isinstance(registry.get("hermes"), HermesHarness)
+
+
+def test_load_context_registers_catalog_defined_harness_name_as_subprocess(tmp_path: Path) -> None:
+    config_path, catalog_path = _write_runtime_files(tmp_path, harness="qwen")
+
+    context = load_context(config_path=config_path, catalog_path=catalog_path)
+
+    harness = context.registry.get("qwen")
+    assert harness.name == "qwen"
+    assert type(harness).__name__ == "SubprocessHarness"

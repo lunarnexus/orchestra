@@ -26,6 +26,9 @@ def _write_source_tree(root: Path) -> None:
     extension = root / "extensions" / "pi" / "orchestra" / "index.ts"
     extension.parent.mkdir(parents=True)
     extension.write_text("extension", encoding="utf-8")
+    hermes_plugin = root / "extensions" / "hermes" / "orchestra" / "plugin.yaml"
+    hermes_plugin.parent.mkdir(parents=True)
+    hermes_plugin.write_text("name: orchestra\n", encoding="utf-8")
     (root / "config.yaml").write_text("state_dir: state\n", encoding="utf-8")
     (root / "prompts.yaml").write_text("{}\n", encoding="utf-8")
     (root / "agent-catalog.yaml").write_text(
@@ -43,7 +46,7 @@ def _write_source_tree(root: Path) -> None:
     )
 
 
-def test_init_hermes_installs_plugin_with_default_profile_and_materializes_config(
+def test_init_hermes_copies_plugin_with_default_profile_and_materializes_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -65,9 +68,8 @@ def test_init_hermes_installs_plugin_with_default_profile_and_materializes_confi
             "args": [
                 "hermes",
                 "plugins",
-                "install",
-                "lunarnexus/orchestra/extensions/hermes/orchestra",
-                "--enable",
+                "enable",
+                "orchestra",
             ],
             "check": False,
             "capture_output": True,
@@ -77,6 +79,7 @@ def test_init_hermes_installs_plugin_with_default_profile_and_materializes_confi
     ]
     assert result.stdout == "installed"
     assert result.stderr == ""
+    assert (hermes_home / "plugins" / "orchestra" / "plugin.yaml").exists()
     assert result.verification_command == "hermes plugins list"
     assert (hermes_home / "orchestra" / "config.yaml").is_symlink()
     assert (hermes_home / "orchestra" / "prompts.yaml").is_symlink()
@@ -106,16 +109,15 @@ def test_init_hermes_explicit_profile_override_still_works(
             "-p",
             "tori",
             "plugins",
-            "install",
-            "lunarnexus/orchestra/extensions/hermes/orchestra",
-            "--enable",
+            "enable",
+            "orchestra",
         ]
     ]
     assert result.verification_command == "hermes -p tori plugins list"
     assert (hermes_home / "profiles" / "tori" / "orchestra" / "config.yaml").is_symlink()
 
 
-def test_init_hermes_passes_force_to_official_installer(
+def test_init_hermes_passes_force_to_local_plugin_copy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -138,15 +140,13 @@ def test_init_hermes_passes_force_to_official_installer(
             "-p",
             "tori",
             "plugins",
-            "install",
-            "lunarnexus/orchestra/extensions/hermes/orchestra",
-            "--enable",
-            "--force",
+            "enable",
+            "orchestra",
         ]
     ]
 
 
-def test_init_hermes_reports_installer_failure(
+def test_init_hermes_reports_enable_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -159,7 +159,7 @@ def test_init_hermes_reports_installer_failure(
     def fake_runner(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
         return completed(args, stderr="clone failed", code=1)
 
-    with pytest.raises(AppError, match="Hermes plugin install failed: clone failed"):
+    with pytest.raises(AppError, match="Hermes plugin enable failed: clone failed"):
         init_hermes(source_root=source, runner=fake_runner)
 
 

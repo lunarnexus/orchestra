@@ -85,6 +85,9 @@ class HarnessRegistry:
     def register_loader(self, name: str, loader: Callable[[], Harness]) -> None:
         self._loaders[name] = loader
 
+    def contains(self, name: str) -> bool:
+        return name in self._harnesses or name in self._loaders
+
     def get(self, name: str) -> Harness:
         if name not in self._harnesses and name in self._loaders:
             self._harnesses[name] = self._load(name)

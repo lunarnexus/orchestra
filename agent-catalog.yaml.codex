@@ -138,8 +138,8 @@ roles:
     skills:
     - researcher
   intern:
-    harness_config: qwen
-    model: openai-codex/gpt-5.4-mini
+    harness_config: pi
+    model: openai-codex/gpt-5.4-mini 
     prompt_addition: Focus on the assigned task and return a compact result.
     enabled: true
     env:

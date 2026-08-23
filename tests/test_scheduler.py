@@ -7,6 +7,8 @@ import yaml
 
 from tests.helpers import run_cli
 
+PROMPTS_TEXT = (Path(__file__).resolve().parents[1] / "prompts.yaml").read_text(encoding="utf-8")
+
 
 def test_global_concurrency_limit_is_atomic(
     tmp_path: Path,
@@ -29,7 +31,7 @@ def test_global_concurrency_limit_is_atomic(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(PROMPTS_TEXT, encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {
@@ -98,7 +100,7 @@ def test_per_session_concurrency_limit_is_atomic(
         ),
         encoding="utf-8",
     )
-    prompts_path.write_text("{}\n", encoding="utf-8")
+    prompts_path.write_text(PROMPTS_TEXT, encoding="utf-8")
     catalog_path.write_text(
         yaml.safe_dump(
             {

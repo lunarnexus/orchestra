@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from orchestra.harnesses.base import (
@@ -21,6 +22,21 @@ def register_builtin_harnesses(registry: HarnessRegistry) -> HarnessRegistry:
     return registry
 
 
+def register_catalog_harnesses(registry: HarnessRegistry, names: set[str]) -> HarnessRegistry:
+    for name in names:
+        if registry.contains(name):
+            continue
+        registry.register_loader(name, _catalog_subprocess_loader(name))
+    return registry
+
+
+def _catalog_subprocess_loader(name: str) -> Callable[[], Harness]:
+    def loader() -> Harness:
+        return _load_subprocess_harness(name)
+
+    return loader
+
+
 def _load_pi_harness() -> Harness:
     from orchestra.harnesses.pi import PiHarness
 
@@ -37,6 +53,12 @@ def _load_opencode_harness() -> Harness:
     from orchestra.harnesses.opencode import OpenCodeHarness
 
     return OpenCodeHarness()
+
+
+def _load_subprocess_harness(name: str) -> Harness:
+    from orchestra.harnesses.subprocess import SubprocessHarness
+
+    return SubprocessHarness(name=name)
 
 
 def __getattr__(name: str) -> object:
@@ -72,4 +94,5 @@ __all__ = [
     "WorkerRequest",
     "WorkerResult",
     "register_builtin_harnesses",
+    "register_catalog_harnesses",
 ]
