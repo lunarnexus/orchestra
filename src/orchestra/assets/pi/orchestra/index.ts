@@ -280,6 +280,18 @@ interface ProgressNotifier {
   notify(message: string): void;
 }
 
+type PiTextToolResult = {
+  content: Array<{ type: "text"; text: string }>;
+  isError: boolean;
+};
+
+function toolTextResult(text: string, isError = false): PiTextToolResult {
+  return {
+    content: [{ type: "text", text }],
+    isError,
+  };
+}
+
 interface ToolInfoPayload {
   description: string;
   goalDescription: string;
@@ -311,15 +323,6 @@ async function loadToolInfo(): Promise<ToolInfoPayload> {
     return JSON.parse(result.stdout) as ToolInfoPayload;
   }
   throw new Error("failed to load orch_dispatch and orch_status metadata from orchestra _tool-info");
-}
-
-function parseRoleNames(output: string): string[] {
-  const roles = new Set<string>();
-  for (const line of output.split(/\r?\n/)) {
-    const match = /^\s+[D✓✗]\s+(\S+)/.exec(line);
-    if (match) roles.add(match[1]);
-  }
-  return [...roles];
 }
 
 function parseRoleMetadata(output: string): { roles: string[]; harnessConfigs: string[] } {
@@ -1122,14 +1125,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         value: Type.Optional(Type.String({ description: toolInfo.statusValueDescription })),
       }),
       async execute(_toolCallId, params: OrchStatusParams, _signal, _onUpdate, ctx) {
-        const failure = (text: string): { content: Array<{ type: "text"; text: string }>; isError: true } => ({
-          content: [{ type: "text", text }],
-          isError: true,
-        });
-        const success = (text: string): { content: Array<{ type: "text"; text: string }>; isError: false } => ({
-          content: [{ type: "text", text }],
-          isError: false,
-        });
+        const failure = (text: string): PiTextToolResult => toolTextResult(text, true);
+        const success = (text: string): PiTextToolResult => toolTextResult(text);
         const runtimeSessionId = () => {
           try {
             return normalizePiSessionId(ctx.sessionManager.getSessionId());
@@ -1218,17 +1215,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }),
       async execute(_toolCallId, params: DispatchParams, _signal, _onUpdate, ctx) {
         if (params.timeout !== undefined) {
-          return {
-            content: [{ type: "text", text: toolInfo.dispatchTimeoutError }],
-            isError: true,
-          };
+          return toolTextResult(toolInfo.dispatchTimeoutError, true);
         }
         const runtimeSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
         const result = await dispatchWorker(runtimeSessionId, params, progressNotifier(ctx), (status) => setOrchestraWorkerStatus(ctx, status));
-        return {
-          content: [{ type: "text", text: result.output }],
-          isError: result.code !== 0,
-        };
+        return toolTextResult(result.output, result.code !== 0);
       },
     });
   }

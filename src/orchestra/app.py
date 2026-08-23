@@ -160,6 +160,16 @@ class InitOpencodeResult:
 
 
 @dataclass(frozen=True)
+class InitCodexResult:
+    files: list[InitFileResult]
+    marketplace: InitFileResult
+    command: list[str]
+    stdout: str
+    stderr: str
+    verification_command: str
+
+
+@dataclass(frozen=True)
 class InitAllResult:
     pi: InitPiResult | None
     hermes: list[InitHermesResult]
@@ -1721,6 +1731,47 @@ def init_opencode(
     return InitOpencodeResult(files=files, verification_command="opencode --help")
 
 
+def init_codex(
+    *,
+    force: bool = False,
+    copy: bool = False,
+    source_root: str | Path | None = None,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> InitCodexResult:
+    source = _codex_plugin_source_path(source_root, copy=copy)
+    writer = _copy_tree if copy else _link_tree
+    plugin_result = writer(source, default_codex_plugin_source_dir(), force=force)
+    marketplace_result = _ensure_codex_personal_marketplace_entry(force=force)
+    command = ["codex", "plugin", "add", "orchestra@personal"]
+    try:
+        result = runner(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except FileNotFoundError as exc:
+        raise AppError("codex command not found") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise AppError("Codex plugin install timed out") from exc
+
+    stdout = (result.stdout or "").strip()
+    stderr = (result.stderr or "").strip()
+    if result.returncode != 0:
+        detail = stderr or stdout or f"codex exited with status {result.returncode}"
+        raise AppError(f"Codex plugin install failed: {detail}")
+
+    return InitCodexResult(
+        files=[plugin_result],
+        marketplace=marketplace_result,
+        command=command,
+        stdout=stdout,
+        stderr=stderr,
+        verification_command="codex plugin add orchestra@personal",
+    )
+
+
 def init_all(
     *,
     force: bool = False,
@@ -1999,6 +2050,15 @@ def _opencode_init_source_paths(
     }
 
 
+def _codex_plugin_source_path(source_root: str | Path | None, *, copy: bool) -> Path:
+    root = _find_source_root(source_root)
+    if root is not None:
+        return root / "extensions" / "codex" / "orchestra"
+    if not copy:
+        raise AppError("codex init source root not found; rerun with --copy")
+    return Path(__file__).resolve().parent / "assets" / "codex" / "orchestra"
+
+
 def _find_source_root(source_root: str | Path | None = None) -> Path | None:
     if source_root is not None:
         candidate = Path(source_root)
@@ -2091,6 +2151,117 @@ def _remove_existing_target(target: Path) -> None:
         raise AppError(f"init target is not a file: {target}")
 
 
+def _copy_tree(source: Path, target: Path, *, force: bool) -> InitFileResult:
+    if not source.is_dir():
+        raise AppError(f"init source directory not found: {source}")
+    target_exists = target.exists() or target.is_symlink()
+    if target_exists and not force:
+        return InitFileResult(source=source, target=target, action="exists", mode="copy")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target_exists:
+        _remove_existing_tree_target(target)
+    shutil.copytree(source, target, symlinks=True)
+    return InitFileResult(
+        source=source,
+        target=target,
+        action="updated" if target_exists else "created",
+        mode="copy",
+    )
+
+
+def _link_tree(source: Path, target: Path, *, force: bool) -> InitFileResult:
+    if not source.is_dir():
+        raise AppError(f"init source directory not found: {source}")
+    target_exists = target.exists() or target.is_symlink()
+    if target_exists and not force:
+        return InitFileResult(source=source, target=target, action="exists", mode="link")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target_exists:
+        _remove_existing_tree_target(target)
+    target.symlink_to(source, target_is_directory=True)
+    return InitFileResult(
+        source=source,
+        target=target,
+        action="updated" if target_exists else "created",
+        mode="link",
+    )
+
+
+def _remove_existing_tree_target(target: Path) -> None:
+    if target.is_symlink():
+        target.unlink()
+        return
+    if target.is_dir():
+        shutil.rmtree(target)
+        return
+    if target.is_file():
+        target.unlink()
+        return
+    if target.exists():
+        raise AppError(f"init target cannot be replaced: {target}")
+
+
+def _ensure_codex_personal_marketplace_entry(*, force: bool) -> InitFileResult:
+    marketplace = default_codex_personal_marketplace_file()
+    entry = {
+        "name": "orchestra",
+        "source": {
+            "source": "local",
+            "path": "./plugins/orchestra",
+        },
+        "policy": {
+            "installation": "AVAILABLE",
+            "authentication": "ON_INSTALL",
+        },
+        "category": "Developer Tools",
+    }
+    source = default_codex_plugin_source_dir()
+
+    if marketplace.exists():
+        raw = json.loads(marketplace.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise AppError(f"Codex marketplace is not a mapping: {marketplace}")
+    else:
+        raw = {
+            "name": "personal",
+            "interface": {
+                "displayName": "Personal",
+            },
+            "plugins": [],
+        }
+
+    if raw.get("name") != "personal":
+        raise AppError("Codex personal marketplace name must be 'personal'")
+    raw.setdefault("interface", {"displayName": "Personal"})
+    plugins = raw.get("plugins")
+    if not isinstance(plugins, list):
+        raise AppError(f"Codex marketplace plugins must be a list: {marketplace}")
+
+    existing_index = next(
+        (
+            index
+            for index, plugin in enumerate(plugins)
+            if isinstance(plugin, dict) and plugin.get("name") == "orchestra"
+        ),
+        None,
+    )
+    if existing_index is not None and not force:
+        return InitFileResult(source=source, target=marketplace, action="exists", mode="json")
+    if existing_index is None:
+        plugins.append(entry)
+        action = "created" if not marketplace.exists() else "updated"
+    else:
+        plugins[existing_index] = entry
+        action = "updated"
+
+    marketplace.parent.mkdir(parents=True, exist_ok=True)
+    marketplace.write_text(
+        json.dumps(raw, indent=2, sort_keys=False) + "\n",
+        encoding="utf-8",
+    )
+    return InitFileResult(source=source, target=marketplace, action=action, mode="json")
+
+
 def default_hermes_home() -> Path:
     explicit_home = os.environ.get("HERMES_HOME", "").strip()
     if explicit_home:
@@ -2124,6 +2295,14 @@ def default_opencode_orchestra_file() -> Path:
 
 def default_opencode_orch_command_file() -> Path:
     return default_opencode_home() / "commands" / "orch.md"
+
+
+def default_codex_plugin_source_dir() -> Path:
+    return Path.home() / "plugins" / "orchestra"
+
+
+def default_codex_personal_marketplace_file() -> Path:
+    return Path.home() / ".agents" / "plugins" / "marketplace.json"
 
 
 def _normalized_optional_profile(profile: str | None) -> str | None:

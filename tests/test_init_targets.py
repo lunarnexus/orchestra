@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from orchestra.app import AppError, init_all, init_opencode, init_pi
+from orchestra.app import AppError, init_all, init_codex, init_opencode, init_pi
 from orchestra.cli import main
 
 OPENCODE_COMMAND_TEMPLATE = """# /orch
@@ -46,6 +47,31 @@ def _write_source_tree(root: Path, catalog_text: str) -> None:
     opencode_command = root / "extensions" / "opencode" / "orchestra" / "commands" / "orch.md"
     opencode_command.parent.mkdir(parents=True)
     opencode_command.write_text(OPENCODE_COMMAND_TEMPLATE, encoding="utf-8")
+    codex_manifest = root / "extensions" / "codex" / "orchestra" / ".codex-plugin" / "plugin.json"
+    codex_manifest.parent.mkdir(parents=True)
+    codex_manifest.write_text(
+        json.dumps(
+            {
+                "name": "orchestra",
+                "version": "0.1.0",
+                "description": "test",
+                "author": {"name": "test"},
+                "skills": "./skills/",
+                "interface": {
+                    "displayName": "Orchestra",
+                    "shortDescription": "test",
+                    "longDescription": "test",
+                    "developerName": "test",
+                    "category": "Developer Tools",
+                    "capabilities": ["Skills"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    codex_skill = root / "extensions" / "codex" / "orchestra" / "skills" / "orchestra" / "SKILL.md"
+    codex_skill.parent.mkdir(parents=True)
+    codex_skill.write_text("---\nname: orchestra\n---\n# Orchestra\n", encoding="utf-8")
     (root / "config.yaml").write_text("state_dir: state\n", encoding="utf-8")
     (root / "prompts.yaml").write_text("{}\n", encoding="utf-8")
     (root / "agent-catalog.yaml").write_text(catalog_text, encoding="utf-8")
@@ -207,6 +233,264 @@ roles:
     assert "verify: opencode --help" in captured.out
     assert (opencode_config / "plugins" / "orchestra.ts").exists()
     assert (opencode_config / "commands" / "orch.md").exists()
+
+
+def test_init_codex_installs_personal_plugin_from_source_checkout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    home = tmp_path / "home"
+    source.mkdir()
+    _write_source_tree(
+        source,
+        """
+default_role: builder
+harness_configs:
+  pi:
+    harness: pi
+    command: ["pi", "-p", "{prompt}"]
+roles:
+  builder:
+    harness_config: pi
+""".lstrip(),
+    )
+    monkeypatch.setenv("HOME", str(home))
+    calls: list[list[str]] = []
+
+    def fake_runner(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return completed(args, stdout="installed")
+
+    result = init_codex(source_root=source, runner=fake_runner)
+
+    plugin_dir = home / "plugins" / "orchestra"
+    marketplace = home / ".agents" / "plugins" / "marketplace.json"
+    assert [item.action for item in result.files] == ["created"]
+    assert [item.mode for item in result.files] == ["link"]
+    assert plugin_dir.is_symlink()
+    assert plugin_dir.resolve() == source / "extensions" / "codex" / "orchestra"
+    assert result.marketplace.action == "created"
+    assert result.marketplace.mode == "json"
+    payload = json.loads(marketplace.read_text(encoding="utf-8"))
+    assert payload["name"] == "personal"
+    assert payload["interface"]["displayName"] == "Personal"
+    assert payload["plugins"] == [
+        {
+            "name": "orchestra",
+            "source": {"source": "local", "path": "./plugins/orchestra"},
+            "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+            "category": "Developer Tools",
+        }
+    ]
+    assert calls == [["codex", "plugin", "add", "orchestra@personal"]]
+    assert result.command == ["codex", "plugin", "add", "orchestra@personal"]
+    assert result.stdout == "installed"
+    assert result.stderr == ""
+    assert result.verification_command == "codex plugin add orchestra@personal"
+
+
+def test_init_codex_does_not_overwrite_without_force(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    home = tmp_path / "home"
+    source.mkdir()
+    _write_source_tree(
+        source,
+        """
+default_role: builder
+harness_configs:
+  pi:
+    harness: pi
+    command: ["pi", "-p", "{prompt}"]
+roles:
+  builder:
+    harness_config: pi
+""".lstrip(),
+    )
+    plugin_dir = home / "plugins" / "orchestra"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "existing.txt").write_text("existing", encoding="utf-8")
+    marketplace = home / ".agents" / "plugins" / "marketplace.json"
+    marketplace.parent.mkdir(parents=True)
+    marketplace.write_text(
+        json.dumps(
+            {
+                "name": "personal",
+                "interface": {"displayName": "Mine"},
+                "plugins": [
+                    {
+                        "name": "orchestra",
+                        "source": {"source": "local", "path": "./plugins/orchestra"},
+                        "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+                        "category": "Developer Tools",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    calls: list[list[str]] = []
+
+    def fake_runner(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return completed(args, stdout="installed")
+
+    result = init_codex(source_root=source, runner=fake_runner)
+
+    assert [item.action for item in result.files] == ["exists"]
+    assert result.marketplace.action == "exists"
+    assert (plugin_dir / "existing.txt").read_text(encoding="utf-8") == "existing"
+    assert json.loads(marketplace.read_text(encoding="utf-8"))["interface"]["displayName"] == "Mine"
+    assert calls == [["codex", "plugin", "add", "orchestra@personal"]]
+
+
+def test_init_codex_force_overwrites_plugin_and_marketplace_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    home = tmp_path / "home"
+    source.mkdir()
+    _write_source_tree(
+        source,
+        """
+default_role: builder
+harness_configs:
+  pi:
+    harness: pi
+    command: ["pi", "-p", "{prompt}"]
+roles:
+  builder:
+    harness_config: pi
+""".lstrip(),
+    )
+    plugin_dir = home / "plugins" / "orchestra"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "existing.txt").write_text("existing", encoding="utf-8")
+    marketplace = home / ".agents" / "plugins" / "marketplace.json"
+    marketplace.parent.mkdir(parents=True)
+    marketplace.write_text(
+        json.dumps(
+            {
+                "name": "personal",
+                "interface": {"displayName": "Mine"},
+                "plugins": [
+                    {
+                        "name": "orchestra",
+                        "source": {"source": "local", "path": "./wrong"},
+                        "policy": {"installation": "NOT_AVAILABLE", "authentication": "ON_USE"},
+                        "category": "Other",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HOME", str(home))
+    calls: list[list[str]] = []
+
+    def fake_runner(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return completed(args, stdout="installed")
+
+    result = init_codex(source_root=source, force=True, copy=True, runner=fake_runner)
+
+    assert [item.action for item in result.files] == ["updated"]
+    assert [item.mode for item in result.files] == ["copy"]
+    assert not plugin_dir.is_symlink()
+    assert (plugin_dir / ".codex-plugin" / "plugin.json").exists()
+    assert not (plugin_dir / "existing.txt").exists()
+    assert result.marketplace.action == "updated"
+    payload = json.loads(marketplace.read_text(encoding="utf-8"))
+    assert payload["interface"]["displayName"] == "Mine"
+    assert payload["plugins"][0]["source"]["path"] == "./plugins/orchestra"
+    assert payload["plugins"][0]["policy"]["installation"] == "AVAILABLE"
+    assert calls == [["codex", "plugin", "add", "orchestra@personal"]]
+
+
+def test_cli_init_codex_uses_current_source_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = tmp_path / "source"
+    home = tmp_path / "home"
+    source.mkdir()
+    _write_source_tree(
+        source,
+        """
+default_role: builder
+harness_configs:
+  pi:
+    harness: pi
+    command: ["pi", "-p", "{prompt}"]
+roles:
+  builder:
+    harness_config: pi
+""".lstrip(),
+    )
+    monkeypatch.chdir(source)
+    monkeypatch.setenv("HOME", str(home))
+    calls: list[list[str]] = []
+
+    def fake_init_codex(
+        *,
+        force: bool = False,
+        copy: bool = False,
+    ) -> Any:
+        calls.append(["force", str(force), "copy", str(copy)])
+        return init_codex(
+            force=force,
+            copy=copy,
+            runner=lambda args, **_kwargs: completed(args, stdout="installed"),
+        )
+
+    monkeypatch.setattr("orchestra.cli.init_codex", fake_init_codex)
+
+    exit_code = main(["init", "codex"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "created:link:" in captured.out
+    assert "created:json:" in captured.out
+    assert "installed: codex plugin add orchestra@personal" in captured.out
+    assert "installed\n" in captured.out
+    assert calls == [["force", "False", "copy", "False"]]
+    assert (home / "plugins" / "orchestra").is_symlink()
+    assert (home / ".agents" / "plugins" / "marketplace.json").exists()
+
+
+def test_init_codex_copy_mode_uses_packaged_asset_when_source_root_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    from orchestra import app
+
+    monkeypatch.setattr(app, "_find_source_root", lambda source_root=None: None)
+    calls: list[list[str]] = []
+
+    def fake_runner(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return completed(args, stdout="installed")
+
+    result = init_codex(copy=True, runner=fake_runner)
+
+    plugin_dir = home / "plugins" / "orchestra"
+    assert [item.action for item in result.files] == ["created"]
+    assert [item.mode for item in result.files] == ["copy"]
+    assert result.marketplace.action == "created"
+    assert not plugin_dir.is_symlink()
+    assert (plugin_dir / ".codex-plugin" / "plugin.json").exists()
+    assert "Current Codex parity boundary" in (
+        plugin_dir / "skills" / "orchestra" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    assert calls == [["codex", "plugin", "add", "orchestra@personal"]]
 
 
 def test_init_all_detects_harnesses_and_deduplicates_targets(
