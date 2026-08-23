@@ -10,13 +10,39 @@ Default model:
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 DEFAULT_MODEL = "lmstudio/llmfan46/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved"
 #DEFAULT_MODEL = "lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved"
 #DEFAULT_MODEL = "lmstudio/qwen/qwen3.8-27b"
-CATALOG = Path(__file__).with_name("agent-catalog.yaml")
+
+
+def _repo_root() -> Path:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        script_path = Path(__file__).resolve()
+        for candidate in (script_path.parent, *script_path.parents):
+            if (candidate / "agent-catalog.yaml").is_file():
+                return candidate
+        raise SystemExit("could not find repository root containing agent-catalog.yaml")
+
+    root = Path(result.stdout.strip())
+    if not (root / "agent-catalog.yaml").is_file():
+        raise SystemExit(f"agent-catalog.yaml not found in repository root: {root}")
+    return root
+
+
+def _catalog_path() -> Path:
+    return _repo_root() / "agent-catalog.yaml"
 
 
 def _set_enabled_role_models(text: str, model: str) -> tuple[str, int]:
@@ -68,10 +94,14 @@ def main() -> int:
         print("usage: set-enabled-role-models [model]", file=sys.stderr)
         return 2
 
-    text = CATALOG.read_text()
+    catalog = _catalog_path()
+    text = catalog.read_text(encoding="utf-8")
     new_text, changed = _set_enabled_role_models(text, model)
-    CATALOG.write_text(new_text)
-    print(f"updated {changed} enabled role model line(s) in {CATALOG}")
+    if changed == 0:
+        print(f"no enabled role model lines found in {catalog}", file=sys.stderr)
+        return 1
+    catalog.write_text(new_text, encoding="utf-8")
+    print(f"updated {changed} enabled role model line(s) in {catalog}")
     print(f"model: {model}")
     return 0
 
