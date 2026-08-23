@@ -1,24 +1,80 @@
-# orchestra - pre-alpha software
-Orchestra is an agent-agnostic orchestration layer for dispatching subagents.  Originally designed for pi.dev, but works the same using lots of different harnesses as the orchestrator or subagent.
+# Orchestra — Beta
 
-##Preamble:
+Orchestra is an agent-agnostic orchestration layer for dispatching focused
+subagents from the coding-agent harness you already use. I originally designed
+it for [Pi](https://pi.dev), but the same core works across multiple main-session
+hosts and subagent harnesses.
 
-Through a TON of research and testing, I've found that agent orchestration only provides benefits in certain situations.  Orchestra tries to enhance quality, cost and speed through many different techniques:
-- Parallelism
-- optimized handoff
-- context engineering (Dumb/Smart zone),
+I use Orchestra to keep a capable main session focused on planning, judgment,
+approvals, and synthesis while subagents handle bounded research,
+implementation, debugging, verification, review, and security work. Those
+subagents can run through different harnesses and models without changing how I
+work in the main session.
+
+## Why I built Orchestra
+
+Through a lot of research and testing, I found that agent orchestration provides
+real benefits in particular situations rather than automatically improving every
+task. Orchestra grew out of trying to improve quality, cost, speed, and
+main-session context use through a combination of:
+
+- parallel execution of independent work
+- focused handoffs
+- context engineering, including deliberate "dumb" and "smart" zones
 - main-session context preservation
-- focused purpose agent harnesses
+- purpose-focused agent harnesses
 - specialized model roles
-- offloading tasks to local models
+- local or cheaper models for subagent work
 
-Where Orchestra really shines, is using cheaper/local models for most or all roles.  Manual use can dispatch subagents in the background while the user continues working. Structured `/orch on` mode is stricter: the main session plans, dispatches, handles approvals, owns project documentation and artifact alignment, and synthesizes compact returns while subagents write assigned operational artifacts. It does not perform delegated research, implementation, debugging, testing, verification, review, or security work. You can customize the skills, tool descriptions, session prompts, etc., so Orchestra can be used as a framework, and easily improved upon or customized depending on your workload.
+Orchestra shines most when I use cheaper or local models for many of the
+subagent roles. It lets me keep a strong main-session model focused on the work
+that needs broader judgment while moving operational context into smaller,
+bounded sessions.
 
-If you use the same model for all Orchestra roles, you can expect a measurable, but slight quality improvement, 2x-5x token consumption, and 2x-3x time to complete.  Most testing was done on orchestra-bench, my terrible, difficult to use, and even more difficult to understand test harness, (also available in the lunarnexus github repo), but it did its job.  Specific long horizon workflows that would normally cause multiple main-session context compactions see the biggest gains, but most gains were simply in quality, and rarely in total time by exploiting parallelism.  By comparison, similar quality gains were observed by setting thinking to high vs low on most models tested.
+Harness diversity is a major part of that flexibility. Some agent harnesses are
+fast and lightweight. Others are smarter but heavier, consume tokens quickly,
+or include UI, memory, and tool systems I do not need for every task. Orchestra
+lets me use a full-featured harness for the main session, a lightweight harness
+for implementation, or a research-oriented harness where its memory and search
+features are useful.
 
-The bottom line is, it seems to always be a trade-off of using more tokens and time for better quality, no matter which method you use.
+Manual use is intentionally simple: I can dispatch subagents in the background
+while continuing to work in the main session. When I want a stricter workflow,
+`/orch on` loads Orchestra's main-session orchestrator skill. That skill keeps
+the main session responsible for decomposition, sequencing, approvals, project
+documentation, artifact alignment, synthesis, and final judgment while
+subagents perform the work assigned to them.
 
-Models used in testing:
+Orchestra remains customizable. Roles, models, harnesses, skills, prompts,
+timeouts, limits, and fallback behavior are configuration rather than a fixed
+workflow baked into one agent shell.
+
+## What my testing showed
+
+Most of my testing used `orchestra-bench`, my difficult and not especially
+friendly orchestration test harness. It is also available in the LunarNexus
+GitHub repositories. Despite its rough edges, it gave me a practical way to test
+longer workflows, different role assignments, and several model combinations.
+
+When I used the same model for every Orchestra role, I generally observed:
+
+- a measurable but slight quality improvement
+- roughly 2x–5x total token consumption
+- roughly 2x–3x completion time
+
+The biggest gains appeared in long-horizon workflows that would otherwise cause
+multiple main-session context compactions. Most gains were in quality rather
+than total completion time; parallelism rarely made the whole workflow faster.
+I also observed similar quality gains on many models by increasing reasoning or
+thinking effort from low to high.
+
+My practical conclusion is that orchestration is a tradeoff. It can spend more
+total tokens and time to improve quality, isolate context, or move work away
+from an expensive main session. The strongest cost case is a capable remote or
+frontier main-session model combined with local or cheaper subagent models.
+
+Models used during this testing included:
+
 - qwen3.6-35b-a3b
 - qwen3.6-27b
 - qwen3.8-27b
@@ -26,72 +82,102 @@ Models used in testing:
 - gpt-5.5
 - gpt-5.6 sol / luna
 
-**
+These are observations from my workloads and test harness, not universal
+performance guarantees. I plan to move the full methodology and results into a
+dedicated research document.
 
-Benefits:
+## How Orchestra works
 
-- Reduces expensive main-session context and token use by offloading focused work to local or cheaper subagents.
-- Keeps the frontier orchestrator lean: the main session owns planning, judgment, approvals, synthesis, and user communication while subagents handle bounded evidence, implementation, and checks.
-- Simple, deterministic where possible.
-- Turn-key install of harness plugins, easy set-it-and-forget-it config.
-- Flexible enough to use as a framework while still shipping with practical defaults.
-- Uses common best practice components like your existing agent harnesses, Skills, etc.
+The normal workflow is host-first:
 
-It gives a host agent or CLI a small, consistent way to:
+1. I install Orchestra into Pi, Hermes, OpenCode, or Codex.
+2. I start a normal session in that host.
+3. Orchestra's tools or `/orch` interface are available in the session according
+   to the host's supported APIs.
+4. I dispatch a particular subagent manually, or use `/orch on` to load the
+   structured orchestrator skill.
+5. Orchestra resolves the requested role, harness, model, skills, and fallback
+   configuration.
+6. It launches a focused subagent without copying the full parent conversation.
+7. It supervises the run, keeps lean operational state, and preserves full output
+   in artifacts or harness-owned sessions.
+8. It returns compact results to the exact main session that launched the work.
 
-- start focused subagent runs through existing agent harnesses
-- keep subagent ownership scoped to the invoking session
-- enforce concurrency, cancellation, and timeouts
-- return compact results without flooding the parent context
-- inspect active and completed runs from a CLI or /slash command surface
-- dispatch subagents in the background, leaving your main session open and responsive for multi-tasking in casual/manual use.
+The main-session host and subagent harness do not have to be the same. A Pi main
+session can dispatch a Hermes or OpenCode subagent when the selected role is
+configured that way.
 
-In structured `/orch on` workflows, the orchestrator does not duplicate subagent-owned work and never polls for completion. It trusts successful subagent returns, does not double-test or confirm delegated scopes, and calls `orch_status` only when the user explicitly asks for status/control/help. Runtime auto-return provides normal completion visibility. `orch_dispatch` stays asynchronous and returns promptly after queuing work.
+## Manual and structured use
 
-Agent Harness Diversity:
-Some harnesses are fast and light, some are smart but bloated.  Some burn tokens at break-neck speed, some just don't have the features you want.  Well, with Orchestra, you can use all your favorite agent harnesses for what they're good at.  Big and full featured with lots of UI bells and whistles for the orchestrator, and lightweight for coders, smart with heavy memory systems for researchers, whatever you want.
+### Manual dispatch
 
-## Why Orchestra?
+Orchestra tools remain available during a normal supported host session. I can
+ask the main agent to dispatch a subagent naturally, call the tool directly, or
+use `/orch do` for a particular task. I do not need to enable structured mode.
 
-LLM coding agents work best when tasks are small, bounded, and matched to the right tool. Orchestra helps an expensive, high-capability main agent stay focused while local or cheaper subagents handle research, implementation, verification, review, or security checks.
+Manual dispatch works well for targeted background research, implementation,
+review, or verification where I want to choose exactly when orchestration is
+worthwhile.
 
-Common LLM coding obstacles Orchestra is designed around:
+### Skill-guided orchestration
 
-- **Expensive main-session context** — offload bounded work to local or cheaper subagents while the frontier orchestrator keeps only compact results.
-- **Context bloat** — subagents return compact summaries while full output stays in artifacts.
-- **Unclear delegation** — roles make subagent selection repeatable instead of improvised.
-- **Harness mismatch** — use different agent harnesses for different strengths and cost profiles.
-- **Runaway work** — timeouts, cancellation, and cooperative budgets keep runs bounded.
-- **Parallel confusion** — session ownership and concurrency limits keep results attached to the right parent session.
-- **Prompt identity mistakes** — host integrations derive session identity from runtime context, not model output.
+`/orch on` loads `skills/orchestrator/SKILL.md` into the current main session.
+The skill teaches the main session to decompose work, dispatch focused slices,
+respect dependencies, handle approvals, and synthesize compact returns without
+duplicating subagent-owned work.
 
-Since Orchestra is harness agnostic, it isn't bogged down with the details of skill loading (though we do inject some basic workflow skills), memory systems, system prompts, LLM usage, etc. The recommended high-value setup is a strong remote/frontier orchestrator with local or cheaper models configured for subagent roles. Same-model orchestration can improve quality or workflow discipline, but the strongest cost case comes from reducing expensive main-session work.
+`/orch off` lets me keep orchestration guidance and dispatch behavior out of a
+session when the task is too small to benefit or when I want the leanest possible
+context. Exact tool-visibility behavior follows the APIs available in each host.
 
-## Key Features
+A harness can also load skills through its own native skill system. That remains
+useful for custom workflows, although `/orch on|off` gives me more direct control
+of Orchestra's main-session behavior.
 
-- Dispatch focused subagents from the CLI or supported host integrations.
-- Configure reusable subagent roles with harness, model/profile, skills, environment, and prompt additions.
-- Route subagent roles to local or cheaper models while keeping the host/orchestrator model independent.
-- Use multiple harnesses from one catalog.
-- Scope subagent ownership to the invoking session.
-- Limit concurrent work globally and per session.
-- Cancel active runs and inspect run history.
-- Return compact summaries automatically while preserving full artifacts.
+## Key features
+
+- Dispatch focused subagents from supported coding-agent hosts.
+- Use different host and subagent harnesses in the same workflow.
+- Configure reusable roles with harness, model, profile, agent, skills,
+  environment, prompt additions, budgets, and fallback.
+- Route bounded work to local or cheaper models while keeping the main-session
+  model independent.
+- Derive session ownership from trusted host runtime context.
+- Prevent one main session from receiving or controlling another session's runs.
+- Enforce global, per-session, and configured per-model concurrency limits.
+- Apply hard timeouts, cancellation, and process supervision.
+- Keep dispatch asynchronous so the main session remains responsive.
+- Return one compact consolidated report after a session's active subagents
+  finish.
+- Preserve full subagent output in return artifacts and harness-owned sessions.
+- Inject configured role skills from local files or native harness skill systems.
 - Keep configuration YAML-first and editable.
-- Install host integrations with `orchestra init ...`.
+- Install or refresh host integrations with `orchestra init ...`.
 
 ## Requirements
 
 - Python 3.11+
 - PyYAML
-- At least one supported agent harness installed for subagent execution
+- At least one supported host or subagent harness
 - `pipx` recommended for a stable user-facing `orchestra` command
 
-Development extras are installed with `.[dev]`.
+Development extras are available through `.[dev]`.
 
 ## Installation
 
-For development, use an editable install in a local virtual environment:
+For a stable local command, I install the checkout with `pipx`:
+
+```bash
+pipx install -e ~/orchestra
+```
+
+After local changes:
+
+```bash
+pipx reinstall orchestra
+```
+
+For development, I use an editable virtual environment:
 
 ```bash
 python3 -m venv .venv
@@ -100,24 +186,12 @@ python3 -m pip install --upgrade pip
 python3 -m pip install -e ".[dev]"
 ```
 
-For a stable local CLI command, install this checkout with `pipx`:
-
-```bash
-pipx install -e ~/orchestra
-```
-
-After local changes, refresh the pipx command with:
-
-```bash
-pipx reinstall orchestra
-```
-
-Release versions are derived from Git tags with `setuptools-scm`. Tag releases as
+Release versions come from Git tags through `setuptools-scm`. Release tags use
 `vMAJOR.MINOR.PATCH`; commits after a tag build as development versions.
 
-## Quick Start
+## Quick start
 
-Install a host integration, then use Orchestra from inside that host:
+First install Orchestra into the host I want to use:
 
 ```bash
 orchestra init pi
@@ -125,187 +199,161 @@ orchestra init pi
 orchestra init hermes
 # or
 orchestra init opencode
+# or
+orchestra init codex
 ```
 
-Adjust agent-catalog.yaml to your liking.
+Then I start a normal session in that host and use the shared `/orch` interface:
 
-From pi:
-```bash
-/orch status
+```text
+/orch help
 /orch do tell me a haiku
-#or 
-dispatch a builder to tell me a haiku
+/orch do --role reviewer review the current diff
+/orch roles
+/orch status
+/orch history
 ```
-#or if you want the full orchestrator experience
 
-```bash
-/orch on  # Loads the primary orchestrator skill
-I'd like to build a .... project
+For the full skill-guided workflow:
+
+```text
+/orch on
+I'd like to build a project that ...
 ```
-The beauty is that it uses your already setup agent harnesses, with your skills, memory, SOUL.md.
 
-## Basic Usage
+When I no longer want Orchestra guiding or dispatching from that session:
 
-CLI mode is useful for manual orchestration, testing, and debugging:
+```text
+/orch off
+```
+
+The callable `orch_dispatch` and `orch_status` tools provide the same core
+operations in hosts that support model-callable tools. Exact command rendering,
+notifications, and UI depend on the host.
+
+## Plugin feature matrix
+
+All integrations call the same Python core where their host APIs allow it. The
+matrix shows current host/plugin capabilities rather than separate Orchestra
+implementations.
+
+| Capability | Pi | Hermes | OpenCode | Codex |
+| --- | --- | --- | --- | --- |
+| Install target | `orchestra init pi` | `orchestra init hermes` | `orchestra init opencode` | `orchestra init codex` |
+| Main-session/orchestrator support | Yes | Yes | Yes | Skill-only |
+| Can run as a subagent harness | Yes | Yes | Yes | No |
+| `orch_dispatch` tool | Yes | Yes | Yes | No |
+| `orch_status` tool | Yes | Yes | Yes | No |
+| `/orch` interface | Native command | Native command | Prompt template over tools | No |
+| `/orch on` | Yes | Yes | Through `orch_status` | Native skill loading only |
+| `/orch off` | Yes | Yes | No | No |
+| Manual `/orch do` | Yes | Yes | Prompt template | CLI through skill |
+| Role listing | Yes | Yes | Read-only tool view | CLI through skill |
+| Native role updates | Yes | Yes | CLI only | CLI through skill |
+| Runtime-derived owner identity | Yes | Yes | Yes | Not proven |
+| Session-scoped consolidated auto-return | Yes | Yes | Yes | No |
+| Per-subagent progress notification | Native notification | No supported host API | Toast | No |
+| Footer/status UI | Yes | No supported host API | No stable equivalent | No |
+| Dynamic command completions | Yes | Static argument hints | No stable equivalent | No |
+| Main-session turn budget hooks | Yes | Yes | No stable equivalent | No |
+| Main-session soft-timeout hooks | Yes | Yes | No stable equivalent | No |
+| Core hard subagent timeout | Yes | Yes | Yes | CLI only |
+| Role skill injection | Yes | Yes | Yes | CLI only |
+| Role environment injection | Yes | Yes | Yes | CLI only |
+| Role-preserving harness fallback | Yes | Yes | Yes | CLI only |
+| Core debug traces and artifacts | Yes | Yes | Yes | CLI only |
+
+"No supported host API" means I have not found a stable public host API for that
+feature. Orchestra does not emulate missing UI capabilities by injecting extra
+model prompts.
+
+## Configuration
+
+Orchestra uses three YAML files:
+
+```text
+config.yaml
+prompts.yaml
+agent-catalog.yaml
+```
+
+Most customization happens in `agent-catalog.yaml`, where I configure:
+
+- roles
+- harness choices and fallback
+- local or remote models
+- profiles and agents
+- role skills
+- role environment values
+- prompt additions
+- role budgets
+- enabled and disabled roles
+
+`config.yaml` controls runtime paths, timeouts, auto-return, and concurrency.
+`prompts.yaml` contains shared tool descriptions, help text, prompt labels, and
+return formats so host adapters do not carry inconsistent copies.
+
+Repository-root files are editable defaults for source development. Host init
+commands materialize runtime configuration in the host's normal location.
+`ARCHITECTURE.md` documents resolution and installation behavior in detail.
+
+## Manual CLI and debugging
+
+I primarily use Orchestra through a coding-agent host. The CLI remains useful
+for local/manual dispatch, automation, smoke testing, and diagnosis:
 
 ```bash
 orchestra doctor
 orchestra roles
 orchestra do --session-id manual:demo --goal "Smoke test"
-orchestra do --session-id manual:demo --role reviewer --goal "Review the current diff"
 orchestra status --session-id manual:demo
 orchestra stop --session-id manual:demo --run-id <run-id>
 orchestra history --session-id manual:demo --limit 10
 orchestra debug --run-id <run-id>
 ```
 
-Host integrations expose the same basic workflow through slash commands or callable tools, depending on what the host supports.
+CLI `--session-id` is a local/manual identifier. It is not a source of trusted
+host runtime identity.
 
-## Configuration
-
-Orchestra is configured with YAML files:
-
-```text
-config.yaml
-prompts.yaml
-agent-catalog.yaml  <-- This is your primary roles/models config
-```
-
-The repository root contains editable defaults for local development and manual CLI use. Host install commands materialize runtime config for the selected host.
-
-Most user customization happens in:
-
-- `agent-catalog.yaml` for roles, harness choices, local/remote models, profiles, skills, and prompt additions
-- `config.yaml` for runtime paths, timeouts, and concurrency
-- `prompts.yaml` for shared prompt text
-
-See the config files and `ARCHITECTURE.md` for detailed behavior.
-
-## Compatible Harnesses
-
-Current support includes:
-
-- **Pi** — host integration and subagent harness
-- **Hermes** — host integration and subagent harness
-- **OpenCode** — host integration and one-shot subagent harness
-- **Codex** — skill-only host plugin scaffold
-
-Harness-specific model names, profiles, agents, and command templates belong in `agent-catalog.yaml`.
-
-Compatibility differs by host because each harness exposes different plugin and UI APIs:
-
-| Feature | Pi | Hermes | OpenCode | Codex |
-| --- | --- | --- | --- | --- |
-| Can be subagent | ✅ | ✅ | ✅* | ❌ |
-| Can be orchestrator | ✅ | ✅ | ✅* | Skill-only |
-| `/slash` commands | ✅ | ✅ | ✅* | ❌ |
-| Footer/status UI | ✅ | ❌ | ❌ | ❌ |
-| Hard timeouts | ✅ | ✅ | ✅ | CLI-only |
-| Soft timeouts | ✅ | ✅ | ✅ | ❌ |
-| Turn limits | ✅ | ✅ | ✅ | ❌ |
-| Role skill injection | ✅ | ✅ | ✅ | CLI-only |
-| Model/global concurrency limits | ✅ | ✅ | ✅ | CLI-only |
-| ENV injection | ✅ | ✅ | ✅ | CLI-only |
-| Debug traces | ✅ | ✅ | ✅ | CLI-only |
-
-## Host Integrations
-
-### Pi
-
-Install or update the Pi extension:
-
-```bash
-orchestra init pi
-```
-
-Common Pi commands:
-
-```text
-/orch on
-/orch help
-/orch do <goal>
-/orch do --role reviewer <goal>
-/orch roles
-/orch status
-/orch stop <run-id>
-/orch doctor
-/orch history [limit]
-```
-
-The Pi extension also registers the `orch_dispatch` and `orch_status` tools.
-
-### Hermes
-
-Install or update the Hermes plugin:
-
-```bash
-orchestra init hermes
-```
-
-Common Hermes commands:
-
-```text
-/orch help
-/orch do <goal>
-/orch do --role reviewer <goal>
-/orch roles
-/orch status
-/orch stop <run-id>
-/orch doctor
-/orch history [limit]
-```
-
-Hermes also exposes `orch_dispatch` and `orch_status`.
-
-### OpenCode
-
-Install or update the OpenCode plugin:
-
-```bash
-orchestra init opencode
-# for non-source installs:
-orchestra init opencode --copy
-```
-
-OpenCode support is complete for its supported host APIs. It includes `orch_dispatch`, `orch_status`, the documented `/orch` prompt template, session-targeted auto-return, and progress toasts. OpenCode does not expose the same native footer/status UI API as Pi; that host-specific UI difference is not an incomplete Orchestra integration.
-
-### Codex
-
-Install or update the Codex plugin scaffold:
-
-```bash
-orchestra init codex
-```
-
-The current Codex plugin is skill-only. It teaches Codex how to use the existing Orchestra CLI for `doctor`, `do`, `status`, `history`, `stop`, and `roles`, while preserving `ORCHESTRA_CONFIG` and `ORCHESTRA_AGENT_CATALOG`. It does not yet expose `orch_dispatch`, `orch_status`, auto-return, or native `/orch` commands because a trusted Codex task/session identity and session-targeted delivery API have not been proven for third-party plugins.
+See `docs/debug.md` for database, lifecycle-log, supervisor-output, request,
+return-artifact, and harness-session tracing.
 
 ## Development
 
-Useful checks:
+Project checks:
 
 ```bash
 python3 -m pytest
 python3 -m ruff check .
 python3 -m mypy src tests
 python3 -m build
-orchestra --help
-orchestra doctor
 ```
 
-CLI smoke commands:
+Useful smoke commands:
 
 ```bash
+orchestra --help
+orchestra doctor
 orchestra do --session-id manual:demo --goal "smoke test"
 orchestra history --session-id manual:demo
 ```
 
-## Further Reading
+Host-extension verification requires the relevant integration installed in its
+global host location.
+
+## Documentation
 
 - `DECISIONS.md` — authoritative owner-approved project decisions
-- `ARCHITECTURE.md` — current technical design and adapter behavior
+- `ARCHITECTURE.md` — current technical architecture and behavior
+- `ROADMAP.md` — TODO and wishlist backlog
+- `KNOWN_BUGS.md` — confirmed open defects
+- `docs/plugin_creation.md` — host-plugin implementation contract
+- `docs/debug.md` — runtime diagnosis and tracing
 - `docs/research/` — durable research notes and evaluations
-- `PLAN.md` / `RESEARCH.md` — optional Orchestra operational artifacts for the active orchestrator session; not part of the public project documentation contract
-- `ROADMAP.md` — backlog and future work
 - `config.yaml` — runtime configuration
-- `agent-catalog.yaml` — harness and role catalog
-- `prompts.yaml` — shared prompt text
+- `agent-catalog.yaml` — role and harness catalog
+- `prompts.yaml` — shared prompt and tool text
+
+Root `PLAN.md`, `RESEARCH.md`, `VERIFY.md`, `REVIEW.md`, and `APPSEC.md` are
+optional operational artifacts for active Orchestra development sessions. They
+are not part of the public project-documentation contract.
