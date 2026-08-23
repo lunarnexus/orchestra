@@ -139,6 +139,8 @@ orchestra init pi
 orchestra init hermes
 # or
 orchestra init opencode
+# or
+orchestra init codex
 ```
 
 ## Basic Usage
@@ -185,24 +187,25 @@ Current support includes:
 - **Pi** — host integration and subagent harness
 - **Hermes** — host integration and subagent harness
 - **OpenCode** — host integration and one-shot subagent harness
+- **Codex** — skill-only host plugin scaffold
 
 Harness-specific model names, profiles, agents, and command templates belong in `agent-catalog.yaml`.
 
 Compatibility differs by host because each harness exposes different plugin and UI APIs:
 
-| Feature | Pi | Hermes | OpenCode |
-| --- | --- | --- | --- |
-| Can be subagent | ✅ | ✅ | ✅* |
-| Can be orchestrator | ✅ | ✅ | ✅* |
-| `/slash` commands | ✅ | ✅ | ✅* |
-| Footer/status UI | ✅ | ❌ | ❌ |
-| Hard timeouts | ✅ | ✅ | ✅ |
-| Soft timeouts | ✅ | ✅ | ✅ |
-| Turn limits | ✅ | ✅ | ✅ |
-| Role skill injection | ✅ | ✅ | ✅ |
-| Model/global concurrency limits | ✅ | ✅ | ✅ |
-| ENV injection | ✅ | ✅ | ✅ |
-| Debug traces | ✅ | ✅ | ✅ |
+| Feature | Pi | Hermes | OpenCode | Codex |
+| --- | --- | --- | --- | --- |
+| Can be subagent | ✅ | ✅ | ✅* | ❌ |
+| Can be orchestrator | ✅ | ✅ | ✅* | Skill-only |
+| `/slash` commands | ✅ | ✅ | ✅* | ❌ |
+| Footer/status UI | ✅ | ❌ | ❌ | ❌ |
+| Hard timeouts | ✅ | ✅ | ✅ | CLI-only |
+| Soft timeouts | ✅ | ✅ | ✅ | ❌ |
+| Turn limits | ✅ | ✅ | ✅ | ❌ |
+| Role skill injection | ✅ | ✅ | ✅ | CLI-only |
+| Model/global concurrency limits | ✅ | ✅ | ✅ | CLI-only |
+| ENV injection | ✅ | ✅ | ✅ | CLI-only |
+| Debug traces | ✅ | ✅ | ✅ | CLI-only |
 
 ## Host Integrations
 
@@ -264,6 +267,16 @@ orchestra init opencode --copy
 ```
 
 OpenCode support is complete for its supported host APIs. It includes `orch_dispatch`, `orch_status`, the documented `/orch` prompt template, session-targeted auto-return, and progress toasts. OpenCode does not expose the same native footer/status UI API as Pi; that host-specific UI difference is not an incomplete Orchestra integration.
+
+### Codex
+
+Install or update the Codex plugin scaffold:
+
+```bash
+orchestra init codex
+```
+
+The current Codex plugin is skill-only. It teaches Codex how to use the existing Orchestra CLI for `doctor`, `do`, `status`, `history`, `stop`, and `roles`, while preserving `ORCHESTRA_CONFIG` and `ORCHESTRA_AGENT_CATALOG`. It does not yet expose `orch_dispatch`, `orch_status`, auto-return, or native `/orch` commands because a trusted Codex task/session identity and session-targeted delivery API have not been proven for third-party plugins.
 
 ## Development
 

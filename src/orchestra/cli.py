@@ -30,6 +30,7 @@ from orchestra.app import (
     format_started_run,
     format_status,
     init_all,
+    init_codex,
     init_hermes,
     init_opencode,
     init_pi,
@@ -215,6 +216,22 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         help="copy plugin file from source checkout",
     )
     init_opencode_parser.set_defaults(handler=_handle_init_opencode)
+
+    init_codex_parser = init_subparsers.add_parser(
+        "codex",
+        help="install Codex plugin scaffold",
+    )
+    init_codex_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite existing plugin source and marketplace entry",
+    )
+    init_codex_parser.add_argument(
+        "--copy",
+        action="store_true",
+        help="copy plugin directory instead of linking",
+    )
+    init_codex_parser.set_defaults(handler=_handle_init_codex)
 
     init_all_parser = init_subparsers.add_parser(
         "all",
@@ -436,6 +453,21 @@ def _handle_init_opencode(args: argparse.Namespace) -> int:
     result = init_opencode(force=bool(args.force), copy=bool(args.copy))
     _print_init_files(result.files)
     print(f"verify: {result.verification_command}")
+    return 0
+
+
+def _handle_init_codex(args: argparse.Namespace) -> int:
+    result = init_codex(
+        force=bool(args.force),
+        copy=bool(args.copy),
+    )
+    _print_init_files(result.files)
+    _print_init_files([result.marketplace])
+    print(f"installed: {' '.join(result.command)}")
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
     return 0
 
 

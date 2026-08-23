@@ -47,6 +47,8 @@ orchestra = [
   "assets/pi/orchestra/index.ts",
   "assets/opencode/orchestra/index.ts",
   "assets/opencode/orchestra/commands/orch.md",
+  "assets/codex/orchestra/.codex-plugin/plugin.json",
+  "assets/codex/orchestra/skills/orchestra/SKILL.md",
 ]
 
 [tool.setuptools.data-files]

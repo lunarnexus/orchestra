@@ -59,9 +59,13 @@ Current host surfaces:
 - Hermes plugin: `extensions/hermes/orchestra/__init__.py`
 - OpenCode plugin: `extensions/opencode/orchestra/index.ts`
 - packaged OpenCode asset mirror: `src/orchestra/assets/opencode/orchestra/index.ts`
+- Codex plugin scaffold: `extensions/codex/orchestra`
+- packaged Codex asset mirror: `src/orchestra/assets/codex/orchestra`
 
 The OpenCode init target installs globally under `~/.config/opencode/plugins/orchestra.ts`; `--copy` uses the packaged asset mirror when a source checkout is unavailable.
 OpenCode's supported surface includes both `orch_dispatch` and `orch_status`. `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, `roles`, and `stop`. Model-callable `roles` is read-only for now and reports configured role env values; role updates remain on native host/CLI paths where supported. `client.session.prompt(...)` is the preferred wake path; `promptAsync(...)` remains fallback-only. `/orch` slash-command and TUI parity are intentionally limited by the stable host APIs available.
+
+The Codex init target installs the skill-only plugin scaffold at `~/plugins/orchestra`, seeds the personal marketplace file at `~/.agents/plugins/marketplace.json`, and runs `codex plugin add orchestra@personal`. Codex support stays skill-only until a trusted task/session identity and session-targeted auto-return API are proven for third-party plugins.
 
 Adapters retrieve runtime session identity from host context and pass it to core. The model or user prompt must not provide session identity.
 
