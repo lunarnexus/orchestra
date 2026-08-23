@@ -5,15 +5,15 @@ subagents from the coding-agent harness you already use. I originally designed
 it for [Pi](https://pi.dev), but the same core works across multiple main-session
 hosts and subagent harnesses.
 
-I use Orchestra to keep a capable main session focused on planning, judgment,
+Orchestra is great to keep a capable main session focused on planning, judgment,
 approvals, and synthesis while subagents handle bounded research,
 implementation, debugging, verification, review, and security work. Those
-subagents can run through different harnesses and models without changing how I
+subagents can run through different harnesses and models without changing how you
 work in the main session.
 
-## Why I built Orchestra
+## Why Orchestra?
 
-Through a lot of research and testing, I found that agent orchestration provides
+Through a lot of research and testing, I've found that agent orchestration provides
 real benefits in particular situations rather than automatically improving every
 task. Orchestra grew out of trying to improve quality, cost, speed, and
 main-session context use through a combination of:
@@ -31,25 +31,21 @@ subagent roles. It lets me keep a strong main-session model focused on the work
 that needs broader judgment while moving operational context into smaller,
 bounded sessions.
 
-Harness diversity is a major part of that flexibility. Some agent harnesses are
-fast and lightweight. Others are smarter but heavier, consume tokens quickly,
-or include UI, memory, and tool systems I do not need for every task. Orchestra
-lets me use a full-featured harness for the main session, a lightweight harness
-for implementation, or a research-oriented harness where its memory and search
-features are useful.
+Agent harnesses all have their own strengths and annoyances. Some are fast and
+lightweight. Others are smarter but bloated, burn tokens at breakneck speed, or
+come with UI and memory systems that are useful for one job and pointless for
+another. Orchestra lets you mix them instead of committing the whole workflow
+to one harness.
 
-Manual use is intentionally simple: I can dispatch subagents in the background
-while continuing to work in the main session. When I want a stricter workflow,
-`/orch on` loads Orchestra's main-session orchestrator skill. That skill keeps
-the main session responsible for decomposition, sequencing, approvals, project
-documentation, artifact alignment, synthesis, and final judgment while
-subagents perform the work assigned to them.
+You can dispatch subagents in the background and keep working in the main
+session. For a stricter workflow, `/orch on` loads the main-session orchestrator
+skill. The main session handles decomposition, sequencing, approvals, project
+documentation, and final judgment. Subagents do the work assigned to them.
 
-Orchestra remains customizable. Roles, models, harnesses, skills, prompts,
-timeouts, limits, and fallback behavior are configuration rather than a fixed
-workflow baked into one agent shell.
+Roles, models, harnesses, skills, prompts, timeouts, limits, and fallback
+behavior are all configurable.
 
-## What my testing showed
+## What testing showed
 
 Most of my testing used `orchestra-bench`, my difficult and not especially
 friendly orchestration test harness. It is also available in the LunarNexus
@@ -68,10 +64,10 @@ than total completion time; parallelism rarely made the whole workflow faster.
 I also observed similar quality gains on many models by increasing reasoning or
 thinking effort from low to high.
 
-My practical conclusion is that orchestration is a tradeoff. It can spend more
-total tokens and time to improve quality, isolate context, or move work away
-from an expensive main session. The strongest cost case is a capable remote or
-frontier main-session model combined with local or cheaper subagent models.
+The bottom line is that orchestration is a tradeoff. It can spend more total
+tokens and time to improve quality, isolate context, or move work away from an
+expensive main session. The cost argument makes the most sense with a capable
+remote main-session model and local or cheaper subagent models.
 
 Models used during this testing included:
 
@@ -88,20 +84,15 @@ dedicated research document.
 
 ## How Orchestra works
 
-The normal workflow is host-first:
+Install Orchestra into Pi, Hermes, OpenCode, or Codex, then start a normal
+session in that host. Orchestra's tools and `/orch` commands are available based
+on what the host supports.
 
-1. I install Orchestra into Pi, Hermes, OpenCode, or Codex.
-2. I start a normal session in that host.
-3. Orchestra's tools or `/orch` interface are available in the session according
-   to the host's supported APIs.
-4. I dispatch a particular subagent manually, or use `/orch on` to load the
-   structured orchestrator skill.
-5. Orchestra resolves the requested role, harness, model, skills, and fallback
-   configuration.
-6. It launches a focused subagent without copying the full parent conversation.
-7. It supervises the run, keeps lean operational state, and preserves full output
-   in artifacts or harness-owned sessions.
-8. It returns compact results to the exact main session that launched the work.
+Dispatch a subagent directly, or use `/orch on` to load the orchestrator skill.
+Orchestra resolves the role and harness configuration, launches the subagent,
+and tracks the run without copying the full parent conversation. Full output
+stays in artifacts or harness-owned sessions; the main session gets a short
+result when the work is done.
 
 The main-session host and subagent harness do not have to be the same. A Pi main
 session can dispatch a Hermes or OpenCode subagent when the selected role is
@@ -111,13 +102,12 @@ configured that way.
 
 ### Manual dispatch
 
-Orchestra tools remain available during a normal supported host session. I can
-ask the main agent to dispatch a subagent naturally, call the tool directly, or
-use `/orch do` for a particular task. I do not need to enable structured mode.
+Orchestra tools remain available during a normal supported host session. Ask
+the main agent to dispatch naturally, call the tool directly, or use `/orch do`.
+Structured mode is not required.
 
-Manual dispatch works well for targeted background research, implementation,
-review, or verification where I want to choose exactly when orchestration is
-worthwhile.
+Manual dispatch is useful when you want to choose exactly which tasks are worth
+offloading.
 
 ### Skill-guided orchestration
 
@@ -126,13 +116,12 @@ The skill teaches the main session to decompose work, dispatch focused slices,
 respect dependencies, handle approvals, and synthesize compact returns without
 duplicating subagent-owned work.
 
-`/orch off` lets me keep orchestration guidance and dispatch behavior out of a
-session when the task is too small to benefit or when I want the leanest possible
-context. Exact tool-visibility behavior follows the APIs available in each host.
+`/orch off` keeps orchestration out of sessions where the work is too small to
+benefit or where you want the leanest possible context. Exact tool visibility
+depends on the host.
 
-A harness can also load skills through its own native skill system. That remains
-useful for custom workflows, although `/orch on|off` gives me more direct control
-of Orchestra's main-session behavior.
+Harnesses can also load skills through their own skill systems, but `/orch
+on|off` gives you direct control over Orchestra's main-session behavior.
 
 ## Key features
 
@@ -165,7 +154,7 @@ Development extras are available through `.[dev]`.
 
 ## Installation
 
-For a stable local command, I install the checkout with `pipx`:
+For a stable local command:
 
 ```bash
 pipx install -e ~/orchestra
@@ -177,7 +166,7 @@ After local changes:
 pipx reinstall orchestra
 ```
 
-For development, I use an editable virtual environment:
+For development:
 
 ```bash
 python3 -m venv .venv
@@ -191,7 +180,7 @@ Release versions come from Git tags through `setuptools-scm`. Release tags use
 
 ## Quick start
 
-First install Orchestra into the host I want to use:
+Install Orchestra into the host you want to use:
 
 ```bash
 orchestra init pi
@@ -203,7 +192,7 @@ orchestra init opencode
 orchestra init codex
 ```
 
-Then I start a normal session in that host and use the shared `/orch` interface:
+Then start a normal session in that host and use `/orch`:
 
 ```text
 /orch help
@@ -221,7 +210,7 @@ For the full skill-guided workflow:
 I'd like to build a project that ...
 ```
 
-When I no longer want Orchestra guiding or dispatching from that session:
+To turn Orchestra off for that session:
 
 ```text
 /orch off
@@ -263,8 +252,8 @@ implementations.
 | Role-preserving harness fallback | Yes | Yes | Yes | CLI only |
 | Core debug traces and artifacts | Yes | Yes | Yes | CLI only |
 
-"No supported host API" means I have not found a stable public host API for that
-feature. Orchestra does not emulate missing UI capabilities by injecting extra
+"No supported host API" means the host does not expose a stable public API for
+that feature. Orchestra does not fake missing UI features by injecting extra
 model prompts.
 
 ## Configuration
@@ -277,7 +266,7 @@ prompts.yaml
 agent-catalog.yaml
 ```
 
-Most customization happens in `agent-catalog.yaml`, where I configure:
+Most customization happens in `agent-catalog.yaml`:
 
 - roles
 - harness choices and fallback
@@ -299,8 +288,8 @@ commands materialize runtime configuration in the host's normal location.
 
 ## Manual CLI and debugging
 
-I primarily use Orchestra through a coding-agent host. The CLI remains useful
-for local/manual dispatch, automation, smoke testing, and diagnosis:
+Orchestra is primarily meant to be used through a coding-agent host. The CLI is
+still useful for manual dispatch, automation, smoke testing, and debugging:
 
 ```bash
 orchestra doctor
