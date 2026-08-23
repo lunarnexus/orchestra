@@ -13,6 +13,9 @@ desktop.ini
 *.swo
 *~
 
+# Qwen
+.qwen/
+
 # Local Python environments
 .venv/
 venv/

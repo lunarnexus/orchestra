@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Skill(extension-creator)"
-    ]
-  },
-  "$version": 4
-}

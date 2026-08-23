@@ -7,21 +7,12 @@ Orchestra roadmap items are split into:
 
 ## TODO
 
-1. [ ] Ensure plugin feature parity with Codex.
-   - Compare supported commands, status/history/help/doctor behavior, auto-return handling, session identity, role exposure, error reporting, and installation/update flow.
-   - Move shared behavior into Orchestra core/config where practical; keep the host plugin focused on host runtime identity, UI/rendering, and harness-specific integration.
-
-2. [ ] Ensure plugin feature parity with OpenHands.
-   - Compare supported commands, status/history/help/doctor behavior, auto-return handling, session identity, role exposure, error reporting, and installation/update flow.
-   - Move shared behavior into Orchestra core/config where practical; keep the host plugin focused on host runtime identity, UI/rendering, and harness-specific integration.
-
-3. [ ] Ensure plugin feature parity with Qwen Code.
-   - Compare supported commands, status/history/help/doctor behavior, auto-return handling, session identity, role exposure, error reporting, and installation/update flow.
-   - Move shared behavior into Orchestra core/config where practical; keep the host plugin focused on host runtime identity, UI/rendering, and harness-specific integration.
-
-4. [ ] Review the Pi plugin for core/plugin boundary cleanup.
+1. [ ] Review the Pi plugin for core/plugin boundary cleanup.
    - Standardize generic command/help/tool/report wording and orchestration behavior in Orchestra core where it makes sense.
    - Keep only Pi-specific runtime context retrieval, slash-command plumbing, UI presentation, notifications, and host integration code in the Pi plugin.
+2. [ ] Add a "mode" display in orchestra status, or maybe the footer.  We
+   need to know when "/orch off" "/orch on"(no orchestrator skill) and "/orch on" (with orchestrator skill) modes are active.
+
 
 5. [ ] Add machine-readable core contracts for host plugins.
    - Add JSON output modes or equivalent stable machine contracts for dispatch, status, progress, and session-report operations currently parsed from human-readable CLI text.
@@ -42,7 +33,19 @@ Orchestra roadmap items are split into:
 
 ## Wishlist
 
-1. [ ] Queued subagent requests instead of MVP fail-fast over-limit behavior.
+1. [ ] Ensure plugin feature parity with Codex.
+   - Compare supported commands, status/history/help/doctor behavior, auto-return handling, session identity, role exposure, error reporting, and installation/update flow.
+   - Move shared behavior into Orchestra core/config where practical; keep the host plugin focused on host runtime identity, UI/rendering, and harness-specific integration.
+
+2. [ ] Ensure plugin feature parity with OpenHands.
+   - Compare supported commands, status/history/help/doctor behavior, auto-return handling, session identity, role exposure, error reporting, and installation/update flow.
+   - Move shared behavior into Orchestra core/config where practical; keep the host plugin focused on host runtime identity, UI/rendering, and harness-specific integration.
+
+3. [ ] Ensure plugin feature parity with Qwen Code.
+   - Compare supported commands, status/history/help/doctor behavior, auto-return handling, session identity, role exposure, error reporting, and installation/update flow.
+   - Move shared behavior into Orchestra core/config where practical; keep the host plugin focused on host runtime identity, UI/rendering, and harness-specific integration.
+
+4. [ ] Queued subagent requests instead of MVP fail-fast over-limit behavior.
    - Keep timeout semantics clean: subagent timeout starts when subagent execution starts, not while queued.
    - Include clear queue status, cancellation, and retry behavior before enabling by default.
 
