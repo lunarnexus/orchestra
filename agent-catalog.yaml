@@ -1,16 +1,3 @@
-# Harness command templates for one-shot prompts, as typed on the command line:
-#   pi:       pi --model [model] -p [prompt]
-#             Pi thinking format can be encoded in the model as [model]:[thinking],
-#             where thinking is off|minimal|low|medium|high|xhigh|max.
-#             Example: openai-codex/gpt-5.5:high
-#   hermes:   hermes --profile [profile] -z [prompt]
-#   opencode: opencode run --agent [agent] --model [model] [prompt]
-#   qwen:     qwen --model [model] -p [prompt]
-#
-# harness_configs.command uses argv-list form. Supported placeholders are:
-#   {prompt}, {model}, {profile}, {agent}
-# If an optional placeholder value is unset, that token is omitted; when the
-# preceding token is a long option such as --model, that option is omitted too.
 default_role: intern
 model_limits:
   lmstudio/llmfan46/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved:
@@ -48,41 +35,10 @@ harness_configs:
     - --model
     - '{model}'
     - '{prompt}'
-# Role schema example:
-# roles:
-#   example_role:
-#     harness_config: pi              # required when top-level harness_configs is present
-#                                     # must name a configured harness_config
-#     harness_fallback:               # optional non-empty list; entries allow only
-#                                     # harness_config, model, profile, and agent
-#     - harness_config: hermes        # required per fallback entry
-#       model: provider/model         # optional non-empty string fallback override
-#       profile: profile-name         # optional non-empty string fallback override
-#       agent: agent-name             # optional non-empty string fallback override
-#     model: provider/model           # optional non-empty string; fills {model}
-#     profile: profile-name           # optional non-empty string; fills {profile}
-#     agent: agent-name               # optional non-empty string; fills {agent}
-#     nested_dispatch_depth: 2        # optional positive integer; child dispatch depth
-#     turn_limit: 20                  # optional positive integer; worker turn budget
-#     soft_timeout: 300               # optional positive integer seconds; worker soft timeout
-#     skills:                         # optional list of skill names; [] disables injection
-#     - builder                       # names may use letters, numbers, _, ., and -
-#     prompt_addition: Extra role instructions.  # optional non-empty string
-#     enabled: true                   # optional boolean; defaults to true
-#     env:                            # optional mapping: valid ENV_NAME keys to string values
-#       HINDSIGHT4PI_AUTO_RECALL: '0' # keys cannot start with reserved ORCHESTRA_ prefixes
-#     # Legacy catalog mode only, when top-level harness_configs is absent:
-#     # harness: pi                   # required non-empty string in legacy mode
-#     # command:                      # required non-empty argv list of non-empty strings
-#     # - pi
-#     # - --model
-#     # - '{model}'
-#     # - -p
-#     # - '{prompt}'
 roles:
   builder:
     harness_config: pi
-    model: lmstudio/qwen/qwen3.8-27b
+    model: openai-codex/gpt-5.4
     skills:
     - builder
     prompt_addition: Implement the assigned task only. Stay in scope. Run focused
@@ -94,7 +50,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   verifier:
     harness_config: pi
-    model: lmstudio/qwen/qwen3.8-27b
+    model: openai-codex/gpt-5.4
     skills:
     - verifier
     prompt_addition: Independently prove whether the work satisfies its scope and
@@ -106,7 +62,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   reviewer:
     harness_config: pi
-    model: lmstudio/qwen/qwen3.8-27b
+    model: openai-codex/gpt-5.4
     skills:
     - reviewer
     prompt_addition: Independently review whether the change is correct, maintainable,
@@ -119,7 +75,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   researcher:
     harness_config: pi
-    model: lmstudio/qwen/qwen3.8-27b
+    model: openai-codex/gpt-5.4
     prompt_addition: Gather evidence with sources from docs, web, or code. Do not
       change code. Update only the assigned RESEARCH.md section when requested. Return
       the compact schema only.
@@ -131,7 +87,7 @@ roles:
     - researcher
   intern:
     harness_config: pi
-    model: lmstudio/qwen/qwen3.8-27b
+    model: openai-codex/gpt-5.4
     prompt_addition: Focus on the assigned task and return a compact result.
     enabled: true
     env:
@@ -139,7 +95,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   appsec:
     harness_config: pi
-    model: lmstudio/qwen/qwen3.8-27b
+    model: openai-codex/gpt-5.4
     skills:
     - appsec
     prompt_addition: Independently identify realistic vulnerabilities across changed

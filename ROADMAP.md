@@ -14,11 +14,6 @@ Orchestra roadmap items are split into:
    need to know when "/orch off" "/orch on"(no orchestrator skill) and "/orch on" (with orchestrator skill) modes are active.
 
 
-5. [ ] Add machine-readable core contracts for host plugins.
-   - Add JSON output modes or equivalent stable machine contracts for dispatch, status, progress, and session-report operations currently parsed from human-readable CLI text.
-   - Update host plugins to consume those contracts instead of regex/parsing display output.
-   - Preserve human-readable CLI output for users.
-
 6. [ ] Add a multi-step dispatch structure for sequential subagent chains.
    - Support multiple different subagent dispatches in sequence, where each step can depend on the previous step's outcome.
    - Pass return artifacts from one step to the next seamlessly so downstream steps receive upstream evidence without manual re-attachment by the orchestrator session.
