@@ -129,8 +129,7 @@ Current host surfaces are:
 - Hermes plugin: `extensions/hermes/orchestra/__init__.py`
 - OpenCode plugin: `extensions/opencode/orchestra/index.ts`
 - packaged OpenCode asset: `src/orchestra/assets/opencode/orchestra/index.ts`
-- Codex skill-only scaffold: `extensions/codex/orchestra`
-- packaged Codex asset: `src/orchestra/assets/codex/orchestra`
+- Codex placeholder scaffold (manifest only): `extensions/codex/orchestra`
 
 ### Harness connectors
 
@@ -523,14 +522,17 @@ The global plugin target is:
 
 ### Codex
 
-Codex support is currently skill-only. The scaffold teaches Codex to use the
-existing Orchestra CLI while preserving resolved configuration selectors. It
-does not provide trusted runtime session ownership, model-callable Orchestra
-tools, native `/orch` commands, or session-targeted auto-return.
+Codex support is currently a placeholder scaffold with no working host
+capabilities. The shipped `.codex-plugin/plugin.json` declares no tools, MCP
+servers, skills, or commands; it does not provide trusted runtime session
+ownership, model-callable Orchestra tools, native `/orch` commands, or
+session-targeted auto-return. The manifest text states that explicitly so the
+plugin is clearly unavailable rather than silently inert.
 
 The init path installs the scaffold under `~/plugins/orchestra`, maintains the
 personal marketplace entry under `~/.agents/plugins/marketplace.json`, and uses
-Codex's plugin installation command.
+Codex's plugin installation command. Until a real Codex integration exists, the
+orchestra CLI remains usable from the terminal.
 
 ## Installation architecture
 

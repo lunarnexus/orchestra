@@ -1,7 +1,7 @@
 {
   "name": "orchestra",
   "version": "0.1.0",
-  "description": "Codex-facing Orchestra integration for dispatching and supervising subagents.",
+  "description": "Placeholder scaffold for a future Orchestra Codex integration; no working Orchestra host tools or commands are provided yet.",
   "author": {
     "name": "Lunar Nexus"
   },
@@ -10,25 +10,16 @@
   "license": "MIT",
   "keywords": [
     "codex",
-    "orchestra",
-    "subagents",
-    "orchestration"
+    "orchestra"
   ],
   "interface": {
     "displayName": "Orchestra",
-    "shortDescription": "Use Orchestra subagents from Codex.",
-    "longDescription": "Adds Codex integration for Orchestra subagent dispatch, status, history, stop, and report delivery without duplicating orchestration policy in the plugin.",
+    "shortDescription": "Placeholder for a future Orchestra Codex integration.",
+    "longDescription": "Scaffold only. This plugin does not provide model-callable Orchestra tools, /orch commands, or auto-return in Codex yet. The orchestra CLI remains usable from the terminal.",
     "developerName": "Lunar Nexus",
     "category": "Developer Tools",
-    "capabilities": [
-      "MCP"
-    ],
+    "capabilities": [],
     "websiteURL": "https://github.com/lunarnexus/orchestra",
-    "defaultPrompt": [
-      "Use Orchestra to dispatch a builder.",
-      "Check Orchestra worker status.",
-      "Show recent Orchestra history."
-    ],
     "brandColor": "#2563EB"
   }
 }

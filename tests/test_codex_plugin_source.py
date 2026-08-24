@@ -7,35 +7,43 @@ PLUGIN_ROOT = Path("extensions/codex/orchestra")
 MANIFEST_PATH = PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
 
 
-def test_codex_plugin_manifest_is_valid_skill_only_scaffold() -> None:
+def test_codex_plugin_manifest_is_unavailable_scaffold() -> None:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
     assert manifest["name"] == "orchestra"
     assert manifest["version"] == "0.1.0"
-    assert "skills" not in manifest
-    assert "mcpServers" not in manifest
-    assert "apps" not in manifest
-    assert "hooks" not in manifest
-    assert "[TODO:" not in json.dumps(manifest)
+    # No capability surface exists yet; the manifest must not claim one.
+    for key in ("skills", "mcpServers", "apps", "hooks"):
+        assert key not in manifest
 
     interface = manifest["interface"]
     assert interface["displayName"] == "Orchestra"
-    assert interface["shortDescription"] == "Use Orchestra subagents from Codex."
     assert interface["developerName"] == "Lunar Nexus"
     assert interface["category"] == "Developer Tools"
-    assert interface["capabilities"] == ["MCP"]
-    assert len(interface["defaultPrompt"]) == 3
+    assert interface.get("capabilities") in (None, [])
+    # No default prompts: there is nothing for Codex to invoke yet.
+    assert manifest["interface"].get("defaultPrompt") in (None, [])
 
 
-def test_codex_plugin_manifest_describes_cli_oriented_scaffold() -> None:
+def test_codex_plugin_manifest_does_not_advertise_working_capabilities() -> None:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
-    interface = manifest["interface"]
-    assert interface["displayName"] == "Orchestra"
-    assert "subagent dispatch" in interface["longDescription"]
-    assert "report delivery" in interface["longDescription"]
-    assert interface["defaultPrompt"] == [
-        "Use Orchestra to dispatch a builder.",
-        "Check Orchestra worker status.",
-        "Show recent Orchestra history.",
-    ]
+    text = " ".join(
+        [manifest.get("description", ""), *map(str, manifest["interface"].values())]
+    ).lower()
+
+    # The manifest must state that support is a scaffold / not available.
+    assert "scaffold" in text or "placeholder" in text
+    assert "not yet" in text or "no working" in text or "does not provide" in text
+
+    # No claims of working model-callable tools, MCP, or native commands.
+    assert '"mcp"' not in json.dumps(manifest)
+    for claim in ("dispatch", "status,", "history", "stop,", "report delivery"):
+        assert claim not in text
+
+
+def test_codex_plugin_source_tree_has_no_stale_skill_files() -> None:
+    skill_dir = PLUGIN_ROOT / "skills"
+
+    if skill_dir.exists():
+        assert [p for p in skill_dir.rglob("*") if p.is_file()] == []

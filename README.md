@@ -192,7 +192,10 @@ orchestra init opencode
 orchestra init codex
 ```
 
-Then start a normal session in that host and use `/orch`:
+Codex is scaffold-only today: `orchestra init codex` installs a placeholder
+manifest with no working Orchestra tools or `/orch` commands yet.
+
+On Pi, Hermes, or OpenCode, start a normal session and use `/orch`:
 
 ```text
 /orch help
@@ -229,16 +232,16 @@ implementations.
 | Capability | Pi | Hermes | OpenCode | Codex |
 | --- | --- | --- | --- | --- |
 | Install target | `orchestra init pi` | `orchestra init hermes` | `orchestra init opencode` | `orchestra init codex` |
-| Main-session/orchestrator support | Yes | Yes | Yes | Skill-only |
+| Main-session/orchestrator support | Yes | Yes | Yes | Scaffold only (no capabilities) |
 | Can run as a subagent harness | Yes | Yes | Yes | No |
 | `orch_dispatch` tool | Yes | Yes | Yes | No |
 | `orch_status` tool | Yes | Yes | Yes | No |
 | `/orch` interface | Native command | Native command | Prompt template over tools | No |
 | `/orch on` | Yes | Yes | Through `orch_status` | Native skill loading only |
 | `/orch off` | Yes | Yes | No | No |
-| Manual `/orch do` | Yes | Yes | Prompt template | CLI through skill |
-| Role listing | Yes | Yes | Read-only tool view | CLI through skill |
-| Native role updates | Yes | Yes | CLI only | CLI through skill |
+| Manual `/orch do` | Yes | Yes | Prompt template | No (scaffold) |
+| Role listing | Yes | Yes | Read-only tool view | No (scaffold) |
+| Native role updates | Yes | Yes | CLI only | No (scaffold) |
 | Runtime-derived owner identity | Yes | Yes | Yes | Not proven |
 | Session-scoped consolidated auto-return | Yes | Yes | Yes | No |
 | Per-subagent progress notification | Native notification | No supported host API | Toast | No |
