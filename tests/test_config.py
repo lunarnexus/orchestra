@@ -335,9 +335,12 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
         (
             "researcher",
             (
-                "Gather evidence with sources from docs, web, or code. Do not change code. "
-                "Update only the assigned RESEARCH.md section when requested. Return the "
-                "compact schema only."
+                "Answer one bounded evidence question. Stay read-only. Inspect only the "
+                "named docs, files, APIs, or narrow code area needed to answer that "
+                "question. Return concise findings with sources, confidence, gaps, "
+                "blockers, and risks. Update only the assigned RESEARCH.md section when "
+                "explicitly requested. Do not plan, implement, verify, review, or broaden "
+                "scope."
             ),
         ),
         (

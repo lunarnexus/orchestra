@@ -38,7 +38,7 @@ harness_configs:
 roles:
   builder:
     harness_config: pi
-    model: openai-codex/gpt-5.4
+    model: openai-codex/gpt-5.4-mini
     skills:
     - builder
     prompt_addition: Implement the assigned task only. Stay in scope. Run focused
@@ -50,7 +50,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   verifier:
     harness_config: pi
-    model: openai-codex/gpt-5.4
+    model: openai-codex/gpt-5.4-mini
     skills:
     - verifier
     prompt_addition: Independently prove whether the work satisfies its scope and
@@ -87,7 +87,7 @@ roles:
     - researcher
   intern:
     harness_config: pi
-    model: openai-codex/gpt-5.4
+    model: openai-codex/gpt-5.4-mini
     prompt_addition: Focus on the assigned task and return a compact result.
     enabled: true
     env:

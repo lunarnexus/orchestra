@@ -70,12 +70,16 @@ tool_prompt_guidelines:
 tool_goal_description: >-
   One small subagent slice: goal, exact scope, prior artifact/command evidence
   to reuse, commands allowed or forbidden when relevant, stop condition, and
-  return shape.
+  return shape. For researcher, ask one concrete evidence question and name the
+  specific docs, files, APIs, or code area to inspect.
 tool_role_description: >-
   Optional subagent capability. Choose the enabled role that best matches the
   slice. Omit role when no specialized enabled role is a better match than the
-  default. Use distinct roles for independent research, planning, implementation,
-  verification, review, and security judgment. {roles}
+  default. Use researcher only for a specific unanswered fact or evidence gap
+  that can change scope, design, ordering, verification, risk, or blockers. The
+  goal should name the exact question and source scope. Use builder for code
+  changes, verifier for acceptance checks, reviewer for quality judgment, and
+  appsec for security judgment. {roles}
 tool_task_label_description: Optional short request label.
 status_description: >-
   Use orch_status only when the user explicitly asks for an Orchestra
