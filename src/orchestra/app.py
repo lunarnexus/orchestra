@@ -1217,7 +1217,7 @@ def status_payload(context: AppContext, session_id: str | None = None) -> dict[s
         "kind": "status",
         "ok": True,
         "scope": "global" if session_id is None else "session",
-        "main_session_mode": (
+        "orchestra_tools": (
             default_main_session_mode(context)
             if session_id is None
             else resolve_main_session_mode(context, session_id)
@@ -1294,10 +1294,10 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
     model_limits = context.catalog.model_limits
     if session_id is None:
         lines = [
+            f"orchestra_tools: {default_main_session_mode(context)}",
             "scope: global",
             f"active_runs: {len(global_runs)}/{global_limit}",
             f"global_active_runs: {len(global_runs)}/{global_limit}",
-            f"main_session_mode: {default_main_session_mode(context)}",
         ]
         if model_limits:
             lines.append("model_active_runs:")
@@ -1316,7 +1316,10 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
     _require_session_id(session_id)
     lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
     runs = _list_active_runs_for_session_ids(context, lineage_session_ids)
-    lines = [f"session_id: {session_id}"]
+    lines = [
+        f"orchestra_tools: {resolve_main_session_mode(context, session_id)}",
+        f"session_id: {session_id}",
+    ]
     if len(lineage_session_ids) > 1:
         lines.append(f"lineage_current_session_id: {lineage_session_ids[-1]}")
         lines.append(f"lineage_session_ids: {', '.join(lineage_session_ids)}")
@@ -1324,7 +1327,6 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
         [
             f"active_runs: {len(runs)}/{per_session_limit}",
             f"global_active_runs: {len(global_runs)}/{global_limit}",
-            f"main_session_mode: {resolve_main_session_mode(context, session_id)}",
         ]
     )
     if model_limits:

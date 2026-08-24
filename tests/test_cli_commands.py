@@ -711,10 +711,10 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
     )
 
     assert format_status(context, "manual:test-session").splitlines()[:11] == [
+        "orchestra_tools: on",
         "session_id: manual:test-session",
         "active_runs: 1/2",
         "global_active_runs: 1/4",
-        "main_session_mode: on",
         "model_active_runs:",
         "- lmstudio/qwen: 1/1",
         "descendants_terminal: no",
@@ -724,10 +724,10 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
         '- run-1 builder running task="test task"',
     ]
     assert format_status(context).splitlines()[:8] == [
+        "orchestra_tools: on",
         "scope: global",
         "active_runs: 1/4",
         "global_active_runs: 1/4",
-        "main_session_mode: on",
         "model_active_runs:",
         "- lmstudio/qwen: 1/1",
         "active:",
@@ -814,7 +814,7 @@ def _set_tools_enabled_by_default(config_path: Path, enabled: bool) -> None:
     config_path.write_text(yaml.safe_dump(data), encoding="utf-8")
 
 
-def test_status_prose_and_json_include_resolved_main_session_mode(
+def test_status_prose_and_json_include_resolved_orchestra_tools(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
@@ -830,7 +830,7 @@ def test_status_prose_and_json_include_resolved_main_session_mode(
 
     status_exit = main(["--config", str(config_path), "status"])
     assert status_exit == 0
-    assert "main_session_mode: on" in capsys.readouterr().out
+    assert capsys.readouterr().out.splitlines()[0] == "orchestra_tools: on"
 
     json_exit = main(
         ["--config", str(config_path), "status", "--json"]
@@ -838,7 +838,8 @@ def test_status_prose_and_json_include_resolved_main_session_mode(
     payload = json.loads(capsys.readouterr().out)
 
     assert json_exit == 0
-    assert payload["main_session_mode"] == "on"
+    assert payload["orchestra_tools"] == "on"
+    assert "main_session_mode" not in payload
 
     session_exit = main(
         [
@@ -850,7 +851,7 @@ def test_status_prose_and_json_include_resolved_main_session_mode(
         ]
     )
     assert session_exit == 0
-    assert "main_session_mode: on" in capsys.readouterr().out
+    assert capsys.readouterr().out.splitlines()[0] == "orchestra_tools: on"
 
 
 def test_bare_status_reports_config_resolved_default_when_disabled(
@@ -870,7 +871,7 @@ def test_bare_status_reports_config_resolved_default_when_disabled(
 
     status_exit = main(["--config", str(config_path), "status"])
     assert status_exit == 0
-    assert "main_session_mode: off" in capsys.readouterr().out
+    assert capsys.readouterr().out.splitlines()[0] == "orchestra_tools: off"
 
     json_exit = main(
         ["--config", str(config_path), "status", "--json"]
@@ -878,7 +879,7 @@ def test_bare_status_reports_config_resolved_default_when_disabled(
     payload = json.loads(capsys.readouterr().out)
 
     assert json_exit == 0
-    assert payload["main_session_mode"] == "off"
+    assert payload["orchestra_tools"] == "off"
 
 
 def test_session_mode_set_get_roundtrip_and_status_resolution(
@@ -959,11 +960,11 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
     status_payload = json.loads(capsys.readouterr().out)
 
     assert status_json_exit == 0
-    assert status_payload["main_session_mode"] == "orchestrator"
+    assert status_payload["orchestra_tools"] == "orchestrator"
 
     bare_status_exit = main(["--config", str(config_path), "status"])
     assert bare_status_exit == 0
-    assert "main_session_mode: off" in capsys.readouterr().out
+    assert capsys.readouterr().out.splitlines()[0] == "orchestra_tools: off"
 
 
 def test_session_mode_set_invalid_mode_errors_cleanly(
