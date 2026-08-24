@@ -211,9 +211,16 @@ Pi subagents use deterministic `orchestra-worker-<run-id>` session IDs stored as
 `worker_session_id`. Internal compatibility names may retain `worker`; public
 documentation calls launched agents subagents.
 
-Stop, approval routing, report delivery, and other control operations use the
-stored exact owner ID. Identity is never derived from prompts, model output,
-working directory, user identity, process ancestry, recency, or host window.
+Stop, approval routing, report delivery, mode tracking, and other control
+operations use the stored exact owner ID. Identity is never derived from prompts,
+model output, working directory, user identity, process ancestry, recency, or host
+window.
+
+Core also stores main-session orchestration mode per session id. Runtime mode is
+`off`, `on`, or `orchestrator`; absent session-mode state resolves from
+`config.yaml` `tools_enabled_by_default`. Host adapters update this state through
+the internal `_session-mode` command when `/orch off`, `/orch on`, or
+orchestrator activation changes the session mode.
 
 Hermes context compression can create parent/child continuation sessions.
 Stored ownership remains exact. Read-only status and history may resolve known
@@ -287,6 +294,7 @@ Runtime settings, including:
 - per-model limits where configured
 - required default timeout
 - host/runtime defaults
+- whether Orchestra tools are enabled by default in host sessions via `tools_enabled_by_default`
 
 ### `prompts.yaml`
 

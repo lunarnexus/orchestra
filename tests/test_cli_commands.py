@@ -110,6 +110,7 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
                 )
             ],
             reserve_run=reserve_run,
+            get_main_session_state=lambda session_id=None: None,
         ),
     )
     context = AppContext(
@@ -695,7 +696,13 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
             Any,
             SimpleNamespace(model_limits={"lmstudio/qwen": ModelLimitConfig(concurrency=1)}),
         ),
-        store=cast(Any, SimpleNamespace(list_active_runs=lambda session_id=None: [active_run])),
+        store=cast(
+            Any,
+            SimpleNamespace(
+                list_active_runs=lambda session_id=None: [active_run],
+                get_main_session_state=lambda session_id=None: None,
+            ),
+        ),
         registry=cast(Any, SimpleNamespace()),
         paths=OrchestraPaths(
             config_path=Path("/tmp/config.yaml"),
@@ -703,10 +710,11 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
         ),
     )
 
-    assert format_status(context, "manual:test-session").splitlines()[:10] == [
+    assert format_status(context, "manual:test-session").splitlines()[:11] == [
         "session_id: manual:test-session",
         "active_runs: 1/2",
         "global_active_runs: 1/4",
+        "main_session_mode: on",
         "model_active_runs:",
         "- lmstudio/qwen: 1/1",
         "descendants_terminal: no",
@@ -715,10 +723,11 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
         "active:",
         '- run-1 builder running task="test task"',
     ]
-    assert format_status(context).splitlines()[:7] == [
+    assert format_status(context).splitlines()[:8] == [
         "scope: global",
         "active_runs: 1/4",
         "global_active_runs: 1/4",
+        "main_session_mode: on",
         "model_active_runs:",
         "- lmstudio/qwen: 1/1",
         "active:",
@@ -797,6 +806,197 @@ def test_status_without_session_id_reports_global_active_runs(
     assert "owner=manual:second" in status_output
     assert first_run_id in status_output
     assert second_run_id in status_output
+
+
+def _set_tools_enabled_by_default(config_path: Path, enabled: bool) -> None:
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    data["tools_enabled_by_default"] = enabled
+    config_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+def test_status_prose_and_json_include_resolved_main_session_mode(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, catalog_path, _ = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success"],
+    )
+
+    from orchestra.cli import main
+
+    status_exit = main(["--config", str(config_path), "status"])
+    assert status_exit == 0
+    assert "main_session_mode: on" in capsys.readouterr().out
+
+    json_exit = main(
+        ["--config", str(config_path), "status", "--json"]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert json_exit == 0
+    assert payload["main_session_mode"] == "on"
+
+    session_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "status",
+            "--session-id",
+            "manual:mode-session",
+        ]
+    )
+    assert session_exit == 0
+    assert "main_session_mode: on" in capsys.readouterr().out
+
+
+def test_bare_status_reports_config_resolved_default_when_disabled(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, catalog_path, _ = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success"],
+    )
+    _set_tools_enabled_by_default(config_path, False)
+
+    from orchestra.cli import main
+
+    status_exit = main(["--config", str(config_path), "status"])
+    assert status_exit == 0
+    assert "main_session_mode: off" in capsys.readouterr().out
+
+    json_exit = main(
+        ["--config", str(config_path), "status", "--json"]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert json_exit == 0
+    assert payload["main_session_mode"] == "off"
+
+
+def test_session_mode_set_get_roundtrip_and_status_resolution(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, catalog_path, _ = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success"],
+    )
+    _set_tools_enabled_by_default(config_path, False)
+
+    from orchestra.cli import main
+
+    set_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "_session-mode",
+            "set",
+            "--session-id",
+            "manual:mode-session",
+            "--mode",
+            "orchestrator",
+        ]
+    )
+    assert set_exit == 0
+    capsys.readouterr()
+
+    get_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "_session-mode",
+            "get",
+            "--session-id",
+            "manual:mode-session",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert get_exit == 0
+    assert payload["session_id"] == "manual:mode-session"
+    assert payload["main_session_mode"] == "orchestrator"
+    assert payload["explicit_main_session_mode"] == "orchestrator"
+
+    other_get_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "_session-mode",
+            "get",
+            "--session-id",
+            "manual:other-session",
+            "--json",
+        ]
+    )
+    other_payload = json.loads(capsys.readouterr().out)
+
+    assert other_get_exit == 0
+    assert other_payload["main_session_mode"] == "off"
+    assert other_payload["explicit_main_session_mode"] is None
+
+    status_json_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "status",
+            "--session-id",
+            "manual:mode-session",
+            "--json",
+        ]
+    )
+    status_payload = json.loads(capsys.readouterr().out)
+
+    assert status_json_exit == 0
+    assert status_payload["main_session_mode"] == "orchestrator"
+
+    bare_status_exit = main(["--config", str(config_path), "status"])
+    assert bare_status_exit == 0
+    assert "main_session_mode: off" in capsys.readouterr().out
+
+
+def test_session_mode_set_invalid_mode_errors_cleanly(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, catalog_path, _ = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success"],
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "_session-mode",
+            "set",
+            "--session-id",
+            "manual:mode-session",
+            "--mode",
+            "maybe",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "invalid main session mode" in output
+    assert "Traceback" not in output
 
 
 def test_stop_command_enforces_ownership(
@@ -1637,7 +1837,108 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert tool_info["dispatchTimeoutError"] == (
         "timeout is not accepted by orch_dispatch; configured default_timeout applies."
     )
+    assert tool_info["budgetTriggerLabel"] == "Budget trigger"
+    assert tool_info["softTimeoutBlockReason"] == (
+        "Orchestra soft timeout reached; return budget handoff"
+    )
     assert "timeoutDescription" not in tool_info
+
+
+def _write_tool_info_fixture(
+    tmp_path: Path,
+    config_extra: dict[str, object] | None = None,
+) -> tuple[Path, Path]:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_body: dict[str, object] = {
+        "state_dir": str(tmp_path / "state"),
+        "log_dir": str(tmp_path / "logs"),
+        "default_timeout": 600,
+    }
+    if config_extra:
+        config_body.update(config_extra)
+    config_path.write_text(yaml.safe_dump(config_body), encoding="utf-8")
+    write_root_prompts(prompts_path)
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "worker",
+                "harness_configs": {
+                    "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                },
+                "roles": {
+                    "worker": {"harness_config": "pi"},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return config_path, catalog_path
+
+
+def test_tool_info_exposes_tools_default_and_resolved_session_mode(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from orchestra.cli import main
+
+    config_path, catalog_path = _write_tool_info_fixture(tmp_path)
+    base_args = ["--config", str(config_path), "--agent-catalog", str(catalog_path)]
+
+    exit_code = main([*base_args, "_tool-info"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["toolsEnabledByDefault"] is True
+    assert payload["mainSessionMode"] == "on"
+    # Existing tool-info fields remain intact.
+    for key in (
+        "description",
+        "promptSnippet",
+        "statusDescription",
+        "dispatchTimeoutError",
+    ):
+        assert key in payload
+
+    set_exit = main(
+        [*base_args, "_session-mode", "set", "--session-id", "pi:s1", "--mode", "orchestrator"]
+    )
+    capsys.readouterr()
+    assert set_exit == 0
+
+    exit_code = main([*base_args, "_tool-info", "--session-id", "pi:s1"])
+    resolved = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert resolved["mainSessionMode"] == "orchestrator"
+    assert resolved["toolsEnabledByDefault"] is True
+
+    # Without a session id the config-resolved default still applies.
+    exit_code = main([*base_args, "_tool-info"])
+    fallback = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert fallback["mainSessionMode"] == "on"
+
+
+def test_tool_info_reflects_disabled_tools_default(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from orchestra.cli import main
+
+    config_path, catalog_path = _write_tool_info_fixture(
+        tmp_path, {"tools_enabled_by_default": False}
+    )
+
+    exit_code = main(
+        ["--config", str(config_path), "--agent-catalog", str(catalog_path), "_tool-info"]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["toolsEnabledByDefault"] is False
+    assert payload["mainSessionMode"] == "off"
 
 
 def test_disabled_role_is_rejected_without_fallback(

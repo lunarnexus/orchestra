@@ -16,6 +16,7 @@ from orchestra.app import (
     await_session_report,
     await_session_report_payload,
     consume_pending_session_report,
+    default_main_session_mode,
     dispatch_ack_payload,
     doctor_checks_pass,
     format_command_echo,
@@ -37,14 +38,17 @@ from orchestra.app import (
     init_opencode,
     init_pi,
     load_context,
+    main_session_state_payload,
     mark_session_report_delivered,
     progress_notification_payload,
     release_session_report,
     render_orchestrator_skill_message,
+    resolve_main_session_mode,
     role_metadata,
     run_doctor,
     run_supervisor_guarded,
     session_report_payload,
+    set_main_session_mode,
     set_role_setting,
     start_run,
     started_run_payload,
@@ -68,6 +72,7 @@ INTERNAL_COMMANDS = frozenset(
         "_dispatch-ack",
         "_progress-message",
         "_command-echo",
+        "_session-mode",
         "_tool-info",
         "_role-metadata",
         "_orchestrator-skill",
@@ -312,7 +317,31 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         echo_parser.add_argument("raw_command")
         echo_parser.set_defaults(handler=_handle_command_echo)
 
+        session_mode_parser = subparsers.add_parser(
+            "_session-mode",
+            help=argparse.SUPPRESS,
+        )
+        session_mode_subparsers = session_mode_parser.add_subparsers(
+            dest="session_mode_action",
+            metavar="ACTION",
+            required=True,
+        )
+        session_mode_set_parser = session_mode_subparsers.add_parser("set")
+        session_mode_set_parser.add_argument("--session-id", required=True)
+        session_mode_set_parser.add_argument("--mode", required=True)
+        session_mode_set_parser.set_defaults(handler=_handle_session_mode)
+
+        session_mode_get_parser = session_mode_subparsers.add_parser("get")
+        session_mode_get_parser.add_argument("--session-id", required=True)
+        session_mode_get_parser.add_argument("--json", action="store_true")
+        session_mode_get_parser.set_defaults(handler=_handle_session_mode)
+
         tool_info_parser = subparsers.add_parser("_tool-info", help=argparse.SUPPRESS)
+        tool_info_parser.add_argument(
+            "--session-id",
+            default=None,
+            help="optional session id for resolving main_session_mode",
+        )
         tool_info_parser.set_defaults(handler=_handle_tool_info)
 
         role_metadata_parser = subparsers.add_parser("_role-metadata", help=argparse.SUPPRESS)
@@ -376,9 +405,13 @@ def _handle_do(args: argparse.Namespace) -> int:
         batch_id=args.batch_id,
     )
     if args.json:
-        print(json.dumps(started_run_payload(started)))
+        print(
+            json.dumps(
+                started_run_payload(started, prompts=context.config.prompts)
+            )
+        )
     else:
-        print(format_started_run(started))
+        print(format_started_run(started, prompts=context.config.prompts))
     return 0
 
 
@@ -391,10 +424,27 @@ def _handle_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_session_mode(args: argparse.Namespace) -> int:
+    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    if not args.session_id.strip():
+        raise AppError("session_id is required")
+    action = args.session_mode_action
+    if action == "set":
+        state = set_main_session_mode(context, args.session_id, args.mode)
+        print(f"main_session_mode: {state.main_session_mode}")
+        return 0
+    payload = main_session_state_payload(context, args.session_id)
+    if getattr(args, "json", False):
+        print(json.dumps(payload))
+    else:
+        print(f"main_session_mode: {payload['main_session_mode']}")
+    return 0
+
+
 def _handle_stop(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
     record = stop_run(context, args.session_id, args.run_id)
-    print(format_run_report(record))
+    print(format_run_report(record, prompts=context.config.prompts))
     return 0
 
 
@@ -535,6 +585,11 @@ def _handle_command_echo(args: argparse.Namespace) -> int:
 def _handle_tool_info(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
     info = tool_info(context)
+    session_id = args.session_id
+    if session_id and session_id.strip():
+        main_session_mode = resolve_main_session_mode(context, session_id)
+    else:
+        main_session_mode = default_main_session_mode(context)
     print(
         json.dumps(
             {
@@ -552,6 +607,10 @@ def _handle_tool_info(args: argparse.Namespace) -> int:
                 "statusSettingDescription": info.status_setting_description,
                 "statusValueDescription": info.status_value_description,
                 "dispatchTimeoutError": info.dispatch_timeout_error,
+                "budgetTriggerLabel": info.budget_trigger_label,
+                "softTimeoutBlockReason": info.soft_timeout_block_reason,
+                "toolsEnabledByDefault": info.tools_enabled_by_default,
+                "mainSessionMode": main_session_mode,
             }
         )
     )
@@ -661,6 +720,7 @@ def _handle_await_run(args: argparse.Namespace) -> int:
                     record,
                     active_remaining=active_remaining,
                     details=details,
+                    prompts=context.config.prompts,
                 )
             )
         )
@@ -676,10 +736,7 @@ def _handle_await_run(args: argparse.Namespace) -> int:
     if record.blocker_text:
         print(f"blocker: {record.blocker_text}")
     if record.status == "incomplete":
-        print(
-            "next: redispatch a smaller continuation task from this handoff; "
-            "do not redo completed work"
-        )
+        print(f"next: {context.config.prompts.return_hint_incomplete}")
     print(f"active_runs_remaining: {active_remaining}")
     print(f"descendants_terminal: {'yes' if details.descendants_terminal else 'no'}")
     print(f"session_report_available: {'yes' if details.session_report_available else 'no'}")

@@ -20,10 +20,14 @@ from pathlib import Path
 import yaml
 
 from orchestra.config import (
+    DEFAULT_RETURN_HINT_DONE,
+    DEFAULT_RETURN_HINT_FAILED,
+    DEFAULT_RETURN_HINT_INCOMPLETE,
     AgentCatalog,
     AppConfig,
     ConfigError,
     ModelLimitConfig,
+    PromptConfig,
     RoleConfig,
     default_pi_orchestra_dir,
     load_agent_catalog,
@@ -51,6 +55,8 @@ from orchestra.harnesses.processes import process_group_id
 from orchestra.logs import append_run_event, utc_now
 from orchestra.state import (
     ACTIVE_STATUSES,
+    MAIN_SESSION_MODE_OFF,
+    MAIN_SESSION_MODE_ON,
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_FAILED,
@@ -58,6 +64,7 @@ from orchestra.state import (
     STATUS_QUEUED,
     STATUS_RUNNING,
     ConcurrencyLimitError,
+    MainSessionState,
     RunRecord,
     RunUpdate,
     StateStore,
@@ -193,6 +200,9 @@ class ToolInfo:
     status_setting_description: str
     status_value_description: str
     dispatch_timeout_error: str
+    budget_trigger_label: str
+    soft_timeout_block_reason: str
+    tools_enabled_by_default: bool
 
 
 @dataclass(frozen=True)
@@ -266,6 +276,49 @@ def load_context(
         registry=resolved_registry,
         paths=OrchestraPaths(config_path=config_file, catalog_path=catalog_file),
     )
+
+
+def set_main_session_mode(context: AppContext, session_id: str, mode: str) -> MainSessionState:
+    return context.store.set_main_session_mode(session_id, mode)
+
+
+def get_main_session_state(
+    context: AppContext,
+    session_id: str,
+) -> MainSessionState | None:
+    return context.store.get_main_session_state(session_id)
+
+
+def default_main_session_mode(context: AppContext) -> str:
+    return (
+        MAIN_SESSION_MODE_ON
+        if context.config.tools_enabled_by_default
+        else MAIN_SESSION_MODE_OFF
+    )
+
+
+def resolve_main_session_mode(context: AppContext, session_id: str) -> str:
+    state = context.store.get_main_session_state(session_id)
+    if state is not None:
+        return state.main_session_mode
+    return default_main_session_mode(context)
+
+
+def main_session_state_payload(
+    context: AppContext,
+    session_id: str,
+) -> dict[str, object]:
+    _require_session_id(session_id)
+    state = get_main_session_state(context, session_id)
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "kind": "main_session_state",
+        "ok": True,
+        "session_id": session_id,
+        "main_session_mode": resolve_main_session_mode(context, session_id),
+        "explicit_main_session_mode": None if state is None else state.main_session_mode,
+        "updated_at": None if state is None else state.updated_at,
+    }
 
 
 def start_run(
@@ -546,7 +599,11 @@ def stop_run(context: AppContext, session_id: str, run_id: str) -> RunRecord:
     return cancelled
 
 
-def format_run_report(record: RunRecord) -> str:
+def format_run_report(
+    record: RunRecord,
+    *,
+    prompts: PromptConfig | None = None,
+) -> str:
     lines = [
         f"run_id: {record.run_id}",
         f"status: {record.status}",
@@ -582,11 +639,13 @@ def format_run_report(record: RunRecord) -> str:
         lines.append(f"error: {record.error_text}")
     if record.blocker_text:
         lines.append(f"blocker: {record.blocker_text}")
+    hint = (
+        prompts.return_hint_incomplete
+        if prompts is not None
+        else DEFAULT_RETURN_HINT_INCOMPLETE
+    )
     if record.status == STATUS_INCOMPLETE:
-        lines.append(
-            "next: redispatch a smaller continuation task from this handoff; "
-            "do not redo completed work"
-        )
+        lines.append(f"next: {hint}")
     if record.worker_session_id:
         lines.append(f"worker_session_id: {record.worker_session_id}")
     if record.transcript_path:
@@ -594,9 +653,13 @@ def format_run_report(record: RunRecord) -> str:
     return "\n".join(lines)
 
 
-def format_started_run(started: StartedRun) -> str:
+def format_started_run(
+    started: StartedRun,
+    *,
+    prompts: PromptConfig | None = None,
+) -> str:
     lines = [
-        format_run_report(started.record),
+        format_run_report(started.record, prompts=prompts),
         f"timeout_seconds: {started.timeout_seconds}",
         f"request_file: {started.request_file}",
         "dispatch: queued for supervision",
@@ -604,7 +667,11 @@ def format_started_run(started: StartedRun) -> str:
     return "\n".join(lines)
 
 
-def started_run_payload(started: StartedRun) -> dict[str, object]:
+def started_run_payload(
+    started: StartedRun,
+    *,
+    prompts: PromptConfig | None = None,
+) -> dict[str, object]:
     return {
         "contract_version": CONTRACT_VERSION,
         "kind": "dispatch",
@@ -614,7 +681,7 @@ def started_run_payload(started: StartedRun) -> dict[str, object]:
         "status": started.record.status,
         "timeout_seconds": started.timeout_seconds,
         "request_file": str(started.request_file),
-        "message": format_started_run(started),
+        "message": format_started_run(started, prompts=prompts),
     }
 
 
@@ -699,7 +766,11 @@ def clean_result_summary(summary: str | None) -> str:
     return cleaned or "-"
 
 
-def format_orchestrator_return(runs: list[RunRecord]) -> str:
+def format_orchestrator_return(
+    runs: list[RunRecord],
+    *,
+    prompts: PromptConfig | None = None,
+) -> str:
     if not runs:
         return "[orchestra: all background processes returned]"
     blocks = []
@@ -711,7 +782,7 @@ def format_orchestrator_return(runs: list[RunRecord]) -> str:
         ]
         if run.result_artifact_path:
             lines.append(f"artifact: {run.result_artifact_path}")
-        hint = _return_hint(run)
+        hint = _return_hint(run, prompts=prompts)
         if hint:
             lines.append(f"next: {hint}")
         if outcome != "success":
@@ -725,14 +796,20 @@ def format_orchestrator_return(runs: list[RunRecord]) -> str:
     return f"[orchestra: {len(runs)} subagents returned]\n\n{report}"
 
 
-def _return_hint(run: RunRecord) -> str | None:
+def _return_hint(run: RunRecord, *, prompts: PromptConfig | None = None) -> str | None:
     if run.status == STATUS_DONE:
-        return "advance the plan using this subagent return; do not repeat its work"
+        return (
+            prompts.return_hint_done if prompts is not None else DEFAULT_RETURN_HINT_DONE
+        )
     if run.status == STATUS_INCOMPLETE:
-        return "redispatch from the continuation handoff; preserve completed work"
+        return (
+            prompts.return_hint_incomplete
+            if prompts is not None
+            else DEFAULT_RETURN_HINT_INCOMPLETE
+        )
     if run.status == STATUS_CANCELLED:
         return None
-    return "inspect the debug trace and dispatch one targeted recovery"
+    return prompts.return_hint_failed if prompts is not None else DEFAULT_RETURN_HINT_FAILED
 
 
 def _format_run_summary(run: RunRecord) -> str:
@@ -778,7 +855,7 @@ def pending_session_report(context: AppContext, session_id: str) -> SessionRepor
         return None
     return SessionReport(
         run_ids=[run.run_id for run in runs],
-        text=format_orchestrator_return(runs),
+        text=format_orchestrator_return(runs, prompts=context.config.prompts),
     )
 
 
@@ -803,7 +880,7 @@ def consume_pending_session_report(context: AppContext, session_id: str) -> str 
     runs = context.store.consume_pending_report_runs(session_id)
     if not runs:
         return None
-    return format_orchestrator_return(runs)
+    return format_orchestrator_return(runs, prompts=context.config.prompts)
 
 
 def await_run_terminal_status(
@@ -1103,6 +1180,7 @@ def await_run_payload(
     *,
     active_remaining: int,
     details: SessionStatusDetails,
+    prompts: PromptConfig | None = None,
 ) -> dict[str, object]:
     return {
         "contract_version": CONTRACT_VERSION,
@@ -1116,7 +1194,7 @@ def await_run_payload(
         "error": record.error_text,
         "blocker": record.blocker_text,
         "next": (
-            "redispatch a smaller continuation task from this handoff; do not redo completed work"
+            _return_hint(record, prompts=prompts)
             if record.status == STATUS_INCOMPLETE
             else None
         ),
@@ -1132,11 +1210,18 @@ def status_payload(context: AppContext, session_id: str | None = None) -> dict[s
     global_runs = context.store.list_active_runs()
     global_limit = context.config.concurrency.global_limit
     per_session_limit = context.config.concurrency.per_session_limit
+    if session_id is not None:
+        _require_session_id(session_id)
     payload: dict[str, object] = {
         "contract_version": CONTRACT_VERSION,
         "kind": "status",
         "ok": True,
         "scope": "global" if session_id is None else "session",
+        "main_session_mode": (
+            default_main_session_mode(context)
+            if session_id is None
+            else resolve_main_session_mode(context, session_id)
+        ),
         "active_runs": {
             "count": len(global_runs) if session_id is None else 0,
             "limit": global_limit if session_id is None else per_session_limit,
@@ -1165,7 +1250,6 @@ def status_payload(context: AppContext, session_id: str | None = None) -> dict[s
         }
         return payload
 
-    _require_session_id(session_id)
     lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
     runs = _list_active_runs_for_session_ids(context, lineage_session_ids)
     role_counts: dict[str, int] = {}
@@ -1213,6 +1297,7 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
             "scope: global",
             f"active_runs: {len(global_runs)}/{global_limit}",
             f"global_active_runs: {len(global_runs)}/{global_limit}",
+            f"main_session_mode: {default_main_session_mode(context)}",
         ]
         if model_limits:
             lines.append("model_active_runs:")
@@ -1239,6 +1324,7 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
         [
             f"active_runs: {len(runs)}/{per_session_limit}",
             f"global_active_runs: {len(global_runs)}/{global_limit}",
+            f"main_session_mode: {resolve_main_session_mode(context, session_id)}",
         ]
     )
     if model_limits:
@@ -1462,6 +1548,9 @@ def tool_info(context: AppContext) -> ToolInfo:
         status_setting_description=prompts.status_setting_description,
         status_value_description=prompts.status_value_description,
         dispatch_timeout_error=DISPATCH_TIMEOUT_ERROR,
+        budget_trigger_label=prompts.budget_trigger_label,
+        soft_timeout_block_reason=prompts.soft_timeout_block_reason,
+        tools_enabled_by_default=context.config.tools_enabled_by_default,
     )
 
 
@@ -1534,7 +1623,12 @@ def format_debug_session(context: AppContext, session_id: str, limit: int = 20) 
 
 
 def _format_debug_bundle(context: AppContext, record: RunRecord) -> str:
-    sections = ["# Orchestra debug bundle", "", "## Run state", format_run_report(record)]
+    sections = [
+        "# Orchestra debug bundle",
+        "",
+        "## Run state",
+        format_run_report(record, prompts=context.config.prompts),
+    ]
     request_path = context.config.state_dir / "requests" / f"{record.run_id}.json"
     sections.append(_debug_file_section("Request", request_path))
     sections.append(_debug_file_section("Lifecycle log", record.log_path))

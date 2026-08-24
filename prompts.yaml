@@ -92,6 +92,8 @@ status_run_id_description: Required run id when action=stop.
 status_role_description: Reserved for compatibility; action=roles lists all configured roles.
 status_setting_description: Reserved for role updates; model-callable roles are read-only for now.
 status_value_description: Reserved for role updates; model-callable roles are read-only for now.
+budget_trigger_label: Budget trigger
+soft_timeout_block_reason: Orchestra soft timeout reached; return budget handoff
 budget_exceeded_prompt: |-
   [Orchestra subagent budget exceeded]
   Stop everything you're doing immediately.
@@ -135,6 +137,9 @@ budget_exceeded_prompt: |-
 
   Caller guidance:
   - Tell the calling agent to redispatch from this handoff rather than restarting completed work.
+return_hint_done: advance the plan using this subagent return; do not repeat its work
+return_hint_incomplete: redispatch from the continuation handoff; preserve completed work
+return_hint_failed: inspect the debug trace and dispatch one targeted recovery
 host_help: |-
   Orchestra commands:
     /orch help                         Show this help

@@ -5,7 +5,15 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestra.app import consume_pending_session_report, format_orchestrator_return, load_context
+from orchestra.app import (
+    SessionStatusDetails,
+    await_run_payload,
+    consume_pending_session_report,
+    format_orchestrator_return,
+    format_run_report,
+    load_context,
+)
+from orchestra.config import load_app_config
 from orchestra.state import (
     STATUS_CANCELLED,
     STATUS_DONE,
@@ -14,7 +22,7 @@ from orchestra.state import (
     RunRecord,
     StateStore,
 )
-from tests.helpers import extract_run_id, run_cli, wait_for_condition
+from tests.helpers import ROOT_PROMPTS, extract_run_id, run_cli, wait_for_condition
 from tests.types import RuntimeFilesFactory
 
 
@@ -58,6 +66,82 @@ def test_return_gives_status_owned_hint(
         assert "next:" not in report
     else:
         assert f"next: {expected_hint}" in report
+
+
+def test_return_hints_come_from_prompts_yaml(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    prompts_path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
+    data = yaml.safe_load(prompts_path.read_text(encoding="utf-8"))
+    data["return_hint_done"] = "custom done hint from prompts"
+    data["return_hint_incomplete"] = "custom incomplete hint from prompts"
+    data["return_hint_failed"] = "custom failed hint from prompts"
+    prompts_path.write_text(
+        yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
+    )
+    config_path.write_text("default_timeout: 30\n", encoding="utf-8")
+
+    config = load_app_config(config_path)
+    assert config.prompts.return_hint_done == "custom done hint from prompts"
+    assert (
+        config.prompts.return_hint_incomplete
+        == "custom incomplete hint from prompts"
+    )
+    assert config.prompts.return_hint_failed == "custom failed hint from prompts"
+
+    def record(status: str) -> RunRecord:
+        return RunRecord(
+            run_id="hint-run",
+            orchestrator_session_id="manual:hints-config",
+            harness="pi",
+            role="builder",
+            task_label="config hint test",
+            log_path=tmp_path / "hint-run.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+            status=status,
+        )
+
+    for status in (STATUS_DONE, STATUS_INCOMPLETE, STATUS_FAILED):
+        report = format_orchestrator_return(
+            [record(status)], prompts=config.prompts
+        )
+        expected = {
+            STATUS_DONE: "custom done hint from prompts",
+            STATUS_INCOMPLETE: "custom incomplete hint from prompts",
+            STATUS_FAILED: "custom failed hint from prompts",
+        }[status]
+        assert f"next: {expected}" in report
+
+    run_report = format_run_report(
+        record(STATUS_INCOMPLETE), prompts=config.prompts
+    )
+    assert "next: custom incomplete hint from prompts" in run_report
+
+    payload = await_run_payload(
+        record(STATUS_INCOMPLETE),
+        active_remaining=0,
+        details=SessionStatusDetails(
+            descendants_terminal=True,
+            session_report_available=False,
+            session_report_delivered=False,
+        ),
+        prompts=config.prompts,
+    )
+    assert payload["next"] == "custom incomplete hint from prompts"
+
+    done_payload = await_run_payload(
+        record(STATUS_DONE),
+        active_remaining=0,
+        details=SessionStatusDetails(
+            descendants_terminal=True,
+            session_report_available=False,
+            session_report_delivered=False,
+        ),
+        prompts=config.prompts,
+    )
+    assert done_payload["next"] is None
 
 
 def test_consolidated_report_includes_all_unreported_terminal_runs(

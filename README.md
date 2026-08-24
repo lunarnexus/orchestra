@@ -278,7 +278,9 @@ Most customization happens in `agent-catalog.yaml`:
 - role budgets
 - enabled and disabled roles
 
-`config.yaml` controls runtime paths, timeouts, auto-return, and concurrency.
+`config.yaml` controls runtime paths, timeouts, auto-return, concurrency, and
+whether Orchestra tools are enabled by default in host sessions with
+`tools_enabled_by_default`.
 `prompts.yaml` contains shared tool descriptions, help text, prompt labels, and
 return formats so host adapters do not carry inconsistent copies.
 

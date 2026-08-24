@@ -12,6 +12,9 @@ import pytest
 
 from orchestra.logs import append_jsonl_event
 from orchestra.state import (
+    MAIN_SESSION_MODE_OFF,
+    MAIN_SESSION_MODE_ON,
+    MAIN_SESSION_MODE_ORCHESTRATOR,
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_FAILED,
@@ -53,7 +56,133 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == 9
+    assert row[0] == 10
+
+
+def test_set_and_get_main_session_mode_round_trip(state_store: StateStore) -> None:
+    off = state_store.set_main_session_mode("pi:session-a", MAIN_SESSION_MODE_OFF)
+
+    assert off.session_id == "pi:session-a"
+    assert off.main_session_mode == MAIN_SESSION_MODE_OFF
+    assert off.updated_at is not None
+
+    loaded = state_store.get_main_session_state("pi:session-a")
+    assert loaded == off
+    for mode in (MAIN_SESSION_MODE_ON, MAIN_SESSION_MODE_ORCHESTRATOR):
+        updated = state_store.set_main_session_mode("pi:session-a", mode)
+        assert updated.main_session_mode == mode
+    assert (
+        state_store.get_main_session_state("pi:session-a").main_session_mode  # type: ignore[union-attr]
+        == MAIN_SESSION_MODE_ORCHESTRATOR
+    )
+
+
+def test_main_session_modes_are_session_isolated(state_store: StateStore) -> None:
+    state_store.set_main_session_mode("pi:session-a", MAIN_SESSION_MODE_OFF)
+    state_store.set_main_session_mode("pi:session-b", MAIN_SESSION_MODE_ORCHESTRATOR)
+
+    assert (
+        state_store.get_main_session_state("pi:session-a").main_session_mode  # type: ignore[union-attr]
+        == MAIN_SESSION_MODE_OFF
+    )
+    assert (
+        state_store.get_main_session_state("pi:session-b").main_session_mode  # type: ignore[union-attr]
+        == MAIN_SESSION_MODE_ORCHESTRATOR
+    )
+
+
+def test_missing_main_session_state_returns_none(state_store: StateStore) -> None:
+    assert state_store.get_main_session_state("pi:absent") is None
+
+
+def test_invalid_main_session_mode_rejected(state_store: StateStore) -> None:
+    with pytest.raises(StateError, match="invalid main session mode: bogus"):
+        state_store.set_main_session_mode("pi:session-a", "bogus")
+
+    assert state_store.get_main_session_state("pi:session-a") is None
+
+
+def test_empty_main_session_id_rejected(state_store: StateStore) -> None:
+    with pytest.raises(StateError, match="session_id must be a non-empty string"):
+        state_store.set_main_session_mode("  ", MAIN_SESSION_MODE_ON)
+
+
+def _create_old_schema_database(path: Path, run_count: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE runs (
+                run_id TEXT PRIMARY KEY,
+                orchestrator_session_id TEXT NOT NULL,
+                batch_id TEXT,
+                harness TEXT NOT NULL,
+                role TEXT NOT NULL,
+                model TEXT,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                started_at TEXT,
+                ended_at TEXT,
+                supervisor_pid INTEGER,
+                supervisor_started_at TEXT,
+                supervisor_output_path TEXT,
+                process_id INTEGER,
+                process_group_id INTEGER,
+                task_label TEXT NOT NULL,
+                result_summary TEXT,
+                result_artifact_path TEXT,
+                error_text TEXT,
+                blocker_text TEXT,
+                log_path TEXT NOT NULL,
+                worker_session_id TEXT,
+                transcript_path TEXT,
+                approval_needed INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        for index in range(run_count):
+            connection.execute(
+                "INSERT INTO runs ("
+                " run_id, orchestrator_session_id, harness, role, status, "
+                "created_at, task_label, log_path"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    f"old-run-{index}",
+                    "pi:session-old",
+                    "pi",
+                    "worker",
+                    STATUS_DONE,
+                    "2026-07-01T00:00:00Z",
+                    f"Old task {index}",
+                    str(path.parent / f"old-run-{index}.jsonl"),
+                ),
+            )
+        connection.execute("PRAGMA user_version = 9")
+
+
+def test_migrating_old_schema_creates_sessions_table_and_preserves_runs(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "state" / "orchestra.db"
+    _create_old_schema_database(database_path, run_count=3)
+
+    store = StateStore(database_path)
+    store.initialize()
+
+    with sqlite3.connect(database_path) as connection:
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        rows = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+        tables = {str(row[0]) for row in rows}
+        run_ids = [str(row[0]) for row in connection.execute("SELECT run_id FROM runs")]
+        run_rows = list(connection.execute("SELECT * FROM runs ORDER BY run_id"))
+
+    assert version == 10
+    assert {"runs", "sessions"} <= tables
+    assert run_ids == ["old-run-0", "old-run-1", "old-run-2"]
+    assert all(str(row[6]) == STATUS_DONE for row in run_rows)
+    assert store.get_main_session_state("pi:session-old") is None
 
 
 def test_connect_retries_transient_sqlite_open_failure(

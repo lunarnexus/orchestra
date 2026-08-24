@@ -61,7 +61,6 @@ _ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET"
 _ORCHESTRA_TURN_BUDGET_ENV = "ORCHESTRA_TURN_BUDGET"
 _ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV = "ORCHESTRA_SOFT_TIMEOUT_SECONDS"
 _ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV = "ORCHESTRA_BUDGET_EXCEEDED_PROMPT"
-_SOFT_TIMEOUT_BLOCK_REASON = "Orchestra soft timeout reached; return budget handoff"
 
 
 def _parse_budget_env(name: str) -> int:
@@ -75,11 +74,11 @@ def _parse_budget_env(name: str) -> int:
     return budget if budget >= 0 else 1
 
 
-def _budget_exceeded_prompt_message(reason: str) -> str | None:
+def _budget_exceeded_prompt_message(reason: str, budget_trigger_label: str) -> str | None:
     prompt = os.environ.get(_ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV, "").strip()
     if not prompt:
         return None
-    return f"{prompt}\n\nBudget trigger: {reason}"
+    return f"{prompt}\n\n{budget_trigger_label}: {reason}"
 
 
 def _hook_session_id(ctx: Any | None, kwargs: dict[str, Any]) -> str | None:
@@ -151,6 +150,50 @@ def _orch_dispatch_enable(runtime_session_id: str) -> bool:
 def _orch_dispatch_is_disabled(runtime_session_id: str) -> bool:
     with _ORCH_DISABLED_SESSIONS_LOCK:
         return runtime_session_id in _ORCH_DISABLED_SESSIONS
+
+
+def _core_dispatch_disabled(payload: Any) -> bool:
+    """Resolve dispatch gating from core `_tool-info` session-mode keys."""
+    if not isinstance(payload, dict):
+        return False
+    mode = payload.get("mainSessionMode")
+    if isinstance(mode, str) and mode in {"off", "on", "orchestrator"}:
+        return mode == "off"
+    return payload.get("toolsEnabledByDefault") is False
+
+
+def _apply_core_session_mode_gating(runtime_session_id: str) -> None:
+    """Apply per-session dispatch gating from core main-session mode.
+
+    Core `off` disables local orchestration dispatch; any other resolvable
+    state keeps it enabled. A failed or raising core call falls back to
+    enabled so an unavailable core never locks out the host adapter.
+    """
+    payload: Any = None
+    try:
+        result = _run_orchestra(["_tool-info", "--session-id", runtime_session_id])
+        if result.returncode == 0 and result.stdout.strip():
+            payload = json.loads(result.stdout)
+    except Exception:
+        payload = None
+    if _core_dispatch_disabled(payload):
+        _orch_dispatch_disable(runtime_session_id)
+    else:
+        _orch_dispatch_enable(runtime_session_id)
+
+
+def _record_core_session_mode(runtime_session_id: str, mode: str) -> str | None:
+    """Record a session mode in core; return a warning message on failure."""
+    try:
+        result = _run_orchestra(
+            ["_session-mode", "set", "--session-id", runtime_session_id, "--mode", mode]
+        )
+    except Exception as exc:  # noqa: BLE001 - plugin must not crash on helper failure
+        return f"could not record session mode in core (helper raised: {exc})"
+    if result.returncode == 0:
+        return None
+    detail = " ".join((result.stderr or "").split()) or f"exit code {result.returncode}"
+    return f"could not record session mode in core ({detail})"
 
 
 def _orchestra_dispatch_budget() -> int:
@@ -882,12 +925,17 @@ def _orch_on_error(reason: str) -> str:
 
 
 def _orch_on(ctx: Any | None, runtime_session_id: str) -> str:
-    if _orch_dispatch_enable(runtime_session_id):
+    if _orch_dispatch_is_disabled(runtime_session_id):
+        warning = _record_core_session_mode(runtime_session_id, "on")
+        _orch_dispatch_enable(runtime_session_id)
         _orch_on_clear(runtime_session_id)
-        return (
+        message = (
             'Hermes /orch on succeeded: Orchestra dispatch enabled for this session. '
             'Run "/orch on" again to inject the orchestrator skill'
         )
+        if warning is not None:
+            message += f"\nWarning: {warning}"
+        return message
 
     if not _orch_on_mark_active(runtime_session_id):
         return "Hermes /orch on already active for this session"
@@ -916,7 +964,11 @@ def _orch_on(ctx: Any | None, runtime_session_id: str) -> str:
         if not injected:
             return _orch_on_error("ctx.inject_message returned False")
         success = True
-        return "Hermes /orch on succeeded: orchestrator skill injected"
+        warning = _record_core_session_mode(runtime_session_id, "orchestrator")
+        message = "Hermes /orch on succeeded: orchestrator skill injected"
+        if warning is not None:
+            message += f"\nWarning: {warning}"
+        return message
     finally:
         if not success:
             _orch_on_clear(runtime_session_id)
@@ -1014,7 +1066,12 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
     if subcommand == "off":
         _orch_dispatch_disable(runtime_session_id)
         _orch_on_clear(runtime_session_id)
-        return "Hermes /orch off succeeded: Orchestra dispatch disabled for this session"
+        message = (
+            "Hermes /orch off succeeded: Orchestra dispatch disabled for this session"
+        )
+        if warning := _record_core_session_mode(runtime_session_id, "off"):
+            message += f"\nWarning: {warning}"
+        return message
 
     if subcommand == "status":
         result = _run_orchestra(["status", "--session-id", runtime_session_id])
@@ -1070,9 +1127,10 @@ def register(ctx: Any) -> None:
     initial_session_id = _slash_session_id(ctx)
     if initial_session_id is not None:
         _reset_budget_state(initial_session_id)
+        _apply_core_session_mode_gating(initial_session_id)
 
     def inject_budget_prompt(reason: str) -> bool:
-        message = _budget_exceeded_prompt_message(reason)
+        message = _budget_exceeded_prompt_message(reason, budget_trigger_label)
         if not message:
             return False
         inject_message = getattr(ctx, "inject_message", None)
@@ -1093,10 +1151,10 @@ def register(ctx: Any) -> None:
             if state.soft_timeout_seconds <= 0 or elapsed < state.soft_timeout_seconds:
                 return None
             if state.budget_prompt_delivered:
-                return {"action": "block", "message": _SOFT_TIMEOUT_BLOCK_REASON}
+                return {"action": "block", "message": soft_timeout_block_reason}
             state.budget_prompt_delivered = True
         inject_budget_prompt("soft_timeout")
-        return {"action": "block", "message": _SOFT_TIMEOUT_BLOCK_REASON}
+        return {"action": "block", "message": soft_timeout_block_reason}
 
     def pre_llm_call_handler(**_kwargs: Any) -> dict[str, str] | None:
         runtime_session_id = _hook_session_id(ctx, _kwargs)
@@ -1110,7 +1168,7 @@ def register(ctx: Any) -> None:
             if state.turn_budget > 1:
                 state.turn_budget -= 1
                 return None
-            message = _budget_exceeded_prompt_message("turn_limit")
+            message = _budget_exceeded_prompt_message("turn_limit", budget_trigger_label)
             if message is None:
                 return None
             state.budget_prompt_delivered = True
@@ -1129,8 +1187,11 @@ def register(ctx: Any) -> None:
         if runtime_session_id is None:
             return
         _reset_budget_state(runtime_session_id)
+        _apply_core_session_mode_gating(runtime_session_id)
 
     tool_info = _load_tool_info()
+    budget_trigger_label = str(tool_info["budgetTriggerLabel"])
+    soft_timeout_block_reason = str(tool_info["softTimeoutBlockReason"])
     if _can_dispatch_orchestra_worker():
         ctx.register_tool(
             name="orch_dispatch",

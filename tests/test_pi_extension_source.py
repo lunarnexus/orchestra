@@ -126,6 +126,134 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert "worker" not in prompts_source
 
 
+def test_pi_extension_wires_core_session_mode() -> None:
+    extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
+
+    # loadToolInfo accepts an optional session id and uses --session-id.
+    assert (
+        "async function loadToolInfo(sessionId?: string): "
+        "Promise<ToolInfoPayload>"
+        in extension_source
+    )
+    assert 'mainSessionMode?: string;' in extension_source
+    assert 'toolsEnabledByDefault?: boolean;' in extension_source
+    assert (
+        'const args = sessionId ? ["_tool-info", "--session-id", '
+        'sessionId] : ["_tool-info"];'
+        in extension_source
+    )
+    # session_start applies the core-resolved mode to tool activation.
+    assert "await loadToolInfo(currentSessionId);" in extension_source
+    assert '.mainSessionMode !== "off"' in extension_source
+    # /orch off persists mode off in core and hides tools locally.
+    assert (
+        'async function handleOrchOff(sessionId: string): Promise<{ code: number; output: string }>'
+        in extension_source
+    )
+    assert '"_session-mode", "set", "--session-id", sessionId, "--mode", "off"' in extension_source
+    assert 'const result = await handleOrchOff(runtimeSessionId);' in extension_source
+    # First /orch on from disabled persists mode on in core and enables tools locally.
+    assert '"_session-mode", "set", "--session-id", sessionId, "--mode", "on"' in extension_source
+
+
+def test_pi_extension_orchestrator_activation_sets_core_mode() -> None:
+    extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
+    start = extension_source.index("async function injectOrchestratorSkill(sessionId: string)")
+    end = extension_source.index("async function handleOrchOn(", start)
+    body = extension_source[start:end]
+
+    # Both activation paths (/orch on two-step and orch_status action=on) route through this.
+    assert 'return injectOrchestratorSkill(sessionId);' in extension_source
+    assert "const result = await injectOrchestratorSkill(sessionId);" in extension_source
+    # Core mode orchestrator is persisted before the skill is injected...
+    set_idx = body.index(
+        '"_session-mode", "set", "'
+        '--session-id", sessionId, "--mode", "orchestrator"'
+    )
+    assert set_idx < body.index('["_orchestrator-skill"]')
+    # ...and a core failure must not block skill injection.
+    assert "modeResult.code !== 0" in body
+
+
+def test_pi_extension_footer_includes_session_mode() -> None:
+    extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
+
+    # The extension tracks the last known main session mode locally.
+    assert 'type MainSessionMode = "off" | "on" | "orchestrator";' in extension_source
+    assert "let mainSessionMode: MainSessionMode | null = null;" in extension_source
+
+    # Footer composes a dimmed mode label with the existing role/active-run text.
+    footer_start = extension_source.index("function renderOrchestraFooterStatus(")
+    footer_end = extension_source.index("function setOrchestraWorkerStatus(", footer_start)
+    footer_body = extension_source[footer_start:footer_end]
+    assert 'parts.push(theme.fg("dim", mode));' in footer_body
+    assert (
+        "status && status.activeCount > 0 ? renderOrchestraWorkerStatus(theme, "
+        "status.roleCounts) : undefined"
+        in footer_body
+    )
+    # The existing role renderer is preserved.
+    assert (
+        "function renderOrchestraWorkerStatus(theme: OrchestraFooterTheme, "
+        "roleCounts: ActiveRoleCount[]): string | undefined {"
+        in extension_source
+    )
+
+    # Session start resets the tracked mode and initializes it from core tool info.
+    start_idx = extension_source.index('pi.on("session_start"')
+    shutdown_idx = extension_source.index('pi.on("session_shutdown"', start_idx)
+    init_block = extension_source[start_idx:shutdown_idx]
+    assert "mainSessionMode = null;" in init_block
+    assert 'mainSessionMode === "orchestrator"' in init_block
+
+    # Session shutdown clears the tracked mode.
+    register_idx = extension_source.index("const registerDispatchTool")
+    shutdown_block = extension_source[shutdown_idx:register_idx]
+    assert "mainSessionMode = null;" in shutdown_block
+
+    # Orchestrator activation tracks the mode when core confirms it.
+    inject_start = extension_source.index(
+        "async function injectOrchestratorSkill(sessionId: string)"
+    )
+    on_idx = extension_source.index("async function handleOrchOn(", inject_start)
+    inject_body = extension_source[inject_start:on_idx]
+    assert 'mainSessionMode = "orchestrator";' in inject_body
+
+    # /orch off and first /orch on track the mode when core confirms it.
+    handler_end = extension_source.index("async function getOrchArgumentCompletions(", on_idx)
+    handlers_block = extension_source[on_idx:handler_end]
+    assert 'mainSessionMode = "on";' in handlers_block
+    assert 'mainSessionMode = "off";' in handlers_block
+
+    # The /orch command paths render the tracked mode through setStatus("orchestra", ...).
+    assert "setOrchestraWorkerStatus(ctx, null, mainSessionMode);" in extension_source
+    assert (
+        "await refreshOrchestraWorkerStatus(currentSessionId, (status) => "
+        "setOrchestraWorkerStatus(ctx, status, mainSessionMode), { fresh: true });"
+        in extension_source
+    )
+
+
+def test_pi_extension_budget_texts_come_from_loaded_tool_info() -> None:
+    extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
+
+    # The loaded _tool-info payload owns both budget texts.
+    assert "budgetTriggerLabel: string;" in extension_source
+    assert "softTimeoutBlockReason: string;" in extension_source
+
+    # Injection appends the core-owned trigger label; env override and steer delivery are kept.
+    assert (
+        'pi.sendUserMessage(`${prompt}\\n\\n${toolInfo.budgetTriggerLabel}: ${reason}`, '
+        '{ deliverAs: "steer" });'
+        in extension_source
+    )
+    assert '"Budget trigger"' not in extension_source
+
+    # Soft-timeout blocking uses the core-owned block reason.
+    assert 'return { block: true, reason: toolInfo.softTimeoutBlockReason };' in extension_source
+    assert '"Orchestra soft timeout reached; return budget handoff"' not in extension_source
+
+
 def test_clean_return_templates_live_in_core_not_extension() -> None:
     extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
     core_source = Path("src/orchestra/app.py").read_text(encoding="utf-8")

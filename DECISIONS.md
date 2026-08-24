@@ -115,6 +115,27 @@ implications, or proposed wording. The main-session orchestrator applies changes
 to project documentation. Subagents may write only operational artifact sections
 explicitly assigned to their role.
 
+### D-WORKFLOW-009 — Core-owned main-session orchestration mode
+
+**Decision:** Orchestra core tracks main-session orchestration mode per session
+id. Initial modes are `off`, `on`, and `orchestrator`: `off` means Orchestra
+tools are disabled for the main session, `on` means Orchestra tools are enabled
+without the main-session orchestrator skill active, and `orchestrator` means the
+orchestrator skill is active. `config.yaml` defines the default tools state with
+`tools_enabled_by_default`, defaulting to `true`; missing per-session mode state
+resolves from that configured default. Host adapters must initialize tool
+availability from core-owned configuration/state and update core mode when
+`/orch off`, `/orch on`, or orchestrator activation changes the session mode.
+
+**Reconciliation:** This decision refines D-WORKFLOW-003 for state tracking and
+status display by distinguishing tools-enabled `on` from skill-active
+`orchestrator`. D-WORKFLOW-003 remains the user workflow for activating the
+orchestrator skill; it no longer implies that every `on` state has the skill
+loaded.
+
+**Source:** Owner clarification during roadmap planning for mode display and
+workflow-state tracking.
+
 ## Terminology and domain model
 
 ### D-DOMAIN-001 — Public term is subagent

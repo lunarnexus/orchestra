@@ -16,6 +16,8 @@ interface OrchestraFooterTheme {
   fg(color: string, text: string): string;
 }
 
+type MainSessionMode = "off" | "on" | "orchestrator";
+
 interface ActiveRoleCount {
   role: string;
   count: number;
@@ -60,14 +62,29 @@ function renderOrchestraWorkerStatus(theme: OrchestraFooterTheme, roleCounts: Ac
     .join(" ");
 }
 
+function renderOrchestraFooterStatus(
+  theme: OrchestraFooterTheme,
+  mode: string | null,
+  status: ActiveSessionStatus | null,
+): string | undefined {
+  const parts: string[] = [];
+  if (mode) {
+    parts.push(theme.fg("dim", mode));
+  }
+  const roleText =
+    status && status.activeCount > 0 ? renderOrchestraWorkerStatus(theme, status.roleCounts) : undefined;
+  if (roleText) {
+    parts.push(roleText);
+  }
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
 function setOrchestraWorkerStatus(
   ctx: { ui: { setStatus: (key: string, msg: string | undefined) => void; theme: OrchestraFooterTheme } },
   status: ActiveSessionStatus | null,
+  mode?: string | null,
 ): void {
-  ctx.ui.setStatus(
-    "orchestra",
-    status && status.activeCount > 0 ? renderOrchestraWorkerStatus(ctx.ui.theme, status.roleCounts) : undefined,
-  );
+  ctx.ui.setStatus("orchestra", renderOrchestraFooterStatus(ctx.ui.theme, mode ?? null, status));
 }
 
 function orchestraDispatchBudget(): number {
@@ -309,6 +326,10 @@ interface ToolInfoPayload {
   statusSettingDescription: string;
   statusValueDescription: string;
   dispatchTimeoutError: string;
+  budgetTriggerLabel: string;
+  softTimeoutBlockReason: string;
+  toolsEnabledByDefault?: boolean;
+  mainSessionMode?: string;
 }
 
 async function hostHelp(): Promise<string> {
@@ -321,8 +342,9 @@ async function commandEchoText(trimmed: string): Promise<string> {
   return result.stdout || (trimmed ? `/orch ${trimmed}` : "/orch");
 }
 
-async function loadToolInfo(): Promise<ToolInfoPayload> {
-  const result = await runOrchestra(["_tool-info"]);
+async function loadToolInfo(sessionId?: string): Promise<ToolInfoPayload> {
+  const args = sessionId ? ["_tool-info", "--session-id", sessionId] : ["_tool-info"];
+  const result = await runOrchestra(args);
   if (result.code === 0 && result.stdout.trim()) {
     return JSON.parse(result.stdout) as ToolInfoPayload;
   }
@@ -441,6 +463,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   let sessionStartedAt = Date.now();
   let budgetPromptInjected = false;
   let orchestraToolsEnabled = true;
+  let mainSessionMode: MainSessionMode | null = null;
   let orchOnRequiresSecondStep = false;
 
   function injectBudgetExceededPrompt(reason: "turn_limit" | "soft_timeout"): void {
@@ -448,7 +471,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     const prompt = process.env[ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV]?.trim();
     if (!prompt) return;
     budgetPromptInjected = true;
-    pi.sendUserMessage(`${prompt}\n\nBudget trigger: ${reason}`, { deliverAs: "steer" });
+    pi.sendUserMessage(`${prompt}\n\n${toolInfo.budgetTriggerLabel}: ${reason}`, { deliverAs: "steer" });
   }
 
   function softTimeoutExceeded(): boolean {
@@ -473,7 +496,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   pi.on("tool_call", async () => {
     if (budgetPromptInjected || !softTimeoutExceeded()) return;
     injectBudgetExceededPrompt("soft_timeout");
-    return { block: true, reason: "Orchestra soft timeout reached; return budget handoff" };
+    return { block: true, reason: toolInfo.softTimeoutBlockReason };
   });
 
   pi.registerEntryRenderer<OrchestraCommandEntry>("orchestra-command", (entry) => {
@@ -840,7 +863,22 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     budgetPromptInjected = false;
     currentSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
     bumpSessionGeneration(currentSessionId);
-    await refreshOrchestraWorkerStatus(currentSessionId, (status) => setOrchestraWorkerStatus(ctx, status), { fresh: true });
+    mainSessionMode = null;
+    try {
+      const sessionToolInfo = await loadToolInfo(currentSessionId);
+      if (
+        sessionToolInfo.mainSessionMode === "off" ||
+        sessionToolInfo.mainSessionMode === "on" ||
+        sessionToolInfo.mainSessionMode === "orchestrator"
+      ) {
+        mainSessionMode = sessionToolInfo.mainSessionMode;
+      }
+      setOrchestraToolsActive(sessionToolInfo.mainSessionMode !== "off");
+    } catch {
+      // Core unavailable: fall back to enabled tools.
+      setOrchestraToolsActive(true);
+    }
+    await refreshOrchestraWorkerStatus(currentSessionId, (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode), { fresh: true });
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {
@@ -850,6 +888,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     setOrchestraWorkerStatus(ctx, null);
     stopSessionWatchers(currentSessionId);
     currentSessionId = null;
+    mainSessionMode = null;
   });
 
   const registerDispatchTool = canDispatchOrchestraWorker();
@@ -925,7 +964,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
   }
 
-  async function injectOrchestratorSkill(_sessionId: string): Promise<{ code: number; output: string }> {
+  async function injectOrchestratorSkill(sessionId: string): Promise<{ code: number; output: string }> {
+    const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", "orchestrator"]);
+    if (modeResult.code === 0) {
+      mainSessionMode = "orchestrator";
+    }
     const result = await runOrchestra(["_orchestrator-skill"]);
     const message = result.stdout.trim();
     if (result.code !== 0 || !message) {
@@ -935,13 +978,29 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       };
     }
     pi.sendUserMessage(message, { deliverAs: "followUp", triggerTurn: true });
-    return { code: 0, output: "Orchestra orchestrator skill refreshed for this session." };
+    let output = "Orchestra orchestrator skill refreshed for this session.";
+    if (modeResult.code !== 0) {
+      output += " Core orchestrator-mode persistence failed; the mode change is local only.";
+    }
+    return { code: 0, output };
   }
 
   async function handleOrchOn(sessionId: string): Promise<{ code: number; output: string }> {
     if (!orchestraToolsEnabled) {
+      const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", "on"]);
+      if (modeResult.code === 0) {
+        mainSessionMode = "on";
+      }
       setOrchestraToolsActive(true);
       orchOnRequiresSecondStep = true;
+      if (modeResult.code !== 0) {
+        return {
+          code: 1,
+          output:
+            'Orchestra tools enabled for this session, but core mode persistence failed; the mode change is local only. '
+            + 'Run "/orch on" again to load the orchestrator skill.',
+        };
+      }
       return {
         code: 0,
         output: 'Orchestra tools enabled for this session. Run "/orch on" again to load the orchestrator skill.',
@@ -954,9 +1013,20 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     return injectOrchestratorSkill(sessionId);
   }
 
-  function handleOrchOff(): { code: number; output: string } {
+  async function handleOrchOff(sessionId: string): Promise<{ code: number; output: string }> {
+    const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", "off"]);
+    if (modeResult.code === 0) {
+      mainSessionMode = "off";
+    }
     setOrchestraToolsActive(false);
     orchOnRequiresSecondStep = true;
+    if (modeResult.code !== 0) {
+      return {
+        code: 1,
+        output:
+          "Orchestra tools hidden for this session, but core mode persistence failed; the mode change is local only. Run /orch on to enable them again.",
+      };
+    }
     return { code: 0, output: "Orchestra tools hidden for this session. Run /orch on to enable them again." };
   }
 
@@ -1229,7 +1299,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           return toolTextResult(toolInfo.dispatchTimeoutError, true);
         }
         const runtimeSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
-        const result = await dispatchWorker(runtimeSessionId, params, progressNotifier(ctx), (status) => setOrchestraWorkerStatus(ctx, status));
+        const result = await dispatchWorker(runtimeSessionId, params, progressNotifier(ctx), (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode));
         return toolTextResult(result.output, result.code !== 0);
       },
     });
@@ -1267,14 +1337,15 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
       if (subcommand === "on") {
         const result = await handleOrchOn(runtimeSessionId);
-        emitOutput(ctx, result.output, result.code === 0 ? "info" : "error");
+        setOrchestraWorkerStatus(ctx, null, mainSessionMode);
+        emitOutput(ctx, result.output, result.code === 0 ? "info" : "warning");
         return;
       }
 
       if (subcommand === "off") {
-        const result = handleOrchOff();
-        setOrchestraWorkerStatus(ctx, null);
-        emitOutput(ctx, result.output, "info");
+        const result = await handleOrchOff(runtimeSessionId);
+        setOrchestraWorkerStatus(ctx, null, mainSessionMode);
+        emitOutput(ctx, result.output, result.code === 0 ? "info" : "warning");
         return;
       }
 
@@ -1299,7 +1370,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         if (statusResult.code === 0) {
           const status = parseActiveSessionStatus(statusResult.stdout);
           cachedActiveStatus = { expiresAt: Date.now() + 2_000, sessionId: runtimeSessionId, status };
-          setOrchestraWorkerStatus(ctx, status);
+          setOrchestraWorkerStatus(ctx, status, mainSessionMode);
         }
         return;
       }
@@ -1331,7 +1402,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           runId,
         ]);
         emitEntryOutput(ctx, result.stdout || result.stderr);
-        await refreshOrchestraWorkerStatus(runtimeSessionId, (status) => setOrchestraWorkerStatus(ctx, status), { fresh: true });
+        await refreshOrchestraWorkerStatus(runtimeSessionId, (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode), { fresh: true });
         return;
       }
 
@@ -1354,7 +1425,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
             taskLabel: parsed.taskLabel ?? undefined,
           },
           progressNotifier(ctx),
-          (status) => setOrchestraWorkerStatus(ctx, status),
+          (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode),
         );
         emitOutput(ctx, result.output, result.code === 0 ? "info" : "error");
         return;

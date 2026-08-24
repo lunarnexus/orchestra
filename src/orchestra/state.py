@@ -18,10 +18,17 @@ STATUS_FAILED = "failed"
 STATUS_CANCELLED = "cancelled"
 STATUS_INCOMPLETE = "incomplete"
 
+MAIN_SESSION_MODE_OFF = "off"
+MAIN_SESSION_MODE_ON = "on"
+MAIN_SESSION_MODE_ORCHESTRATOR = "orchestrator"
+ALLOWED_MAIN_SESSION_MODES = frozenset(
+    {MAIN_SESSION_MODE_OFF, MAIN_SESSION_MODE_ON, MAIN_SESSION_MODE_ORCHESTRATOR}
+)
+
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
-_SCHEMA_VERSION = 9
+_SCHEMA_VERSION = 10
 _CONNECT_ATTEMPTS = 8
 _CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
 _CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
@@ -71,6 +78,13 @@ class RunRecord:
     approval_needed: bool = False
     report_claimed_at: str | None = None
     reported_at: str | None = None
+
+
+@dataclass(frozen=True)
+class MainSessionState:
+    session_id: str
+    main_session_mode: str
+    updated_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -172,6 +186,15 @@ class StateStore:
             )
             self._ensure_column(connection, "runs", "report_claimed_at", "TEXT")
             self._ensure_column(connection, "runs", "reported_at", "TEXT")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    main_session_mode TEXT NOT NULL DEFAULT 'on',
+                    updated_at TEXT
+                )
+                """
+            )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_runs_session_status "
                 "ON runs(orchestrator_session_id, status)"
@@ -303,6 +326,43 @@ class StateStore:
             record,
             global_limit=10_000_000,
             per_session_limit=10_000_000,
+        )
+
+    def set_main_session_mode(self, session_id: str, mode: str) -> MainSessionState:
+        if not session_id.strip():
+            raise StateError("session_id must be a non-empty string")
+        _validate_main_session_mode(mode)
+        updated_at = utc_now()
+        with self._connect() as connection:
+            self._begin_immediate(connection, operation="set_main_session_mode")
+            connection.execute(
+                """
+                INSERT INTO sessions (session_id, main_session_mode, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(session_id) DO UPDATE SET
+                    main_session_mode = excluded.main_session_mode,
+                    updated_at = excluded.updated_at
+                """,
+                (session_id, mode, updated_at),
+            )
+            connection.commit()
+        return MainSessionState(
+            session_id=session_id,
+            main_session_mode=mode,
+            updated_at=updated_at,
+        )
+
+    def get_main_session_state(self, session_id: str) -> MainSessionState | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        if row is None:
+            return None
+        return MainSessionState(
+            session_id=str(row["session_id"]),
+            main_session_mode=str(row["main_session_mode"]),
+            updated_at=_optional_text(row["updated_at"]),
         )
 
     def get_run(self, run_id: str) -> RunRecord:
@@ -877,6 +937,11 @@ def _report_claim_stale_before() -> str:
 def _is_transient_sqlite_error(exc: sqlite3.OperationalError) -> bool:
     message = str(exc).lower()
     return "database is locked" in message or "database is busy" in message
+
+
+def _validate_main_session_mode(mode: str) -> None:
+    if mode not in ALLOWED_MAIN_SESSION_MODES:
+        raise StateError(f"invalid main session mode: {mode}")
 
 
 def _validate_status(status: str) -> None:

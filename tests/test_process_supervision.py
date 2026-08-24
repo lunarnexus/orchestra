@@ -424,7 +424,7 @@ def test_budget_handoff_marker_marks_run_incomplete(
         run_id,
     )
     assert "status: incomplete" in await_run.stdout
-    assert "redispatch a smaller continuation task" in await_run.stdout
+    assert "redispatch from the continuation handoff" in await_run.stdout
 
     debug = run_cli(
         "--config",

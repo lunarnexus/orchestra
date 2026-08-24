@@ -102,6 +102,7 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.concurrency.global_limit == DEFAULT_GLOBAL_CONCURRENCY
     assert config.concurrency.per_session_limit == DEFAULT_PER_SESSION_CONCURRENCY
     assert config.auto_return is DEFAULT_AUTO_RETURN
+    assert config.tools_enabled_by_default is True
     assert config.turn_limit is None
     assert config.soft_timeout is None
     assert config.prompts.tool_description
@@ -200,6 +201,31 @@ def test_load_app_config_keeps_yaml_native_boolean_parsing(
     assert config.auto_return is expected
 
 
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("true", True),
+        ("false", False),
+    ],
+)
+def test_load_app_config_reads_tools_enabled_by_default(
+    tmp_path: Path,
+    raw_value: str,
+    expected: bool,
+) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text(
+        f"default_timeout: 30\ntools_enabled_by_default: {raw_value}\n",
+        encoding="utf-8",
+    )
+    write_root_prompts(prompts_path)
+
+    config = load_app_config(path)
+
+    assert config.tools_enabled_by_default is expected
+
+
 def test_load_app_config_missing_default_timeout_raises_config_error(
     tmp_path: Path,
 ) -> None:
@@ -250,6 +276,10 @@ def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
         ("default_timeout: 0\n", "'default_timeout' must be a positive integer"),
         ("default_timeout: 30\nconcurrency: 3\n", "'concurrency' must be a mapping"),
         ("default_timeout: 30\nauto_return: maybe\n", "'auto_return' must be a boolean"),
+        (
+            "default_timeout: 30\ntools_enabled_by_default: maybe\n",
+            "'tools_enabled_by_default' must be a boolean",
+        ),
         ("default_timeout: 30\nturn_limit: 0\n", "'turn_limit' must be a positive integer"),
         (
             "default_timeout: 30\nsoft_timeout: 30\n",

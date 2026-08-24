@@ -139,6 +139,10 @@ def make_tool_info_payload() -> dict[str, Any]:
         "statusSettingDescription": "dynamic status setting",
         "statusValueDescription": "dynamic status value",
         "dispatchTimeoutError": "dynamic timeout error",
+        "budgetTriggerLabel": "dynamic budget trigger label",
+        "softTimeoutBlockReason": "dynamic soft timeout block reason",
+        "toolsEnabledByDefault": True,
+        "mainSessionMode": "on",
     }
 
 
@@ -254,6 +258,8 @@ def test_hermes_plugin_registers_orch_status_tool_with_tool_info_metadata(
         "statusSettingDescription": "dynamic status setting",
         "statusValueDescription": "dynamic status value",
         "dispatchTimeoutError": "dynamic timeout error",
+        "budgetTriggerLabel": "Budget trigger",
+        "softTimeoutBlockReason": "Orchestra soft timeout reached; return budget handoff",
     }
     monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, json.dumps(payload)))
     ctx = FakeHermesPluginContext()
@@ -338,6 +344,8 @@ def test_hermes_orch_status_routes_session_actions_and_keeps_roles_read_only(
                 "  ✓  reviewer [hermes]\n"
                 "      model: gpt\n",
             )
+        if args[0] == "_session-mode":
+            return completed(args)
         if args[0] == "_orchestrator-skill":
             return completed(args, "orchestrator skill payload\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -366,6 +374,7 @@ def test_hermes_orch_status_routes_session_actions_and_keeps_roles_read_only(
     )
 
     assert calls == [
+        ["_tool-info", "--session-id", "hermes:runtime"],
         ["_tool-info"],
         ["status", "--session-id", "hermes:runtime"],
         ["history", "--session-id", "hermes:runtime", "--limit", "7"],
@@ -373,6 +382,7 @@ def test_hermes_orch_status_routes_session_actions_and_keeps_roles_read_only(
         ["help-host"],
         ["roles", "--all"],
         ["_orchestrator-skill"],
+        ["_session-mode", "set", "--session-id", "hermes:runtime", "--mode", "orchestrator"],
         ["stop", "--session-id", "hermes:runtime", "--run-id", "run-1"],
     ]
     assert ctx.injected == [("orchestrator skill payload", "user")]
@@ -400,7 +410,10 @@ def test_hermes_orch_status_rejects_model_supplied_identity_args(
     output = handler({"action": action, "session_id": "attacker"}, session_id="runtime")
 
     assert "identity arguments are not accepted" in output
-    assert calls == [["_tool-info"]]
+    assert calls == [
+        ["_tool-info", "--session-id", "hermes:runtime"],
+        ["_tool-info"],
+    ]
 
 
 def test_hermes_orch_status_requires_run_id_for_stop(
@@ -423,7 +436,10 @@ def test_hermes_orch_status_requires_run_id_for_stop(
     output = handler({"action": "stop"}, session_id="runtime")
 
     assert "runId is required" in output
-    assert calls == [["_tool-info"]]
+    assert calls == [
+        ["_tool-info", "--session-id", "hermes:runtime"],
+        ["_tool-info"],
+    ]
 
 
 def test_hermes_plugin_session_report_watcher_suppresses_late_delivery_after_cleanup(
@@ -579,6 +595,33 @@ def test_hermes_plugin_pre_tool_call_blocks_without_budget_prompt_without_inject
     assert ctx.injected == []
 
 
+def test_hermes_plugin_budget_texts_come_from_dynamic_tool_info_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    clock = {"value": 100.0}
+    monkeypatch.setattr(plugin.time, "monotonic", lambda: clock["value"])
+    monkeypatch.setenv("ORCHESTRA_SOFT_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
+    payload = make_tool_info_payload()
+    monkeypatch.setattr(
+        plugin, "_run_orchestra", lambda args: completed(args, json.dumps(payload))
+    )
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_tool_call = dict(ctx.hooks)["pre_tool_call"]
+    clock["value"] = 102.0
+
+    assert pre_tool_call() == {
+        "action": "block",
+        "message": payload["softTimeoutBlockReason"],
+    }
+    assert ctx.injected == [
+        (f"Budget handoff\n\n{payload['budgetTriggerLabel']}: soft_timeout", "user")
+    ]
+
+
 def test_hermes_plugin_pre_llm_call_decrements_turn_budget_and_injects_prompt_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -643,6 +686,126 @@ def test_hermes_plugin_session_start_resets_only_requested_budget_state(
         ("Budget handoff\n\nBudget trigger: turn_limit", "user"),
         ("Budget handoff\n\nBudget trigger: turn_limit", "user"),
     ]
+
+
+def test_hermes_register_disables_dispatch_when_core_session_mode_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    payload = make_tool_info_payload()
+    payload["mainSessionMode"] = "off"
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(payload))
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+
+    assert ["_tool-info", "--session-id", "hermes:runtime-a"] in calls
+    assert plugin._orch_dispatch_is_disabled("hermes:runtime-a")
+
+
+def test_hermes_on_session_start_disables_dispatch_when_core_session_mode_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    payload = make_tool_info_payload()
+    payload["mainSessionMode"] = "off"
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(payload))
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext()
+
+    plugin.register(ctx)
+    on_session_start = dict(ctx.hooks)["on_session_start"]
+
+    assert not plugin._orch_dispatch_is_disabled("hermes:runtime-b")
+    on_session_start(session_id="runtime-b")
+
+    assert ["_tool-info", "--session-id", "hermes:runtime-b"] in calls
+    assert plugin._orch_dispatch_is_disabled("hermes:runtime-b")
+
+
+@pytest.mark.parametrize("mode", ["on", "orchestrator"])
+def test_hermes_session_start_keeps_dispatch_enabled_for_non_off_modes(
+    mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    payload = make_tool_info_payload()
+    payload["mainSessionMode"] = mode
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(payload))
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    on_session_start = dict(ctx.hooks)["on_session_start"]
+    on_session_start()
+
+    assert ["_tool-info", "--session-id", "hermes:runtime-a"] in calls
+    assert not plugin._orch_dispatch_is_disabled("hermes:runtime-a")
+
+
+def test_hermes_register_falls_back_to_enabled_when_core_tool_info_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args[0] == "_tool-info" and "--session-id" in args:
+            return completed(args, stderr="core unavailable", code=1)
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(make_tool_info_payload()))
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+
+    assert not plugin._orch_dispatch_is_disabled("hermes:runtime-a")
+
+
+def test_hermes_register_falls_back_to_enabled_when_core_call_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args[0] == "_tool-info" and "--session-id" in args:
+            raise RuntimeError("core call exploded")
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(make_tool_info_payload()))
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+
+    assert not plugin._orch_dispatch_is_disabled("hermes:runtime-a")
 
 
 def test_hermes_plugin_session_cleanup_clears_only_requested_budget_state(
@@ -717,6 +880,8 @@ def test_hermes_plugin_uses_dynamic_tool_metadata(monkeypatch: pytest.MonkeyPatc
         "statusSettingDescription": "dynamic status setting",
         "statusValueDescription": "dynamic status value",
         "dispatchTimeoutError": "dynamic timeout error",
+        "budgetTriggerLabel": "Budget trigger",
+        "softTimeoutBlockReason": "Orchestra soft timeout reached; return budget handoff",
     }
     monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, json.dumps(payload)))
     ctx = FakeHermesPluginContext()
@@ -769,6 +934,8 @@ def test_orch_slash_on_injects_orchestrator_skill_into_current_session(
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_session-mode":
+            return completed(args)
         if args[0] == "_orchestrator-skill":
             return completed(args, "orchestrator skill payload\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -781,7 +948,10 @@ def test_orch_slash_on_injects_orchestrator_skill_into_current_session(
     output = ctx.commands[0]["handler"]("on")
 
     assert output == "Hermes /orch on succeeded: orchestrator skill injected"
-    assert calls == [["_orchestrator-skill"]]
+    assert calls == [
+        ["_orchestrator-skill"],
+        ["_session-mode", "set", "--session-id", "hermes:cli-session", "--mode", "orchestrator"],
+    ]
     assert ctx.injected == [("orchestrator skill payload", "user")]
 
 
@@ -795,6 +965,8 @@ def test_orch_slash_on_is_idempotent_per_session_and_cleared_on_cleanup(
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_session-mode":
+            return completed(args)
         if args[0] == "_orchestrator-skill":
             return completed(args, "orchestrator skill payload\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -810,7 +982,20 @@ def test_orch_slash_on_is_idempotent_per_session_and_cleared_on_cleanup(
     plugin._on_session_cleanup(session_id="cli-session")
     assert handler("on") == "Hermes /orch on succeeded: orchestrator skill injected"
 
-    assert calls == [["_orchestrator-skill"], ["_orchestrator-skill"]]
+    mode_call = [
+        "_session-mode",
+        "set",
+        "--session-id",
+        "hermes:cli-session",
+        "--mode",
+        "orchestrator",
+    ]
+    assert calls == [
+        ["_orchestrator-skill"],
+        mode_call,
+        ["_orchestrator-skill"],
+        mode_call,
+    ]
     assert ctx.injected == [
         ("orchestrator skill payload", "user"),
         ("orchestrator skill payload", "user"),
@@ -827,6 +1012,8 @@ def test_orch_slash_off_disables_dispatch_until_reenabled(
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_session-mode":
+            return completed(args)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -849,7 +1036,9 @@ def test_orch_slash_off_disables_dispatch_until_reenabled(
             )
         }
     )
-    assert calls == []
+    assert calls == [
+        ["_session-mode", "set", "--session-id", "hermes:cli-session", "--mode", "off"],
+    ]
 
 
 def test_orch_slash_on_after_off_requires_second_call_to_inject_skill(
@@ -862,6 +1051,8 @@ def test_orch_slash_on_after_off_requires_second_call_to_inject_skill(
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_session-mode":
+            return completed(args)
         if args[0] == "_orchestrator-skill":
             return completed(args, "orchestrator skill payload\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -881,7 +1072,156 @@ def test_orch_slash_on_after_off_requires_second_call_to_inject_skill(
     )
     assert handler("on") == "Hermes /orch on succeeded: orchestrator skill injected"
 
-    assert calls == [["_orchestrator-skill"]]
+    assert calls == [
+        ["_session-mode", "set", "--session-id", "hermes:cli-session", "--mode", "off"],
+        ["_session-mode", "set", "--session-id", "hermes:cli-session", "--mode", "on"],
+        ["_orchestrator-skill"],
+        [
+            "_session-mode",
+            "set",
+            "--session-id",
+            "hermes:cli-session",
+            "--mode",
+            "orchestrator",
+        ],
+    ]
+    assert ctx.injected == [("orchestrator skill payload", "user")]
+
+
+def test_orch_slash_off_records_session_mode_off_in_core(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_session-mode":
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+    plugin.register(ctx)
+    calls.clear()
+
+    output = ctx.commands[0]["handler"]("off")
+
+    assert output == (
+        "Hermes /orch off succeeded: Orchestra dispatch disabled for this session"
+    )
+    assert calls == [
+        ["_session-mode", "set", "--session-id", "hermes:cli-session", "--mode", "off"],
+    ]
+
+
+@pytest.mark.parametrize("scenario", ["nonzero_exit", "raises"])
+def test_orch_slash_off_keeps_success_echo_and_warns_when_core_write_fails(
+    scenario: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_session-mode":
+            if scenario == "raises":
+                raise RuntimeError("core unavailable")
+            return completed(args, stderr="mode write failed\n", code=1)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+    plugin.register(ctx)
+
+    output = ctx.commands[0]["handler"]("off")
+
+    assert output.startswith(
+        "Hermes /orch off succeeded: Orchestra dispatch disabled for this session"
+    )
+    assert "could not record session mode in core" in output
+
+
+def test_orch_slash_on_first_enable_records_mode_before_local_dispatch_enablement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+    mode_write_seen_disabled: bool | None = None
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal mode_write_seen_disabled
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_session-mode":
+            mode_write_seen_disabled = plugin._orch_dispatch_is_disabled("hermes:cli-session")
+            return completed(args)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+    plugin.register(ctx)
+    calls.clear()
+    plugin._orch_dispatch_disable("hermes:cli-session")
+
+    output = ctx.commands[0]["handler"]("on")
+
+    assert output == (
+        "Hermes /orch on succeeded: Orchestra dispatch enabled for this session. "
+        'Run "/orch on" again to inject the orchestrator skill'
+    )
+    assert calls == [
+        ["_session-mode", "set", "--session-id", "hermes:cli-session", "--mode", "on"],
+    ]
+    assert mode_write_seen_disabled is True
+
+
+def test_orch_status_tool_on_action_records_core_session_mode_through_same_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+    mode_write_seen_disabled: bool | None = None
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal mode_write_seen_disabled
+        calls.append(args)
+        if args[0] == "_tool-info":
+            return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_session-mode":
+            mode_write_seen_disabled = plugin._orch_dispatch_is_disabled("hermes:runtime")
+            return completed(args)
+        if args[0] == "_orchestrator-skill":
+            return completed(args, "orchestrator skill payload\n")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime")
+    plugin.register(ctx)
+    calls.clear()
+    handler = next(tool["handler"] for tool in ctx.tools if tool["name"] == "orch_status")
+    plugin._orch_dispatch_disable("hermes:runtime")
+
+    assert handler({"action": "on"}, session_id="runtime") == (
+        "Hermes /orch on succeeded: Orchestra dispatch enabled for this session. "
+        'Run "/orch on" again to inject the orchestrator skill'
+    )
+    assert mode_write_seen_disabled is True
+    assert calls == [
+        ["_session-mode", "set", "--session-id", "hermes:runtime", "--mode", "on"],
+    ]
+
+    output = handler({"action": "on"}, session_id="runtime")
+
+    assert output == "Hermes /orch on succeeded: orchestrator skill injected"
+    assert calls[-2:] == [
+        ["_orchestrator-skill"],
+        ["_session-mode", "set", "--session-id", "hermes:runtime", "--mode", "orchestrator"],
+    ]
     assert ctx.injected == [("orchestrator skill payload", "user")]
 
 
@@ -897,6 +1237,8 @@ def test_orch_session_cleanup_clears_dispatch_disabled_state(
             return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "do":
             return completed(args, "run_id: abc123\nrole: builder\ntimeout_seconds: 60\n")
+        if args[0] == "_session-mode":
+            return completed(args)
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: builder abc123\n")
         raise AssertionError(f"unexpected command: {args}")
@@ -919,6 +1261,7 @@ def test_orch_session_cleanup_clears_dispatch_disabled_state(
 
     assert output == "orchestra dispatched: builder abc123"
     assert calls == [
+        ["_session-mode", "set", "--session-id", "hermes:cli-session", "--mode", "off"],
         ["do", "--session-id", "hermes:cli-session", "--goal", "do work", "--json"],
         ["_dispatch-ack", "--run-id", "abc123", "--role", "builder"],
     ]
@@ -936,6 +1279,8 @@ def test_orch_slash_on_clears_active_state_if_helper_raises_then_retry_succeeds(
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_session-mode":
+            return completed(args)
         if args[0] == "_orchestrator-skill":
             orchestrator_skill_calls += 1
             if orchestrator_skill_calls == 1:
@@ -952,7 +1297,18 @@ def test_orch_slash_on_clears_active_state_if_helper_raises_then_retry_succeeds(
     assert handler("on") == "Hermes /orch on failed: orchestrator skill helper raised: boom"
     assert handler("on") == "Hermes /orch on succeeded: orchestrator skill injected"
 
-    assert calls == [["_orchestrator-skill"], ["_orchestrator-skill"]]
+    assert calls == [
+        ["_orchestrator-skill"],
+        ["_orchestrator-skill"],
+        [
+            "_session-mode",
+            "set",
+            "--session-id",
+            "hermes:cli-session",
+            "--mode",
+            "orchestrator",
+        ],
+    ]
     assert ctx.injected == [("orchestrator skill payload", "user")]
 
 
@@ -1997,7 +2353,11 @@ def test_session_report_tui_busy_steers_live_session_without_cli_ref(
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
     ctx = FakeHermesPluginContext(agent_running=False)
     ctx._manager._cli_ref = None
-    agent = SimpleNamespace(steer=lambda message: steered.append(message) or True)
+    def steer(message: str) -> bool:
+        steered.append(message)
+        return True
+
+    agent = SimpleNamespace(steer=steer)
     fake_server = SimpleNamespace(
         _find_live_session_by_key=lambda key: (
             "tui-session",
