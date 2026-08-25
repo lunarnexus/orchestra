@@ -256,7 +256,8 @@ def test_pi_extension_budget_texts_come_from_loaded_tool_info() -> None:
 
 def test_clean_return_templates_live_in_core_not_extension() -> None:
     extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
-    core_source = Path("src/orchestra/app.py").read_text(encoding="utf-8")
+    core_reports_source = Path("src/orchestra/reports.py").read_text(encoding="utf-8")
+    core_host_text_source = Path("src/orchestra/host_text.py").read_text(encoding="utf-8")
 
     assert "_dispatch-ack" in extension_source
     assert "_progress-message" in extension_source
@@ -289,12 +290,13 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
         in extension_source
     )
     assert "compactReturnMessage" not in extension_source
-    assert "format_orchestrator_return" in core_source
-    assert "format_progress_notification" in core_source
-    assert "format_dispatch_ack" in core_source
-    assert "format_command_echo" in core_source
-    assert "tool_info" in core_source
-    assert "[orchestra: {run.role}" in core_source
-    assert "Request: {run.task_label}" not in core_source
-    assert "log: {run.log_path}" in core_source
-    assert "summary: {_format_run_summary(run)}" in core_source
+    assert "format_orchestrator_return" in core_reports_source
+    assert "clean_result_summary" in core_reports_source
+    assert "[orchestra: {run.role}" in core_reports_source
+    assert "Request: {run.task_label}" not in core_reports_source
+    assert "log: {run.log_path}" in core_reports_source
+    assert "summary: {_format_run_summary(run)}" in core_reports_source
+    assert "format_progress_notification" in core_host_text_source
+    assert "format_dispatch_ack" in core_host_text_source
+    assert "format_command_echo" in core_host_text_source
+    assert "tool_info" in core_host_text_source

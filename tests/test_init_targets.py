@@ -7,8 +7,10 @@ from typing import Any
 
 import pytest
 
-from orchestra.app import AppError, init_all, init_codex, init_opencode, init_pi
+import orchestra.init as init_module
 from orchestra.cli import main
+from orchestra.context import AppError
+from orchestra.init import init_all, init_codex, init_opencode, init_pi
 
 OPENCODE_COMMAND_TEMPLATE = """# /orch
 Args: `$ARGUMENTS`
@@ -190,9 +192,8 @@ def test_init_opencode_copy_mode_requires_canonical_source_root(
 ) -> None:
     opencode_config = tmp_path / "opencode-config"
     monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(opencode_config))
-    from orchestra import app
 
-    monkeypatch.setattr(app, "_find_source_root", lambda source_root=None: None)
+    monkeypatch.setattr(init_module, "_find_source_root", lambda source_root=None: None)
 
     with pytest.raises(AppError, match="canonical opencode source root not found"):
         init_opencode(copy=True)
@@ -467,9 +468,8 @@ def test_init_codex_copy_mode_requires_canonical_source_root(
 ) -> None:
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
-    from orchestra import app
 
-    monkeypatch.setattr(app, "_find_source_root", lambda source_root=None: None)
+    monkeypatch.setattr(init_module, "_find_source_root", lambda source_root=None: None)
     calls: list[list[str]] = []
 
     def fake_runner(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
@@ -562,9 +562,8 @@ def test_init_pi_requires_canonical_source_root_when_no_source_root_exists(
 ) -> None:
     pi_dir = tmp_path / "pi-agent"
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
-    from orchestra import app
 
-    monkeypatch.setattr(app, "_find_source_root", lambda source_root=None: None)
+    monkeypatch.setattr(init_module, "_find_source_root", lambda source_root=None: None)
 
     with pytest.raises(AppError, match="init source root not found"):
         init_pi()
@@ -576,9 +575,8 @@ def test_init_pi_copy_mode_requires_canonical_source_root_when_no_source_root_ex
 ) -> None:
     pi_dir = tmp_path / "pi-agent"
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
-    from orchestra import app
 
-    monkeypatch.setattr(app, "_find_source_root", lambda source_root=None: None)
+    monkeypatch.setattr(init_module, "_find_source_root", lambda source_root=None: None)
 
     with pytest.raises(AppError, match="init source root not found"):
         init_pi(copy=True)

@@ -1,0 +1,799 @@
+"""Detached supervisor and worker lifecycle helpers for Orchestra."""
+
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from orchestra.context import AppContext, AppError
+from orchestra.harnesses import HarnessLoadError, WorkerProcess, WorkerRequest, WorkerResult
+from orchestra.harnesses.common import SKILL_LIBRARY_DIR, compact_summary, summary_was_truncated
+from orchestra.harnesses.processes import process_group_id
+from orchestra.logs import append_run_event, utc_now
+from orchestra.reports import clean_result_summary
+from orchestra.roles import SelectedRole, _fallback_note, _fallback_roles_for, _select_role
+from orchestra.state import (
+    ACTIVE_STATUSES,
+    STATUS_CANCELLED,
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_INCOMPLETE,
+    STATUS_QUEUED,
+    STATUS_RUNNING,
+    RunRecord,
+    RunUpdate,
+)
+
+if TYPE_CHECKING:
+    from orchestra.dispatch import PendingRunRequest
+
+
+def _app_error(message: str) -> Exception:
+    return AppError(message)
+
+
+def _require_session_id(session_id: str) -> None:
+    if not session_id.strip():
+        raise AppError("session_id is required")
+
+
+WORKER_EMPTY_RESULT_ERROR = "Worker exited successfully without a meaningful result"
+WORKER_EMPTY_RESULT_BLOCKER = "Worker protocol error: empty result"
+WORKER_BUDGET_EXCEEDED_BLOCKER = (
+    "Worker budget exceeded; redispatch from continuation handoff"
+)
+SUPERVISOR_STARTUP_TIMEOUT_SECONDS = 30
+
+
+def run_supervisor_guarded(
+    context: AppContext, *, run_id: str, request_file: str | Path
+) -> RunRecord:
+    _append_run_event(context, run_id, "supervisor.started", {"pid": os.getpid()})
+    try:
+        context.store.update_run(
+            run_id,
+            RunUpdate(status=STATUS_QUEUED, supervisor_started_at=utc_now()),
+        )
+        return run_supervisor(context, run_id=run_id, request_file=request_file)
+    except Exception as exc:
+        _append_run_event(
+            context,
+            run_id,
+            "supervisor.failed",
+            {"error_type": type(exc).__name__, "error": str(exc)},
+        )
+        try:
+            return context.store.update_run(
+                run_id,
+                RunUpdate(
+                    status=STATUS_FAILED,
+                    error_text="Worker supervisor failed before completing run",
+                    blocker_text="Worker supervisor failure",
+                ),
+            )
+        except Exception:
+            raise exc from None
+
+
+def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path) -> RunRecord:
+    record = context.store.get_run(run_id)
+    if record.status not in ACTIVE_STATUSES:
+        return record
+
+    pending_request = _load_pending_request(run_id, Path(request_file))
+    selected_role = _select_role(context.catalog, record.role)
+    fallback_note: str | None = None
+
+    _append_run_event(
+        context,
+        run_id,
+        "worker.start_requested",
+        {"harness": selected_role.config.harness, "role": selected_role.name},
+    )
+    try:
+        started_role, worker = _start_worker_process(
+            context,
+            selected_role,
+            pending_request,
+            log_path=record.log_path,
+        )
+    except Exception as exc:
+        startup_failures = [str(exc)]
+        last_failure_text = str(exc)
+        attempted_role = selected_role
+        started_role = None
+        worker = None
+
+        for fallback_role in _fallback_roles_for(context.catalog, selected_role):
+            candidate_note = _fallback_note(
+                role_name=selected_role.name,
+                fallback_harness_config=fallback_role.config.harness_config,
+                failed_harness=attempted_role.config.harness,
+            )
+            try:
+                started_role, worker = _start_worker_process(
+                    context,
+                    fallback_role,
+                    pending_request,
+                    log_path=record.log_path,
+                )
+                fallback_note = candidate_note
+                break
+            except Exception as fallback_exc:
+                startup_failures.append(
+                    "fallback harness_config "
+                    f"{fallback_role.config.harness_config} also failed: {fallback_exc}"
+                )
+                last_failure_text = str(fallback_exc)
+                attempted_role = fallback_role
+
+        if started_role is None or worker is None:
+            finalized = _finalize_supervisor_setup_failure(
+                context,
+                run_id,
+                error_text="; ".join(startup_failures),
+                blocker_text=_setup_failure_blocker(last_failure_text),
+            )
+            _safe_unlink(pending_request.request_file)
+            return finalized
+
+    assert started_role is not None
+    assert worker is not None
+    pgid = process_group_id(worker.process.pid)
+    _append_run_event(
+        context,
+        run_id,
+        "worker.started",
+        {
+            "harness": started_role.config.harness,
+            "role": started_role.name,
+            "process_id": worker.process.pid,
+            "process_group_id": pgid,
+            "worker_session_id": worker.worker_session_id,
+            "transcript_path": str(worker.transcript_path) if worker.transcript_path else None,
+        },
+    )
+    updated = context.store.update_run(
+        run_id,
+        RunUpdate(
+            status=STATUS_RUNNING,
+            harness=started_role.config.harness,
+            role=started_role.name,
+            process_id=worker.process.pid,
+            process_group_id=pgid,
+            worker_session_id=worker.worker_session_id,
+            transcript_path=worker.transcript_path,
+            approval_needed=worker.approval_needed,
+            blocker_text=fallback_note,
+        ),
+    )
+    if updated.status != STATUS_RUNNING:
+        _terminate_worker(worker.process, pgid)
+        return updated
+
+    try:
+        stdout, stderr = worker.process.communicate(timeout=pending_request.timeout_seconds)
+    except subprocess.TimeoutExpired:
+        stdout, stderr = _terminate_subprocess(worker.process, pgid)
+        result = WorkerResult(
+            status=STATUS_FAILED,
+            command=worker.command,
+            prompt=worker.prompt,
+            exit_code=None,
+            stdout=stdout,
+            stderr=stderr,
+            result_summary=compact_summary(stdout),
+            error_text="Worker timed out",
+            blocker_text="Worker exceeded timeout",
+            result_summary_truncated=False,
+            timed_out=True,
+            worker_session_id=worker.worker_session_id,
+            transcript_path=worker.transcript_path,
+            approval_needed=worker.approval_needed,
+        )
+    else:
+        result = _result_from_completed_worker(worker, stdout, stderr)
+
+    _append_run_event(
+        context,
+        run_id,
+        "worker.exited",
+        {
+            "exit_code": worker.process.returncode,
+            "stdout_bytes": len(stdout.encode()),
+            "stderr_bytes": len(stderr.encode()),
+            "timed_out": result.timed_out,
+        },
+    )
+
+    if fallback_note:
+        result = _annotate_result_with_fallback(result, fallback_note)
+
+    return _finalize_run(context, record.run_id, result)
+
+
+def stop_run(context: AppContext, session_id: str, run_id: str) -> RunRecord:
+    _require_session_id(session_id)
+    record = context.store.get_run(run_id)
+    if record.orchestrator_session_id != session_id:
+        raise _app_error("run does not belong to the provided session_id")
+    if record.status not in ACTIVE_STATUSES:
+        raise _app_error("run is not active")
+
+    cancelled = context.store.update_run(
+        run_id,
+        RunUpdate(status=STATUS_CANCELLED, blocker_text="Cancelled by orchestra stop"),
+    )
+    if record.process_id is not None:
+        _terminate_owned_process(record.process_id, record.process_group_id)
+    return cancelled
+
+
+def reconcile_stale_queued_runs(
+    context: AppContext,
+    *,
+    startup_timeout_seconds: int = SUPERVISOR_STARTUP_TIMEOUT_SECONDS,
+) -> list[RunRecord]:
+    reconciled: list[RunRecord] = []
+    now = datetime.now(UTC)
+    for run in context.store.list_active_runs():
+        if run.status == STATUS_RUNNING:
+            if _is_stale_running_run(run):
+                reconciled.append(_reconcile_stale_running_run(context, run))
+            continue
+        if run.status != STATUS_QUEUED:
+            continue
+        age = _record_age_seconds(run.created_at, now)
+        if run.supervisor_pid is not None and not _process_exists(run.supervisor_pid):
+            reconciled.append(
+                _reconcile_queued_run(
+                    context,
+                    run,
+                    reason="supervisor process exited before starting worker",
+                    error_text="Worker supervisor exited before starting worker",
+                    blocker_text="Worker supervisor launch failed",
+                    queued_age_seconds=age,
+                )
+            )
+            continue
+        if age < startup_timeout_seconds:
+            continue
+        if run.supervisor_pid is not None and _process_exists(run.supervisor_pid):
+            _append_run_event(
+                context,
+                run.run_id,
+                "supervisor.startup_wait_extended",
+                {
+                    "reason": "supervisor still alive before worker start",
+                    "supervisor_pid": run.supervisor_pid,
+                    "queued_age_seconds": round(age, 3),
+                    "supervisor_output_path": str(run.supervisor_output_path)
+                    if run.supervisor_output_path
+                    else None,
+                },
+            )
+            continue
+        error_text = "Worker supervisor ownership was not recorded"
+        blocker_text = "Worker supervisor launch state missing"
+        reconciled.append(
+            _reconcile_queued_run(
+                context,
+                run,
+                reason=error_text,
+                error_text=error_text,
+                blocker_text=blocker_text,
+                queued_age_seconds=age,
+            )
+        )
+    return reconciled
+
+
+def _is_stale_running_run(run: RunRecord) -> bool:
+    return (
+        run.process_id is not None
+        and run.supervisor_pid is not None
+        and not _process_exists(run.process_id)
+        and not _process_exists(run.supervisor_pid)
+    )
+
+
+def _record_age_seconds(created_at: str, now: datetime) -> float:
+    try:
+        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    return max((now - created).total_seconds(), 0.0)
+
+
+def _reconcile_stale_running_run(context: AppContext, run: RunRecord) -> RunRecord:
+    reason = "worker process exited/disappeared without terminal status"
+    _append_run_event(
+        context,
+        run.run_id,
+        "worker.reconciled",
+        {
+            "reason": reason,
+            "process_id": run.process_id,
+            "supervisor_pid": run.supervisor_pid,
+            "supervisor_output_path": str(run.supervisor_output_path)
+            if run.supervisor_output_path
+            else None,
+        },
+    )
+    return context.store.update_run(
+        run.run_id,
+        RunUpdate(
+            status=STATUS_FAILED,
+            error_text=reason,
+            blocker_text="stale running worker reconciled",
+        ),
+    )
+
+
+def _reconcile_queued_run(
+    context: AppContext,
+    run: RunRecord,
+    *,
+    reason: str,
+    error_text: str,
+    blocker_text: str,
+    queued_age_seconds: float,
+) -> RunRecord:
+    _append_run_event(
+        context,
+        run.run_id,
+        "supervisor.reconciled",
+        {
+            "reason": reason,
+            "supervisor_pid": run.supervisor_pid,
+            "queued_age_seconds": round(queued_age_seconds, 3),
+            "supervisor_output_path": str(run.supervisor_output_path)
+            if run.supervisor_output_path
+            else None,
+        },
+    )
+    return context.store.update_run(
+        run.run_id,
+        RunUpdate(status=STATUS_FAILED, error_text=error_text, blocker_text=blocker_text),
+    )
+
+
+def _run_log_path(context: AppContext, run_id: str) -> Path:
+    return context.config.log_dir / f"{run_id}.jsonl"
+
+
+def _append_run_event(
+    context: AppContext,
+    run_id: str,
+    event: str,
+    details: dict[str, object] | None = None,
+) -> None:
+    append_run_event(_run_log_path(context, run_id), run_id=run_id, event=event, details=details)
+
+
+def _spawn_supervisor(context: AppContext, request_file: Path, run_id: str) -> None:
+    command = [
+        sys.executable,
+        "-m",
+        "orchestra",
+        "--config",
+        str(context.paths.config_path),
+        "--agent-catalog",
+        str(context.paths.catalog_path),
+        "_run-supervisor",
+        "--run-id",
+        run_id,
+        "--request-file",
+        str(request_file),
+    ]
+    supervisor_output_path = context.config.log_dir / f"{run_id}.supervisor.log"
+    supervisor_output_path.parent.mkdir(parents=True, exist_ok=True)
+    _append_run_event(
+        context,
+        run_id,
+        "supervisor.spawn_requested",
+        {
+            "command": command,
+            "request_file": str(request_file),
+            "supervisor_output_path": str(supervisor_output_path),
+        },
+    )
+    try:
+        output = supervisor_output_path.open("ab")
+        process = subprocess.Popen(
+            command,
+            stdout=output,
+            stderr=output,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        _append_run_event(context, run_id, "supervisor.failed", {"error": str(exc)})
+        context.store.update_run(
+            run_id,
+            RunUpdate(
+                status=STATUS_FAILED,
+                error_text="Worker supervisor could not be launched",
+                blocker_text="Worker supervisor launch failed",
+                supervisor_output_path=supervisor_output_path,
+            ),
+        )
+        return
+    finally:
+        try:
+            output.close()
+        except UnboundLocalError:
+            pass
+
+    context.store.update_run(
+        run_id,
+        RunUpdate(
+            status=STATUS_QUEUED,
+            supervisor_pid=process.pid,
+            supervisor_output_path=supervisor_output_path,
+        ),
+    )
+    _append_run_event(
+        context,
+        run_id,
+        "supervisor.spawned",
+        {"supervisor_pid": process.pid, "supervisor_output_path": str(supervisor_output_path)},
+    )
+
+
+def _load_pending_request(run_id: str, request_file: Path) -> PendingRunRequest:
+    from orchestra.dispatch import PendingRunRequest
+
+    payload = json.loads(request_file.read_text(encoding="utf-8"))
+    return PendingRunRequest(
+        run_id=run_id,
+        role_name=str(payload["role_name"]),
+        goal=str(payload["goal"]),
+        approved_context=str(payload["approved_context"]),
+        boundaries=str(payload["boundaries"]),
+        acceptance_target=str(payload["acceptance_target"]),
+        return_format=str(payload["return_format"]),
+        timeout_seconds=int(payload["timeout_seconds"]),
+        task_label=str(payload["task_label"]),
+        request_file=request_file,
+    )
+
+
+def _finalize_supervisor_setup_failure(
+    context: AppContext,
+    run_id: str,
+    *,
+    error_text: str,
+    blocker_text: str,
+) -> RunRecord:
+    return context.store.update_run(
+        run_id,
+        RunUpdate(
+            status=STATUS_FAILED,
+            result_summary=clean_result_summary(error_text),
+            error_text=error_text,
+            blocker_text=blocker_text,
+        ),
+    )
+
+
+def _start_worker_process(
+    context: AppContext,
+    selected_role: SelectedRole,
+    pending_request: PendingRunRequest,
+    *,
+    log_path: Path,
+) -> tuple[SelectedRole, WorkerProcess]:
+    role = selected_role.config
+    try:
+        harness = context.registry.get(role.harness)
+    except HarnessLoadError as exc:
+        detail = exc.args[0] if exc.args else str(exc)
+        raise _app_error(detail) from exc
+    except KeyError as exc:
+        detail = exc.args[0] if exc.args else str(exc)
+        raise _app_error(detail) from exc
+
+    request = WorkerRequest(
+        role_name=selected_role.name,
+        goal=pending_request.goal,
+        run_id=pending_request.run_id,
+        approved_context=pending_request.approved_context,
+        boundaries=pending_request.boundaries,
+        acceptance_target=pending_request.acceptance_target,
+        return_format=pending_request.return_format,
+        timeout_seconds=pending_request.timeout_seconds,
+        task_label=pending_request.task_label,
+        nested_dispatch_depth=role.nested_dispatch_depth,
+        turn_limit=role.turn_limit or context.config.turn_limit,
+        soft_timeout=role.soft_timeout or context.config.soft_timeout,
+        budget_exceeded_prompt=context.config.prompts.budget_exceeded_prompt,
+        log_path=log_path,
+        skill_roots=_worker_skill_roots(context.paths.catalog_path),
+        prompts=context.config.prompts,
+    )
+
+    try:
+        return selected_role, harness.start(request, role)
+    except Exception as exc:
+        raise _app_error(f"failed to start harness: {role.harness}: {exc}") from exc
+
+
+def _worker_skill_roots(catalog_path: Path) -> tuple[Path, ...]:
+    roots = (Path.cwd() / SKILL_LIBRARY_DIR, catalog_path.resolve().parent / SKILL_LIBRARY_DIR)
+    return tuple(dict.fromkeys(root.resolve() for root in roots))
+
+
+def _annotate_result_with_fallback(result: WorkerResult, note: str) -> WorkerResult:
+    result_summary = f"{note}; {result.result_summary}" if result.result_summary else note
+    error_text = f"{note}; {result.error_text}" if result.error_text else result.error_text
+    blocker_text = f"{note}; {result.blocker_text}" if result.blocker_text else ""
+    return WorkerResult(
+        status=result.status,
+        command=result.command,
+        prompt=result.prompt,
+        exit_code=result.exit_code,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        result_summary=result_summary,
+        error_text=error_text,
+        blocker_text=blocker_text,
+        result_summary_truncated=result.result_summary_truncated,
+        timed_out=result.timed_out,
+        worker_session_id=result.worker_session_id,
+        transcript_path=result.transcript_path,
+        approval_needed=result.approval_needed,
+    )
+
+
+def _setup_failure_blocker(error_text: str) -> str:
+    if error_text.startswith("failed to load harness:"):
+        return "Worker harness could not be loaded"
+    if error_text.startswith("unknown harness:"):
+        return "Worker harness is not configured"
+    return "Worker harness could not start"
+
+
+def _meaningful_worker_summary(stdout: str) -> str | None:
+    return compact_summary(_meaningful_worker_output(stdout))
+
+
+def _meaningful_worker_output(stdout: str) -> str:
+    lines = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lowered = stripped.lower()
+        if lowered.startswith("bootstrapping") or lowered.startswith("warning"):
+            continue
+        lines.append(stripped)
+    return "\n".join(lines)
+
+
+def _is_incomplete_worker_result(stdout: str) -> bool:
+    return any(
+        line.strip().lower() == "orchestra_status: incomplete"
+        for line in stdout.splitlines()
+    )
+
+
+def _result_from_completed_worker(
+    worker: WorkerProcess,
+    stdout: str,
+    stderr: str,
+) -> WorkerResult:
+    result_summary = _meaningful_worker_summary(stdout)
+    if worker.process.returncode == 0:
+        if _is_incomplete_worker_result(stdout):
+            return WorkerResult(
+                status=STATUS_INCOMPLETE,
+                command=worker.command,
+                prompt=worker.prompt,
+                exit_code=worker.process.returncode,
+                stdout=stdout,
+                stderr=stderr,
+                result_summary=result_summary,
+                error_text=None,
+                blocker_text=WORKER_BUDGET_EXCEEDED_BLOCKER,
+                result_summary_truncated=summary_was_truncated(_meaningful_worker_output(stdout)),
+                worker_session_id=worker.worker_session_id,
+                transcript_path=worker.transcript_path,
+                approval_needed=worker.approval_needed,
+            )
+        if not result_summary:
+            return WorkerResult(
+                status=STATUS_FAILED,
+                command=worker.command,
+                prompt=worker.prompt,
+                exit_code=worker.process.returncode,
+                stdout=stdout,
+                stderr=stderr,
+                result_summary=None,
+                error_text=WORKER_EMPTY_RESULT_ERROR,
+                blocker_text=WORKER_EMPTY_RESULT_BLOCKER,
+                result_summary_truncated=False,
+                worker_session_id=worker.worker_session_id,
+                transcript_path=worker.transcript_path,
+                approval_needed=worker.approval_needed,
+            )
+        return WorkerResult(
+            status=STATUS_DONE,
+            command=worker.command,
+            prompt=worker.prompt,
+            exit_code=worker.process.returncode,
+            stdout=stdout,
+            stderr=stderr,
+            result_summary=result_summary,
+            error_text=None,
+            blocker_text=None,
+            result_summary_truncated=summary_was_truncated(_meaningful_worker_output(stdout)),
+            worker_session_id=worker.worker_session_id,
+            transcript_path=worker.transcript_path,
+            approval_needed=worker.approval_needed,
+        )
+    return WorkerResult(
+        status=STATUS_FAILED,
+        command=worker.command,
+        prompt=worker.prompt,
+        exit_code=worker.process.returncode,
+        stdout=stdout,
+        stderr=stderr,
+        result_summary=result_summary,
+        error_text=compact_summary(stderr) or "Worker failed",
+        blocker_text=None,
+        result_summary_truncated=summary_was_truncated(stderr) if stderr else False,
+        worker_session_id=worker.worker_session_id,
+        transcript_path=worker.transcript_path,
+        approval_needed=worker.approval_needed,
+    )
+
+
+def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> RunRecord:
+    current = context.store.get_run(run_id)
+    if current.status not in ACTIVE_STATUSES:
+        return current
+
+    terminal_status = (
+        result.status
+        if result.status in {STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}
+        else STATUS_FAILED
+    )
+    artifact_path: Path | None = None
+    blocker_text = result.blocker_text
+    effective_blocker_text = current.blocker_text if blocker_text is None else blocker_text
+    try:
+        artifact_path = _write_return_artifact(context, run_id, result)
+        _append_run_event(
+            context,
+            run_id,
+            "artifact.written",
+            {"path": str(artifact_path) if artifact_path else None},
+        )
+    except OSError as exc:
+        artifact_error = f"Return artifact could not be written: {exc}"
+        effective_blocker_text = (
+            f"{effective_blocker_text}; {artifact_error}"
+            if effective_blocker_text
+            else artifact_error
+        )
+        blocker_text = effective_blocker_text
+
+    result_summary_truncated = (
+        result.result_summary_truncated if not effective_blocker_text else False
+    )
+    return context.store.update_run(
+        run_id,
+        RunUpdate(
+            status=terminal_status,
+            result_summary=result.result_summary,
+            result_artifact_path=artifact_path,
+            result_summary_truncated=result_summary_truncated,
+            error_text=result.error_text,
+            blocker_text=blocker_text,
+            worker_session_id=result.worker_session_id,
+            transcript_path=result.transcript_path,
+            approval_needed=result.approval_needed,
+        ),
+    )
+
+
+def _write_return_artifact(
+    context: AppContext,
+    run_id: str,
+    result: WorkerResult,
+) -> Path:
+    artifact_dir = context.config.state_dir / "return-artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_dir / f"{run_id}.md"
+    artifact_path.write_text(
+        _format_return_artifact(run_id, result),
+        encoding="utf-8",
+    )
+    return artifact_path
+
+
+def _format_return_artifact(run_id: str, result: WorkerResult) -> str:
+    content = (
+        "\n".join(
+            [
+                "# Orchestra worker return",
+                "",
+                f"Run: {run_id}",
+                "",
+                "## stdout",
+                "",
+            ]
+        )
+        + "\n"
+    )
+    content += result.stdout if result.stdout else "(empty)\n"
+    content = _ensure_terminal_newline(content)
+    if result.stderr:
+        content += "\n## stderr\n\n"
+        content += result.stderr
+        content = _ensure_terminal_newline(content)
+    return content
+
+
+def _ensure_terminal_newline(text: str) -> str:
+    return text if text.endswith("\n") else f"{text}\n"
+
+
+def _terminate_owned_process(process_id: int, process_group_id_value: int | None) -> None:
+    _send_termination(process_id, process_group_id_value, signal.SIGTERM)
+    time.sleep(0.2)
+    if _process_exists(process_id):
+        _send_termination(process_id, process_group_id_value, signal.SIGKILL)
+
+
+def _terminate_worker(process: subprocess.Popen[str], process_group_id_value: int | None) -> None:
+    _send_termination(process.pid, process_group_id_value, signal.SIGTERM)
+
+
+def _terminate_subprocess(
+    process: subprocess.Popen[str],
+    process_group_id_value: int | None,
+) -> tuple[str, str]:
+    _send_termination(process.pid, process_group_id_value, signal.SIGTERM)
+    try:
+        stdout, stderr = process.communicate(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        _send_termination(process.pid, process_group_id_value, signal.SIGKILL)
+        stdout, stderr = process.communicate(timeout=1.0)
+    return stdout, stderr
+
+
+def _send_termination(
+    process_id: int,
+    process_group_id_value: int | None,
+    sig: signal.Signals,
+) -> None:
+    try:
+        if process_group_id_value is not None and os.name != "nt":
+            os.killpg(process_group_id_value, sig)
+        else:
+            os.kill(process_id, sig)
+    except ProcessLookupError:
+        return
+
+
+def _process_exists(process_id: int) -> bool:
+    try:
+        os.kill(process_id, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _safe_unlink(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return

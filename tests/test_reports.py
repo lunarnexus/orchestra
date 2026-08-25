@@ -5,15 +5,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestra.app import (
+from orchestra.config import load_app_config
+from orchestra.context import load_context
+from orchestra.reports import (
     SessionStatusDetails,
-    await_run_payload,
     consume_pending_session_report,
     format_orchestrator_return,
     format_run_report,
-    load_context,
 )
-from orchestra.config import load_app_config
 from orchestra.state import (
     STATUS_CANCELLED,
     STATUS_DONE,
@@ -22,6 +21,7 @@ from orchestra.state import (
     RunRecord,
     StateStore,
 )
+from orchestra.status import await_run_payload
 from tests.helpers import ROOT_PROMPTS, extract_run_id, run_cli, wait_for_condition
 from tests.types import RuntimeFilesFactory
 

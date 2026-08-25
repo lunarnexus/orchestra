@@ -5,7 +5,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestra.app import format_status, load_context, reconcile_stale_queued_runs, start_run
+from orchestra.context import load_context
+from orchestra.dispatch import start_run
 from orchestra.state import (
     STATUS_CANCELLED,
     STATUS_DONE,
@@ -16,6 +17,8 @@ from orchestra.state import (
     RunUpdate,
     StateStore,
 )
+from orchestra.status import format_status
+from orchestra.supervision import reconcile_stale_queued_runs
 from tests.helpers import extract_run_id, run_cli, wait_for_condition
 from tests.types import RuntimeFilesFactory
 
@@ -191,7 +194,7 @@ def test_reconcile_does_not_fail_queued_run_with_live_supervisor_after_startup_d
             supervisor_pid=222_222,
         )
     )
-    monkeypatch.setattr("orchestra.app._process_exists", lambda pid: pid == 222_222)
+    monkeypatch.setattr("orchestra.supervision._process_exists", lambda pid: pid == 222_222)
 
     reconciled = reconcile_stale_queued_runs(context, startup_timeout_seconds=1)
 
@@ -230,7 +233,7 @@ def test_status_reconciles_stale_running_run_with_dead_worker_and_supervisor(
         "stalerunning1",
         RunUpdate(status=STATUS_RUNNING, process_id=111_111, supervisor_pid=222_222),
     )
-    monkeypatch.setattr("orchestra.app._process_exists", lambda _pid: False)
+    monkeypatch.setattr("orchestra.supervision._process_exists", lambda _pid: False)
 
     status = format_status(context, "manual:stale-running")
 
@@ -294,8 +297,8 @@ def test_start_run_reconciles_stale_running_model_slot_before_reserve(
         "stalemodel1",
         RunUpdate(status=STATUS_RUNNING, process_id=111_111, supervisor_pid=222_222),
     )
-    monkeypatch.setattr("orchestra.app._process_exists", lambda _pid: False)
-    monkeypatch.setattr("orchestra.app._spawn_supervisor", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("orchestra.supervision._process_exists", lambda _pid: False)
+    monkeypatch.setattr("orchestra.supervision._spawn_supervisor", lambda *_args, **_kwargs: None)
 
     started = start_run(
         context,

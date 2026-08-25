@@ -6,20 +6,16 @@ from pathlib import Path
 
 import pytest
 
-from orchestra.app import (
-    create_default_registry,
-    doctor_checks_pass,
-    load_context,
-    run_doctor,
-    run_supervisor,
-    start_run,
-)
 from orchestra.config import RoleConfig
+from orchestra.context import create_default_registry, load_context
+from orchestra.dispatch import start_run
 from orchestra.harnesses import HarnessRegistry, WorkerProcess, WorkerRequest
 from orchestra.harnesses.hermes import HermesHarness
 from orchestra.harnesses.opencode import OpenCodeHarness
 from orchestra.harnesses.pi import PiHarness
+from orchestra.init import doctor_checks_pass, run_doctor
 from orchestra.state import STATUS_FAILED
+from orchestra.supervision import run_supervisor
 
 ROOT_PROMPTS = Path(__file__).resolve().parents[1] / "prompts.yaml"
 
@@ -109,7 +105,7 @@ def test_run_doctor_reports_missing_orchestra_executable(
             return None
         return f"/usr/bin/{executable}"
 
-    monkeypatch.setattr("orchestra.app.shutil.which", fake_which)
+    monkeypatch.setattr("orchestra.init.shutil.which", fake_which)
 
     checks = run_doctor(config_path=config_path, catalog_path=catalog_path, registry=registry)
 

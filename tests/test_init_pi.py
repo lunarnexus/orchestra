@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from orchestra.app import init_pi
 from orchestra.cli import main
+from orchestra.init import init_pi
 
 
 def _write_source_tree(root: Path, extension_text: str = "extension v1") -> None:

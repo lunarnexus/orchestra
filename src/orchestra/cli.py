@@ -7,57 +7,59 @@ import json
 import sys
 from collections.abc import Sequence
 
-from orchestra.app import (
+from orchestra.config import ConfigError
+from orchestra.context import AppError, load_context
+from orchestra.dispatch import format_started_run, start_run, started_run_payload
+from orchestra.host_text import (
     ROLE_USAGE,
-    AppError,
-    InitFileResult,
-    await_run_payload,
-    await_run_terminal_status,
-    await_session_report,
-    await_session_report_payload,
-    consume_pending_session_report,
-    default_main_session_mode,
     dispatch_ack_payload,
-    doctor_checks_pass,
     format_command_echo,
-    format_debug_run,
-    format_debug_session,
     format_dispatch_ack,
-    format_doctor_checks,
-    format_history,
     format_host_help,
     format_opencode_help,
     format_progress_notification,
-    format_roles,
-    format_run_report,
-    format_started_run,
-    format_status,
+    progress_notification_payload,
+    render_orchestrator_skill_message,
+    tool_info,
+)
+from orchestra.init import (
+    InitFileResult,
+    doctor_checks_pass,
+    format_doctor_checks,
     init_all,
     init_codex,
     init_hermes,
     init_opencode,
     init_pi,
-    load_context,
-    main_session_state_payload,
-    mark_session_report_delivered,
-    progress_notification_payload,
-    release_session_report,
-    render_orchestrator_skill_message,
-    resolve_main_session_mode,
-    role_metadata,
     run_doctor,
-    run_supervisor_guarded,
-    session_report_payload,
-    set_main_session_mode,
-    set_role_setting,
-    start_run,
-    started_run_payload,
-    status_payload,
-    stop_run,
-    tool_info,
 )
-from orchestra.config import ConfigError
+from orchestra.reports import (
+    await_run_terminal_status,
+    await_session_report,
+    await_session_report_payload,
+    consume_pending_session_report,
+    format_run_report,
+    mark_session_report_delivered,
+    release_session_report,
+    session_report_payload,
+)
+from orchestra.roles import format_roles, role_metadata, set_role_setting
+from orchestra.session_mode import (
+    default_main_session_mode,
+    main_session_state_payload,
+    resolve_main_session_mode,
+    set_main_session_mode,
+)
 from orchestra.state import StateError
+from orchestra.status import (
+    await_run_payload,
+    format_debug_run,
+    format_debug_session,
+    format_history,
+    format_status,
+    status_payload,
+)
+from orchestra.supervision import run_supervisor_guarded, stop_run
 
 INTERNAL_COMMANDS = frozenset(
     {

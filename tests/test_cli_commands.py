@@ -8,25 +8,18 @@ from typing import Any, cast
 import pytest
 import yaml
 
-from orchestra.app import (
-    AppConfig,
-    AppContext,
-    AppError,
-    OrchestraPaths,
-    _debug_transcript_section,
-    _expanded_model_limits,
-    format_orchestrator_return,
-    format_status,
-    start_run,
-)
 from orchestra.config import (
     AgentCatalog,
+    AppConfig,
     ConcurrencyConfig,
     ModelLimitConfig,
     PromptConfig,
     RoleConfig,
 )
+from orchestra.context import AppContext, AppError, OrchestraPaths
+from orchestra.dispatch import _expanded_model_limits, start_run
 from orchestra.harnesses.common import ORCHESTRA_DISPATCH_BUDGET_ENV
+from orchestra.reports import format_orchestrator_return
 from orchestra.state import (
     STATUS_DONE,
     STATUS_FAILED,
@@ -36,6 +29,7 @@ from orchestra.state import (
     RunUpdate,
     StateStore,
 )
+from orchestra.status import _debug_transcript_section, format_status, status_payload
 from tests.helpers import extract_run_id, wait_for_condition
 from tests.types import RuntimeFilesFactory
 
@@ -133,7 +127,7 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
             catalog_path=tmp_path / "catalog.yaml",
         ),
     )
-    monkeypatch.setattr("orchestra.app.orchestra_can_dispatch", lambda: True)
+    monkeypatch.setattr("orchestra.harnesses.common.orchestra_can_dispatch", lambda: True)
 
     with pytest.raises(
         AppError,
@@ -735,6 +729,86 @@ def test_format_status_reports_capacity_notation_for_session_and_global_scopes()
     ]
 
 
+def test_status_module_exports_match_direct_imports(tmp_path: Path) -> None:
+    prompts = load_root_prompt_config()
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
+    context = AppContext(
+        config=AppConfig(
+            default_timeout=30,
+            prompts=prompts,
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+        ),
+        catalog=AgentCatalog(
+            roles={"worker": RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])},
+        ),
+        store=store,
+        registry=cast(Any, SimpleNamespace()),
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+
+    from orchestra import status as status_module
+
+    assert status_module.format_status(context) == format_status(context)
+    assert status_module.status_payload(context) == status_payload(context)
+
+
+def test_roles_module_exports_match_direct_imports(tmp_path: Path) -> None:
+    prompts = load_root_prompt_config()
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
+    context = AppContext(
+        config=AppConfig(
+            default_timeout=30,
+            prompts=prompts,
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
+            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
+        ),
+        catalog=AgentCatalog(
+            default_role="builder",
+            roles={
+                "builder": RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"]),
+                "reviewer": RoleConfig(
+                    harness="pi",
+                    command=["pi", "-p", "{prompt}"],
+                    enabled=False,
+                ),
+            },
+        ),
+        store=store,
+        registry=cast(Any, SimpleNamespace()),
+        paths=OrchestraPaths(
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
+        ),
+    )
+
+    from orchestra import roles as roles_module
+    from orchestra.roles import (
+        SelectedRole as module_selected_role,
+    )
+    from orchestra.roles import (
+        format_roles as module_format_roles,
+    )
+    from orchestra.roles import (
+        role_metadata as module_role_metadata,
+    )
+    from orchestra.roles import (
+        set_role_setting as module_set_role_setting,
+    )
+
+    assert roles_module.SelectedRole is module_selected_role
+    assert roles_module.format_roles(context) == module_format_roles(context)
+    assert roles_module.role_metadata(context) == module_role_metadata(context)
+    assert roles_module.set_role_setting is module_set_role_setting
+
+
 def test_status_without_session_id_reports_global_active_runs(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
@@ -1189,10 +1263,10 @@ def test_internal_orchestrator_skill_errors_when_missing(
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
-    import orchestra.app as app
+    import orchestra.host_text as host_text
     from orchestra.cli import main
 
-    monkeypatch.setattr(app, "_find_source_root", lambda source_root=None: None)
+    monkeypatch.setattr(host_text, "_find_source_root", lambda source_root=None: None)
 
     exit_code = main(["_orchestrator-skill"])
 

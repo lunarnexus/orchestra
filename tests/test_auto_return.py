@@ -7,10 +7,10 @@ from typing import Any, cast
 
 import pytest
 
-from orchestra.app import (
+from orchestra.context import load_context
+from orchestra.reports import (
     await_session_report_payload,
     consume_pending_session_report,
-    load_context,
     mark_session_report_delivered,
 )
 from orchestra.state import STATUS_DONE, STATUS_RUNNING, RunRecord, RunUpdate, StateStore

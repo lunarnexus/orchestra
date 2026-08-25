@@ -8,10 +8,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestra.app import (
-    AppContext,
+from orchestra import session_mode
+from orchestra.context import AppContext, load_context
+from orchestra.session_mode import (
     get_main_session_state,
-    load_context,
+    main_session_state_payload,
     resolve_main_session_mode,
     set_main_session_mode,
 )
@@ -72,3 +73,22 @@ def test_config_default_is_true_when_key_missing(tmp_path: Path) -> None:
     context = make_context(tmp_path / "rt", tools_enabled_by_default=None)
 
     assert resolve_main_session_mode(context, "pi:session-a") == "on"
+
+
+def test_session_mode_module_matches_payload(tmp_path: Path) -> None:
+    context = make_context(tmp_path / "rt", tools_enabled_by_default=False)
+
+    assert session_mode.default_main_session_mode(context) == "off"
+    assert session_mode.resolve_main_session_mode(context, "pi:session-a") == "off"
+
+    session_state = session_mode.set_main_session_mode(context, "pi:session-a", "on")
+    module_state = set_main_session_mode(context, "pi:session-a", "on")
+    assert session_state == module_state
+
+    session_loaded = session_mode.get_main_session_state(context, "pi:session-a")
+    module_loaded = get_main_session_state(context, "pi:session-a")
+    assert session_loaded == module_loaded
+
+    session_payload = session_mode.main_session_state_payload(context, "pi:session-a")
+    module_payload = main_session_state_payload(context, "pi:session-a")
+    assert session_payload == module_payload

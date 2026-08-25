@@ -9,8 +9,9 @@ from typing import Any
 
 import pytest
 
-from orchestra.app import AppError, init_hermes
 from orchestra.cli import main
+from orchestra.context import AppError
+from orchestra.init import InitHermesResult, init_hermes
 
 
 def completed(
@@ -168,7 +169,6 @@ def test_cli_init_hermes_allows_default_profile(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from orchestra import cli
-    from orchestra.app import InitHermesResult
 
     def fake_init_hermes(
         *,
@@ -202,7 +202,6 @@ def test_cli_init_hermes_prints_verify_command(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from orchestra import cli
-    from orchestra.app import InitHermesResult
 
     def fake_init_hermes(
         *,
