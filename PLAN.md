@@ -476,33 +476,47 @@ Anticipated issues:
 
 ### Phase 5 — Thin Plugins Incrementally
 
-- [ ] Slice 5.1 — sequential — Migrate read-only actions in one adapter first.
-  Scope: choose the smallest viable adapter/action set, likely OpenCode or Pi read-only status/help/roles.
-  Stop when: one adapter delegates read-only routing to core facade.
-  Verify: relevant plugin tests.
-  Risk: P2 — source-string tests may need targeted updates.
+Phase 5 tracer decision: use **Pi first**. Pi is the most complete adapter and exercises the widest host contract: `/orch on/off`, active-tool gating, footer mode display, dispatch, progress watchers, auto-return injection, role completions, and native tool registration. If the core facade supports Pi cleanly, apply the proven contract to OpenCode and Hermes afterward.
 
-- [ ] Slice 5.2 — sequential — Migrate session-mode behavior.
-  Scope: Pi and OpenCode `/orch on/off` or tool equivalents, Hermes gating where applicable.
-  Stop when: adapters record and respect core-owned mode consistently.
-  Verify: `tests/test_session_mode.py`, plugin source/contract tests.
-  Risk: P1 — mode drift is already a known design problem.
+- [ ] Slice 5.1 — sequential — Migrate Pi session-mode actions to core host effects.
+  Scope: Pi `/orch on`, `/orch off`, and `orch_status({action:"on"})` should consume structured core host effects for mode transitions and orchestrator-skill injection text. Pi still owns active-tool toggling, footer rendering, and `pi.sendUserMessage` delivery.
+  Stop when: Pi no longer duplicates transition semantics that core can express, while current UX remains unchanged.
+  Verify: `tests/test_pi_extension_source.py`, `tests/test_session_mode.py`, `tests/test_host_commands.py`; live Pi smoke if global extension is installed.
+  Risk: P1 — mode transitions and tool visibility are user-visible.
 
-- [ ] Slice 5.3 — sequential — Migrate dispatch command construction.
-  Scope: adapter calls core facade; core returns run id, ack text, timeout, watcher instructions.
-  Stop when: adapters stop duplicating `do --session-id --goal --json` construction.
-  Verify: e2e fake worker and plugin dispatch tests.
-  Risk: P1 — must preserve async dispatch and auto-return behavior.
+- [ ] Slice 5.2 — sequential — Migrate Pi read-only action routing.
+  Scope: Pi help, doctor, status, history, and roles listing use core facade routing/output where practical. Pi still owns slash-command parsing, UI output, completions, and native tool registration.
+  Stop when: Pi does not hand-assemble duplicate core command semantics for read-only actions beyond host plumbing.
+  Verify: Pi extension tests plus focused CLI tests for affected actions.
+  Risk: P2 — must preserve existing text and machine-readable status behavior.
 
-- [ ] Slice 5.4 — sequential — Consolidate progress/report text formatting.
-  Scope: core owns wording and payloads; adapters own delivery mechanism.
-  Stop when: plugins render/deliver core output without duplicating message formats.
-  Verify: auto-return/report tests and plugin report tests.
+- [ ] Slice 5.3 — sequential — Migrate Pi dispatch command construction.
+  Scope: Pi dispatch path consumes core facade output for validation, run id, ack text, timeout, and watcher instructions. Pi keeps watcher lifecycle, notifications, footer updates, and report injection.
+  Stop when: Pi no longer constructs `orchestra do --session-id --goal --json` by hand except through core-provided instructions.
+  Verify: Pi dispatch tests, e2e fake worker, and live Pi/manual dispatch smoke where feasible.
+  Risk: P1 — dispatch is central async behavior.
+
+- [ ] Slice 5.4 — sequential — Consolidate Pi progress/report payload formatting.
+  Scope: core owns progress/report wording and payload shape; Pi owns delivery through notifications and follow-up message injection.
+  Stop when: Pi renders/delivers core-provided output without duplicating message formats.
+  Verify: auto-return/report tests and Pi plugin report/progress tests.
   Risk: P2 — exact text may be tested or user-recognized.
 
-- [ ] Slice 5.5 — sequential — Replace brittle source-string tests where feasible.
-  Scope: add more semantic/plugin-contract tests around expected actions and command payloads.
-  Stop when: tests validate behavior without freezing incidental source layout.
+- [ ] Slice 5.5 — sequential — Apply proven contract to OpenCode and fix mode drift.
+  Scope: OpenCode adopts the Pi-proven core host effects for mode/tool-info behavior. Add or align `off` support if host API permits. `action:"on"` should persist core `orchestrator` mode instead of calling `_orchestrator-skill` without session state.
+  Stop when: OpenCode mode behavior matches the documented core-owned contract or a documented host limitation is recorded.
+  Verify: OpenCode plugin tests plus session-mode tests.
+  Risk: P1 — this fixes known host drift and may expose OpenCode API limitations.
+
+- [ ] Slice 5.6 — sequential — Apply/adapt proven contract to Hermes.
+  Scope: Hermes consumes CLI/JSON contracts only; do not import the Orchestra Python package directly. Keep Hermes runtime hooks, compression/thread watcher integration, and `inject_message` host-owned.
+  Stop when: Hermes session-mode/read-only/dispatch semantics align with the core facade where host constraints allow.
+  Verify: Hermes plugin tests and session-mode tests.
+  Risk: P2 — Hermes continuation lineage and no-import constraint limit abstraction choices.
+
+- [ ] Slice 5.7 — sequential — Replace brittle plugin source-string tests where feasible.
+  Scope: replace source-string assertions only when an equal or better semantic/contract test exists. Keep source-string tests for host registration surfaces that cannot be executed in test harnesses.
+  Stop when: tests validate behavior and contracts without freezing incidental source layout.
   Verify: plugin test suite.
   Risk: P2 — full runtime tests may be hard without host harnesses.
 
@@ -510,7 +524,9 @@ Anticipated issues:
 
 - Some code must remain duplicated across TypeScript/Python because plugin APIs are language/runtime-specific.
 - Need to avoid weakening delegation-by-default instructions while reducing overhead.
-- OpenCode currently lacks full session-mode parity; this phase should fix behavior rather than encode drift.
+- Pi is the contract tracer; avoid designing around OpenCode drift.
+- OpenCode currently lacks full session-mode parity; fix it after the Pi contract is proven, or document a host limitation.
+- Plugin source-string tests should only be relaxed when replaced by stronger contract tests.
 
 ### Phase 6 — Safer Role Catalog Mutation Design
 

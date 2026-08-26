@@ -986,6 +986,27 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
     assert set_exit == 0
     capsys.readouterr()
 
+    set_json_exit = main(
+        [
+            "--config",
+            str(config_path),
+            "_session-mode",
+            "set",
+            "--session-id",
+            "manual:mode-session",
+            "--mode",
+            "off",
+            "--json",
+        ]
+    )
+    set_payload = json.loads(capsys.readouterr().out)
+
+    assert set_json_exit == 0
+    assert set_payload["effect"]["display_text"] == "Orchestra tools disabled for this session."
+    assert set_payload["effect"]["mode"] == "off"
+    assert set_payload["effect"]["tools_enabled"] is False
+    assert set_payload["effect"]["trigger_turn"] is False
+
     get_exit = main(
         [
             "--config",
@@ -1001,8 +1022,8 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
 
     assert get_exit == 0
     assert payload["session_id"] == "manual:mode-session"
-    assert payload["main_session_mode"] == "orchestrator"
-    assert payload["explicit_main_session_mode"] == "orchestrator"
+    assert payload["main_session_mode"] == "off"
+    assert payload["explicit_main_session_mode"] == "off"
 
     other_get_exit = main(
         [
@@ -1034,7 +1055,7 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
     status_payload = json.loads(capsys.readouterr().out)
 
     assert status_json_exit == 0
-    assert status_payload["orchestra_tools"] == "orchestrator"
+    assert status_payload["orchestra_tools"] == "off"
 
     bare_status_exit = main(["--config", str(config_path), "status"])
     assert bare_status_exit == 0

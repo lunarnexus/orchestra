@@ -150,10 +150,10 @@ def test_pi_extension_wires_core_session_mode() -> None:
         'async function handleOrchOff(sessionId: string): Promise<{ code: number; output: string }>'
         in extension_source
     )
-    assert '"_session-mode", "set", "--session-id", sessionId, "--mode", "off"' in extension_source
+    assert '"_session-mode", "set", "--session-id", sessionId, "--mode", "off", "--json"' in extension_source
     assert 'const result = await handleOrchOff(runtimeSessionId);' in extension_source
     # First /orch on from disabled persists mode on in core and enables tools locally.
-    assert '"_session-mode", "set", "--session-id", sessionId, "--mode", "on"' in extension_source
+    assert '"_session-mode", "set", "--session-id", sessionId, "--mode", "on", "--json"' in extension_source
 
 
 def test_pi_extension_orchestrator_activation_sets_core_mode() -> None:
@@ -168,11 +168,12 @@ def test_pi_extension_orchestrator_activation_sets_core_mode() -> None:
     # Core mode orchestrator is persisted before the skill is injected...
     set_idx = body.index(
         '"_session-mode", "set", "'
-        '--session-id", sessionId, "--mode", "orchestrator"'
+        '--session-id", sessionId, "--mode", "orchestrator", "--json"'
     )
-    assert set_idx < body.index('["_orchestrator-skill"]')
+    assert set_idx < body.index('effect?.inject_text')
     # ...and a core failure must not block skill injection.
     assert "modeResult.code !== 0" in body
+    assert 'effect?.inject_text' in body
 
 
 def test_pi_extension_footer_includes_session_mode() -> None:

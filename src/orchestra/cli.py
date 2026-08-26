@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from orchestra.config import ConfigError
 from orchestra.context import AppError, load_context
 from orchestra.dispatch import format_started_run, start_run, started_run_payload
-from orchestra.host_commands import tool_info_payload
+from orchestra.host_commands import session_mode_transition_payload, tool_info_payload
 from orchestra.host_text import (
     ROLE_USAGE,
     dispatch_ack_payload,
@@ -329,6 +329,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         session_mode_set_parser = session_mode_subparsers.add_parser("set")
         session_mode_set_parser.add_argument("--session-id", required=True)
         session_mode_set_parser.add_argument("--mode", required=True)
+        session_mode_set_parser.add_argument("--json", action="store_true")
         session_mode_set_parser.set_defaults(handler=_handle_session_mode)
 
         session_mode_get_parser = session_mode_subparsers.add_parser("get")
@@ -431,7 +432,18 @@ def _handle_session_mode(args: argparse.Namespace) -> int:
     action = args.session_mode_action
     if action == "set":
         state = set_main_session_mode(context, args.session_id, args.mode)
-        print(f"main_session_mode: {state.main_session_mode}")
+        if getattr(args, "json", False):
+            print(
+                json.dumps(
+                    session_mode_transition_payload(
+                        context,
+                        args.session_id,
+                        state.main_session_mode,
+                    ).to_payload()
+                )
+            )
+        else:
+            print(f"main_session_mode: {state.main_session_mode}")
         return 0
     payload = main_session_state_payload(context, args.session_id)
     if getattr(args, "json", False):
