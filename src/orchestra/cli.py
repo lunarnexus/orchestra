@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from orchestra.config import ConfigError
 from orchestra.context import AppError, load_context
 from orchestra.dispatch import format_started_run, start_run, started_run_payload
+from orchestra.host_commands import tool_info_payload
 from orchestra.host_text import (
     ROLE_USAGE,
     dispatch_ack_payload,
@@ -20,7 +21,6 @@ from orchestra.host_text import (
     format_progress_notification,
     progress_notification_payload,
     render_orchestrator_skill_message,
-    tool_info,
 )
 from orchestra.init import (
     InitFileResult,
@@ -45,9 +45,7 @@ from orchestra.reports import (
 )
 from orchestra.roles import format_roles, role_metadata, set_role_setting
 from orchestra.session_mode import (
-    default_main_session_mode,
     main_session_state_payload,
-    resolve_main_session_mode,
     set_main_session_mode,
 )
 from orchestra.state import StateError
@@ -586,33 +584,29 @@ def _handle_command_echo(args: argparse.Namespace) -> int:
 
 def _handle_tool_info(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
-    info = tool_info(context)
     session_id = args.session_id
-    if session_id and session_id.strip():
-        main_session_mode = resolve_main_session_mode(context, session_id)
-    else:
-        main_session_mode = default_main_session_mode(context)
+    info = tool_info_payload(context, session_id).to_payload()
     print(
         json.dumps(
             {
-                "description": info.description,
-                "promptSnippet": info.prompt_snippet,
-                "promptGuidelines": info.prompt_guidelines,
-                "goalDescription": info.goal_description,
-                "roleDescription": info.role_description,
-                "taskLabelDescription": info.task_label_description,
-                "statusDescription": info.status_description,
-                "statusActionDescription": info.status_action_description,
-                "statusLimitDescription": info.status_limit_description,
-                "statusRunIdDescription": info.status_run_id_description,
-                "statusRoleDescription": info.status_role_description,
-                "statusSettingDescription": info.status_setting_description,
-                "statusValueDescription": info.status_value_description,
-                "dispatchTimeoutError": info.dispatch_timeout_error,
-                "budgetTriggerLabel": info.budget_trigger_label,
-                "softTimeoutBlockReason": info.soft_timeout_block_reason,
-                "toolsEnabledByDefault": info.tools_enabled_by_default,
-                "mainSessionMode": main_session_mode,
+                "description": info["description"],
+                "promptSnippet": info["prompt_snippet"],
+                "promptGuidelines": info["prompt_guidelines"],
+                "goalDescription": info["goal_description"],
+                "roleDescription": info["role_description"],
+                "taskLabelDescription": info["task_label_description"],
+                "statusDescription": info["status_description"],
+                "statusActionDescription": info["status_action_description"],
+                "statusLimitDescription": info["status_limit_description"],
+                "statusRunIdDescription": info["status_run_id_description"],
+                "statusRoleDescription": info["status_role_description"],
+                "statusSettingDescription": info["status_setting_description"],
+                "statusValueDescription": info["status_value_description"],
+                "dispatchTimeoutError": info["dispatch_timeout_error"],
+                "budgetTriggerLabel": info["budget_trigger_label"],
+                "softTimeoutBlockReason": info["soft_timeout_block_reason"],
+                "toolsEnabledByDefault": info["tools_enabled_by_default"],
+                "mainSessionMode": info["main_session_mode"],
             }
         )
     )
