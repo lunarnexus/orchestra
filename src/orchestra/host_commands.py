@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from orchestra.context import CONTRACT_VERSION, AppContext
-from orchestra.host_text import ToolInfo, tool_info
+from orchestra.host_text import ToolInfo, render_orchestrator_skill_message, tool_info
 from orchestra.session_mode import (
     default_main_session_mode,
     resolve_main_session_mode,
@@ -157,7 +157,7 @@ def session_mode_transition_payload(
         trigger_turn = False
     else:
         display_text = "Orchestra orchestrator skill refreshed for this session."
-        inject_text = "Load the Orchestra main-session orchestrator skill."
+        inject_text = render_orchestrator_skill_message()
         trigger_turn = True
     return HostActionPayload(
         kind="main_session_state",

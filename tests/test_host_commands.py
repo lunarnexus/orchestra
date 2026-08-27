@@ -13,6 +13,7 @@ from orchestra.host_commands import (
     session_mode_transition_payload,
     tool_info_payload,
 )
+from orchestra.host_text import render_orchestrator_skill_message
 from tests.helpers import write_runtime_files
 
 
@@ -122,6 +123,6 @@ def test_session_mode_transition_payloads_cover_on_off_and_orchestrator(
         "display_text": "Orchestra orchestrator skill refreshed for this session.",
         "mode": "orchestrator",
         "tools_enabled": True,
-        "inject_text": "Load the Orchestra main-session orchestrator skill.",
+        "inject_text": render_orchestrator_skill_message(),
         "trigger_turn": True,
     }
