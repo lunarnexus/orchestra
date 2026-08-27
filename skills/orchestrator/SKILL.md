@@ -142,7 +142,36 @@ Nested dispatch:
 
 ## Planning standard
 
-Before implementation, produce a plan a builder can execute without inventing requirements, interfaces, dependencies, or verification.
+Before implementation, complete the multi-turn planning checkpoints and produce a plan a builder can execute without inventing requirements, interfaces, dependencies, or verification.
+
+## Multi-turn planning checkpoints
+
+When the user asks for a plan, plan through user-visible checkpoints before implementation.
+
+Checkpoint 1 — Planning map:
+- Show the user the high-level phases or work areas needed for success.
+- For each phase, list the essential concerns: behavior, files/modules, interfaces, data flow, tests, artifacts, risks, verification, and likely dependencies.
+- Classify unknowns as known evidence, local evidence to inspect, researcher-owned evidence, user decision, spike, or safe assumption.
+- End with the recommended next action and ask: `Continue to phase fill-in?`
+
+Checkpoint 2 — Phase fill-in and parallelization check:
+- After user confirmation, expand each phase into executable vertical slices.
+- Include exact files/modules, interfaces, dependency marker, stop condition, verification command, risk tier, and gates.
+- Add a `Parallelization check` section to the plan:
+  - slices that can run in parallel;
+  - slices that must run sequentially;
+  - roles that can run concurrently after build exists, such as verifier, reviewer, and appsec;
+  - file/module/interface overlap that determines dispatch order;
+  - blockers to resolve before parallel fan-out.
+- Identify gotchas, ordering hazards, shared abstractions, schema/config/API coupling, artifact updates, test gaps, and blocked work.
+- End with the recommended next action and ask: `Continue to coherence validation?`
+
+Checkpoint 3 — Coherence validation and implementation approval:
+- After user confirmation, validate acceptance coverage, dependency correctness, interface consistency, evidence sufficiency, artifact updates, verification specificity, risk handling, and scope boundaries.
+- Confirm that each unblocked builder slice can be executed without inventing requirements, interfaces, or verification.
+- Re-check the `Parallelization check` against the finalized slices and gates.
+- If user input is needed, ask the decision-blocking question with a recommendation.
+- Otherwise update `PLAN.md` and ask: `Approve implementation dispatch?`
 
 A plan must state:
 - goal and acceptance criteria
