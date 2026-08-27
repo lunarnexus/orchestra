@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import re
+import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,7 +19,13 @@ from orchestra.context import AppContext, AppError
 if TYPE_CHECKING:
     pass
 
-__all__ = ["SelectedRole", "format_roles", "role_metadata", "set_role_setting"]
+__all__ = [
+    "SelectedRole",
+    "format_roles",
+    "patch_role_setting_text",
+    "role_metadata",
+    "set_role_setting",
+]
 
 
 def _app_error(message: str) -> Exception:
@@ -171,6 +182,84 @@ def _write_catalog_mapping(path: Path, catalog: dict[str, object]) -> None:
     path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
 
 
+_ROLE_KEY_LINE = re.compile(r"^(?P<indent>  )(?P<name>[^:#\n]+):(?P<trailing>.*)$")
+_SETTING_LINE = re.compile(r"^(?P<indent>    )(?P<key>[A-Za-z0-9_][A-Za-z0-9_.-]*):(?P<value>.*)$")
+
+
+def _format_yaml_scalar(value: str) -> str:
+    if value == "":
+        return '""'
+    if re.fullmatch(r"[A-Za-z0-9_./:-]+", value) and not value.startswith(
+        ("-", "?", ":", "@", "&", "*", "!", "#")
+    ):
+        return value
+    return json.dumps(value)
+
+
+def patch_role_setting_text(
+    original_text: str,
+    *,
+    role_name: str,
+    setting: str,
+    value: str,
+) -> str:
+    lines = original_text.splitlines(keepends=True)
+    roles_index = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.strip() == "roles:" and not line.startswith(" ")
+        ),
+        None,
+    )
+    if roles_index is None:
+        raise _app_error("agent catalog must contain a top-level roles mapping")
+
+    role_line_index = None
+    role_end_index = len(lines)
+    for index in range(roles_index + 1, len(lines)):
+        line = lines[index]
+        if line.startswith(" "):
+            match = _ROLE_KEY_LINE.match(line)
+            if match is None:
+                continue
+            if match.group("name").strip() == role_name:
+                trailing = match.group("trailing").strip()
+                if trailing and not trailing.startswith("#"):
+                    raise _app_error(
+                        f"role '{role_name}' must use block mapping, not inline mapping"
+                    )
+                role_line_index = index
+                for candidate in range(index + 1, len(lines)):
+                    candidate_line = lines[candidate]
+                    if (
+                        candidate_line.startswith("  ")
+                        and not candidate_line.startswith("   ")
+                        and _ROLE_KEY_LINE.match(candidate_line)
+                    ):
+                        role_end_index = candidate
+                        break
+                break
+        elif line.strip() and not line.startswith("#"):
+            break
+    if role_line_index is None:
+        raise _app_error(f"unknown role: {role_name}")
+
+    setting_line_index = None
+    for index in range(role_line_index + 1, role_end_index):
+        match = _SETTING_LINE.match(lines[index])
+        if match and match.group("key") == setting:
+            setting_line_index = index
+            break
+
+    replacement_line = f"    {setting}: {_format_yaml_scalar(value)}\n"
+    if setting_line_index is not None:
+        lines[setting_line_index] = replacement_line
+    else:
+        lines.insert(role_end_index, replacement_line)
+    return "".join(lines)
+
+
 def _parse_user_toggle_bool(value: str, *, setting_name: str) -> bool:
     normalized = value.strip().lower()
     if normalized in {"true", "yes", "y", "1", "on"}:
@@ -180,6 +269,38 @@ def _parse_user_toggle_bool(value: str, *, setting_name: str) -> bool:
     raise _app_error(
         f"{setting_name} must be one of true/yes/y/1/on or false/no/n/0/off; got {value!r}"
     )
+
+
+def _replace_catalog_text_atomically(path: Path, candidate_text: str) -> None:
+    original_bytes = path.read_bytes()
+    original_hash = hashlib.sha256(original_bytes).hexdigest()
+    directory = path.parent
+    temp_file = tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=directory,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    )
+    temp_path = Path(temp_file.name)
+    try:
+        with temp_file:
+            temp_file.write(candidate_text)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        try:
+            yaml.safe_load(temp_path.read_text(encoding="utf-8"))
+            load_agent_catalog(temp_path)
+        except Exception:
+            raise
+        if hashlib.sha256(path.read_bytes()).hexdigest() != original_hash:
+            raise _app_error(f"agent catalog changed while updating: {path}")
+        os.replace(temp_path, path)
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
 
 
 def set_role_setting(context: AppContext, role_name: str, setting: str, value: str) -> str:
@@ -200,24 +321,32 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
         if not enabled and role_key == context.catalog.default_role:
             raise _app_error(f"cannot disable default role: {role_key}")
         role_raw["enabled"] = enabled
-        changed = f"enabled={str(enabled).lower()}"
+        setting_key = "enabled"
+        setting_value = str(enabled).lower()
+        changed = f"enabled={setting_value}"
     elif setting == "model":
         model = value.strip()
         if not model:
             raise _app_error("model must be a non-empty string")
         role_raw["model"] = model
+        setting_key = "model"
+        setting_value = model
         changed = f"model={model}"
     elif setting == "profile":
         profile = value.strip()
         if not profile:
             raise _app_error("profile must be a non-empty string")
         role_raw["profile"] = profile
+        setting_key = "profile"
+        setting_value = profile
         changed = f"profile={profile}"
     elif setting == "agent":
         agent = value.strip()
         if not agent:
             raise _app_error("agent must be a non-empty string")
         role_raw["agent"] = agent
+        setting_key = "agent"
+        setting_value = agent
         changed = f"agent={agent}"
     elif setting == "harness":
         harness_config = value.strip()
@@ -229,12 +358,22 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
         if harness_config not in harness_configs_raw:
             raise _app_error(f"unknown harness config: {harness_config}")
         role_raw["harness_config"] = harness_config
+        setting_key = "harness_config"
+        setting_value = harness_config
         changed = f"harness_config={harness_config}"
     else:
         raise _app_error(
             "role setting must be one of: harness, enabled, model, profile, agent"
         )
-    _write_catalog_mapping(context.paths.catalog_path, raw_catalog)
+
+    original_text = context.paths.catalog_path.read_text(encoding="utf-8")
+    candidate_text = patch_role_setting_text(
+        original_text,
+        role_name=role_key,
+        setting=setting_key,
+        value=setting_value,
+    )
+    _replace_catalog_text_atomically(context.paths.catalog_path, candidate_text)
     updated_catalog = load_agent_catalog(context.paths.catalog_path)
     updated_context = replace(context, catalog=updated_catalog)
     roles_output = format_roles(updated_context, include_disabled=True)

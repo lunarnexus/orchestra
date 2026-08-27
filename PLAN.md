@@ -530,67 +530,107 @@ Anticipated issues:
 
 ### Phase 6 — Safer Role Catalog Mutation Design
 
-- [ ] Slice 6.1 — sequential — Define minimum safety bar.
-  Scope: atomic write, validation-before-replace, no mutation on invalid input, clear errors.
-  Stop when: accepted MVP safety behavior is documented.
-  Verify: review only.
-  Risk: P2 — overbuilding comment-preserving YAML may slow MVP.
+Phase 6 design decision: role catalog mutation must be **targeted text editing**, not YAML round-tripping. `agent-catalog.yaml` is user-owned config. Role updates must edit only the exact scalar field being changed, preserve comments and unrelated formatting, and fail clearly when the file shape cannot be safely patched.
 
-- [ ] Slice 6.2 — sequential — Decide comment preservation strategy.
-  Scope: compare PyYAML atomic rewrite vs text-preserving scalar replacement vs `ruamel.yaml` dependency.
-  Stop when: owner-approved decision exists if adding dependency or accepting formatting normalization.
-  Verify: review/approval.
-  Risk: P2 — dependency change affects packaging and lock expectations.
+Non-goals:
 
-- [ ] Slice 6.3 — sequential — Design concurrency detection.
-  Scope: content hash or mtime/size precondition before replace.
-  Stop when: chosen precondition is documented and testable.
+- Do not rewrite the whole YAML file.
+- Do not use `yaml.safe_dump` or any full-file serializer for mutation.
+- Do not normalize comments, ordering, anchors, indentation, or unrelated formatting.
+- Do not add a YAML round-trip dependency unless a later owner decision explicitly changes this design.
+
+Required mutation flow:
+
+1. Read original file text and bytes.
+2. Compute a content hash for concurrent-edit detection.
+3. Parse current YAML with existing safe loader to validate syntax and semantic structure.
+4. Validate requested mutation:
+   - role exists
+   - setting is supported
+   - value is valid
+   - default role cannot be disabled
+   - harness setting names an existing `harness_configs` entry
+5. Locate the exact editable text range for the target role setting.
+6. Apply a narrow text replacement or insertion for that one setting only.
+7. Write candidate content to a temp file in the same directory.
+8. Run final syntax and semantic validation against the temp file:
+   - YAML parses
+   - `load_agent_catalog(temp_path)` succeeds
+9. Re-read the live catalog and compare its hash to the original hash.
+10. Atomically replace the live file with the validated temp file.
+11. Reload the resulting catalog and report success.
+
+If any step fails, leave the original file untouched.
+
+- [ ] Slice 6.1 — sequential — Specify supported patch shapes.
+  Scope: define exactly which YAML text shapes role mutation supports. Minimum: block-style `roles:` mapping, role mapping entries, scalar values on the same line or absent setting insertion into a role block.
+  Stop when: unsupported shapes are listed with clear failure behavior.
   Verify: review only.
-  Risk: P2 — mtime granularity can be weak; content hash is safer.
+  Risk: P2 — underspecified shapes can lead to unsafe text edits.
+
+- [ ] Slice 6.2 — sequential — Define exact edit behavior per setting.
+  Scope: for `enabled`, `model`, `profile`, `agent`, and `harness`, define whether to replace an existing scalar line or insert a new line, how indentation is chosen, and how values are rendered/quoted.
+  Stop when: each supported setting has deterministic text-edit rules.
+  Verify: review only.
+  Risk: P2 — quoting and indentation mistakes can break YAML.
+
+- [ ] Slice 6.3 — sequential — Define final validation and atomic replace contract.
+  Scope: temp-file path, YAML syntax check, `load_agent_catalog` semantic check, original-hash recheck, `os.replace`, cleanup on failure.
+  Stop when: failure modes and error messages are documented enough for implementation tests.
+  Verify: review only.
+  Risk: P1 — must never corrupt or partially write user config.
+
+- [ ] Slice 6.4 — sequential — Define test matrix for preservation and safety.
+  Scope: comment preservation, unrelated formatting preservation, invalid value no-op, validation failure no-op, concurrent edit no-op, unsupported shape clear error, successful updates preserve old CLI output semantics.
+  Stop when: implementation-ready test cases are listed.
+  Verify: review only.
+  Risk: P2 — without preservation tests, regressions will silently reintroduce full-file rewrites.
 
 Anticipated issues:
 
-- Atomic replace may behave differently on network filesystems.
-- Preserving comments without a YAML-preserving library is hard.
-- Role mutation edits user-owned config, so error messages must be careful and actionable.
+- YAML is flexible; targeted text edits should support common block-style config and fail on complex shapes rather than guessing.
+- Inline role mappings, anchors, aliases, multiline scalars, or unusual indentation may be valid YAML but unsupported for safe mutation.
+- Rendering string values may require quoting when values contain YAML-significant characters.
+- Atomic replace may behave differently on network filesystems, but same-directory temp + `os.replace` is the baseline.
+- Error messages must tell the user what was not changed and how to make the file patchable.
 
 ### Phase 7 — Implement Role Mutation Safety Improvements
 
-- [ ] Slice 7.1 — sequential — Move role mutation into `orchestra.roles` if not already done.
-  Scope: `set_role_setting`, catalog load/write helpers.
-  Stop when: existing role tests pass.
-  Verify: `python3 -m pytest tests/test_cli_commands.py -k roles`.
-  Risk: P2 — refactor prerequisite.
+- [ ] Slice 7.1 — sequential — Add targeted catalog patcher with preservation tests.
+  Scope: implement a helper that locates role setting text ranges and returns candidate content without writing the live file.
+  Stop when: unit tests prove comments and unrelated bytes are preserved for supported updates.
+  Verify: targeted role patcher tests.
+  Risk: P1 — text patching must not edit the wrong range.
 
-- [ ] Slice 7.2 — sequential — Add atomic validated write helper.
-  Scope: temp file in same directory, validate candidate with `load_agent_catalog`, then `os.replace`.
-  Stop when: helper exists with focused tests.
-  Verify: new unit tests plus role CLI tests.
+- [ ] Slice 7.2 — sequential — Add final validation and atomic replace helper.
+  Scope: temp file in same directory, YAML parse, `load_agent_catalog(temp_path)`, original hash recheck, `os.replace`, temp cleanup.
+  Stop when: validation and failure/no-op tests pass.
+  Verify: role safety tests plus role CLI tests.
   Risk: P1 — must never corrupt catalog.
 
-- [ ] Slice 7.3 — sequential — Add concurrent edit detection.
-  Scope: original content hash before load; re-read/check before replace.
-  Stop when: concurrent modification test fails before overwrite.
-  Verify: new test for changed file between load and replace.
-  Risk: P2 — tests may need injectable hook to simulate race deterministically.
+- [ ] Slice 7.3 — sequential — Wire `set_role_setting` to targeted mutation.
+  Scope: replace current full-file write path in `orchestra.roles`; preserve successful CLI output and existing validation behavior.
+  Stop when: `orchestra roles ROLE SETTING VALUE` uses targeted mutation only.
+  Verify: `python3 -m pytest tests/test_cli_commands.py -k roles` plus new preservation tests.
+  Risk: P2 — host/plugin role update behavior must remain stable.
 
-- [ ] Slice 7.4 — sequential — Preserve existing role mutation behavior.
-  Scope: successful updates for harness/enabled/model/profile/agent; default role cannot be disabled.
-  Stop when: old behavior passes plus new safety tests.
-  Verify: role tests.
-  Risk: P2 — YAML output may change if strategy changes.
+- [ ] Slice 7.4 — sequential — Add unsupported-shape and concurrent-edit tests.
+  Scope: deterministic test hook for race detection; fixtures for unsupported but valid YAML shapes.
+  Stop when: unsupported/race cases fail clearly and leave original file unchanged.
+  Verify: new tests.
+  Risk: P2 — race tests may need injectable hooks to avoid flakiness.
 
-- [ ] Slice 7.5 — blocked — Optional comment-preserving implementation.
-  Scope: only if owner approves dependency or text-edit approach.
-  Stop when: comments survive supported simple setting updates.
-  Verify: comment-preservation tests.
-  Risk: P2 — may add complexity beyond current value.
+- [ ] Slice 7.5 — sequential — Full verification and live config mutation smoke.
+  Scope: run full tests/lint/type/build; use a temp config/catalog for CLI smoke so user config is not mutated.
+  Stop when: full verification passes and temp-catalog smoke shows targeted edit behavior.
+  Verify: `python3 -m pytest`, `python3 -m ruff check .`, `python3 -m mypy src tests`, `python3 -m build`.
+  Risk: P2 — avoid mutating real local agent catalog during smoke.
 
 Anticipated issues:
 
 - Validation needs to use the temp file path so relative prompt/config assumptions do not accidentally change.
-- If catalog uses anchors or complex YAML, PyYAML rewrite may normalize them.
-- Role mutation should probably remain a CLI/host command feature, not model-callable from `orch_status` in read-only hosts.
+- The current `harness` CLI setting maps to the YAML key `harness_config`; tests must make that explicit.
+- Role mutation should remain a CLI/host command feature, not model-callable from `orch_status` in read-only hosts.
 
 ### Phase 8 — Preserve and Harden Tokenized Subprocess Launch
 
