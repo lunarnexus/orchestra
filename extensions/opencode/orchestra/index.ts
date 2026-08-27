@@ -13,7 +13,7 @@ type OrchDispatchArgs = {
   taskLabel?: string;
 };
 
-type OrchStatusAction = "on" | "status" | "history" | "help" | "doctor" | "roles" | "stop";
+type OrchStatusAction = "on" | "off" | "status" | "history" | "help" | "doctor" | "roles" | "stop";
 
 type OrchStatusArgs = {
   action: OrchStatusAction;
@@ -223,8 +223,8 @@ function validateOrchStatusArgs(action: OrchStatusAction, args: OrchStatusArgs):
 function buildOrchStatusCommand(ownerId: string | null, args: OrchStatusArgs): string[] {
   validateOrchStatusArgs(args.action, args);
 
-  if (args.action === "on") {
-    return ["orchestra", "_orchestrator-skill"];
+  if (args.action === "on" || args.action === "off") {
+    return ["orchestra", "_session-mode", "set", "--session-id", ownerId, "--mode", args.action === "on" ? "orchestrator" : "off", "--json"];
   }
 
   if (args.action === "status") {
@@ -769,7 +769,7 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
   const orchStatusTool = tool({
     description: toolInfo.statusDescription,
     args: {
-      action: tool.schema.enum(["on", "status", "history", "help", "doctor", "roles", "stop"]).describe(toolInfo.statusActionDescription),
+      action: tool.schema.enum(["on", "off", "status", "history", "help", "doctor", "roles", "stop"]).describe(toolInfo.statusActionDescription),
       limit: tool.schema
         .number()
         .int()
@@ -786,9 +786,9 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
       const rawSessionID = context.sessionID?.trim();
       let ownerId: string | null = null;
 
-      if (statusArgs.action === "status" || statusArgs.action === "history" || statusArgs.action === "stop") {
+      if (statusArgs.action === "on" || statusArgs.action === "off" || statusArgs.action === "status" || statusArgs.action === "history" || statusArgs.action === "stop") {
         if (!rawSessionID) {
-          throw new Error("context.sessionID is required for orch_status status/history/stop.");
+          throw new Error("context.sessionID is required for orch_status on/off/status/history/stop.");
         }
         ownerId = normalizeOpenCodeOwnerId(rawSessionID);
       }
@@ -801,6 +801,14 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
       }
       if (!output) {
         throw new Error(`orch_status ${statusArgs.action} returned no output.`);
+      }
+      if (statusArgs.action === "on" && rawSessionID) {
+        const payload = parseSessionModeTransitionPayload(result.stdout);
+        const effect = payload.effect;
+        if (effect?.inject_text) {
+          const sessionPrompt = getSessionPrompt(client);
+          await sessionPrompt({ path: { id: rawSessionID }, body: { parts: [{ type: "text", text: effect.inject_text }] } });
+        }
       }
       return output;
     },

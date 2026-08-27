@@ -620,6 +620,16 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     sessionCompletedRuns.delete(sessionId);
   }
 
+  function parseProgressNotification(output: string): { message: string | null } {
+    if (!output.trim()) return { message: null };
+    try {
+      const payload = JSON.parse(output) as { message?: unknown };
+      return { message: typeof payload.message === "string" ? payload.message : null };
+    } catch {
+      return { message: null };
+    }
+  }
+
   function watchRunProgress(
     sessionId: string,
     runId: string,
@@ -713,9 +723,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       if (role) command.push("--role", role);
       void runOrchestra(command).then(async (result) => {
         if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
-        const roleText = role ? ` ${role}` : "";
-        const blockerText = blocker ? ` :: ${blocker}` : "";
-        notifier.notify(result.stdout || `orchestra:${roleText} ${runId} returned ${status ?? "done"} (${completed.size}/${total})${blockerText}`);
+        const message = parseProgressNotification(result.stdout).message;
+        notifier.notify(message ? (blocker ? `${message} :: ${blocker}` : message) : result.stdout);
         const activeCount = await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true, expectedGeneration: sessionGeneration });
         if (activeCount === 0 && isCurrentSessionGeneration(sessionId, sessionGeneration)) {
           sessionRuns.delete(sessionId);

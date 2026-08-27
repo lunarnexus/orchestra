@@ -47,6 +47,14 @@ class HostActionPayload:
 
 
 @dataclass(frozen=True)
+class DispatchCommandSchema:
+    command: list[str]
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"command": self.command}
+
+
+@dataclass(frozen=True)
 class ToolInfoSchema:
     description: str
     prompt_snippet: str
@@ -113,21 +121,42 @@ def session_mode_payload(context: AppContext, session_id: str) -> HostActionPayl
     )
 
 
+def dispatch_command_payload(
+    session_id: str,
+    goal: str,
+    *,
+    role: str | None = None,
+    timeout_seconds: int | None = None,
+    task_label: str | None = None,
+) -> DispatchCommandSchema:
+    command = ["do", "--session-id", session_id, "--goal", goal, "--json"]
+    if role:
+        command.extend(["--role", role])
+    if timeout_seconds is not None:
+        command.extend(["--timeout", str(timeout_seconds)])
+    if task_label:
+        command.extend(["--task-label", task_label])
+    return DispatchCommandSchema(command=command)
+
+
 def session_mode_transition_payload(
     context: AppContext,
     session_id: str,
     mode: str,
 ) -> HostActionPayload:
     if mode == "off":
-        display_text = "Orchestra tools disabled for this session."
+        display_text = "Orchestra tools hidden for this session. Run /orch on to enable them again."
         inject_text = None
         trigger_turn = False
     elif mode == "on":
-        display_text = "Orchestra tools enabled for this session."
+        display_text = (
+            'Orchestra tools enabled for this session. '
+            'Run "/orch on" again to load the orchestrator skill.'
+        )
         inject_text = None
         trigger_turn = False
     else:
-        display_text = "Orchestra orchestrator mode enabled for this session."
+        display_text = "Orchestra orchestrator skill refreshed for this session."
         inject_text = "Load the Orchestra main-session orchestrator skill."
         trigger_turn = True
     return HostActionPayload(

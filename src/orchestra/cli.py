@@ -10,7 +10,11 @@ from collections.abc import Sequence
 from orchestra.config import ConfigError
 from orchestra.context import AppError, load_context
 from orchestra.dispatch import format_started_run, start_run, started_run_payload
-from orchestra.host_commands import session_mode_transition_payload, tool_info_payload
+from orchestra.host_commands import (
+    dispatch_command_payload,
+    session_mode_transition_payload,
+    tool_info_payload,
+)
 from orchestra.host_text import (
     ROLE_USAGE,
     dispatch_ack_payload,
@@ -69,6 +73,7 @@ INTERNAL_COMMANDS = frozenset(
         "_await-run",
         "_mark-session-report-delivered",
         "_release-session-report",
+        "_dispatch-command",
         "_dispatch-ack",
         "_progress-message",
         "_command-echo",
@@ -297,6 +302,15 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         wait_run_parser.add_argument("--timeout", type=float, default=None)
         wait_run_parser.add_argument("--json", action="store_true")
         wait_run_parser.set_defaults(handler=_handle_await_run)
+
+        dispatch_command_parser = subparsers.add_parser("_dispatch-command", help=argparse.SUPPRESS)
+        dispatch_command_parser.add_argument("--session-id", required=True)
+        dispatch_command_parser.add_argument("--goal", required=True)
+        dispatch_command_parser.add_argument("--role", default=None)
+        dispatch_command_parser.add_argument("--timeout", type=_positive_int, default=None)
+        dispatch_command_parser.add_argument("--task-label", default=None)
+        dispatch_command_parser.add_argument("--json", action="store_true")
+        dispatch_command_parser.set_defaults(handler=_handle_dispatch_command)
 
         dispatch_ack_parser = subparsers.add_parser("_dispatch-ack", help=argparse.SUPPRESS)
         dispatch_ack_parser.add_argument("--run-id", required=True)
@@ -579,6 +593,18 @@ def _handle_init_all(args: argparse.Namespace) -> int:
 def _print_init_files(files: Sequence[InitFileResult]) -> None:
     for file_result in files:
         print(f"{file_result.action}:{file_result.mode}: {file_result.target}")
+
+
+def _handle_dispatch_command(args: argparse.Namespace) -> int:
+    payload = dispatch_command_payload(
+        args.session_id,
+        args.goal,
+        role=args.role,
+        timeout_seconds=args.timeout,
+        task_label=args.task_label,
+    )
+    print(json.dumps(payload.to_payload()))
+    return 0
 
 
 def _handle_dispatch_ack(args: argparse.Namespace) -> int:

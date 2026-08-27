@@ -8,6 +8,7 @@ import yaml
 from orchestra.context import AppContext, load_context
 from orchestra.host_commands import (
     HostActionEffect,
+    dispatch_command_payload,
     session_mode_payload,
     session_mode_transition_payload,
     tool_info_payload,
@@ -60,6 +61,33 @@ def test_session_mode_payload_matches_current_mode_resolution(tmp_path: Path) ->
     }
 
 
+def test_dispatch_command_payload_builds_core_dispatch_argv() -> None:
+    payload = dispatch_command_payload(
+        "pi:session-a",
+        "ship it",
+        role="builder",
+        timeout_seconds=45,
+        task_label="slice 5.3",
+    ).to_payload()
+
+    assert payload == {
+        "command": [
+            "do",
+            "--session-id",
+            "pi:session-a",
+            "--goal",
+            "ship it",
+            "--json",
+            "--role",
+            "builder",
+            "--timeout",
+            "45",
+            "--task-label",
+            "slice 5.3",
+        ]
+    }
+
+
 def test_session_mode_transition_payloads_cover_on_off_and_orchestrator(
     tmp_path: Path,
 ) -> None:
@@ -74,19 +102,24 @@ def test_session_mode_transition_payloads_cover_on_off_and_orchestrator(
     ).to_payload()
 
     assert off_payload["effect"] == {
-        "display_text": "Orchestra tools disabled for this session.",
+        "display_text": (
+            "Orchestra tools hidden for this session. Run /orch on to enable them again."
+        ),
         "mode": "off",
         "tools_enabled": False,
         "trigger_turn": False,
     }
     assert on_payload["effect"] == {
-        "display_text": "Orchestra tools enabled for this session.",
+        "display_text": (
+            'Orchestra tools enabled for this session. '
+            'Run "/orch on" again to load the orchestrator skill.'
+        ),
         "mode": "on",
         "tools_enabled": True,
         "trigger_turn": False,
     }
     assert orchestrator_payload["effect"] == {
-        "display_text": "Orchestra orchestrator mode enabled for this session.",
+        "display_text": "Orchestra orchestrator skill refreshed for this session.",
         "mode": "orchestrator",
         "tools_enabled": True,
         "inject_text": "Load the Orchestra main-session orchestrator skill.",

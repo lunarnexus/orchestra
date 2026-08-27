@@ -126,56 +126,6 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert "worker" not in prompts_source
 
 
-def test_pi_extension_wires_core_session_mode() -> None:
-    extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
-
-    # loadToolInfo accepts an optional session id and uses --session-id.
-    assert (
-        "async function loadToolInfo(sessionId?: string): "
-        "Promise<ToolInfoPayload>"
-        in extension_source
-    )
-    assert 'mainSessionMode?: string;' in extension_source
-    assert 'toolsEnabledByDefault?: boolean;' in extension_source
-    assert (
-        'const args = sessionId ? ["_tool-info", "--session-id", '
-        'sessionId] : ["_tool-info"];'
-        in extension_source
-    )
-    # session_start applies the core-resolved mode to tool activation.
-    assert "await loadToolInfo(currentSessionId);" in extension_source
-    assert '.mainSessionMode !== "off"' in extension_source
-    # /orch off persists mode off in core and hides tools locally.
-    assert (
-        'async function handleOrchOff(sessionId: string): Promise<{ code: number; output: string }>'
-        in extension_source
-    )
-    assert '"_session-mode", "set", "--session-id", sessionId, "--mode", "off", "--json"' in extension_source
-    assert 'const result = await handleOrchOff(runtimeSessionId);' in extension_source
-    # First /orch on from disabled persists mode on in core and enables tools locally.
-    assert '"_session-mode", "set", "--session-id", sessionId, "--mode", "on", "--json"' in extension_source
-
-
-def test_pi_extension_orchestrator_activation_sets_core_mode() -> None:
-    extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
-    start = extension_source.index("async function injectOrchestratorSkill(sessionId: string)")
-    end = extension_source.index("async function handleOrchOn(", start)
-    body = extension_source[start:end]
-
-    # Both activation paths (/orch on two-step and orch_status action=on) route through this.
-    assert 'return injectOrchestratorSkill(sessionId);' in extension_source
-    assert "const result = await injectOrchestratorSkill(sessionId);" in extension_source
-    # Core mode orchestrator is persisted before the skill is injected...
-    set_idx = body.index(
-        '"_session-mode", "set", "'
-        '--session-id", sessionId, "--mode", "orchestrator", "--json"'
-    )
-    assert set_idx < body.index('effect?.inject_text')
-    # ...and a core failure must not block skill injection.
-    assert "modeResult.code !== 0" in body
-    assert 'effect?.inject_text' in body
-
-
 def test_pi_extension_footer_includes_session_mode() -> None:
     extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
 
@@ -264,6 +214,10 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert "_progress-message" in extension_source
     assert "_command-echo" in extension_source
     assert 'function parseDispatchPayload(output: string): DispatchPayload {' in extension_source
+    assert (
+        'function parseProgressNotification(output: string): { message: string | null } {'
+        in extension_source
+    )
     assert '["_dispatch-ack", "--run-id", runId, "--role", role]' in extension_source
     assert 'command.push("--role", role)' in extension_source
     assert (

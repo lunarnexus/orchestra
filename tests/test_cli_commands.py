@@ -1002,7 +1002,10 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
     set_payload = json.loads(capsys.readouterr().out)
 
     assert set_json_exit == 0
-    assert set_payload["effect"]["display_text"] == "Orchestra tools disabled for this session."
+    assert (
+        set_payload["effect"]["display_text"]
+        == "Orchestra tools hidden for this session. Run /orch on to enable them again."
+    )
     assert set_payload["effect"]["mode"] == "off"
     assert set_payload["effect"]["tools_enabled"] is False
     assert set_payload["effect"]["trigger_turn"] is False

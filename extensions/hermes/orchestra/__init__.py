@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 _IDENTITY_ARG_NAMES = frozenset({"session_id", "identity", "orchestrator_session_id"})
 _SUBPROCESS_TIMEOUT_SECONDS = 300
@@ -280,16 +280,25 @@ def _run_orchestra(
         )
 
 
-def _load_tool_info() -> dict[str, Any]:
+def _load_tool_info(session_id: str | None = None) -> dict[str, Any]:
     error = "failed to load orch_dispatch and orch_status metadata from orchestra _tool-info"
-    result = _run_orchestra(["_tool-info"])
-    if result.returncode != 0 or not result.stdout.strip():
-        raise RuntimeError(error)
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(error) from exc
-    return payload
+
+    def _load(args: list[str]) -> dict[str, Any]:
+        result = _run_orchestra(args)
+        if result.returncode != 0 or not result.stdout.strip():
+            raise RuntimeError(error)
+        try:
+            payload = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(error) from exc
+        return cast(dict[str, Any], payload)
+
+    if session_id is not None:
+        try:
+            return _load(["_tool-info", "--session-id", session_id])
+        except RuntimeError:
+            pass
+    return _load(["_tool-info"])
 
 
 def _tool_timeout_error() -> str:
@@ -588,9 +597,10 @@ def _tui_live_session(runtime_session_id: str | None) -> dict[str, Any] | None:
             live = None
         if live is not None:
             try:
-                return live[1]
+                session = live[1]
             except Exception:
                 return None
+            return session if isinstance(session, dict) else None
     sessions = getattr(tui_server, "_sessions", None)
     if not isinstance(sessions, dict):
         return None
@@ -783,9 +793,11 @@ def _watch_session_report(
 
 
 def _report_watcher_retry_delay_seconds(attempt: int) -> float:
-    return min(
-        _REPORT_WATCHER_RETRY_BASE_DELAY_SECONDS * (2**attempt),
-        _REPORT_WATCHER_RETRY_MAX_DELAY_SECONDS,
+    return float(
+        min(
+            _REPORT_WATCHER_RETRY_BASE_DELAY_SECONDS * (2**attempt),
+            _REPORT_WATCHER_RETRY_MAX_DELAY_SECONDS,
+        )
     )
 
 
@@ -994,18 +1006,21 @@ def orch_status(args: dict[str, Any], **kwargs: Any) -> str:
         if runtime_session_id is None:
             return _orch_status_error("Hermes session_id is required")
 
+    assert runtime_session_id is not None or action in {"help", "doctor", "roles"}
+    runtime_session_id_str = runtime_session_id or ""
+
     if action == "on":
-        return _orch_on(kwargs.get("_ctx"), runtime_session_id)
+        return _orch_on(kwargs.get("_ctx"), runtime_session_id_str)
 
     if action == "status":
-        result = _run_orchestra(["status", "--session-id", runtime_session_id])
+        result = _run_orchestra(["status", "--session-id", runtime_session_id_str])
         return result.stdout or result.stderr
 
     if action == "history":
         limit = args.get("limit")
         limit_text = "10" if limit is None else _normalize_status_limit(limit)
         result = _run_orchestra(
-            ["history", "--session-id", runtime_session_id, "--limit", limit_text]
+            ["history", "--session-id", runtime_session_id_str, "--limit", limit_text]
         )
         return result.stdout or result.stderr
 
@@ -1024,7 +1039,7 @@ def orch_status(args: dict[str, Any], **kwargs: Any) -> str:
     run_id = str(args.get("runId") or "").strip()
     if not run_id:
         return _orch_status_error("runId is required for orch_status stop")
-    result = _run_orchestra(["stop", "--session-id", runtime_session_id, "--run-id", run_id])
+    result = _run_orchestra(["stop", "--session-id", runtime_session_id_str, "--run-id", run_id])
     return result.stdout or result.stderr
 
 
@@ -1189,7 +1204,7 @@ def register(ctx: Any) -> None:
         _reset_budget_state(runtime_session_id)
         _apply_core_session_mode_gating(runtime_session_id)
 
-    tool_info = _load_tool_info()
+    tool_info = _load_tool_info(initial_session_id)
     budget_trigger_label = str(tool_info["budgetTriggerLabel"])
     soft_timeout_block_reason = str(tool_info["softTimeoutBlockReason"])
     if _can_dispatch_orchestra_worker():

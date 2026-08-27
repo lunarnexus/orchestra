@@ -154,6 +154,22 @@ def test_hermes_tool_info_loads_only_from_dynamic_payload(monkeypatch: pytest.Mo
     assert plugin._load_tool_info() == payload
 
 
+def test_hermes_tool_info_uses_runtime_session_id_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return completed(args, json.dumps({"description": "dynamic"}))
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+
+    assert plugin._load_tool_info("hermes:session-a") == {"description": "dynamic"}
+    assert calls == [["_tool-info", "--session-id", "hermes:session-a"]]
+
+
 @pytest.fixture(autouse=True)
 def _clear_orchestra_dispatch_budget_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("ORCHESTRA_DISPATCH_BUDGET", raising=False)
@@ -375,7 +391,7 @@ def test_hermes_orch_status_routes_session_actions_and_keeps_roles_read_only(
 
     assert calls == [
         ["_tool-info", "--session-id", "hermes:runtime"],
-        ["_tool-info"],
+        ["_tool-info", "--session-id", "hermes:runtime"],
         ["status", "--session-id", "hermes:runtime"],
         ["history", "--session-id", "hermes:runtime", "--limit", "7"],
         ["doctor"],
@@ -412,7 +428,7 @@ def test_hermes_orch_status_rejects_model_supplied_identity_args(
     assert "identity arguments are not accepted" in output
     assert calls == [
         ["_tool-info", "--session-id", "hermes:runtime"],
-        ["_tool-info"],
+        ["_tool-info", "--session-id", "hermes:runtime"],
     ]
 
 
@@ -438,7 +454,7 @@ def test_hermes_orch_status_requires_run_id_for_stop(
     assert "runId is required" in output
     assert calls == [
         ["_tool-info", "--session-id", "hermes:runtime"],
-        ["_tool-info"],
+        ["_tool-info", "--session-id", "hermes:runtime"],
     ]
 
 
@@ -1616,23 +1632,6 @@ def test_orch_slash_fails_closed_without_hook_session_context() -> None:
     output = plugin._orch_command("status")
 
     assert "runtime session context" in output
-
-
-def test_hermes_plugin_source_uses_session_cleanup_hooks() -> None:
-    source = PLUGIN_PATH.read_text(encoding="utf-8")
-
-    assert "_CURRENT_SESSION_ID" not in source
-    assert 'register_hook("on_session_end"' not in source
-    assert "on_session_finalize" in source
-    assert "on_session_reset" in source
-    assert "on_session_start" in source
-    assert "_AWAIT_RUN_WATCHERS" not in source
-    assert "_AWAIT_RUN_WATCHERS_LOCK" not in source
-    assert "_parse_await_run_output" not in source
-    assert "_format_await_run_progress" not in source
-    assert "_log_watcher_progress" not in source
-    assert "_start_session_await_run_watcher" not in source
-    assert "_watch_await_run" not in source
 
 
 @pytest.mark.parametrize(

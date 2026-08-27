@@ -10,7 +10,7 @@ def test_opencode_plugin_registers_orch_dispatch_tool() -> None:
     assert 'export const OrchestraPlugin: Plugin = async ({ client }) => {' in source
     assert 'const orchStatusTool = tool({' in source
     assert 'action: tool.schema' in source
-    assert '.enum(["on", "status", "history", "help", "doctor", "roles", "stop"])' in source
+    assert '.enum(["on", "off", "status", "history", "help", "doctor", "roles", "stop"])' in source
     assert (
         'runId: tool.schema.string().optional().describe(toolInfo.statusRunIdDescription),'
         in source
@@ -28,7 +28,8 @@ def test_opencode_plugin_registers_orch_dispatch_tool() -> None:
     )
     assert 'description: toolInfo.statusDescription,' in source
     assert (
-        'action: tool.schema.enum(["on", "status", "history", "help", "doctor", "roles", "stop"])'
+        'action: tool.schema.enum(["on", "off", "status", "history", "help", "doctor", '
+        '"roles", "stop"])'
         in source
     )
 
@@ -42,8 +43,12 @@ def test_opencode_plugin_routes_orch_status_actions_and_role_settings() -> None:
         'const SUPPORTED_ROLE_SETTINGS = new Set(["harness", "enabled", "model", "profile", '
         '"agent"]);' in source
     )
-    assert 'if (args.action === "on") {' in source
-    assert '["orchestra", "_orchestrator-skill"]' in source
+    assert 'if (args.action === "on" || args.action === "off") {' in source
+    assert (
+        '["orchestra", "_session-mode", "set", "--session-id", ownerId, "--mode", '
+        'args.action === "on" ? "orchestrator" : "off", "--json"]'
+        in source
+    )
     assert '["orchestra", "status", "--session-id", ownerId]' in source
     assert 'normalizeOrchStatusLimit(args.limit)' in source
     assert (
@@ -60,10 +65,13 @@ def test_opencode_plugin_routes_orch_status_actions_and_role_settings() -> None:
         in source
     )
     assert 'Unsupported role setting' not in source
-    assert 'context.sessionID is required for orch_status status/history/stop.' in source
+    assert 'context.sessionID is required for orch_status on/off/status/history/stop.' in source
     assert 'runId is required for orch_status stop.' in source
     assert 'limit is only accepted for orch_status history.' not in source
     assert 'role, setting, and value are only accepted for orch_status roles.' not in source
+    assert 'if (statusArgs.action === "on" && rawSessionID) {' in source
+    assert 'const sessionPrompt = getSessionPrompt(client);' in source
+    assert 'effect?.inject_text' in source
 
 
 def test_opencode_plugin_ignores_irrelevant_orch_status_optional_fields() -> None:
@@ -102,6 +110,11 @@ def test_opencode_plugin_reuses_core_tool_info_and_dispatch_budget_guard() -> No
     source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
 
     assert 'const ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET";' in source
+    assert (
+        'type OrchStatusAction = "on" | "off" | "status" | "history" | "help" | "doctor" | '
+        '"roles" | "stop";'
+        in source
+    )
     assert 'function orchestraDispatchBudget(): number {' in source
     assert 'function canDispatchOrchestraWorker(): boolean {' in source
     assert 'return orchestraDispatchBudget() !== 1;' in source
