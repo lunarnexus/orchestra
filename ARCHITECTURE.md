@@ -125,10 +125,8 @@ Current host surfaces are:
 
 - CLI entrypoint: `orchestra ...`
 - Pi extension: `extensions/pi/orchestra/index.ts`
-- packaged Pi asset: `src/orchestra/assets/pi/orchestra/index.ts`
 - Hermes plugin: `extensions/hermes/orchestra/__init__.py`
 - OpenCode plugin: `extensions/opencode/orchestra/index.ts`
-- packaged OpenCode asset: `src/orchestra/assets/opencode/orchestra/index.ts`
 - Codex placeholder scaffold (manifest only): `extensions/codex/orchestra`
 
 ### Harness connectors
