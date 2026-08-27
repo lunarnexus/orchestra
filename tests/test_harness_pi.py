@@ -102,6 +102,38 @@ def test_pi_harness_builds_scoped_prompt(worker_request: WorkerRequest) -> None:
     assert "PI_SESSION_ID" not in prompt
 
 
+@pytest.mark.parametrize(
+    "goal",
+    [
+        "Fix this; rm -rf / | cat <<'EOF'\n$(touch hacked)\n`echo nope`\nEOF",
+        'quote"single\'backtick`pipe|amp&redir>file<in\\nline two',
+    ],
+)
+def test_pi_harness_keeps_hostile_goal_text_inside_one_argv_argument(
+    worker_request: WorkerRequest,
+    goal: str,
+) -> None:
+    harness = PiHarness()
+    request = WorkerRequest(
+        role_name=worker_request.role_name,
+        goal=goal,
+        approved_context=worker_request.approved_context,
+        boundaries=worker_request.boundaries,
+        acceptance_target=worker_request.acceptance_target,
+        timeout_seconds=worker_request.timeout_seconds,
+        log_path=worker_request.log_path,
+        prompts=ROOT_PROMPTS,
+    )
+    role = RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])
+
+    command = harness.build_command(role, harness.build_prompt(request, role))
+
+    assert command[-1].startswith("Role: worker\n\nGoal: ")
+    assert goal in command[-1]
+    assert len(command) == 3
+    assert command[2] == command[-1]
+
+
 def test_pi_harness_injects_local_role_skill_before_goal(
     worker_request: WorkerRequest,
     tmp_path: Path,

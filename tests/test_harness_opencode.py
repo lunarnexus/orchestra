@@ -112,6 +112,37 @@ def test_opencode_harness_builds_scoped_prompt(worker_request: WorkerRequest) ->
     assert "Acceptance target: Return a short status report." in prompt
 
 
+@pytest.mark.parametrize(
+    "goal",
+    [
+        "build; echo unsafe | sed -n '1p' && $(printf nope)\nnext line",
+        'double"single\'tick`redirect>out<in',
+    ],
+)
+def test_opencode_harness_keeps_hostile_goal_text_inside_one_argv_argument(
+    worker_request: WorkerRequest,
+    goal: str,
+) -> None:
+    harness = OpenCodeHarness()
+    request = WorkerRequest(
+        role_name=worker_request.role_name,
+        goal=goal,
+        approved_context=worker_request.approved_context,
+        boundaries=worker_request.boundaries,
+        acceptance_target=worker_request.acceptance_target,
+        timeout_seconds=worker_request.timeout_seconds,
+        log_path=worker_request.log_path,
+        prompts=ROOT_PROMPTS,
+    )
+    role = RoleConfig(harness="opencode", command=["opencode", "run", "{prompt}"])
+
+    command = harness.build_command(role, harness.build_prompt(request, role))
+
+    assert command[-1].startswith("Role: worker\n\nGoal: ")
+    assert goal in command[-1]
+    assert len(command) == 3
+
+
 def test_opencode_harness_uses_shared_prompt_and_command_helpers(
     worker_request: WorkerRequest,
 ) -> None:

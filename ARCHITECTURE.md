@@ -132,7 +132,9 @@ Current host surfaces are:
 ### Harness connectors
 
 Harness connectors translate a selected role into a tokenized subagent process
-invocation. Current configured harness types include:
+invocation. Orchestra keeps this path argv-list only: user goal and prompt text
+are data passed as a single argv element or equivalent prompt payload, not shell
+syntax. Current configured harness types include:
 
 - Pi
 - Hermes
@@ -329,6 +331,10 @@ behavior fields. Dispatch resolution is:
 ```text
 role -> harness config -> rendered tokenized command -> supported runtime args
 ```
+
+Internally generated shell wrappers are not part of the Orchestra safety
+contract. If an operator configures a shell wrapper in the catalog, that wrapper
+is trusted local configuration and remains the operator's responsibility.
 
 Role environment values apply only to the subagent process. They cannot use the
 reserved `ORCHESTRA_` prefix and are not a secret store.

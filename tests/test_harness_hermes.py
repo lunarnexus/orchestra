@@ -93,6 +93,33 @@ def test_hermes_harness_drops_unset_optional_model_and_profile(
     assert "--model" not in command
 
 
+@pytest.mark.parametrize(
+    "goal",
+    [
+        "inspect; touch bad | awk '{print $1}' && $(date)\nline two",
+        'quote"single\'backtick`pipe|redir>out<in',
+    ],
+)
+def test_hermes_harness_keeps_hostile_goal_text_inside_one_argv_argument(
+    tmp_path: Path,
+    goal: str,
+) -> None:
+    request = WorkerRequest(
+        role_name="worker",
+        goal=goal,
+        timeout_seconds=30,
+        log_path=tmp_path / "worker.jsonl",
+        prompts=ROOT_PROMPTS,
+    )
+    role = RoleConfig(harness="hermes", command=["hermes", "-z", "{prompt}"])
+
+    command = HermesHarness().build_command(role, HermesHarness().build_prompt(request, role))
+
+    assert command[0:2] == ["hermes", "-z"]
+    assert command[-1].startswith("Role: worker\n\nGoal: ")
+    assert goal in command[-1]
+
+
 def test_hermes_harness_start_sets_orchestra_dispatch_budget_env_counter(
     tmp_path: Path,
     python_executable: str,

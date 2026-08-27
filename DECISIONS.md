@@ -232,6 +232,14 @@ harness connectors.
 stores only lean operational metadata and result references needed for dispatch,
 supervision, and debugging.
 
+### D-ARCH-008 — No-shell subprocess contract
+
+**Decision:** Orchestra internals launch subprocesses through argv-list APIs.
+Untrusted goal and prompt text are passed as argv data, not shell syntax.
+Trusted catalog command tokens and executables are local operator configuration;
+user-configured shell wrappers remain trusted operator responsibility and are
+outside Orchestra's injection guarantee.
+
 ## Delegation and scope ownership
 
 ### D-DELEGATE-001 — Delegation is the structured-mode default
