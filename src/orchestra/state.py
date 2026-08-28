@@ -28,7 +28,7 @@ ALLOWED_MAIN_SESSION_MODES = frozenset(
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
-_SCHEMA_VERSION = 10
+_SCHEMA_VERSION = 12
 _CONNECT_ATTEMPTS = 8
 _CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
 _CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
@@ -69,7 +69,7 @@ class RunRecord:
     process_id: int | None = None
     process_group_id: int | None = None
     result_summary: str | None = None
-    result_artifact_path: Path | None = None
+    result_output: str | None = None
     result_summary_truncated: bool = False
     error_text: str | None = None
     blocker_text: str | None = None
@@ -78,6 +78,10 @@ class RunRecord:
     approval_needed: bool = False
     report_claimed_at: str | None = None
     reported_at: str | None = None
+    cycle_id: str | None = None
+    triggered_by_run_id: str | None = None
+    trigger_reason: str | None = None
+    sequence_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -100,7 +104,7 @@ class RunUpdate:
     process_id: int | None = None
     process_group_id: int | None = None
     result_summary: str | None = None
-    result_artifact_path: Path | None = None
+    result_output: str | None = None
     result_summary_truncated: bool | None = None
     error_text: str | None = None
     blocker_text: str | None = None
@@ -108,6 +112,10 @@ class RunUpdate:
     transcript_path: Path | None = None
     approval_needed: bool | None = None
     reported_at: str | None = None
+    cycle_id: str | None = None
+    triggered_by_run_id: str | None = None
+    trigger_reason: str | None = None
+    sequence_index: int | None = None
 
 
 _LOG = logging.getLogger(__name__)
@@ -159,7 +167,7 @@ class StateStore:
                     process_group_id INTEGER,
                     task_label TEXT NOT NULL,
                     result_summary TEXT,
-                    result_artifact_path TEXT,
+                    result_output TEXT,
                     result_summary_truncated INTEGER NOT NULL DEFAULT 0,
                     error_text TEXT,
                     blocker_text TEXT,
@@ -168,7 +176,11 @@ class StateStore:
                     transcript_path TEXT,
                     approval_needed INTEGER NOT NULL DEFAULT 0,
                     report_claimed_at TEXT,
-                    reported_at TEXT
+                    reported_at TEXT,
+                    cycle_id TEXT,
+                    triggered_by_run_id TEXT,
+                    trigger_reason TEXT,
+                    sequence_index INTEGER
                 )
                 """
             )
@@ -177,7 +189,7 @@ class StateStore:
             self._ensure_column(connection, "runs", "supervisor_started_at", "TEXT")
             self._ensure_column(connection, "runs", "supervisor_output_path", "TEXT")
             self._ensure_column(connection, "runs", "process_group_id", "INTEGER")
-            self._ensure_column(connection, "runs", "result_artifact_path", "TEXT")
+            self._ensure_column(connection, "runs", "result_output", "TEXT")
             self._ensure_column(
                 connection,
                 "runs",
@@ -186,6 +198,10 @@ class StateStore:
             )
             self._ensure_column(connection, "runs", "report_claimed_at", "TEXT")
             self._ensure_column(connection, "runs", "reported_at", "TEXT")
+            self._ensure_column(connection, "runs", "cycle_id", "TEXT")
+            self._ensure_column(connection, "runs", "triggered_by_run_id", "TEXT")
+            self._ensure_column(connection, "runs", "trigger_reason", "TEXT")
+            self._ensure_column(connection, "runs", "sequence_index", "INTEGER")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -290,7 +306,7 @@ class StateStore:
                     process_group_id,
                     task_label,
                     result_summary,
-                    result_artifact_path,
+                    result_output,
                     result_summary_truncated,
                     error_text,
                     blocker_text,
@@ -299,10 +315,14 @@ class StateStore:
                     transcript_path,
                     approval_needed,
                     report_claimed_at,
-                    reported_at
+                    reported_at,
+                    cycle_id,
+                    triggered_by_run_id,
+                    trigger_reason,
+                    sequence_index
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 self._serialize_record(record),
@@ -711,10 +731,10 @@ class StateStore:
                 if update.result_summary is not None
                 else current.result_summary
             ),
-            result_artifact_path=(
-                update.result_artifact_path
-                if update.result_artifact_path is not None
-                else current.result_artifact_path
+            result_output=(
+                update.result_output
+                if update.result_output is not None
+                else current.result_output
             ),
             result_summary_truncated=(
                 update.result_summary_truncated
@@ -746,6 +766,22 @@ class StateStore:
             reported_at=(
                 update.reported_at if update.reported_at is not None else current.reported_at
             ),
+            cycle_id=update.cycle_id if update.cycle_id is not None else current.cycle_id,
+            triggered_by_run_id=(
+                update.triggered_by_run_id
+                if update.triggered_by_run_id is not None
+                else current.triggered_by_run_id
+            ),
+            trigger_reason=(
+                update.trigger_reason
+                if update.trigger_reason is not None
+                else current.trigger_reason
+            ),
+            sequence_index=(
+                update.sequence_index
+                if update.sequence_index is not None
+                else current.sequence_index
+            ),
         )
 
         if update.status == STATUS_RUNNING and next_record.started_at is None:
@@ -775,7 +811,7 @@ class StateStore:
                 process_id = ?,
                 process_group_id = ?,
                 result_summary = ?,
-                result_artifact_path = ?,
+                result_output = ?,
                 result_summary_truncated = ?,
                 error_text = ?,
                 blocker_text = ?,
@@ -783,7 +819,11 @@ class StateStore:
                 transcript_path = ?,
                 approval_needed = ?,
                 report_claimed_at = ?,
-                reported_at = ?
+                reported_at = ?,
+                cycle_id = ?,
+                triggered_by_run_id = ?,
+                trigger_reason = ?,
+                sequence_index = ?
             WHERE run_id = ?
               AND status = ?
             """,
@@ -799,7 +839,7 @@ class StateStore:
                 record.process_id,
                 record.process_group_id,
                 record.result_summary,
-                str(record.result_artifact_path) if record.result_artifact_path else None,
+                record.result_output,
                 int(record.result_summary_truncated),
                 record.error_text,
                 record.blocker_text,
@@ -808,6 +848,10 @@ class StateStore:
                 int(record.approval_needed),
                 record.report_claimed_at,
                 record.reported_at,
+                record.cycle_id,
+                record.triggered_by_run_id,
+                record.trigger_reason,
+                record.sequence_index,
                 record.run_id,
                 expected_status,
             ),
@@ -833,7 +877,7 @@ class StateStore:
             record.process_group_id,
             record.task_label,
             record.result_summary,
-            str(record.result_artifact_path) if record.result_artifact_path else None,
+            record.result_output,
             int(record.result_summary_truncated),
             record.error_text,
             record.blocker_text,
@@ -843,6 +887,10 @@ class StateStore:
             int(record.approval_needed),
             record.report_claimed_at,
             record.reported_at,
+            record.cycle_id,
+            record.triggered_by_run_id,
+            record.trigger_reason,
+            record.sequence_index,
         )
 
     def _row_to_record(self, row: sqlite3.Row) -> RunRecord:
@@ -872,11 +920,7 @@ class StateStore:
             ),
             task_label=str(row["task_label"]),
             result_summary=_optional_text(row["result_summary"]),
-            result_artifact_path=(
-                Path(str(row["result_artifact_path"]))
-                if row["result_artifact_path"] is not None
-                else None
-            ),
+            result_output=_optional_text(row["result_output"]),
             result_summary_truncated=bool(row["result_summary_truncated"]),
             error_text=_optional_text(row["error_text"]),
             blocker_text=_optional_text(row["blocker_text"]),
@@ -888,6 +932,12 @@ class StateStore:
             approval_needed=bool(row["approval_needed"]),
             report_claimed_at=_optional_text(row["report_claimed_at"]),
             reported_at=_optional_text(row["reported_at"]),
+            cycle_id=_optional_text(row["cycle_id"]),
+            triggered_by_run_id=_optional_text(row["triggered_by_run_id"]),
+            trigger_reason=_optional_text(row["trigger_reason"]),
+            sequence_index=(
+                int(row["sequence_index"]) if row["sequence_index"] is not None else None
+            ),
         )
 
     def _log_event(

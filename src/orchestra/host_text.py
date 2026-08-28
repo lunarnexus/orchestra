@@ -36,7 +36,7 @@ ROLE_USAGE = """Usage:
 
 Settings:
   harness   selected harness config name
-  enabled   true/false
+  enabled   true/false/auto
   model     model name for the selected harness
   profile   optional harness profile, when supported
   agent     optional harness agent, when supported
@@ -44,10 +44,12 @@ Settings:
 Examples:
   /orch roles reviewer harness pi
   /orch roles appsec enabled false
+  /orch roles reviewer enabled auto
   /orch roles reviewer model openai-codex/gpt-5.4
 
 Enabled values:
   true, yes, y, 1, on
+  auto
   false, no, n, 0, off"""
 DISPATCH_TIMEOUT_ERROR = (
     "timeout is not accepted by orch_dispatch; configured default_timeout applies."

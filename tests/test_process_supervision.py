@@ -443,7 +443,7 @@ def test_budget_handoff_marker_marks_run_incomplete(
     assert "## Lifecycle log" in debug.stdout
     assert "supervisor.spawned" in debug.stdout
     assert "worker.started" in debug.stdout
-    assert "## Return artifact" in debug.stdout
+    assert "## Full return" in debug.stdout
     assert "## Harness transcript" in debug.stdout
 
 

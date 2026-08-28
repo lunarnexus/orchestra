@@ -7,15 +7,15 @@ How to trace Orchestra sessions and subagents during local debugging.
 For every run, start with the run id. Orchestra now keeps a small canonical
 lifecycle trace and links to larger artifacts when they exist.
 
-- **DB row**: current state and pointers to logs/artifacts/transcripts.
+- **DB row**: current state, compact result fields, and pointers to logs/transcripts.
 - **Lifecycle log**: `logs/<run-id>.jsonl`; lean Orchestra-owned events such as
   supervisor spawn/start/failure, subagent start/exit, artifact writes, and state
   updates.
 - **Supervisor output**: `logs/<run-id>.supervisor.log`; raw stdout/stderr from
   the detached supervisor process.
 - **Request file**: `state/requests/<run-id>.json`; preserved for diagnosis.
-- **Return artifact**: `state/return-artifacts/<run-id>.md`; subagent stdout/stderr
-  and returned content when the subagent starts and produces output.
+- **Full return**: `result_output` on the run record; the stored final return
+  content for explicit debug or non-success follow-up.
 - **Harness transcript**: optional. Pi subagents use a deterministic worker session
   id, but transcript files depend on harness support and runtime storage.
 
@@ -45,8 +45,9 @@ orchestra debug --session-id '<orchestrator-session-id>' --limit 20
 ```
 
 `orchestra debug` prints the DB state, request file, lifecycle log, supervisor
-output, return artifact, and harness transcript content or search hints. Session
-mode fans out over Orchestra-owned runs for that orchestrator session.
+output, full return content when requested, and harness transcript content or
+search hints. Session mode fans out over Orchestra-owned runs for that
+orchestrator session.
 
 ## Stale queued run recovery
 
@@ -73,7 +74,7 @@ Trace all subagents for an orchestrator session:
 
 ```bash
 sqlite3 state/orchestra.db \
-  "select run_id,status,role,task_label,worker_session_id,log_path,result_artifact_path from runs where runs.orchestrator_session_id='<ORCH_SESSION_ID>' order by created_at;"
+  "select run_id,status,role,task_label,worker_session_id,log_path,result_output from runs where runs.orchestrator_session_id='<ORCH_SESSION_ID>' order by created_at;"
 ```
 
 Inspect one run manually:
@@ -87,7 +88,7 @@ sqlite3 state/orchestra.db \
 cat "logs/${RUN_ID}.jsonl"
 cat "logs/${RUN_ID}.supervisor.log"
 cat "state/requests/${RUN_ID}.json"
-cat "state/return-artifacts/${RUN_ID}.md"
+sqlite3 state/orchestra.db "select result_output from runs where run_id='$RUN_ID';"
 ```
 
 Find a Pi subagent session file:
@@ -121,5 +122,5 @@ This project has a simple cleanup script:
 ./scripts/clear-local-state.sh
 ```
 
-It removes local Orchestra DB/logs/request/return-artifact files for this
-checkout. It does not remove Pi/Hermes/OpenCode session history.
+It removes local Orchestra DB/logs/request files for this checkout. It does
+not remove Pi/Hermes/OpenCode session history.

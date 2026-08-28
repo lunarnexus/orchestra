@@ -8,13 +8,23 @@ from typing import Any, cast
 import pytest
 
 from orchestra.context import load_context
+from orchestra.harnesses.base import WorkerResult
 from orchestra.reports import (
     await_session_report_payload,
     consume_pending_session_report,
     mark_session_report_delivered,
 )
-from orchestra.state import STATUS_DONE, STATUS_RUNNING, RunRecord, RunUpdate, StateStore
+from orchestra.state import (
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_RUNNING,
+    RunRecord,
+    RunUpdate,
+    StateStore,
+)
+from orchestra.supervision import _finalize_run
 from tests.helpers import extract_run_id, run_cli, wait_for_condition
+from tests.test_auto_verify import _done_result, _make_context, _start_linked_run
 from tests.types import RuntimeFilesFactory
 
 
@@ -40,6 +50,25 @@ def _create_terminal_run(
     )
     store.update_run(run_id, RunUpdate(status=STATUS_RUNNING, process_id=1234))
     store.update_run(run_id, RunUpdate(status=STATUS_DONE, result_summary="done"))
+
+
+def _failed_verifier_result() -> WorkerResult:
+    return WorkerResult(
+        status=STATUS_FAILED,
+        command=["echo", "verifier"],
+        prompt="prompt",
+        exit_code=1,
+        stdout="verifier timed out",
+        stderr="timeout",
+        result_summary="verifier timed out",
+        error_text="timed out after 30 seconds",
+        blocker_text=None,
+        result_summary_truncated=False,
+        timed_out=True,
+        worker_session_id=None,
+        transcript_path=None,
+        approval_needed=False,
+    )
 
 
 class FlakyGetRunStore:
@@ -282,3 +311,72 @@ def test_auto_return_disabled_stays_quiet(
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     assert consume_pending_session_report(context, "manual:no-auto") is None
+
+
+def test_auto_return_includes_linked_builder_and_verifier_cycle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(tmp_path, auto_verify=True)
+    builder_started = _start_linked_run(context, monkeypatch)
+
+    _finalize_run(context, builder_started.record.run_id, _done_result())
+    assert wait_for_condition(
+        lambda: any(
+            run.trigger_reason == "auto_verify"
+            for run in context.store.list_runs("manual:test", limit=20)
+        ),
+        timeout=5,
+    )
+    verifier = next(
+        run
+        for run in context.store.list_runs("manual:test", limit=20)
+        if run.trigger_reason == "auto_verify"
+    )
+    context.store.update_run(verifier.run_id, RunUpdate(status=STATUS_RUNNING, process_id=4321))
+    _finalize_run(context, verifier.run_id, _done_result())
+
+    report = consume_pending_session_report(context, "manual:test")
+
+    assert report is not None
+    assert f"[orchestra: builder {builder_started.record.run_id} success]" in report
+    assert "artifact:" not in report
+    assert f"[orchestra: verifier {verifier.run_id} success]" in report
+    verifier_block = report.split(f"[orchestra: verifier {verifier.run_id} success]", 1)[1]
+    assert "next:" not in verifier_block.split("\n\n", 1)[0]
+    assert consume_pending_session_report(context, "manual:test") is None
+
+
+def test_auto_return_surfaces_failed_verifier_without_changing_builder_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(tmp_path, auto_verify=True)
+    builder_started = _start_linked_run(context, monkeypatch)
+
+    _finalize_run(context, builder_started.record.run_id, _done_result())
+    assert wait_for_condition(
+        lambda: any(
+            run.trigger_reason == "auto_verify"
+            for run in context.store.list_runs("manual:test", limit=20)
+        ),
+        timeout=5,
+    )
+    verifier = next(
+        run
+        for run in context.store.list_runs("manual:test", limit=20)
+        if run.trigger_reason == "auto_verify"
+    )
+    context.store.update_run(verifier.run_id, RunUpdate(status=STATUS_RUNNING, process_id=4321))
+    finalized_verifier = _finalize_run(context, verifier.run_id, _failed_verifier_result())
+
+    report = consume_pending_session_report(context, "manual:test")
+
+    assert report is not None
+    assert f"[orchestra: builder {builder_started.record.run_id} success]" in report
+    assert f"[orchestra: verifier {verifier.run_id} fail]" in report
+    assert "status: failed" in report
+    assert "artifact:" not in report
+    assert f"log: {finalized_verifier.log_path}" in report
+    assert "timed out after 30 seconds" in report
+    assert consume_pending_session_report(context, "manual:test") is None

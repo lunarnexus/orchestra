@@ -87,6 +87,7 @@ def test_load_app_config_reads_values_from_fixture(fixture_dir: Path) -> None:
     assert config.concurrency.global_limit == 4
     assert config.concurrency.per_session_limit == 3
     assert config.auto_return is True
+    assert config.auto_verify is False
 
 
 def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
@@ -102,6 +103,7 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.concurrency.global_limit == DEFAULT_GLOBAL_CONCURRENCY
     assert config.concurrency.per_session_limit == DEFAULT_PER_SESSION_CONCURRENCY
     assert config.auto_return is DEFAULT_AUTO_RETURN
+    assert config.auto_verify is False
     assert config.tools_enabled_by_default is True
     assert config.turn_limit is None
     assert config.soft_timeout is None
@@ -205,6 +207,32 @@ def test_load_app_config_keeps_yaml_native_boolean_parsing(
     ("raw_value", "expected"),
     [
         ("true", True),
+        ("yes", True),
+        ("on", True),
+        ("false", False),
+        ("no", False),
+        ("off", False),
+    ],
+)
+def test_load_app_config_reads_auto_verify(
+    tmp_path: Path,
+    raw_value: str,
+    expected: bool,
+) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text(f"default_timeout: 30\nauto_verify: {raw_value}\n", encoding="utf-8")
+    write_root_prompts(prompts_path)
+
+    config = load_app_config(path)
+
+    assert config.auto_verify is expected
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("true", True),
         ("false", False),
     ],
 )
@@ -276,6 +304,7 @@ def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
         ("default_timeout: 0\n", "'default_timeout' must be a positive integer"),
         ("default_timeout: 30\nconcurrency: 3\n", "'concurrency' must be a mapping"),
         ("default_timeout: 30\nauto_return: maybe\n", "'auto_return' must be a boolean"),
+        ("default_timeout: 30\nauto_verify: maybe\n", "'auto_verify' must be a boolean"),
         (
             "default_timeout: 30\ntools_enabled_by_default: maybe\n",
             "'tools_enabled_by_default' must be a boolean",
@@ -338,9 +367,8 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
                 "Answer one bounded evidence question. Stay read-only. Inspect only the "
                 "named docs, files, APIs, or narrow code area needed to answer that "
                 "question. Return concise findings with sources, confidence, gaps, "
-                "blockers, and risks. Update only the assigned RESEARCH.md section when "
-                "explicitly requested. Do not plan, implement, verify, review, or broaden "
-                "scope."
+                "blockers, and risks. Update only the explicitly assigned RESEARCH.md "
+                "section when requested. Do not plan, implement, verify, review, or broaden scope."
             ),
         ),
         (
@@ -356,7 +384,8 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
             (
                 "Independently prove whether the work satisfies its scope and acceptance "
                 "criteria using fresh evidence. Stay read-only. Return verdict, evidence, "
-                "missing checks, blockers, and risks."
+                "missing checks, blockers, and risks. Do not write role-owned `.md` "
+                "artifacts by default."
             ),
         ),
         (
@@ -364,16 +393,14 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
             (
                 "Independently review whether the change is correct, maintainable, "
                 "appropriately scoped, and ready to merge. Stay read-only for source code. "
-                "Run no test commands. Update only the assigned REVIEW.md section. Return "
-                "the compact schema only."
+                "Run no test commands. Return the compact schema only."
             ),
         ),
         (
             "appsec",
             (
                 "Independently identify realistic vulnerabilities across changed trust "
-                "boundaries. Stay read-only for source code. Update only the assigned "
-                "APPSEC.md section. Return the compact schema only."
+                "boundaries. Stay read-only for source code. Return the compact schema only."
             ),
         ),
     ],
@@ -546,6 +573,7 @@ roles:
     assert reviewer.soft_timeout == 840
     assert reviewer.command == ["hermes", "--profile", "{profile}", "-z", "{prompt}"]
     assert reviewer.enabled is True
+    assert reviewer.enabled_mode == "manual"
     assert reviewer.skills == ("code-reviewer",)
     assert reviewer.env == {"FEATURE_FLAG": "1", "EMPTY_OK": ""}
 
@@ -810,6 +838,18 @@ roles:
             "    enabled: false\n",
             "default_role must be enabled: builder",
         ),
+        (
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n"
+            "    enabled: maybe\n",
+            "'enabled' must be a boolean or 'auto'",
+        ),
     ],
 )
 def test_load_agent_catalog_rejects_invalid_values(
@@ -873,6 +913,14 @@ def test_root_agent_catalog_does_not_include_builder_harness_fallback() -> None:
     assert builder.harness_fallback == ()
 
 
+def test_root_agent_catalog_verifier_uses_auto_enabled_mode() -> None:
+    catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
+
+    verifier = catalog.roles["verifier"]
+    assert verifier.enabled is True
+    assert verifier.enabled_mode == "auto"
+
+
 def test_load_agent_catalog_supports_default_role_and_enabled_flags(tmp_path: Path) -> None:
     path = tmp_path / "agent-catalog.yaml"
     path.write_text(
@@ -892,6 +940,9 @@ roles:
   reviewer:
     harness_config: hermes
     enabled: on
+  observer:
+    harness_config: pi
+    enabled: auto
 """.lstrip(),
         encoding="utf-8",
     )
@@ -900,7 +951,29 @@ roles:
 
     assert catalog.default_role == "reviewer"
     assert catalog.roles["worker"].enabled is False
+    assert catalog.roles["worker"].enabled_mode == "manual"
     assert catalog.roles["reviewer"].enabled is True
+    assert catalog.roles["reviewer"].enabled_mode == "manual"
+    assert catalog.roles["observer"].enabled is True
+    assert catalog.roles["observer"].enabled_mode == "auto"
+
+
+def test_load_agent_catalog_rejects_auto_only_default_role(tmp_path: Path) -> None:
+    path = tmp_path / "agent-catalog.yaml"
+    path.write_text(
+        """
+default_role: reviewer
+roles:
+  reviewer:
+    harness: pi
+    command: ["pi", "-p", "{prompt}"]
+    enabled: auto
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="default_role must not be auto-only: reviewer"):
+        load_agent_catalog(path)
 
 
 def test_load_agent_catalog_defaults_to_builder_when_omitted(tmp_path: Path) -> None:

@@ -193,11 +193,82 @@ def test_consolidated_report_includes_all_unreported_terminal_runs(
     assert "Request: first goal" not in report
     assert "Request: second goal" not in report
     assert "summary: worker ok" in report
-    assert "artifact:" in report
+    assert "artifact:" not in report
     assert "log:" not in report
 
     second_report = consume_pending_session_report(context, "manual:report")
     assert second_report is None
+
+
+def test_consolidated_report_suppresses_auto_verify_next_hint_for_child_run(
+    tmp_path: Path,
+) -> None:
+    builder_run = RunRecord(
+        run_id="builder-run",
+        orchestrator_session_id="manual:report-cycle",
+        harness="pi",
+        role="builder",
+        task_label="builder task",
+        log_path=tmp_path / "builder-run.jsonl",
+        created_at="2026-01-01T00:00:00Z",
+        status=STATUS_DONE,
+        result_summary="builder ok",
+        result_output="builder full return",
+    )
+    verifier_run = RunRecord(
+        run_id="verifier-run",
+        orchestrator_session_id="manual:report-cycle",
+        harness="pi",
+        role="verifier",
+        task_label="verifier task",
+        log_path=tmp_path / "verifier-run.jsonl",
+        created_at="2026-01-01T00:00:01Z",
+        status=STATUS_DONE,
+        result_summary="verifier ok",
+        result_output="verifier full return",
+        cycle_id="builder-run",
+        triggered_by_run_id="builder-run",
+        trigger_reason="auto_verify",
+        sequence_index=1,
+    )
+
+    report = format_orchestrator_return([builder_run, verifier_run])
+
+    assert report.startswith("[orchestra: 2 subagents returned]\n\n")
+    assert f"[orchestra: builder {builder_run.run_id} success]" in report
+    assert f"[orchestra: verifier {verifier_run.run_id} success]" in report
+    assert "artifact:" not in report
+    verifier_block = report.split(f"[orchestra: verifier {verifier_run.run_id} success]", 1)[1]
+    assert "next:" not in verifier_block.split("\n\n", 1)[0]
+
+
+def test_consolidated_report_surfaces_auto_verify_dispatch_failure_without_full_return_load(
+    tmp_path: Path,
+) -> None:
+    log_path = tmp_path / "builder-run.jsonl"
+    log_path.write_text(
+        (
+            '{"event":"auto_verify.dispatch_failed",'
+            '"error_type":"RuntimeError","error":"dispatch start failed"}\n'
+        ),
+        encoding="utf-8",
+    )
+    builder_run = RunRecord(
+        run_id="builder-run",
+        orchestrator_session_id="manual:report-cycle",
+        harness="pi",
+        role="builder",
+        task_label="builder task",
+        log_path=log_path,
+        created_at="2026-01-01T00:00:00Z",
+        status=STATUS_DONE,
+        result_summary="builder ok",
+    )
+
+    report = format_orchestrator_return([builder_run])
+
+    assert "auto_verify: auto-verify dispatch failed: RuntimeError: dispatch start failed" in report
+    assert "result_output" not in report
 
 
 def test_truncated_report_points_to_full_return_artifact(
@@ -229,20 +300,16 @@ def test_truncated_report_points_to_full_return_artifact(
     assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
     record = store.get_run(run_id)
 
-    assert record.result_artifact_path is not None
-    assert record.result_artifact_path.exists()
     assert record.result_summary_truncated is True
-    artifact_text = record.result_artifact_path.read_text(encoding="utf-8")
-    assert long_output in artifact_text
-    assert "## stdout" in artifact_text
-    assert "## stderr" not in artifact_text
+    assert record.result_output is not None
+    assert long_output in record.result_output
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     report = consume_pending_session_report(context, "manual:truncated-report")
 
     assert report is not None
     assert "[truncated]" in report
-    assert f"artifact: {record.result_artifact_path}" in report
+    assert "artifact:" not in report
     assert f"log: {record.log_path}" not in report
 
 
@@ -274,17 +341,16 @@ def test_short_report_includes_artifact_pointer(
     assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
     record = store.get_run(run_id)
 
-    assert record.result_artifact_path is not None
-    assert record.result_artifact_path.exists()
     assert record.result_summary_truncated is False
-    assert "short ok" in record.result_artifact_path.read_text(encoding="utf-8")
+    assert record.result_output is not None
+    assert "short ok" in record.result_output
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     report = consume_pending_session_report(context, "manual:short-report")
 
     assert report is not None
     assert "summary: short ok" in report
-    assert f"artifact: {record.result_artifact_path}" in report
+    assert "artifact:" not in report
     assert "Full result:" not in report
     assert "[truncated]" not in report
 
@@ -325,11 +391,9 @@ def test_failed_worker_return_artifact_includes_stderr(
     assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_FAILED, timeout=5)
     record = store.get_run(run_id)
 
-    assert record.result_artifact_path is not None
-    artifact_text = record.result_artifact_path.read_text(encoding="utf-8")
-    assert "stdout data" in artifact_text
-    assert "## stderr" in artifact_text
-    assert "stderr detail" in artifact_text
+    assert record.result_output is not None
+    assert "stdout data" in record.result_output
+    assert "stderr detail" in record.result_output
 
 
 def test_failed_worker_with_long_stdout_and_short_stderr_does_not_mark_summary_truncated(
@@ -369,9 +433,9 @@ def test_failed_worker_with_long_stdout_and_short_stderr_does_not_mark_summary_t
     assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_FAILED, timeout=5)
     record = store.get_run(run_id)
 
-    assert record.result_artifact_path is not None
     assert record.result_summary_truncated is False
-    assert long_stdout in record.result_artifact_path.read_text(encoding="utf-8")
+    assert record.result_output is not None
+    assert long_stdout in record.result_output
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     report = consume_pending_session_report(context, "manual:failed-short-stderr")
@@ -379,7 +443,7 @@ def test_failed_worker_with_long_stdout_and_short_stderr_does_not_mark_summary_t
     assert report is not None
     assert "summary: short stderr" in report
     assert "[truncated]" not in report
-    assert f"artifact: {record.result_artifact_path}" in report
+    assert "artifact:" not in report
     assert "next: inspect the debug trace and dispatch one targeted recovery" in report
     assert "Full result:" not in report
 
@@ -421,7 +485,7 @@ def test_long_stderr_marks_failed_summary_truncated(
     assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_FAILED, timeout=5)
     record = store.get_run(run_id)
 
-    assert record.result_artifact_path is not None
+    assert record.result_output is not None
     assert record.result_summary_truncated is True
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
@@ -430,7 +494,7 @@ def test_long_stderr_marks_failed_summary_truncated(
     assert report is not None
     assert "summary: stderr diagnostic" in report
     assert "[truncated]" in report
-    assert f"artifact: {record.result_artifact_path}" in report
+    assert "artifact:" not in report
 
 
 def test_fallback_note_appears_in_final_report(

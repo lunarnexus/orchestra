@@ -315,7 +315,7 @@ def test_python_module_roles_enabled_accepts_on_off_and_rejects_maybe(tmp_path: 
     )
     assert invalid.returncode == 1
     assert (
-        "error: enabled must be one of true/yes/y/1/on or false/no/n/0/off; got 'maybe'"
+        "error: enabled must be one of true/yes/y/1/on, auto, or false/no/n/0/off; got 'maybe'"
         in invalid.stdout
     )
     catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))

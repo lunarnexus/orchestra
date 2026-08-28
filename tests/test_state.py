@@ -35,7 +35,16 @@ def state_store(tmp_path: Path) -> StateStore:
     return store
 
 
-def make_run(tmp_path: Path, run_id: str, session_id: str) -> RunRecord:
+def make_run(
+    tmp_path: Path,
+    run_id: str,
+    session_id: str,
+    *,
+    cycle_id: str | None = None,
+    triggered_by_run_id: str | None = None,
+    trigger_reason: str | None = None,
+    sequence_index: int | None = None,
+) -> RunRecord:
     return RunRecord(
         run_id=run_id,
         orchestrator_session_id=session_id,
@@ -46,6 +55,10 @@ def make_run(tmp_path: Path, run_id: str, session_id: str) -> RunRecord:
         created_at="2026-07-27T00:00:00Z",
         task_label="Investigate tests",
         log_path=tmp_path / "logs" / f"{run_id}.jsonl",
+        cycle_id=cycle_id,
+        triggered_by_run_id=triggered_by_run_id,
+        trigger_reason=trigger_reason,
+        sequence_index=sequence_index,
     )
 
 
@@ -56,7 +69,11 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == 10
+    assert row[0] == 12
+    with sqlite3.connect(state_store.database_path) as connection:
+        columns = [str(row[1]) for row in connection.execute("PRAGMA table_info(runs)")]
+
+    assert {"cycle_id", "triggered_by_run_id", "trigger_reason", "sequence_index"} <= set(columns)
 
 
 def test_set_and_get_main_session_mode_round_trip(state_store: StateStore) -> None:
@@ -130,7 +147,7 @@ def _create_old_schema_database(path: Path, run_count: int) -> None:
                 process_group_id INTEGER,
                 task_label TEXT NOT NULL,
                 result_summary TEXT,
-                result_artifact_path TEXT,
+                result_output TEXT,
                 error_text TEXT,
                 blocker_text TEXT,
                 log_path TEXT NOT NULL,
@@ -157,7 +174,7 @@ def _create_old_schema_database(path: Path, run_count: int) -> None:
                     str(path.parent / f"old-run-{index}.jsonl"),
                 ),
             )
-        connection.execute("PRAGMA user_version = 9")
+        connection.execute("PRAGMA user_version = 10")
 
 
 def test_migrating_old_schema_creates_sessions_table_and_preserves_runs(
@@ -178,7 +195,12 @@ def test_migrating_old_schema_creates_sessions_table_and_preserves_runs(
         run_ids = [str(row[0]) for row in connection.execute("SELECT run_id FROM runs")]
         run_rows = list(connection.execute("SELECT * FROM runs ORDER BY run_id"))
 
-    assert version == 10
+    assert version == 12
+    run = store.get_run("old-run-0")
+    assert run.cycle_id is None
+    assert run.triggered_by_run_id is None
+    assert run.trigger_reason is None
+    assert run.sequence_index is None
     assert {"runs", "sessions"} <= tables
     assert run_ids == ["old-run-0", "old-run-1", "old-run-2"]
     assert all(str(row[6]) == STATUS_DONE for row in run_rows)
@@ -233,7 +255,15 @@ def test_connect_uses_expanded_retry_backoff_and_includes_database_path_on_failu
 
 
 def test_reserve_and_get_run_round_trip(state_store: StateStore, tmp_path: Path) -> None:
-    record = make_run(tmp_path, run_id="run-1", session_id="pi:session-a")
+    record = make_run(
+        tmp_path,
+        run_id="run-1",
+        session_id="pi:session-a",
+        cycle_id="cycle-1",
+        triggered_by_run_id="run-parent",
+        trigger_reason="auto_verify",
+        sequence_index=1,
+    )
 
     state_store.reserve_run(record, global_limit=4, per_session_limit=3)
     loaded = state_store.get_run("run-1")
@@ -256,6 +286,10 @@ def test_update_run_tracks_state_transitions_and_metadata(
             process_group_id=1234,
             worker_session_id="worker-session-1",
             transcript_path=tmp_path / "transcripts" / "run-2.md",
+            cycle_id="cycle-2",
+            triggered_by_run_id="run-parent-2",
+            trigger_reason="auto_verify",
+            sequence_index=1,
         ),
     )
     done = state_store.update_run(
@@ -263,7 +297,7 @@ def test_update_run_tracks_state_transitions_and_metadata(
         RunUpdate(
             status=STATUS_DONE,
             result_summary="Completed successfully",
-            result_artifact_path=tmp_path / "state" / "return-artifacts" / "run-2.md",
+            result_output="final return text",
             result_summary_truncated=True,
         ),
     )
@@ -272,12 +306,20 @@ def test_update_run_tracks_state_transitions_and_metadata(
     assert running.process_id == 1234
     assert running.process_group_id == 1234
     assert running.worker_session_id == "worker-session-1"
+    assert running.cycle_id == "cycle-2"
+    assert running.triggered_by_run_id == "run-parent-2"
+    assert running.trigger_reason == "auto_verify"
+    assert running.sequence_index == 1
     assert "worker-session-1" in running.log_path.read_text(encoding="utf-8")
     assert running.transcript_path == tmp_path / "transcripts" / "run-2.md"
     assert done.ended_at is not None
     assert done.result_summary == "Completed successfully"
-    assert done.result_artifact_path == tmp_path / "state" / "return-artifacts" / "run-2.md"
+    assert done.result_output == "final return text"
     assert done.result_summary_truncated is True
+    assert done.cycle_id == "cycle-2"
+    assert done.triggered_by_run_id == "run-parent-2"
+    assert done.trigger_reason == "auto_verify"
+    assert done.sequence_index == 1
 
 
 def test_late_terminal_update_is_ignored(state_store: StateStore, tmp_path: Path) -> None:

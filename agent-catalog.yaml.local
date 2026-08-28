@@ -55,8 +55,8 @@ roles:
     - verifier
     prompt_addition: Independently prove whether the work satisfies its scope and
       acceptance criteria using fresh evidence. Stay read-only. Return verdict, evidence,
-      missing checks, blockers, and risks.
-    enabled: true
+      missing checks, blockers, and risks. Do not write role-owned `.md` artifacts by default.
+    enabled: auto
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
       HINDSIGHT4PI_AUTO_RECALL: '0'
@@ -67,8 +67,7 @@ roles:
     - reviewer
     prompt_addition: Independently review whether the change is correct, maintainable,
       appropriately scoped, and ready to merge. Stay read-only for source code. Run
-      no test commands. Update only the assigned REVIEW.md section. Return the compact
-      schema only.
+      no test commands. Return the compact schema only.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
@@ -77,7 +76,7 @@ roles:
     harness_config: pi
     model: lmstudio/qwen/qwen3.8-27b
     prompt_addition: Gather evidence with sources from docs, web, or code. Do not
-      change code. Update only the assigned RESEARCH.md section when requested. Return
+      change code. Update only the explicitly assigned RESEARCH.md section when requested. Return
       the compact schema only.
     enabled: true
     env:
@@ -99,8 +98,7 @@ roles:
     skills:
     - appsec
     prompt_addition: Independently identify realistic vulnerabilities across changed
-      trust boundaries. Stay read-only for source code. Update only the assigned APPSEC.md
-      section. Return the compact schema only.
+      trust boundaries. Stay read-only for source code. Return the compact schema only.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'

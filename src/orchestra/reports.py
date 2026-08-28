@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import time
@@ -144,8 +145,6 @@ def format_run_report(
         if record.result_summary_truncated:
             result = f"{result} [truncated]"
         lines.append(f"result: {result}")
-    if record.result_summary_truncated and record.result_artifact_path:
-        lines.append(f"result_artifact_path: {record.result_artifact_path}")
     if record.error_text:
         lines.append(f"error: {record.error_text}")
     if record.blocker_text:
@@ -197,6 +196,36 @@ def _format_run_summary(run: RunRecord) -> str:
     return summary
 
 
+def _should_show_return_hint(run: RunRecord, runs: list[RunRecord]) -> bool:
+    if run.trigger_reason != "auto_verify" or not run.triggered_by_run_id:
+        return True
+    return not any(other.run_id == run.triggered_by_run_id for other in runs)
+
+
+def _auto_verify_dispatch_failure_note(run: RunRecord) -> str | None:
+    try:
+        log_path = Path(run.log_path)
+        log_lines = log_path.read_text(encoding="utf-8").splitlines()
+    except (AttributeError, TypeError, OSError):
+        return None
+
+    for line in log_lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("event") != "auto_verify.dispatch_failed":
+            continue
+        error_type = event.get("error_type")
+        error = event.get("error")
+        if error_type and error:
+            return f"auto-verify dispatch failed: {error_type}: {error}"
+        if error:
+            return f"auto-verify dispatch failed: {error}"
+        return "auto-verify dispatch failed"
+    return None
+
+
 def format_orchestrator_return(
     runs: list[RunRecord],
     *,
@@ -211,12 +240,14 @@ def format_orchestrator_return(
             f"[orchestra: {run.role} {run.run_id} {outcome}]",
             f"summary: {_format_run_summary(run)}",
         ]
-        if run.result_artifact_path:
-            lines.append(f"artifact: {run.result_artifact_path}")
-        hint = _return_hint(run, prompts=prompts)
+        dispatch_failure = _auto_verify_dispatch_failure_note(run)
+        if dispatch_failure:
+            lines.append(f"auto_verify: {dispatch_failure}")
+        hint = _return_hint(run, prompts=prompts) if _should_show_return_hint(run, runs) else None
         if hint:
             lines.append(f"next: {hint}")
         if outcome != "success":
+            lines.append(f"status: {run.status}")
             if run.worker_session_id:
                 lines.append(f"worker_session: {run.worker_session_id}")
             lines.append(f"log: {run.log_path}")
@@ -244,8 +275,9 @@ def build_session_report(session_id: str, runs: list[RunRecord], *, active_remai
         lines.append(
             f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label} :: {summary}"
         )
-        if run.result_artifact_path:
-            lines.append(f"  artifact: {run.result_artifact_path}")
+        dispatch_failure = _auto_verify_dispatch_failure_note(run)
+        if dispatch_failure:
+            lines.append(f"  auto_verify: {dispatch_failure}")
         if run.worker_session_id:
             lines.append(f"  worker_session_id: {run.worker_session_id}")
         lines.append(f"  log: {run.log_path}")

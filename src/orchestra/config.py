@@ -21,6 +21,7 @@ PI_CODING_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
 DEFAULT_GLOBAL_CONCURRENCY = 4
 DEFAULT_PER_SESSION_CONCURRENCY = 3
 DEFAULT_AUTO_RETURN = True
+DEFAULT_AUTO_VERIFY = False
 DEFAULT_TOOLS_ENABLED_BY_DEFAULT = True
 DEFAULT_ROLE_NAME = "builder"
 DEFAULT_RETURN_HINT_DONE = (
@@ -84,6 +85,7 @@ class AppConfig:
     log_dir: Path = DEFAULT_LOG_DIR
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
     auto_return: bool = DEFAULT_AUTO_RETURN
+    auto_verify: bool = DEFAULT_AUTO_VERIFY
     tools_enabled_by_default: bool = DEFAULT_TOOLS_ENABLED_BY_DEFAULT
 
 
@@ -115,6 +117,7 @@ class RoleConfig:
     turn_limit: int | None = None
     soft_timeout: int | None = None
     enabled: bool = True
+    enabled_mode: str = "manual"
     skills: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
 
@@ -170,6 +173,7 @@ def load_app_config(path: str | Path) -> AppConfig:
     if soft_timeout is not None and soft_timeout >= default_timeout:
         raise ConfigError("'soft_timeout' must be less than 'default_timeout'")
     auto_return = _get_optional_bool(raw, "auto_return", DEFAULT_AUTO_RETURN)
+    auto_verify = _get_optional_bool(raw, "auto_verify", DEFAULT_AUTO_VERIFY)
     tools_enabled_by_default = _get_optional_bool(
         raw,
         "tools_enabled_by_default",
@@ -255,6 +259,7 @@ def load_app_config(path: str | Path) -> AppConfig:
         soft_timeout=soft_timeout,
         concurrency=concurrency,
         auto_return=auto_return,
+        auto_verify=auto_verify,
         tools_enabled_by_default=tools_enabled_by_default,
         prompts=prompts,
     )
@@ -315,6 +320,7 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                     f"{harness_config_name}"
                 )
             harness_config = harness_configs[harness_config_name]
+            enabled, enabled_mode = _get_optional_enabled_mode(role_raw, "enabled")
             roles[role_name] = RoleConfig(
                 harness_config=harness_config_name,
                 harness=harness_config.harness,
@@ -335,7 +341,8 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                 nested_dispatch_depth=_get_optional_nested_dispatch_depth(role_raw),
                 turn_limit=_get_optional_positive_int_or_none(role_raw, "turn_limit"),
                 soft_timeout=_get_optional_positive_int_or_none(role_raw, "soft_timeout"),
-                enabled=_get_optional_bool(role_raw, "enabled", True),
+                enabled=enabled,
+                enabled_mode=enabled_mode,
                 skills=tuple(
                     _get_optional_skill_names(
                         role_raw,
@@ -353,6 +360,7 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
             )
             continue
 
+        enabled, enabled_mode = _get_optional_enabled_mode(role_raw, "enabled")
         roles[role_name] = RoleConfig(
             harness=_get_required_string(role_raw, "harness", context=f"role '{role_name}'"),
             command=_get_required_string_list(role_raw, "command", context=f"role '{role_name}'"),
@@ -372,7 +380,8 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
             nested_dispatch_depth=_get_optional_nested_dispatch_depth(role_raw),
             turn_limit=_get_optional_positive_int_or_none(role_raw, "turn_limit"),
             soft_timeout=_get_optional_positive_int_or_none(role_raw, "soft_timeout"),
-            enabled=_get_optional_bool(role_raw, "enabled", True),
+            enabled=enabled,
+            enabled_mode=enabled_mode,
             skills=tuple(
                 _get_optional_skill_names(
                     role_raw,
@@ -393,6 +402,8 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
         raise ConfigError(f"default_role must name a configured role: {default_role}")
     if not roles[default_role].enabled:
         raise ConfigError(f"default_role must be enabled: {default_role}")
+    if roles[default_role].enabled_mode == "auto":
+        raise ConfigError(f"default_role must not be auto-only: {default_role}")
 
     return AgentCatalog(
         roles=roles,
@@ -501,6 +512,17 @@ def _get_optional_bool(data: dict[str, Any], key: str, default: bool) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"'{key}' must be a boolean")
     return value
+
+
+def _get_optional_enabled_mode(data: dict[str, Any], key: str) -> tuple[bool, str]:
+    value = data.get(key)
+    if value is None:
+        return True, "manual"
+    if isinstance(value, bool):
+        return value, "manual"
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return True, "auto"
+    raise ConfigError(f"'{key}' must be a boolean or 'auto'")
 
 
 def _get_required_positive_int(data: dict[str, Any], key: str) -> int:

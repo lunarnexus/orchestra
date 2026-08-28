@@ -7,3 +7,4 @@ concurrency:
   global: 6
   per_session: 3
 auto_return: true
+auto_verify: false

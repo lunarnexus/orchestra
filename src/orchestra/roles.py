@@ -46,7 +46,12 @@ def _enabled_roles(catalog: AgentCatalog) -> list[tuple[str, RoleConfig]]:
     ]
 
 
-def _select_role(catalog: AgentCatalog, role_name: str | None) -> SelectedRole:
+def _select_role(
+    catalog: AgentCatalog,
+    role_name: str | None,
+    *,
+    allow_auto_only: bool = False,
+) -> SelectedRole:
     normalized_role_name = (role_name or "").strip() or catalog.default_role
     try:
         role = catalog.roles[normalized_role_name]
@@ -54,6 +59,8 @@ def _select_role(catalog: AgentCatalog, role_name: str | None) -> SelectedRole:
         raise _app_error(f"unknown role: {normalized_role_name}") from exc
     if not role.enabled:
         raise _app_error(f"role is disabled: {normalized_role_name}")
+    if role.enabled_mode == "auto" and not allow_auto_only:
+        raise _app_error(f"role is auto-only: {normalized_role_name}")
     return SelectedRole(name=normalized_role_name, config=role)
 
 
@@ -125,6 +132,9 @@ def _format_role_lines(
         else:
             role_marker = "✓" if role.enabled else "✗"
         lines.append(f"  {role_marker}  {role_name} [{role.harness}]")
+        if role.enabled_mode == "auto":
+            lines.append("      enabled: auto")
+            lines.append("      dispatch: auto-only")
         if role.harness_config:
             lines.append(f"      harness: {role.harness_config}")
         if role.model:
@@ -260,14 +270,16 @@ def patch_role_setting_text(
     return "".join(lines)
 
 
-def _parse_user_toggle_bool(value: str, *, setting_name: str) -> bool:
+def _parse_user_enabled_mode(value: str, *, setting_name: str) -> tuple[bool, str]:
     normalized = value.strip().lower()
     if normalized in {"true", "yes", "y", "1", "on"}:
-        return True
+        return True, "manual"
     if normalized in {"false", "no", "n", "0", "off"}:
-        return False
+        return False, "manual"
+    if normalized == "auto":
+        return True, "auto"
     raise _app_error(
-        f"{setting_name} must be one of true/yes/y/1/on or false/no/n/0/off; got {value!r}"
+        f"{setting_name} must be one of true/yes/y/1/on, auto, or false/no/n/0/off; got {value!r}"
     )
 
 
@@ -317,12 +329,14 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
         raise _app_error(f"role '{role_key}' must be a mapping")
 
     if setting == "enabled":
-        enabled = _parse_user_toggle_bool(value, setting_name="enabled")
+        enabled, enabled_mode = _parse_user_enabled_mode(value, setting_name="enabled")
+        if role_key == context.catalog.default_role and enabled_mode == "auto":
+            raise _app_error(f"cannot make default role auto-only: {role_key}")
         if not enabled and role_key == context.catalog.default_role:
             raise _app_error(f"cannot disable default role: {role_key}")
-        role_raw["enabled"] = enabled
+        role_raw["enabled"] = "auto" if enabled_mode == "auto" else enabled
         setting_key = "enabled"
-        setting_value = str(enabled).lower()
+        setting_value = "auto" if enabled_mode == "auto" else str(enabled).lower()
         changed = f"enabled={setting_value}"
     elif setting == "model":
         model = value.strip()

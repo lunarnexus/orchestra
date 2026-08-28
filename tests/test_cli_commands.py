@@ -1391,6 +1391,7 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
                 "roles": {
                     "worker": {"harness_config": "pi", "enabled": False},
                     "reviewer": {"harness_config": "hermes"},
+                    "verifier": {"harness_config": "pi", "enabled": "auto"},
                 },
             },
             sort_keys=False,
@@ -1427,11 +1428,17 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
     assert "Configured roles" in default_output
     assert "Default: reviewer" in default_output
     assert "  D  reviewer [hermes]" in default_output
+    assert "  ✓  verifier [pi]" in default_output
+    assert "      enabled: auto" in default_output
+    assert "      dispatch: auto-only" in default_output
     assert "  ✗  worker [pi]" not in default_output
 
     assert all_exit_code == 0
     assert "Default: reviewer" in all_output
     assert "  D  reviewer [hermes]" in all_output
+    assert "  ✓  verifier [pi]" in all_output
+    assert "      enabled: auto" in all_output
+    assert "      dispatch: auto-only" in all_output
     assert "  ✗  worker [pi]" in all_output
 
 
@@ -1553,6 +1560,66 @@ def test_roles_command_accepts_common_false_enabled_values(
     assert "Updated role reviewer: enabled=false" in output
     assert "  ✗  reviewer [pi]" in output
     assert catalog["roles"]["reviewer"]["enabled"] is False
+
+
+def test_roles_command_accepts_auto_enabled_value(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    catalog_path = tmp_path / "agent-catalog.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "state_dir": str(tmp_path / "state"),
+                "log_dir": str(tmp_path / "logs"),
+                "default_timeout": 600,
+            }
+        ),
+        encoding="utf-8",
+    )
+    write_root_prompts(prompts_path)
+    catalog_path.write_text(
+        yaml.safe_dump(
+            {
+                "default_role": "builder",
+                "harness_configs": {
+                    "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
+                },
+                "roles": {
+                    "builder": {"harness_config": "pi"},
+                    "reviewer": {"harness_config": "pi", "enabled": False},
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "roles",
+            "reviewer",
+            "enabled",
+            "auto",
+        ]
+    )
+    output = capsys.readouterr().out
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+
+    assert exit_code == 0
+    assert "Updated role reviewer: enabled=auto" in output
+    assert "  ✓  reviewer [pi]" in output
+    assert "      enabled: auto" in output
+    assert "      dispatch: auto-only" in output
+    assert catalog["roles"]["reviewer"]["enabled"] == "auto"
 
 
 def test_roles_command_rejects_disabling_default_role(
@@ -1716,11 +1783,15 @@ def test_roles_command_rejects_invalid_role_mutations(
         (["missing", "enabled", "true"], "error: unknown role: missing"),
         (
             ["reviewer", "enabled", "maybe"],
-            "error: enabled must be one of true/yes/y/1/on or false/no/n/0/off; got 'maybe'",
+            "error: enabled must be one of true/yes/y/1/on, auto, or false/no/n/0/off; got 'maybe'",
         ),
         (
             ["reviewer", "enabled", "2"],
-            "error: enabled must be one of true/yes/y/1/on or false/no/n/0/off; got '2'",
+            "error: enabled must be one of true/yes/y/1/on, auto, or false/no/n/0/off; got '2'",
+        ),
+        (
+            ["builder", "enabled", "auto"],
+            "error: cannot make default role auto-only: builder",
         ),
         (["reviewer", "model", ""], "error: model must be a non-empty string"),
         (["reviewer", "harness", "missing"], "error: unknown harness config: missing"),
@@ -1747,8 +1818,10 @@ def test_roles_command_rejects_invalid_role_mutations(
             incomplete_usage_output = output
 
     assert "/orch roles ROLE SETTING VALUE" in incomplete_usage_output
+    assert "enabled   true/false/auto" in incomplete_usage_output
     assert "harness   selected harness config name" in incomplete_usage_output
     assert "profile   optional harness profile, when supported" in incomplete_usage_output
+    assert "auto" in incomplete_usage_output
 
     catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
     assert catalog["roles"]["reviewer"]["model"] == "old-model"
@@ -2211,10 +2284,9 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
     assert record.result_summary is not None
     assert note in record.result_summary
     assert not record.blocker_text
-    assert record.result_artifact_path is not None
+    assert record.result_output is not None
 
-    artifact_text = record.result_artifact_path.read_text(encoding="utf-8")
-    payload = json.loads(artifact_text.split("## stdout\n\n", 1)[1].strip())
+    payload = json.loads(record.result_output.split("## stdout\n\n", 1)[1].strip())
     assert payload["argv"] == ["--model", "fallback-model"]
     assert payload["nested_dispatch_depth"] == "2"
     assert payload["role_env"] == "configured"

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from orchestra.config import PromptConfig
 from orchestra.context import CONTRACT_VERSION, AppContext, AppError
-from orchestra.reports import format_run_report, session_status_details
+from orchestra.reports import clean_result_summary, format_run_report, session_status_details
 from orchestra.session_mode import default_main_session_mode, resolve_main_session_mode
 from orchestra.state import STATUS_INCOMPLETE, RunRecord
 
@@ -56,9 +56,37 @@ def _compact_active_run_line(run: RunRecord, *, include_owner: bool = False) -> 
     parts = [f"- {run.run_id}", run.role, run.status, f"task={json.dumps(run.task_label)}"]
     if include_owner:
         parts.append(f"owner={run.orchestrator_session_id}")
+    if run.cycle_id:
+        parts.append(f"cycle={run.cycle_id}")
+    if run.triggered_by_run_id:
+        parts.append(f"triggered_by={run.triggered_by_run_id}")
+    if run.trigger_reason:
+        parts.append(f"trigger={run.trigger_reason}")
+    if run.sequence_index is not None:
+        parts.append(f"seq={run.sequence_index}")
     if run.blocker_text:
         parts.append(f"blocker={json.dumps(run.blocker_text)}")
     return " ".join(parts)
+
+
+def _format_run_linkage_details(run: RunRecord) -> str | None:
+    if not (
+        run.cycle_id
+        or run.triggered_by_run_id
+        or run.trigger_reason
+        or run.sequence_index is not None
+    ):
+        return None
+    lines = ["## Cycle linkage"]
+    if run.cycle_id:
+        lines.append(f"cycle_id: {run.cycle_id}")
+    if run.triggered_by_run_id:
+        lines.append(f"triggered_by_run_id: {run.triggered_by_run_id}")
+    if run.trigger_reason:
+        lines.append(f"trigger_reason: {run.trigger_reason}")
+    if run.sequence_index is not None:
+        lines.append(f"sequence_index: {run.sequence_index}")
+    return "\n".join(lines)
 
 
 def _list_active_runs_for_session_ids(
@@ -260,6 +288,21 @@ def status_payload(context: AppContext, session_id: str | None = None) -> dict[s
                     "task_label": run.task_label,
                     "owner": run.orchestrator_session_id,
                     "model": run.model,
+                    **(
+                        {
+                            "cycle_id": run.cycle_id,
+                            "triggered_by_run_id": run.triggered_by_run_id,
+                            "trigger_reason": run.trigger_reason,
+                            "sequence_index": run.sequence_index,
+                        }
+                        if (
+                            run.cycle_id
+                            or run.triggered_by_run_id
+                            or run.trigger_reason
+                            or run.sequence_index is not None
+                        )
+                        else {}
+                    ),
                 }
                 for run in global_runs
             ],
@@ -286,6 +329,21 @@ def status_payload(context: AppContext, session_id: str | None = None) -> dict[s
                         "status": run.status,
                         "task_label": run.task_label,
                         "model": run.model,
+                        **(
+                            {
+                                "cycle_id": run.cycle_id,
+                                "triggered_by_run_id": run.triggered_by_run_id,
+                                "trigger_reason": run.trigger_reason,
+                                "sequence_index": run.sequence_index,
+                            }
+                            if (
+                                run.cycle_id
+                                or run.triggered_by_run_id
+                                or run.trigger_reason
+                                or run.sequence_index is not None
+                            )
+                            else {}
+                        ),
                     }
                     for run in runs
                 ],
@@ -417,8 +475,6 @@ def _return_hint(run: RunRecord, *, prompts: PromptConfig | None = None) -> str 
 
 
 def _format_run_summary(run: RunRecord) -> str:
-    from orchestra.reports import clean_result_summary
-
     summary = clean_result_summary(run.blocker_text or run.error_text or run.result_summary)
     if run.result_summary_truncated:
         return f"{summary} [truncated]"
@@ -481,6 +537,9 @@ def _format_debug_bundle(context: AppContext, record: RunRecord) -> str:
         "## Run state",
         format_run_report(record, prompts=context.config.prompts),
     ]
+    linkage_details = _format_run_linkage_details(record)
+    if linkage_details is not None:
+        sections.append(linkage_details)
     request_path = context.config.state_dir / "requests" / f"{record.run_id}.json"
     sections.append(_debug_file_section("Request", request_path))
     sections.append(_debug_file_section("Lifecycle log", record.log_path))
@@ -488,10 +547,11 @@ def _format_debug_bundle(context: AppContext, record: RunRecord) -> str:
         record.log_path.parent / f"{record.run_id}.supervisor.log"
     )
     sections.append(_debug_file_section("Supervisor output", supervisor_output_path))
-    if record.result_artifact_path:
-        sections.append(_debug_file_section("Return artifact", record.result_artifact_path))
+    if record.result_output:
+        sections.append("## Full return")
+        sections.append(record.result_output.rstrip())
     else:
-        sections.append("## Return artifact\npath: missing")
+        sections.append("## Full return\nmissing")
     sections.append(_debug_transcript_section(record))
     return "\n\n".join(sections)
 
@@ -536,8 +596,14 @@ def format_history(context: AppContext, session_id: str, limit: int) -> str:
         lines.append(
             f"- {run.run_id} [{run.status}] {run.role}{owner} :: {run.task_label} :: {summary}"
         )
-        if run.result_artifact_path:
-            lines.append(f"  artifact: {run.result_artifact_path}")
+        if run.cycle_id:
+            lines.append(f"  cycle_id: {run.cycle_id}")
+        if run.triggered_by_run_id:
+            lines.append(f"  triggered_by_run_id: {run.triggered_by_run_id}")
+        if run.trigger_reason:
+            lines.append(f"  trigger_reason: {run.trigger_reason}")
+        if run.sequence_index is not None:
+            lines.append(f"  sequence_index: {run.sequence_index}")
         if run.worker_session_id:
             lines.append(f"  worker_session_id: {run.worker_session_id}")
         lines.append(f"  log: {run.log_path}")

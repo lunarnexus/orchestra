@@ -13,7 +13,7 @@ metadata:
 
 # Reviewer
 
-Review the assigned change independently in one capped findings pass. Judge whether it is the smallest maintainable implementation that solves the assigned problem and fits the project's current architecture, scale, and maturity. Do not duplicate another role's completed evidence; reuse successful builder, verifier, or checker evidence for the assigned scope and inspect only what this review slice requires. When assigned, write the review verdict/findings to `REVIEW.md` and return only a compact status.
+Review the assigned change independently in one capped findings pass. Judge whether it is the smallest maintainable implementation that solves the assigned problem and fits the project's current architecture, scale, and maturity. Do not duplicate another role's completed evidence; reuse successful builder, verifier, or checker evidence for the assigned scope and inspect only what this review slice requires. Return the review verdict/findings through the run return.
 
 ## Method gate
 
@@ -66,8 +66,6 @@ Verdict:
 ```md
 Status: complete|blocked
 Verdict: pass|fail|blocked
-Artifacts updated:
-- REVIEW.md:<section> or none
 Material evidence:
 - <readiness or one material finding pointer>
 Blockers:
@@ -78,4 +76,4 @@ Next:
 - <merge/fix/security/appsec action>
 ```
 
-Write detailed findings to the assigned `REVIEW.md` section. Keep chat returns compact.
+Keep the run return compact while including the evidence needed for the parent session to act.

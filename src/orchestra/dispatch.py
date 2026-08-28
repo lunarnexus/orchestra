@@ -45,6 +45,10 @@ class PendingRunRequest:
     timeout_seconds: int
     task_label: str
     request_file: Path
+    cycle_id: str | None = None
+    triggered_by_run_id: str | None = None
+    trigger_reason: str | None = None
+    sequence_index: int | None = None
 
 
 @dataclass(frozen=True)
@@ -133,12 +137,21 @@ def start_run(
     timeout_seconds: int | None,
     task_label: str,
     batch_id: str | None,
+    cycle_id: str | None = None,
+    triggered_by_run_id: str | None = None,
+    trigger_reason: str | None = None,
+    sequence_index: int | None = None,
+    allow_auto_only: bool = False,
 ) -> StartedRun:
     _require_session_id(session_id)
 
     if not orchestra_can_dispatch():
         raise _app_error("ORCHESTRA_DISPATCH_BUDGET dispatch budget exhausted")
-    selected_role = _select_role(context.catalog, role_name)
+    selected_role = _select_role(
+        context.catalog,
+        role_name,
+        allow_auto_only=allow_auto_only,
+    )
     role = selected_role.config
 
     run_id = uuid.uuid4().hex[:12]
@@ -163,6 +176,10 @@ def start_run(
         timeout_seconds=effective_timeout,
         task_label=effective_task_label,
         request_file=request_file,
+        cycle_id=cycle_id,
+        triggered_by_run_id=triggered_by_run_id,
+        trigger_reason=trigger_reason,
+        sequence_index=sequence_index,
     )
 
     record = RunRecord(
@@ -175,6 +192,10 @@ def start_run(
         task_label=effective_task_label,
         log_path=log_path,
         created_at=utc_now(),
+        cycle_id=cycle_id,
+        triggered_by_run_id=triggered_by_run_id,
+        trigger_reason=trigger_reason,
+        sequence_index=sequence_index,
     )
 
     from orchestra.supervision import _spawn_supervisor, reconcile_stale_queued_runs
@@ -205,6 +226,10 @@ def start_run(
                 "return_format": pending_request.return_format,
                 "timeout_seconds": pending_request.timeout_seconds,
                 "task_label": pending_request.task_label,
+                "cycle_id": pending_request.cycle_id,
+                "triggered_by_run_id": pending_request.triggered_by_run_id,
+                "trigger_reason": pending_request.trigger_reason,
+                "sequence_index": pending_request.sequence_index,
             }
         ),
         encoding="utf-8",

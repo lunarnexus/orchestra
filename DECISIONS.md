@@ -177,6 +177,21 @@ return semantics. A step is one child-agent execution inside a run.
 **Decision:** Lightweight runtime status uses queued, running, waiting, done,
 failed, and cancelled states.
 
+### D-DOMAIN-008 — Auto-verification cycles group normal runs
+
+**Decision:** A user-facing builder dispatch may create an automatic verification
+cycle containing multiple normal subagent runs. For the initial cycle, a
+`builder` run may be followed by one `verifier` run. Each subagent run remains
+independently visible with its own run id, harness session id, transcript,
+artifact, status, and history entry. Core stores lightweight linkage metadata so
+operators can debug the relationship between the runs.
+
+**Reconciliation:** This decision does not replace D-DOMAIN-006. An individual
+run remains one subagent execution; an auto-verification cycle is grouping and
+causality metadata around related runs.
+
+**Source:** Owner approval during lunar-cycle planning.
+
 ## Core and adapter boundaries
 
 ### D-ARCH-001 — Core plus adapters
@@ -511,6 +526,41 @@ return.
 while preserving real blockers and risks. Final summaries strip emoji and other
 non-ASCII content to keep main-session context lean.
 
+### D-RETURN-013 — Auto-verification return grouping
+
+**Decision:** When auto-verification is enabled, the verifier remains a normal
+visible run, but the orchestrator-facing return should present the linked
+builder and verifier results coherently. Builder and verifier return artifacts
+remain separate for the initial implementation. The returned report should
+include both run ids and artifact references, and should avoid presenting the
+automatic verifier as unrelated duplicate advice.
+
+**Source:** Owner approval during lunar-cycle planning.
+
+### D-RETURN-014 — Auto-verifier failure is visible and non-fatal
+
+**Decision:** Auto-verification is best effort. A verifier failure, timeout, or
+crash must be surfaced to the orchestrator with the verifier run id and available
+result or log references. It must not silently disappear and must not change a
+successful builder run into a failed builder run.
+
+**Source:** Owner approval during lunar-cycle planning.
+
+### D-RETURN-015 — Successful returns stay compact
+
+**Decision:** A successful `done` or equivalent `OK` run returns only its compact
+status, summary, and required next action to the owning orchestrator session.
+Core and the main-session orchestrator do not load or inject the full per-run
+return merely because it is available in SQLite. Full return content is retrieved
+only for an explicit user/debug request or when non-success evidence requires a
+scoped follow-up.
+
+**Reconciliation:** This makes the context-preservation requirement in
+D-RETURN-001, D-RETURN-004, D-RETURN-010, and D-DELEGATE-004 explicit for
+DB-backed returns.
+
+**Source:** Owner clarification during DB-backed return planning.
+
 ## State, logs, and artifacts
 
 ### D-STATE-001 — SQLite plus JSONL and artifacts
@@ -552,6 +602,63 @@ not use a hidden `.orchestra` directory as its default runtime location.
 `orchestra-worker-<run-id>` ids. Hermes one-shot or profile runs may persist
 sessions. Native session handles are metadata and debugging references, not
 required core state.
+
+### D-STATE-007 — Run linkage metadata for automatic cycles
+
+**Decision:** Core may store lightweight linkage fields for automatic run cycles,
+such as a cycle id, triggering run id, trigger reason, and sequence/order. This
+metadata exists for supervision, report grouping, history, and debugging. It does
+not require transcript merging or storing full prompts/transcripts in core state.
+
+**Source:** Owner approval during lunar-cycle planning.
+
+### D-STATE-008 — Full per-run returns are DB-backed
+
+**Decision:** Every subagent role stores its full final return on its existing
+SQLite run record. New runs do not write per-run return-artifact files. Builders,
+auto-verifiers, researchers, reviewers, and appsec use the same run-return
+mechanism. An auto-verifier stores its own linked run return and does not use
+`VERIFY.md` as per-run return storage.
+
+**Reconciliation:** This supersedes the return-artifact storage portions of
+D-RETURN-001, D-RETURN-004, D-RETURN-010, D-RETURN-011, D-RETURN-013,
+D-STATE-001, D-STATE-002, and D-STATE-003. Their compact-report, sparse-state,
+logging, transcript, and session-context requirements remain in force. Storing a
+full final return in SQLite does not authorize injecting it into the main-session
+context.
+
+**Source:** Owner approval during DB-backed return planning.
+
+### D-STATE-009 — Role-owned operational artifacts are DB-backed except research
+
+**Decision:** Verification, review, and appsec outputs are stored in the
+subagent's DB-backed run return unless the main-session plan explicitly assigns
+a durable project-document edit. `VERIFY.md`, `REVIEW.md`, and `APPSEC.md` are
+not canonical role-return storage. Research is the exception: researcher-owned
+findings may be written to `RESEARCH.md` when assigned because research evidence
+is often large and durable.
+
+**Source:** Owner correction during DB-backed artifact planning.
+
+### D-DOCS-008 — Official project artifacts
+
+**Decision:** Official project artifacts are durable file-backed project
+documents: `DECISIONS.md`, `ARCHITECTURE.md`, `PLAN.md`, `README.md`,
+`RESEARCH.md`, and `ROADMAP.md`. Verification, review, and appsec findings are
+DB-backed run returns unless explicitly promoted into one of these documents.
+Research findings may be written directly to `RESEARCH.md` when assigned. Researchers use `RESEARCH.md` for raw data, facts, sources, and bulk evidence, then return the shortest parent-session summary that directly answers the assigned research question.
+
+**Source:** Owner correction during DB-backed artifact planning.
+
+### D-DOCS-009 — README content must be defined before creation or rewrite
+
+**Decision:** Before creating, replacing, or substantially rewriting `README.md`,
+the main session must define the README's intended content and scope in the
+active plan. README edits describe stable user-facing project purpose, install or
+usage surfaces, supported integrations, and current documented behavior; they do
+not store role-return evidence or transient execution results.
+
+**Source:** Owner correction during DB-backed artifact planning.
 
 ## Configuration, roles, and prompts
 
@@ -648,6 +755,28 @@ flags; `ORCHESTRA_CONFIG` and `ORCHESTRA_AGENT_CATALOG`; Pi runtime defaults
 under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`; then current-working-
 directory fallback for local or manual development. `prompts.yaml` resolves from
 the selected `config.yaml` directory.
+
+### D-CONFIG-015 — `auto_verify` runtime setting
+
+**Decision:** `config.yaml` owns the `auto_verify` runtime setting. The initial
+behavior is off by default. When enabled, it applies only to exact `builder` role
+runs and causes core to automatically dispatch a normal `verifier` role run for
+the same scope after a successful builder completion. Builder failures skip
+auto-verification for the initial implementation.
+
+**Source:** Owner approval during lunar-cycle planning.
+
+### D-CONFIG-016 — Role enabled modes
+
+**Decision:** Role `enabled` supports three effective modes. Missing `enabled` is
+`true`. `enabled: true` means the role can be used by core automation and manual
+or model-callable dispatch. `enabled: false` means the role cannot be used.
+`enabled: auto` means the role can be used only by Orchestra core automation; it
+is not manually dispatchable through `orch_dispatch` or equivalent dispatch
+surfaces. Auto-only roles remain visible in `/orch roles` for operator
+transparency.
+
+**Source:** Owner approval during role-mode planning.
 
 ## Commands and host behavior
 
@@ -794,17 +923,20 @@ session and is not part of the public documentation contract.
 
 ### D-DOCS-006 — Standard operational artifacts
 
-**Decision:** `PLAN.md`, `RESEARCH.md`, `VERIFY.md`, `REVIEW.md`, and `APPSEC.md`
-are operational artifacts for active execution state, working evidence, and role
-verdicts. Their presence in this repository does not make them public project
-documentation.
+**Decision:** `PLAN.md` and `RESEARCH.md` are standard operational artifacts for
+active execution state and working evidence. `VERIFY.md`, `REVIEW.md`, and
+`APPSEC.md` are not canonical role-return storage; verification, review, and
+appsec verdicts return through DB-backed run returns unless explicitly promoted
+into an official project artifact.
 
 ### D-DOCS-007 — Artifact editing ownership
 
 **Decision:** The main-session orchestrator owns project documentation and
-`PLAN.md` alignment. Researchers, verifiers, reviewers, and appsec subagents
-write only their assigned operational artifact sections. Builders modify only
-explicitly assigned implementation or progress sections.
+`PLAN.md` alignment. Researchers may write assigned `RESEARCH.md` sections for
+raw data, facts, sources, and bulk evidence. Verification, review, and appsec
+verdicts return through DB-backed run returns unless the main-session plan
+explicitly promotes content into an official project artifact. Builders modify
+only explicitly assigned implementation or progress sections.
 
 ## Explicitly deferred behavior
 

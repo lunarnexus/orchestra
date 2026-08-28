@@ -29,7 +29,7 @@ Main agent session / CLI
         -> subagent CLI process
       -> SQLite state
       -> JSONL lifecycle logs
-      -> return artifacts
+      -> DB-backed per-run returns
   -> optional consolidated auto-return to the owning session
 ```
 
@@ -84,6 +84,11 @@ review, or security work. Project-documentation changes remain main-session
 work. Subagents inspect documentation and return evidence, implications, or
 proposed wording.
 
+When `auto_verify` is enabled, a completed `builder` run starts an automatic
+verification cycle. Core dispatches a normal `verifier` run for the same scope,
+tracks the relationship between the runs, and returns a coherent grouped report
+while keeping each run independently visible.
+
 ## Major components
 
 ### Python core
@@ -97,9 +102,10 @@ Core code lives under `src/orchestra/`. It owns behavior shared by every host:
 - concurrency enforcement
 - process launch, timeout, stop, and cancellation
 - terminal-state updates
+- automatic builder-to-verifier dispatch when `auto_verify` is enabled
 - harness fallback
 - SQLite state and JSONL lifecycle logging
-- return-artifact creation
+- DB-backed full final return persistence
 - compact result and consolidated-report formatting
 - pending-report acquisition, delivery, and release state
 
@@ -180,11 +186,17 @@ fail-fast rather than queueing.
 9. Orchestra records lifecycle events and process metadata while the harness
    owns the subagent's full session context.
 10. The subagent completes, fails, times out, or is stopped.
-11. Core stores a compact result and writes full final output to a return
-    artifact when available.
-12. Core checks whether the owning main session has any active subagents left.
-13. When none remain, core creates one consolidated session report.
-14. If auto-return is enabled and supported, the host adapter delivers that
+11. Core stores a compact result on the run and stores the full final return in
+    SQLite as `result_output` on that same run record.
+12. If `auto_verify` is enabled and the completed run is a successful exact
+    `builder` role run, core dispatches a linked normal `verifier` run for the
+    same scope. Builder failures skip automatic verification.
+13. Core checks whether the owning main session has any active subagents left.
+14. When none remain, core creates one consolidated session report. Successful
+    reports stay compact and do not load or inject full `result_output` content.
+    Linked auto-verification cycles are presented coherently with builder and
+    verifier run ids.
+15. If auto-return is enabled and supported, the host adapter delivers that
     report to the exact owning session and records successful delivery.
 
 Dispatch remains asynchronous. The immediate model-visible result acknowledges
@@ -294,6 +306,7 @@ Runtime settings, including:
 - required default timeout
 - host/runtime defaults
 - whether Orchestra tools are enabled by default in host sessions via `tools_enabled_by_default`
+- whether successful builder runs automatically trigger verifier runs via `auto_verify`
 
 ### `prompts.yaml`
 
@@ -321,7 +334,7 @@ The catalog contains:
 - model, profile, and agent fields
 - role skills and prompt additions
 - role environment values
-- enabled state
+- enabled state (`true`, `false`, or `auto`)
 - role-level harness fallback
 - subagent budgets
 
@@ -374,6 +387,10 @@ When a role lists skills, Orchestra searches recursively under `skills/` for
 - local skill absent: tell the subagent to load the named native skill
 - skills omitted or empty: do not inject a role skill
 
+Role `enabled: auto` entries remain visible in role listings but are rejected by
+normal manual dispatch. Core auto-verification can select the auto-only
+`verifier` role when a completed `builder` run triggers verification.
+
 The main orchestration skill is `skills/orchestrator/SKILL.md`. `/orch on`
 loads it into the main session through host-specific message delivery. Role
 skills define methodology and stricter workflow; shared tool metadata defines
@@ -420,10 +437,12 @@ The database stores compact operational fields such as:
 - supervisor/process metadata
 - task label
 - compact result, error, or blocker
-- lifecycle-log and return-artifact paths
+- lifecycle-log paths and compact result/output fields
 - optional harness session/transcript metadata
 - report-delivery state
 - fallback metadata
+- optional auto-cycle linkage metadata such as cycle id, triggering run id,
+  trigger reason, and sequence/order
 
 It does not store complete prompts, transcripts, token streams, or every tool
 call. SQLite uses WAL mode. Existing current databases avoid unnecessary schema
@@ -442,7 +461,7 @@ Detached supervisor stdout and stderr are available at:
 logs/<run-id>.supervisor.log
 ```
 
-### Request and return artifacts
+### Request files and DB-backed returns
 
 Preserved requests live under:
 
@@ -450,11 +469,9 @@ Preserved requests live under:
 state/requests/<run-id>.json
 ```
 
-Full final subagent output is stored outside main-session context under:
-
-```text
-state/return-artifacts/<run-id>.md
-```
+Full final subagent output is stored on the run record in SQLite as `result_output`.
+The main session reads only compact results for normal success handling and
+retrieves full return content only for explicit debug or non-success follow-up.
 
 Harness-owned session logs remain with the harness. Orchestra stores a native
 session ID or transcript path only when available.
@@ -466,8 +483,15 @@ state while accepting compact human-readable findings. Machine-readable JSON con
 
 Completions group by owning session, not batch. When the active-run count for a
 session reaches zero, core builds one consolidated report containing each
-subagent's status, compact result or blocker, and artifact pointer when needed.
-A truncated summary is marked and points to its full return artifact.
+subagent's status, compact result or blocker, and next action when relevant.
+Successful returns stay compact and do not load or inject the full per-run
+return content.
+
+For an auto-verification cycle, the builder and verifier remain separate normal
+runs with separate DB-backed returns and history entries. The consolidated
+return marks the relationship and includes both run ids. A verifier failure,
+timeout, or crash is reported as part of the cycle and does not change a
+successful builder run into a failed builder run.
 
 Auto-return is enabled by default and configurable. Host adapters acquire a
 pending consolidated report, deliver it to the exact owning session, mark it
@@ -568,6 +592,6 @@ adapters, and configured harness executables.
 - `docs/debug.md` — runtime diagnostic procedures
 - `docs/research/` — durable research notes and evaluations
 
-`PLAN.md`, root `RESEARCH.md`, `VERIFY.md`, `REVIEW.md`, and `APPSEC.md` are
-operational artifacts used by active Orchestra development sessions. They are
-not part of the public project-documentation contract.
+`PLAN.md` and root `RESEARCH.md` are operational artifacts used by active
+Orchestra development sessions. They are not part of the public project-
+documentation contract.
