@@ -10,6 +10,12 @@ Orchestra roadmap items are split into:
 1. [ ] Review the Pi plugin for core/plugin boundary cleanup.
    - Standardize generic command/help/tool/report wording and orchestration behavior in Orchestra core where it makes sense.
    - Keep only Pi-specific runtime context retrieval, slash-command plumbing, UI presentation, notifications, and host integration code in the Pi plugin.
+2. [ ] Setup an actual approval system for non-sandboxed harnesses.
+       Passthrough approval probably requires RPC or and env var.  Research it.
+
+3. [ ] Cache config into memory, create load command and function, config
+       to me session specific, saved to file specifically.
+
 
 6. [ ] Add a multi-step dispatch structure for sequential subagent chains.
    - Support multiple different subagent dispatches in sequence, where each step can depend on the previous step's outcome.
