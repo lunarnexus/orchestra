@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,6 +20,7 @@ from orchestra.state import (
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_FAILED,
+    STATUS_INCOMPLETE,
     STATUS_QUEUED,
     STATUS_RUNNING,
     ConcurrencyLimitError,
@@ -122,6 +125,206 @@ def test_invalid_main_session_mode_rejected(state_store: StateStore) -> None:
 def test_empty_main_session_id_rejected(state_store: StateStore) -> None:
     with pytest.raises(StateError, match="session_id must be a non-empty string"):
         state_store.set_main_session_mode("  ", MAIN_SESSION_MODE_ON)
+
+
+def test_plan_prune_reports_old_terminal_runs_and_owned_paths(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    store.initialize()
+    old_request = tmp_path / "state" / "requests" / "old-done.json"
+    old_request.parent.mkdir(parents=True, exist_ok=True)
+    old_request.write_text("request", encoding="utf-8")
+    orphan_log = tmp_path / "logs" / "old-orphan.jsonl"
+    orphan_log.parent.mkdir(parents=True, exist_ok=True)
+    orphan_log.write_text("orphan", encoding="utf-8")
+    os.utime(orphan_log, (datetime(2026, 1, 1, tzinfo=UTC).timestamp(),) * 2)
+    old_run = RunRecord(
+        run_id="old-done",
+        orchestrator_session_id="manual:session-a",
+        harness="pi",
+        role="builder",
+        task_label="old",
+        log_path=tmp_path / "logs" / "old-done.jsonl",
+        created_at="2026-01-01T00:00:00Z",
+        status=STATUS_DONE,
+        transcript_path=tmp_path / "transcripts" / "old-done.jsonl",
+    )
+    recent_run = RunRecord(
+        run_id="recent-done",
+        orchestrator_session_id="manual:session-a",
+        harness="pi",
+        role="builder",
+        task_label="recent",
+        log_path=tmp_path / "logs" / "recent-done.jsonl",
+        created_at="2026-12-31T00:00:00Z",
+        status=STATUS_DONE,
+    )
+    active_run = RunRecord(
+        run_id="running",
+        orchestrator_session_id="manual:session-a",
+        harness="pi",
+        role="builder",
+        task_label="active",
+        log_path=tmp_path / "logs" / "running.jsonl",
+        created_at="2026-01-01T00:00:00Z",
+        status=STATUS_RUNNING,
+    )
+    incomplete_run = RunRecord(
+        run_id="old-incomplete",
+        orchestrator_session_id="manual:session-a",
+        harness="pi",
+        role="builder",
+        task_label="old incomplete",
+        log_path=tmp_path / "logs" / "old-incomplete.jsonl",
+        created_at="2026-01-01T00:00:00Z",
+        status=STATUS_INCOMPLETE,
+    )
+    for record in (old_run, recent_run, active_run, incomplete_run):
+        queued = replace(record, status=STATUS_QUEUED)
+        store.create_run(queued)
+        if record.status != STATUS_QUEUED:
+            if record.status == STATUS_RUNNING:
+                store.update_run(record.run_id, RunUpdate(status=STATUS_RUNNING))
+            else:
+                store.update_run(record.run_id, RunUpdate(status=STATUS_RUNNING))
+                store.update_run(record.run_id, RunUpdate(status=record.status))
+
+    plan = store.plan_prune(
+        90,
+        now=datetime(2026, 6, 1, tzinfo=UTC),
+        request_dir=tmp_path / "state" / "requests",
+        log_dir=tmp_path / "logs",
+    )
+
+    assert plan.retention_days == 90
+    assert [candidate.run_id for candidate in plan.candidates] == ["old-done", "old-incomplete"]
+    assert plan.candidates[0].owned_paths == (
+        tmp_path / "logs" / "old-done.jsonl",
+        tmp_path / "transcripts" / "old-done.jsonl",
+        tmp_path / "state" / "requests" / "old-done.json",
+    )
+    assert all(candidate.run_id != "running" for candidate in plan.candidates)
+    assert all(candidate.run_id != "recent-done" for candidate in plan.candidates)
+    assert plan.orphan_candidates == (orphan_log,)
+
+
+def test_delete_prune_candidates_removes_runs_owned_files_and_empty_sessions(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    store.initialize()
+    store.set_main_session_mode("manual:old", MAIN_SESSION_MODE_ON)
+    store.set_main_session_mode("manual:mixed", MAIN_SESSION_MODE_ON)
+    old_log = tmp_path / "logs" / "old-done.jsonl"
+    old_log.parent.mkdir(parents=True, exist_ok=True)
+    old_log.write_text("log", encoding="utf-8")
+    old_request = tmp_path / "state" / "requests" / "old-done.json"
+    old_request.parent.mkdir(parents=True, exist_ok=True)
+    old_request.write_text("request", encoding="utf-8")
+    unsafe_transcript = tmp_path / "outside" / "old-done.jsonl"
+    unsafe_transcript.parent.mkdir()
+    unsafe_transcript.write_text("transcript", encoding="utf-8")
+    records = (
+        RunRecord(
+            run_id="old-done",
+            orchestrator_session_id="manual:old",
+            harness="pi",
+            role="builder",
+            task_label="old",
+            log_path=old_log,
+            created_at="2026-01-01T00:00:00Z",
+            status=STATUS_DONE,
+            transcript_path=unsafe_transcript,
+        ),
+        RunRecord(
+            run_id="recent-done",
+            orchestrator_session_id="manual:mixed",
+            harness="pi",
+            role="builder",
+            task_label="recent",
+            log_path=tmp_path / "logs" / "recent-done.jsonl",
+            created_at="2026-12-31T00:00:00Z",
+            status=STATUS_DONE,
+        ),
+    )
+    for record in records:
+        store.create_run(replace(record, status=STATUS_QUEUED))
+        store.update_run(record.run_id, RunUpdate(status=STATUS_RUNNING))
+        store.update_run(record.run_id, RunUpdate(status=record.status))
+
+    plan = store.plan_prune(
+        90,
+        now=datetime(2026, 6, 1, tzinfo=UTC),
+        request_dir=tmp_path / "state" / "requests",
+        log_dir=tmp_path / "logs",
+    )
+    result = store.delete_prune_candidates(
+        plan,
+        allowed_roots=(tmp_path / "state", tmp_path / "logs"),
+    )
+
+    assert result.deleted_run_ids == ("old-done",)
+    assert result.deleted_session_ids == ("manual:old",)
+    assert old_log in result.deleted_paths
+    assert old_request in result.deleted_paths
+    assert unsafe_transcript in result.skipped_paths
+    assert result.failed_paths == ()
+    assert not old_log.exists()
+    assert not old_request.exists()
+    assert unsafe_transcript.exists()
+    with pytest.raises(StateError, match="run not found: old-done"):
+        store.get_run("old-done")
+    assert store.get_run("recent-done").run_id == "recent-done"
+    assert store.get_main_session_state("manual:old") is None
+    assert store.get_main_session_state("manual:mixed") is not None
+
+
+def test_delete_prune_candidates_keeps_run_when_owned_file_delete_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    store.initialize()
+    old_log = tmp_path / "logs" / "old-done.jsonl"
+    old_log.parent.mkdir(parents=True, exist_ok=True)
+    old_log.write_text("log", encoding="utf-8")
+    store.create_run(
+        RunRecord(
+            run_id="old-done",
+            orchestrator_session_id="manual:old",
+            harness="pi",
+            role="builder",
+            task_label="old",
+            log_path=old_log,
+            created_at="2026-01-01T00:00:00Z",
+            status=STATUS_QUEUED,
+        )
+    )
+    store.update_run("old-done", RunUpdate(status=STATUS_RUNNING))
+    store.update_run("old-done", RunUpdate(status=STATUS_DONE))
+    plan = store.plan_prune(
+        90,
+        now=datetime(2026, 6, 1, tzinfo=UTC),
+        request_dir=tmp_path / "state" / "requests",
+        log_dir=tmp_path / "logs",
+    )
+    original_unlink: Any = Path.unlink
+
+    def fail_old_log(path: Path, *args: Any, **kwargs: Any) -> None:
+        if path == old_log:
+            raise OSError("simulated unlink failure")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_old_log)
+
+    result = store.delete_prune_candidates(
+        plan,
+        allowed_roots=(tmp_path / "state", tmp_path / "logs"),
+    )
+
+    assert result.deleted_run_ids == ()
+    assert result.failed_paths == (old_log,)
+    assert store.get_run("old-done").status == STATUS_DONE
+    assert old_log.exists()
 
 
 def _create_old_schema_database(path: Path, run_count: int) -> None:

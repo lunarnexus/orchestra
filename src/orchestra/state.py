@@ -92,6 +92,41 @@ class MainSessionState:
 
 
 @dataclass(frozen=True)
+class PruneCandidate:
+    run_id: str
+    orchestrator_session_id: str
+    role: str
+    status: str
+    created_at: str
+    cutoff_at: str
+    owned_paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class PrunePlan:
+    retention_days: int
+    cutoff_at: str
+    candidates: tuple[PruneCandidate, ...]
+    orphan_candidates: tuple[Path, ...] = ()
+
+    @property
+    def owned_paths(self) -> tuple[Path, ...]:
+        paths: list[Path] = []
+        for candidate in self.candidates:
+            paths.extend(candidate.owned_paths)
+        return tuple(paths)
+
+
+@dataclass(frozen=True)
+class PruneResult:
+    deleted_run_ids: tuple[str, ...]
+    deleted_session_ids: tuple[str, ...]
+    deleted_paths: tuple[Path, ...]
+    skipped_paths: tuple[Path, ...]
+    failed_paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
 class RunUpdate:
     status: str
     harness: str | None = None
@@ -475,6 +510,160 @@ class StateStore:
                 (orchestrator_session_id, limit),
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
+
+    def plan_prune(
+        self,
+        retention_days: int,
+        *,
+        now: datetime | None = None,
+        request_dir: Path | None = None,
+        log_dir: Path | None = None,
+    ) -> PrunePlan:
+        if retention_days <= 0:
+            raise StateError("retention_days must be a positive integer")
+        reference_dt = now or datetime.now(UTC)
+        cutoff_dt = reference_dt - timedelta(days=retention_days)
+        cutoff_at = cutoff_dt.isoformat(timespec="seconds").replace("+00:00", "Z")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM runs
+                WHERE status IN (?, ?, ?, ?)
+                ORDER BY created_at, run_id
+                """,
+                (STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE),
+            ).fetchall()
+            all_rows = connection.execute("SELECT * FROM runs ORDER BY run_id").fetchall()
+        candidates = []
+        owned_paths: set[Path] = set()
+        for row in rows:
+            record = self._row_to_record(row)
+            created_at = _parse_utc_timestamp(record.created_at)
+            if created_at >= cutoff_dt:
+                continue
+            candidate_paths = tuple(
+                path
+                for path in (
+                    record.log_path,
+                    record.transcript_path,
+                    record.supervisor_output_path,
+                    request_dir / f"{record.run_id}.json" if request_dir is not None else None,
+                )
+                if path is not None
+            )
+            owned_paths.update(candidate_paths)
+            candidates.append(
+                PruneCandidate(
+                    run_id=record.run_id,
+                    orchestrator_session_id=record.orchestrator_session_id,
+                    role=record.role,
+                    status=record.status,
+                    created_at=record.created_at,
+                    cutoff_at=cutoff_at,
+                    owned_paths=candidate_paths,
+                )
+            )
+        for row in all_rows:
+            record = self._row_to_record(row)
+            owned_paths.update(
+                path
+                for path in (
+                    record.log_path,
+                    record.transcript_path,
+                    record.supervisor_output_path,
+                    request_dir / f"{record.run_id}.json" if request_dir is not None else None,
+                )
+                if path is not None
+            )
+        orphan_candidates = _list_orphan_candidates(
+            cutoff_dt=cutoff_dt,
+            request_dir=request_dir,
+            log_dir=log_dir,
+            owned_paths=owned_paths,
+        )
+        return PrunePlan(
+            retention_days=retention_days,
+            cutoff_at=cutoff_at,
+            candidates=tuple(candidates),
+            orphan_candidates=tuple(orphan_candidates),
+        )
+
+    def delete_prune_candidates(
+        self,
+        plan: PrunePlan,
+        *,
+        allowed_roots: tuple[Path, ...],
+    ) -> PruneResult:
+        run_ids = tuple(candidate.run_id for candidate in plan.candidates)
+        if not run_ids:
+            return PruneResult((), (), (), (), ())
+
+        deleted_paths: list[Path] = []
+        skipped_paths: list[Path] = []
+        failed_paths: list[Path] = []
+        deletable_run_ids: list[str] = []
+        allowed = tuple(root.resolve() for root in allowed_roots)
+        for candidate in plan.candidates:
+            candidate_failed = False
+            for path in candidate.owned_paths:
+                if not _path_is_under_roots(path, allowed):
+                    skipped_paths.append(path)
+                    continue
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    failed_paths.append(path)
+                    candidate_failed = True
+                    continue
+                deleted_paths.append(path)
+            if not candidate_failed:
+                deletable_run_ids.append(candidate.run_id)
+
+        if not deletable_run_ids:
+            return PruneResult(
+                (),
+                (),
+                tuple(deleted_paths),
+                tuple(skipped_paths),
+                tuple(failed_paths),
+            )
+
+        placeholders = ", ".join("?" for _ in deletable_run_ids)
+        with self._connect() as connection:
+            self._begin_immediate(connection, operation="delete_prune_candidates")
+            connection.execute(
+                f"DELETE FROM runs WHERE run_id IN ({placeholders})",
+                tuple(deletable_run_ids),
+            )
+            session_rows = connection.execute(
+                """
+                SELECT session_id
+                FROM sessions
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM runs
+                    WHERE runs.orchestrator_session_id = sessions.session_id
+                )
+                ORDER BY session_id
+                """
+            ).fetchall()
+            deleted_session_ids = tuple(str(row["session_id"]) for row in session_rows)
+            if deleted_session_ids:
+                session_placeholders = ", ".join("?" for _ in deleted_session_ids)
+                connection.execute(
+                    f"DELETE FROM sessions WHERE session_id IN ({session_placeholders})",
+                    deleted_session_ids,
+                )
+            connection.commit()
+
+        return PruneResult(
+            deleted_run_ids=tuple(deletable_run_ids),
+            deleted_session_ids=deleted_session_ids,
+            deleted_paths=tuple(deleted_paths),
+            skipped_paths=tuple(skipped_paths),
+            failed_paths=tuple(failed_paths),
+        )
 
     def list_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
         claim_stale_before = _report_claim_stale_before()
@@ -997,6 +1186,44 @@ def _validate_main_session_mode(mode: str) -> None:
 def _validate_status(status: str) -> None:
     if status not in ALL_STATUSES:
         raise StateError(f"invalid run status: {status}")
+
+
+def _list_orphan_candidates(
+    *,
+    cutoff_dt: datetime,
+    request_dir: Path | None,
+    log_dir: Path | None,
+    owned_paths: set[Path],
+) -> list[Path]:
+    candidates: list[Path] = []
+    for base_dir in (request_dir, log_dir):
+        if base_dir is None or not base_dir.exists():
+            continue
+        for path in sorted(base_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            try:
+                modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+            except FileNotFoundError:
+                continue
+            if modified_at >= cutoff_dt:
+                continue
+            if path in owned_paths:
+                continue
+            candidates.append(path)
+    return candidates
+
+
+def _path_is_under_roots(path: Path, roots: tuple[Path, ...]) -> bool:
+    try:
+        resolved = path.resolve()
+    except OSError:
+        resolved = path.absolute()
+    return any(resolved == root or root in resolved.parents for root in roots)
+
+
+def _parse_utc_timestamp(raw: str) -> datetime:
+    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
 
 
 def _validate_transition(current: str, target: str) -> None:

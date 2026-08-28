@@ -307,6 +307,7 @@ Runtime settings, including:
 - host/runtime defaults
 - whether Orchestra tools are enabled by default in host sessions via `tools_enabled_by_default`
 - whether successful builder runs automatically trigger verifier runs via `auto_verify`
+- the dry-run prune retention window via top-level `retention_days`
 
 ### `prompts.yaml`
 
@@ -475,6 +476,18 @@ retrieves full return content only for explicit debug or non-success follow-up.
 
 Harness-owned session logs remain with the harness. Orchestra stores a native
 session ID or transcript path only when available.
+
+### Prune
+
+`orchestra prune` plans retention cleanup from the SQLite run records using the
+top-level `retention_days` config value. By default, it is dry-run only and
+reports old terminal runs, their recorded owned paths, and conservative orphan
+file candidates under Orchestra-owned runtime directories.
+
+`orchestra prune --delete` deletes old terminal run rows, empty session rows, and
+run-owned files under configured Orchestra state/log roots. Orphan files are
+reported but not deleted. If a run-owned file cannot be deleted, the run row is
+retained so a later prune can retry.
 
 ## Results and auto-return
 

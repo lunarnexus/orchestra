@@ -81,6 +81,7 @@ class AppConfig:
     prompts: PromptConfig
     turn_limit: int | None = None
     soft_timeout: int | None = None
+    retention_days: int = 90
     state_dir: Path = DEFAULT_STATE_DIR
     log_dir: Path = DEFAULT_LOG_DIR
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
@@ -179,6 +180,7 @@ def load_app_config(path: str | Path) -> AppConfig:
         "tools_enabled_by_default",
         DEFAULT_TOOLS_ENABLED_BY_DEFAULT,
     )
+    retention_days = _get_optional_positive_int(raw, "retention_days", 90)
 
     concurrency_raw = raw.get("concurrency", {})
     if not isinstance(concurrency_raw, dict):
@@ -261,6 +263,7 @@ def load_app_config(path: str | Path) -> AppConfig:
         auto_return=auto_return,
         auto_verify=auto_verify,
         tools_enabled_by_default=tools_enabled_by_default,
+        retention_days=retention_days,
         prompts=prompts,
     )
 

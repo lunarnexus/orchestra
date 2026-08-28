@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -27,6 +29,7 @@ from orchestra.state import (
     ConcurrencyLimitError,
     RunRecord,
     RunUpdate,
+    StateError,
     StateStore,
 )
 from orchestra.status import _debug_transcript_section, format_status, status_payload
@@ -439,6 +442,130 @@ def test_do_status_history_flow(
     assert history_exit == 0
     assert "history_count: 1" in history_output
     assert "worker done" in history_output
+
+
+def test_prune_reports_dry_run_candidates_without_deleting(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        ["python", "-c", "print('noop')"],
+    )
+    store = StateStore(db_path)
+    store.initialize()
+    store.create_run(
+        RunRecord(
+            run_id="old-done",
+            orchestrator_session_id="manual:prune-session",
+            harness="pi",
+            role="builder",
+            task_label="old done",
+            log_path=tmp_path / "logs" / "old-done.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+            transcript_path=tmp_path / "transcripts" / "old-done.jsonl",
+        )
+    )
+    store.update_run("old-done", RunUpdate(status=STATUS_RUNNING))
+    store.update_run("old-done", RunUpdate(status=STATUS_DONE))
+    store.create_run(
+        RunRecord(
+            run_id="running",
+            orchestrator_session_id="manual:prune-session",
+            harness="pi",
+            role="builder",
+            task_label="active",
+            log_path=tmp_path / "logs" / "running.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    store.update_run("running", RunUpdate(status=STATUS_RUNNING))
+    orphan_log = tmp_path / "logs" / "old-orphan.jsonl"
+    orphan_log.write_text("orphan", encoding="utf-8")
+    os.utime(orphan_log, (datetime(2026, 1, 1, tzinfo=UTC).timestamp(),) * 2)
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "prune",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "dry-run only; no deletion performed" in output
+    assert "candidate_count: 1" in output
+    assert "old-done" in output
+    assert "running" not in output
+    assert "orphan_candidates:" in output
+    assert "old-orphan.jsonl" in output
+    assert store.get_run("old-done").status == STATUS_DONE
+    assert store.get_run("running").status == STATUS_RUNNING
+
+
+def test_prune_delete_removes_old_runs_and_owned_files_but_not_orphans(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        ["python", "-c", "print('noop')"],
+    )
+    store = StateStore(db_path)
+    store.initialize()
+    old_log = tmp_path / "logs" / "old-done.jsonl"
+    old_request = tmp_path / "state" / "requests" / "old-done.json"
+    old_request.parent.mkdir(parents=True, exist_ok=True)
+    old_request.write_text("request", encoding="utf-8")
+    old_log.parent.mkdir(parents=True, exist_ok=True)
+    old_log.write_text("log", encoding="utf-8")
+    orphan_log = tmp_path / "logs" / "old-orphan.jsonl"
+    orphan_log.write_text("orphan", encoding="utf-8")
+    os.utime(orphan_log, (datetime(2000, 1, 1, tzinfo=UTC).timestamp(),) * 2)
+    store.create_run(
+        RunRecord(
+            run_id="old-done",
+            orchestrator_session_id="manual:prune-delete",
+            harness="pi",
+            role="builder",
+            task_label="old done",
+            log_path=old_log,
+            created_at="2000-01-01T00:00:00Z",
+        )
+    )
+    store.update_run("old-done", RunUpdate(status=STATUS_RUNNING))
+    store.update_run("old-done", RunUpdate(status=STATUS_DONE))
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path),
+            "--agent-catalog",
+            str(catalog_path),
+            "prune",
+            "--delete",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "prune: delete completed" in output
+    assert "deleted_runs: 1" in output
+    assert "deleted_paths:" in output
+    with pytest.raises(StateError, match="run not found: old-done"):
+        store.get_run("old-done")
+    assert not old_log.exists()
+    assert not old_request.exists()
+    assert orphan_log.exists()
 
 
 def test_do_rejects_over_model_limit(

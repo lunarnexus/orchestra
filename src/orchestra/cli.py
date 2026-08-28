@@ -187,6 +187,19 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     history_parser.add_argument("--limit", type=int, default=10, help="maximum number of runs")
     history_parser.set_defaults(handler=_handle_history)
 
+    prune_parser = subparsers.add_parser("prune", help="prune old runtime state")
+    prune_parser.add_argument(
+        "--delete",
+        action="store_true",
+        help="delete old terminal runs and their owned runtime files; orphans are reported only",
+    )
+    prune_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the prune result as JSON",
+    )
+    prune_parser.set_defaults(handler=_handle_prune)
+
     debug_parser = subparsers.add_parser("debug", help="print run/session debug bundle")
     debug_target = debug_parser.add_mutually_exclusive_group(required=True)
     debug_target.add_argument("--run-id", help="run id to inspect")
@@ -510,6 +523,81 @@ def _handle_history(args: argparse.Namespace) -> int:
         raise AppError("limit must be a positive integer")
     print(format_history(context, args.session_id, args.limit))
     return 0
+
+
+def _handle_prune(args: argparse.Namespace) -> int:
+    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    plan = context.store.plan_prune(
+        context.config.retention_days,
+        request_dir=context.config.state_dir / "requests",
+        log_dir=context.config.log_dir,
+    )
+    result = None
+    if args.delete:
+        result = context.store.delete_prune_candidates(
+            plan,
+            allowed_roots=(context.config.state_dir, context.config.log_dir),
+        )
+    payload = {
+        "kind": "prune",
+        "ok": result is None or not result.failed_paths,
+        "dry_run": not args.delete,
+        "retention_days": plan.retention_days,
+        "cutoff_at": plan.cutoff_at,
+        "candidate_count": len(plan.candidates),
+        "candidates": [
+            {
+                "run_id": candidate.run_id,
+                "session_id": candidate.orchestrator_session_id,
+                "role": candidate.role,
+                "status": candidate.status,
+                "created_at": candidate.created_at,
+                "owned_paths": [str(path) for path in candidate.owned_paths],
+            }
+            for candidate in plan.candidates
+        ],
+        "orphan_candidate_count": len(plan.orphan_candidates),
+        "orphan_candidates": [str(path) for path in plan.orphan_candidates],
+        "deleted_run_ids": list(result.deleted_run_ids) if result else [],
+        "deleted_session_ids": list(result.deleted_session_ids) if result else [],
+        "deleted_paths": [str(path) for path in result.deleted_paths] if result else [],
+        "skipped_paths": [str(path) for path in result.skipped_paths] if result else [],
+        "failed_paths": [str(path) for path in result.failed_paths] if result else [],
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        if args.delete:
+            print("prune: delete completed")
+        else:
+            print("prune: dry-run only; no deletion performed")
+        print(f"retention_days: {plan.retention_days}")
+        print(f"cutoff_at: {plan.cutoff_at}")
+        print(f"candidate_count: {len(plan.candidates)}")
+        for candidate in plan.candidates:
+            print(
+                f"- {candidate.run_id} {candidate.status} {candidate.role} "
+                f"session={candidate.orchestrator_session_id} created_at={candidate.created_at}"
+            )
+            for path in candidate.owned_paths:
+                print(f"  path: {path}")
+        if plan.orphan_candidates:
+            print("orphan_candidates:")
+            for path in plan.orphan_candidates:
+                print(f"- {path}")
+        if result:
+            print(f"deleted_runs: {len(result.deleted_run_ids)}")
+            print(f"deleted_sessions: {len(result.deleted_session_ids)}")
+            print(f"deleted_paths: {len(result.deleted_paths)}")
+            if result.skipped_paths:
+                print("skipped_paths:")
+                for path in result.skipped_paths:
+                    print(f"- {path}")
+            if result.failed_paths:
+                print("failed_paths:")
+                for path in result.failed_paths:
+                    print(f"- {path}")
+    return 1 if result and result.failed_paths else 0
 
 
 def _handle_debug(args: argparse.Namespace) -> int:

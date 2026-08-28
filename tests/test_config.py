@@ -298,6 +298,17 @@ def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
     assert config.default_timeout == 120
 
 
+def test_load_app_config_reads_retention_days(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text("default_timeout: 120\nretention_days: 45\n", encoding="utf-8")
+    write_root_prompts(prompts_path)
+
+    config = load_app_config(path)
+
+    assert config.retention_days == 45
+
+
 @pytest.mark.parametrize(
     ("content", "expected_message"),
     [
@@ -305,6 +316,7 @@ def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
         ("default_timeout: 30\nconcurrency: 3\n", "'concurrency' must be a mapping"),
         ("default_timeout: 30\nauto_return: maybe\n", "'auto_return' must be a boolean"),
         ("default_timeout: 30\nauto_verify: maybe\n", "'auto_verify' must be a boolean"),
+        ("default_timeout: 30\nretention_days: 0\n", "'retention_days' must be a positive integer"),
         (
             "default_timeout: 30\ntools_enabled_by_default: maybe\n",
             "'tools_enabled_by_default' must be a boolean",
