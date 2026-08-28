@@ -16,6 +16,7 @@ Orchestra roadmap items are split into:
 3. [ ] Cache config into memory, create load command and function, config
        to me session specific, saved to file specifically.
 
+4. [ ] Add compatability with pi-offload-router, specifically token counts, money saved.
 
 6. [ ] Add a multi-step dispatch structure for sequential subagent chains.
    - Support multiple different subagent dispatches in sequence, where each step can depend on the previous step's outcome.

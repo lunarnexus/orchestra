@@ -3,9 +3,9 @@ log_dir: ~/workspace/orchestra/logs
 default_timeout: 1500
 turn_limit: 50     # Global cooperative worker turn budget before handoff.
 soft_timeout: 1200 # Global cooperative timeout seconds before handoff; must be below default_timeout.
-retention_days: 20 # Retain terminal runs before prune planning reports them as old.
-concurrency:
+retention_days: 90 # Retain terminal runs before prune planning reports them as old.
+concurrency: # Concurrent dispatches
   global: 6
   per_session: 3
-auto_return: true
-auto_verify: false
+auto_return: true # Auto prompts the main session on subagent return
+auto_verify: true # Automatically runs a verifier after every sucessful builder return
