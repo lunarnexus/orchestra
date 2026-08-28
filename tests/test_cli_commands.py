@@ -468,7 +468,10 @@ def test_prune_reports_dry_run_candidates_without_deleting(
         )
     )
     store.update_run("old-done", RunUpdate(status=STATUS_RUNNING))
-    store.update_run("old-done", RunUpdate(status=STATUS_DONE))
+    store.update_run(
+        "old-done",
+        RunUpdate(status=STATUS_DONE, ended_at="2026-01-01T00:00:00Z"),
+    )
     store.create_run(
         RunRecord(
             run_id="running",
@@ -494,12 +497,15 @@ def test_prune_reports_dry_run_candidates_without_deleting(
             "--agent-catalog",
             str(catalog_path),
             "prune",
+            "--retention-days",
+            "30",
         ]
     )
     output = capsys.readouterr().out
 
     assert exit_code == 0
     assert "dry-run only; no deletion performed" in output
+    assert "retention_days: 30" in output
     assert "candidate_count: 1" in output
     assert "old-done" in output
     assert "running" not in output
@@ -509,7 +515,7 @@ def test_prune_reports_dry_run_candidates_without_deleting(
     assert store.get_run("running").status == STATUS_RUNNING
 
 
-def test_prune_delete_removes_old_runs_and_owned_files_but_not_orphans(
+def test_prune_delete_removes_old_runs_owned_files_and_orphans(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     capsys: pytest.CaptureFixture[str],
@@ -541,7 +547,10 @@ def test_prune_delete_removes_old_runs_and_owned_files_but_not_orphans(
         )
     )
     store.update_run("old-done", RunUpdate(status=STATUS_RUNNING))
-    store.update_run("old-done", RunUpdate(status=STATUS_DONE))
+    store.update_run(
+        "old-done",
+        RunUpdate(status=STATUS_DONE, ended_at="2000-01-01T00:00:00Z"),
+    )
 
     from orchestra.cli import main
 
@@ -565,7 +574,7 @@ def test_prune_delete_removes_old_runs_and_owned_files_but_not_orphans(
         store.get_run("old-done")
     assert not old_log.exists()
     assert not old_request.exists()
-    assert orphan_log.exists()
+    assert not orphan_log.exists()
 
 
 def test_do_rejects_over_model_limit(

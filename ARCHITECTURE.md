@@ -484,10 +484,13 @@ top-level `retention_days` config value. By default, it is dry-run only and
 reports old terminal runs, their recorded owned paths, and conservative orphan
 file candidates under Orchestra-owned runtime directories.
 
-`orchestra prune --delete` deletes old terminal run rows, empty session rows, and
-run-owned files under configured Orchestra state/log roots. Orphan files are
-reported but not deleted. If a run-owned file cannot be deleted, the run row is
-retained so a later prune can retry.
+`orchestra prune --retention-days N` overrides the configured window for one
+command. `orchestra prune --delete` deletes old terminal run rows, empty session
+rows, run-owned files, and safe old orphan files under configured Orchestra
+state/log roots. Run age uses `ended_at`, then `reported_at`, then `created_at`.
+If a run-owned file cannot be deleted, the run row is retained so a later prune
+can retry. Prune does not run SQLite `VACUUM` or touch WAL/SHM files directly;
+deleted pages remain available for SQLite reuse.
 
 ## Results and auto-return
 

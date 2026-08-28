@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add an explicit `orchestra prune` command that reports old Orchestra runtime data using a configurable retention window and deletes old terminal run records plus owned runtime files only when `--delete` is supplied. Orphan files are reported but not deleted.
+Add an explicit `orchestra prune` command that reports old Orchestra runtime data using a configurable retention window and deletes old terminal run records, owned runtime files, and safe old orphan files only when `--delete` is supplied.
 
 ## Acceptance Criteria
 
@@ -10,10 +10,12 @@ Add an explicit `orchestra prune` command that reports old Orchestra runtime dat
 - Config loading validates `retention_days` as a positive integer.
 - `orchestra prune` is an explicit command.
 - Default `orchestra prune` behavior is dry-run/report-only and clearly says no deletion was performed.
-- `orchestra prune --delete` deletes only old terminal run rows and owned runtime files.
+- `orchestra prune --delete` deletes only old terminal run rows, owned runtime files, empty session rows, and safe old orphan files.
+- `orchestra prune --retention-days N` overrides the configured retention window for that command.
 - Active/running/queued runs are never prune candidates.
+- Prune planning uses terminal age: `ended_at`, then `reported_at`, then `created_at`.
 - Prune planning reports run-owned paths from persisted DB fields.
-- Orphan files are reported conservatively but are not deleted.
+- Orphan files are detected and deleted conservatively under configured runtime roots.
 - Paths outside configured Orchestra state/log roots are skipped, not deleted.
 - If deleting a run-owned file fails, the run row is retained so a later prune can retry.
 - Tests cover config parsing, state planning, active-run preservation, and CLI dry-run output.
@@ -47,8 +49,8 @@ Add an explicit `orchestra prune` command that reports old Orchestra runtime dat
   - Risk: P2.
 
 - [x] Slice 4 — sequential — Destructive pruning behind explicit flag
-  - Behavior: `orchestra prune --delete` deletes old terminal run rows, owned runtime files, and empty session rows; orphan files remain report-only.
-  - Verify: state and CLI tests for deletion, active-run preservation, orphan preservation, path skipping, and retryability after file deletion failure.
+  - Behavior: `orchestra prune --delete` deletes old terminal run rows, owned runtime files, empty session rows, and safe old orphan files.
+  - Verify: state and CLI tests for deletion, active-run preservation, orphan deletion, path skipping, and retryability after file deletion failure.
   - Risk: P0 because it deletes user-visible runtime/debug data.
 
 ## Verification
@@ -71,6 +73,5 @@ python3 -m build
 
 ## Open Questions
 
-- Should prune eventually use `ended_at`/`reported_at` rather than `created_at` as the primary age timestamp?
-- Should orphan reporting include only known run-id filename patterns, or all old files under `state/requests` and `logs`?
-- What confirmation UX should destructive `--apply` require?
+- Should a future maintenance command offer SQLite `wal_checkpoint(TRUNCATE)` for idle databases?
+- Should a future explicit compact command offer SQLite `VACUUM`, with disk-space warnings?

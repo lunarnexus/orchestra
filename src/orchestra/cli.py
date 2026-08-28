@@ -189,9 +189,15 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
 
     prune_parser = subparsers.add_parser("prune", help="prune old runtime state")
     prune_parser.add_argument(
+        "--retention-days",
+        type=_positive_int,
+        default=None,
+        help="override configured retention_days for this prune run",
+    )
+    prune_parser.add_argument(
         "--delete",
         action="store_true",
-        help="delete old terminal runs and their owned runtime files; orphans are reported only",
+        help="delete old terminal runs, owned runtime files, and safe old orphan files",
     )
     prune_parser.add_argument(
         "--json",
@@ -527,8 +533,9 @@ def _handle_history(args: argparse.Namespace) -> int:
 
 def _handle_prune(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    retention_days = args.retention_days or context.config.retention_days
     plan = context.store.plan_prune(
-        context.config.retention_days,
+        retention_days,
         request_dir=context.config.state_dir / "requests",
         log_dir=context.config.log_dir,
     )

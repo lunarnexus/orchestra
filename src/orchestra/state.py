@@ -539,8 +539,8 @@ class StateStore:
         owned_paths: set[Path] = set()
         for row in rows:
             record = self._row_to_record(row)
-            created_at = _parse_utc_timestamp(record.created_at)
-            if created_at >= cutoff_dt:
+            prune_at = _prune_reference_timestamp(record)
+            if prune_at >= cutoff_dt:
                 continue
             candidate_paths = tuple(
                 path
@@ -595,10 +595,6 @@ class StateStore:
         *,
         allowed_roots: tuple[Path, ...],
     ) -> PruneResult:
-        run_ids = tuple(candidate.run_id for candidate in plan.candidates)
-        if not run_ids:
-            return PruneResult((), (), (), (), ())
-
         deleted_paths: list[Path] = []
         skipped_paths: list[Path] = []
         failed_paths: list[Path] = []
@@ -620,42 +616,46 @@ class StateStore:
             if not candidate_failed:
                 deletable_run_ids.append(candidate.run_id)
 
-        if not deletable_run_ids:
-            return PruneResult(
-                (),
-                (),
-                tuple(deleted_paths),
-                tuple(skipped_paths),
-                tuple(failed_paths),
-            )
+        for path in plan.orphan_candidates:
+            if not _path_is_under_roots(path, allowed):
+                skipped_paths.append(path)
+                continue
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                failed_paths.append(path)
+                continue
+            deleted_paths.append(path)
 
-        placeholders = ", ".join("?" for _ in deletable_run_ids)
-        with self._connect() as connection:
-            self._begin_immediate(connection, operation="delete_prune_candidates")
-            connection.execute(
-                f"DELETE FROM runs WHERE run_id IN ({placeholders})",
-                tuple(deletable_run_ids),
-            )
-            session_rows = connection.execute(
-                """
-                SELECT session_id
-                FROM sessions
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM runs
-                    WHERE runs.orchestrator_session_id = sessions.session_id
-                )
-                ORDER BY session_id
-                """
-            ).fetchall()
-            deleted_session_ids = tuple(str(row["session_id"]) for row in session_rows)
-            if deleted_session_ids:
-                session_placeholders = ", ".join("?" for _ in deleted_session_ids)
+        deleted_session_ids: tuple[str, ...] = ()
+        if deletable_run_ids:
+            placeholders = ", ".join("?" for _ in deletable_run_ids)
+            with self._connect() as connection:
+                self._begin_immediate(connection, operation="delete_prune_candidates")
                 connection.execute(
-                    f"DELETE FROM sessions WHERE session_id IN ({session_placeholders})",
-                    deleted_session_ids,
+                    f"DELETE FROM runs WHERE run_id IN ({placeholders})",
+                    tuple(deletable_run_ids),
                 )
-            connection.commit()
+                session_rows = connection.execute(
+                    """
+                    SELECT session_id
+                    FROM sessions
+                    WHERE NOT EXISTS (
+                        SELECT 1
+                        FROM runs
+                        WHERE runs.orchestrator_session_id = sessions.session_id
+                    )
+                    ORDER BY session_id
+                    """
+                ).fetchall()
+                deleted_session_ids = tuple(str(row["session_id"]) for row in session_rows)
+                if deleted_session_ids:
+                    session_placeholders = ", ".join("?" for _ in deleted_session_ids)
+                    connection.execute(
+                        f"DELETE FROM sessions WHERE session_id IN ({session_placeholders})",
+                        deleted_session_ids,
+                    )
+                connection.commit()
 
         return PruneResult(
             deleted_run_ids=tuple(deletable_run_ids),
@@ -1212,6 +1212,13 @@ def _list_orphan_candidates(
                 continue
             candidates.append(path)
     return candidates
+
+
+def _prune_reference_timestamp(record: RunRecord) -> datetime:
+    for raw in (record.ended_at, record.reported_at, record.created_at):
+        if raw:
+            return _parse_utc_timestamp(raw)
+    return _parse_utc_timestamp(record.created_at)
 
 
 def _path_is_under_roots(path: Path, roots: tuple[Path, ...]) -> bool:

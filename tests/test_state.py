@@ -145,6 +145,7 @@ def test_plan_prune_reports_old_terminal_runs_and_owned_paths(tmp_path: Path) ->
         task_label="old",
         log_path=tmp_path / "logs" / "old-done.jsonl",
         created_at="2026-01-01T00:00:00Z",
+        ended_at="2026-01-01T00:00:00Z",
         status=STATUS_DONE,
         transcript_path=tmp_path / "transcripts" / "old-done.jsonl",
     )
@@ -156,6 +157,17 @@ def test_plan_prune_reports_old_terminal_runs_and_owned_paths(tmp_path: Path) ->
         task_label="recent",
         log_path=tmp_path / "logs" / "recent-done.jsonl",
         created_at="2026-12-31T00:00:00Z",
+        status=STATUS_DONE,
+    )
+    old_created_recently_ended_run = RunRecord(
+        run_id="recently-ended",
+        orchestrator_session_id="manual:session-a",
+        harness="pi",
+        role="builder",
+        task_label="recently ended",
+        log_path=tmp_path / "logs" / "recently-ended.jsonl",
+        created_at="2026-01-01T00:00:00Z",
+        ended_at="2026-05-30T00:00:00Z",
         status=STATUS_DONE,
     )
     active_run = RunRecord(
@@ -176,9 +188,10 @@ def test_plan_prune_reports_old_terminal_runs_and_owned_paths(tmp_path: Path) ->
         task_label="old incomplete",
         log_path=tmp_path / "logs" / "old-incomplete.jsonl",
         created_at="2026-01-01T00:00:00Z",
+        ended_at="2026-01-01T00:00:00Z",
         status=STATUS_INCOMPLETE,
     )
-    for record in (old_run, recent_run, active_run, incomplete_run):
+    for record in (old_run, recent_run, old_created_recently_ended_run, active_run, incomplete_run):
         queued = replace(record, status=STATUS_QUEUED)
         store.create_run(queued)
         if record.status != STATUS_QUEUED:
@@ -186,7 +199,10 @@ def test_plan_prune_reports_old_terminal_runs_and_owned_paths(tmp_path: Path) ->
                 store.update_run(record.run_id, RunUpdate(status=STATUS_RUNNING))
             else:
                 store.update_run(record.run_id, RunUpdate(status=STATUS_RUNNING))
-                store.update_run(record.run_id, RunUpdate(status=record.status))
+                store.update_run(
+                    record.run_id,
+                    RunUpdate(status=record.status, ended_at=record.ended_at),
+                )
 
     plan = store.plan_prune(
         90,
@@ -204,6 +220,7 @@ def test_plan_prune_reports_old_terminal_runs_and_owned_paths(tmp_path: Path) ->
     )
     assert all(candidate.run_id != "running" for candidate in plan.candidates)
     assert all(candidate.run_id != "recent-done" for candidate in plan.candidates)
+    assert all(candidate.run_id != "recently-ended" for candidate in plan.candidates)
     assert plan.orphan_candidates == (orphan_log,)
 
 
@@ -232,6 +249,7 @@ def test_delete_prune_candidates_removes_runs_owned_files_and_empty_sessions(
             task_label="old",
             log_path=old_log,
             created_at="2026-01-01T00:00:00Z",
+            ended_at="2026-01-01T00:00:00Z",
             status=STATUS_DONE,
             transcript_path=unsafe_transcript,
         ),
@@ -249,7 +267,7 @@ def test_delete_prune_candidates_removes_runs_owned_files_and_empty_sessions(
     for record in records:
         store.create_run(replace(record, status=STATUS_QUEUED))
         store.update_run(record.run_id, RunUpdate(status=STATUS_RUNNING))
-        store.update_run(record.run_id, RunUpdate(status=record.status))
+        store.update_run(record.run_id, RunUpdate(status=record.status, ended_at=record.ended_at))
 
     plan = store.plan_prune(
         90,
@@ -300,7 +318,10 @@ def test_delete_prune_candidates_keeps_run_when_owned_file_delete_fails(
         )
     )
     store.update_run("old-done", RunUpdate(status=STATUS_RUNNING))
-    store.update_run("old-done", RunUpdate(status=STATUS_DONE))
+    store.update_run(
+        "old-done",
+        RunUpdate(status=STATUS_DONE, ended_at="2026-01-01T00:00:00Z"),
+    )
     plan = store.plan_prune(
         90,
         now=datetime(2026, 6, 1, tzinfo=UTC),
