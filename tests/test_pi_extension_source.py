@@ -133,11 +133,12 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     assert 'type MainSessionMode = "off" | "on" | "orchestrator";' in extension_source
     assert "let mainSessionMode: MainSessionMode | null = null;" in extension_source
 
-    # Footer composes a dimmed mode label with the existing role/active-run text.
+    # Footer composes a labeled dimmed mode with the existing role/active-run text.
     footer_start = extension_source.index("function renderOrchestraFooterStatus(")
     footer_end = extension_source.index("function setOrchestraWorkerStatus(", footer_start)
     footer_body = extension_source[footer_start:footer_end]
-    assert 'parts.push(theme.fg("dim", mode));' in footer_body
+    assert 'if (!mode || mode === "off") return undefined;' in footer_body
+    assert 'theme.fg("dim", `Orchestra:${mode}`)' in footer_body
     assert (
         "status && status.activeCount > 0 ? renderOrchestraWorkerStatus(theme, "
         "status.roleCounts) : undefined"

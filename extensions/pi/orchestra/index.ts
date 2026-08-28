@@ -67,10 +67,8 @@ function renderOrchestraFooterStatus(
   mode: string | null,
   status: ActiveSessionStatus | null,
 ): string | undefined {
-  const parts: string[] = [];
-  if (mode) {
-    parts.push(theme.fg("dim", mode));
-  }
+  if (!mode || mode === "off") return undefined;
+  const parts: string[] = [theme.fg("dim", `Orchestra:${mode}`)];
   const roleText =
     status && status.activeCount > 0 ? renderOrchestraWorkerStatus(theme, status.roleCounts) : undefined;
   if (roleText) {
@@ -771,7 +769,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         ? dispatch.timeout_seconds
         : undefined;
       watchRunProgress(sessionId, runId, notifier, updateStatus, effectiveTimeout);
-      watchSessionReport(sessionId, runId, effectiveTimeout);
+      watchSessionReport(sessionId, runId, updateStatus, effectiveTimeout);
       const role = typeof dispatch?.role === "string" && dispatch.role.trim() ? dispatch.role : (requestedRole || "worker");
       const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId, "--role", role]);
       await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true });
@@ -786,6 +784,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   function watchSessionReport(
     sessionId: string,
     runId: string,
+    updateStatus?: (status: ActiveSessionStatus | null) => void,
     effectiveTimeout?: number,
   ): void {
     if (reportWatchers.has(sessionId)) return;
@@ -861,6 +860,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
               ...runIds.flatMap((id) => ["--run-id", id]),
             ]);
           }
+          cachedActiveStatus = null;
+          updateStatus?.({ activeCount: 0, roleCounts: [], runIds: [] });
         } catch (error) {
           if (runIds.length > 0) {
             void runOrchestra([
