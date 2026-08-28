@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import select
+import shutil
+import sqlite3
+import subprocess
+import time
+from pathlib import Path
+
+try:
+    import yaml
+except ModuleNotFoundError as exc:  # pragma: no cover - environment issue
+    raise SystemExit("PyYAML is required to run this smoke script") from exc
+
+DEFAULT_TASK = "return exactly: pi smoke done"
+RUN_ID_RE = re.compile(r"\borchestra dispatched:\s+\S+\s+([A-Za-z0-9._:-]+)\b")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="smoke-pi-live",
+        description="Run the live Pi smoke flow for Orchestra.",
+    )
+    parser.add_argument(
+        "--repo-root",
+        default=Path(__file__).resolve().parents[1],
+        type=Path,
+        help="Path to the Orchestra repository root.",
+    )
+    parser.add_argument(
+        "--session-id",
+        default=f"orch-smoke-{int(time.time())}",
+        help="Pi session id to use for the smoke run.",
+    )
+    parser.add_argument(
+        "--task-label",
+        default="smoke-pi-live",
+        help="Task label recorded for the /orch do run.",
+    )
+    parser.add_argument(
+        "--goal",
+        default=DEFAULT_TASK,
+        help="Goal passed to /orch do.",
+    )
+    parser.add_argument(
+        "--wait-seconds",
+        default=300,
+        type=int,
+        help="Seconds to wait for the returned Orchestra prompt in the Pi RPC session.",
+    )
+    parser.add_argument(
+        "--check-args",
+        action="store_true",
+        help="Validate arguments and exit without running Pi.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    repo_root = args.repo_root.resolve()
+    if args.check_args:
+        print(f"smoke args ok: session_id={args.session_id} task_label={args.task_label}")
+        return 0
+
+    orchestra = shutil.which("orchestra")
+    pi = shutil.which("pi")
+    if orchestra is None:
+        raise SystemExit("missing prerequisite: orchestra CLI not found in PATH")
+    if pi is None:
+        raise SystemExit("missing prerequisite: pi CLI not found in PATH")
+
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    env["ORCHESTRA_DISPATCH_BUDGET"] = "0"
+
+    _run([orchestra, "init", "pi", "--force"], env=env, cwd=repo_root)
+
+    pi_session = args.session_id
+    rpc = _start_pi_rpc(pi, pi_session, env, repo_root)
+    try:
+        _send_pi_rpc_prompt(rpc, "/orch help")
+        _send_pi_rpc_prompt(rpc, "/orch doctor")
+        _send_pi_rpc_prompt(rpc, "/orch roles")
+        do_output = _send_pi_rpc_prompt(
+            rpc,
+            f'/orch do --role builder --task-label "{args.task_label}" {args.goal}',
+            wait_for_return_prompt=True,
+            wait_seconds=args.wait_seconds,
+        )
+    finally:
+        _stop_process(rpc)
+
+    if "subagent will auto-return when finished" not in do_output:
+        raise SystemExit("/orch do did not report that auto-return was armed")
+    if not _output_shows_follow_up_delivery(do_output, args.task_label):
+        raise SystemExit("Pi RPC stream did not show the injected follow-up return prompt")
+    run_id = _extract_run_id(do_output)
+    if run_id is None:
+        raise SystemExit("could not find a dispatch run id in /orch do output")
+
+    history_output = _poll_history(pi, pi_session, env, repo_root, run_id, args.task_label)
+    if run_id not in history_output:
+        raise SystemExit("history did not include the builder run id")
+    if args.task_label not in history_output:
+        raise SystemExit("history did not include the smoke task label")
+
+    config_path = _resolve_config_path(repo_root)
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    state_dir = _resolve_configured_path(repo_root, str(config["state_dir"]))
+    db_path = state_dir / "orchestra.db"
+    _assert_db_backed_return(db_path, run_id)
+    _assert_no_return_artifact(state_dir, run_id)
+
+    auto_verify = bool(config.get("auto_verify"))
+    if auto_verify:
+        verifier_run_id = _assert_linked_verifier(db_path, run_id)
+        if verifier_run_id not in history_output:
+            raise SystemExit("history did not include the linked verifier run id")
+        _assert_no_return_artifact(state_dir, verifier_run_id)
+
+    print(f"smoke ok: {run_id}")
+    return 0
+
+
+def _start_pi_rpc(
+    pi: str, session_id: str, env: dict[str, str], cwd: Path
+) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        [pi, "--mode", "rpc", "--no-approve", "--session-id", session_id],
+        env=env,
+        cwd=cwd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def _send_pi_rpc_prompt(
+    proc: subprocess.Popen[str],
+    prompt: str,
+    *,
+    wait_for_return_prompt: bool = False,
+    wait_seconds: int = 30,
+) -> str:
+    if proc.stdin is None or proc.stdout is None or proc.stderr is None:
+        raise SystemExit("pi rpc process streams are unavailable")
+    proc.stdin.write(json.dumps({"type": "prompt", "message": prompt}) + "\n")
+    proc.stdin.flush()
+    deadline = time.time() + (wait_seconds if wait_for_return_prompt else 30)
+    lines: list[str] = []
+    streams = [proc.stdout, proc.stderr]
+    while time.time() < deadline:
+        readable, _, _ = select.select(streams, [], [], 0.5)
+        if not readable:
+            if proc.poll() is not None:
+                break
+            continue
+        for stream in readable:
+            line = stream.readline()
+            if not line:
+                continue
+            lines.append(line)
+        joined = "".join(lines)
+        if wait_for_return_prompt:
+            if _output_shows_follow_up_delivery(joined, prompt):
+                return joined
+        elif '"success":true' in joined or '"success":false' in joined:
+            return joined
+    return "".join(lines)
+
+
+def _stop_process(proc: subprocess.Popen[str]) -> None:
+    if proc.stdin is not None:
+        proc.stdin.close()
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except Exception:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+def _run_pi(
+    pi: str,
+    session_id: str,
+    prompt: str,
+    env: dict[str, str],
+    cwd: Path,
+) -> subprocess.CompletedProcess[str]:
+    return _run([pi, "--no-approve", "--session-id", session_id, "-p", prompt], env=env, cwd=cwd)
+
+
+def _run(command: list[str], *, env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(command, env=env, cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise SystemExit(
+            "command failed "
+            f"({result.returncode}): {' '.join(command)}\nSTDOUT:\n{result.stdout}\n"
+            f"STDERR:\n{result.stderr}"
+        )
+    return result
+
+
+def _extract_run_id(output: str) -> str | None:
+    match = RUN_ID_RE.search(output)
+    return match.group(1) if match else None
+
+
+def _poll_history(
+    pi: str,
+    session_id: str,
+    env: dict[str, str],
+    cwd: Path,
+    run_id: str,
+    task_label: str,
+) -> str:
+    last_output = ""
+    for _ in range(20):
+        result = _run_pi(pi, session_id, "/orch history 10", env, cwd)
+        last_output = result.stdout + "\n" + result.stderr
+        if run_id in last_output and task_label in last_output and _history_shows_done(last_output):
+            return last_output
+        time.sleep(0.5)
+    raise SystemExit(f"history did not show completed run {run_id} after polling")
+
+
+def _resolve_config_path(repo_root: Path) -> Path:
+    for candidate in (
+        Path(os.environ["ORCHESTRA_CONFIG"]) if os.environ.get("ORCHESTRA_CONFIG") else None,
+        repo_root / "config.yaml",
+        (
+            Path(os.environ.get("PI_CODING_AGENT_DIR", Path.home() / ".pi" / "agent"))
+            / "orchestra"
+            / "config.yaml"
+        ),
+    ):
+        if candidate and candidate.exists():
+            return candidate
+    raise SystemExit("could not locate config.yaml for the smoke run")
+
+
+def _resolve_configured_path(repo_root: Path, value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = repo_root / path
+    return path.resolve()
+
+
+def _assert_db_backed_return(db_path: Path, run_id: str) -> None:
+    if not db_path.exists():
+        raise SystemExit(f"database not found: {db_path}")
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("select result_output from runs where run_id = ?", (run_id,)).fetchone()
+    if row is None or not row[0]:
+        raise SystemExit(f"missing result_output in sqlite for run {run_id}")
+
+
+def _assert_no_return_artifact(state_dir: Path, run_id: str) -> None:
+    artifact = state_dir / "return-artifacts" / f"{run_id}.md"
+    if artifact.exists():
+        raise SystemExit(f"unexpected return artifact created: {artifact}")
+
+
+def _parse_jsonl_events(output: str) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            events.append(parsed)
+    return events
+
+
+def _output_shows_follow_up_delivery(output: str, _task_label: str) -> bool:
+    for event in _parse_jsonl_events(output):
+        entry = event.get("entry")
+        if isinstance(entry, dict) and entry.get("customType") == "orchestra-output":
+            data = entry.get("data")
+            if isinstance(data, dict) and "subagent will auto-return when finished" in str(data.get("text", "")):
+                continue
+        message = event.get("message")
+        if isinstance(message, dict) and message.get("role") == "user":
+            if "[orchestra:" in json.dumps(message):
+                return True
+    return False
+
+
+def _assert_linked_verifier(db_path: Path, builder_run_id: str) -> str:
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            select run_id, status, result_output
+            from runs
+            where triggered_by_run_id = ? and role = 'verifier'
+            order by created_at desc
+            limit 1
+            """,
+            (builder_run_id,),
+        ).fetchone()
+    if row is None:
+        raise SystemExit("auto_verify is enabled but no linked verifier run was stored")
+    run_id, status, result_output = row
+    if status != "done":
+        raise SystemExit(f"linked verifier {run_id} did not complete successfully: {status}")
+    if not result_output:
+        raise SystemExit(f"linked verifier {run_id} is missing sqlite result_output")
+    return str(run_id)
+
+
+def _history_shows_done(output: str) -> bool:
+    return "[done]" in output or "status: done" in output
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

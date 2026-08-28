@@ -223,6 +223,20 @@ The callable `orch_dispatch` and `orch_status` tools provide the same core
 operations in hosts that support model-callable tools. Exact command rendering,
 notifications, and UI depend on the host.
 
+## Live smoke tests
+
+Run the minimal end-to-end Pi smoke check from the repo root:
+
+```bash
+python3 scripts/smoke-pi-live
+```
+
+It requires both `orchestra` and `pi` on `PATH`, runs `orchestra init pi --force`,
+opens one long-lived Pi RPC parent session, sends `/orch help`, `/orch doctor`,
+`/orch roles`, and `/orch do` through that session, watches stdout JSONL/event
+output for the injected follow-up return prompt, and checks the SQLite return
+plus the absence of a per-run `state/return-artifacts/<run-id>.md` file.
+
 ## Plugin feature matrix
 
 All integrations call the same Python core where their host APIs allow it. The
