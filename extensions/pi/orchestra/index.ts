@@ -487,7 +487,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     const prompt = process.env[ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV]?.trim();
     if (!prompt) return;
     budgetPromptInjected = true;
-    pi.sendUserMessage(`${prompt}\n\n${toolInfo.budgetTriggerLabel}: ${reason}`, { deliverAs: "steer" });
+    pi.sendUserMessage(`${prompt}\n\n${currentToolInfo.budgetTriggerLabel}: ${reason}`, { deliverAs: "steer" });
   }
 
   function softTimeoutExceeded(): boolean {
@@ -512,7 +512,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   pi.on("tool_call", async () => {
     if (budgetPromptInjected || !softTimeoutExceeded()) return;
     injectBudgetExceededPrompt("soft_timeout");
-    return { block: true, reason: toolInfo.softTimeoutBlockReason };
+    return { block: true, reason: currentToolInfo.softTimeoutBlockReason };
   });
 
   pi.registerEntryRenderer<OrchestraCommandEntry>("orchestra-command", (entry) => {
@@ -1365,14 +1365,18 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     });
   }
 
-  async function refreshOrchDispatchToolRegistration(toolInfo?: ToolInfoPayload): Promise<void> {
-    if (!registerDispatchTool) return;
-    registerOrchDispatchTool(toolInfo ?? await loadToolInfo());
+  function registerOrchestraTools(toolInfo: ToolInfoPayload): void {
+    registerOrchStatusTool(toolInfo);
+    if (registerDispatchTool) registerOrchDispatchTool(toolInfo);
   }
 
-  const toolInfo = await loadToolInfo();
-  registerOrchStatusTool(toolInfo);
-  await refreshOrchDispatchToolRegistration(toolInfo);
+  async function refreshOrchestraToolRegistrations(toolInfo?: ToolInfoPayload): Promise<void> {
+    currentToolInfo = toolInfo ?? await loadToolInfo();
+    registerOrchestraTools(currentToolInfo);
+  }
+
+  let currentToolInfo = await loadToolInfo();
+  await refreshOrchestraToolRegistrations(currentToolInfo);
 
   pi.registerCommand("orch", {
     description: "Orchestra host adapter: /orch help|on|off|do|roles|status|stop|doctor|history",
@@ -1417,9 +1421,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
       if (subcommand === "roles") {
         const result = await runOrchestra(rest.length > 0 ? ["roles", ...rest] : ["roles", "--all"]);
-        cachedRoleNames = null;
-        await refreshOrchDispatchToolRegistration();
         emitEntryOutput(ctx, result.stdout || result.stderr);
+        if (result.code === 0) {
+          cachedRoleNames = null;
+          await refreshOrchestraToolRegistrations();
+        }
         return;
       }
 
