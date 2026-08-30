@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from orchestra.context import AppContext, AppError
 from orchestra.harnesses.common import SKILL_FILENAME, SKILL_LIBRARY_DIR
 from orchestra.init import _find_source_root
-from orchestra.roles import format_roles
+from orchestra.roles import format_roles, format_tool_roles, format_tool_workflow
 
 if TYPE_CHECKING:
     pass
@@ -63,6 +63,7 @@ class ToolInfo:
     prompt_guidelines: list[str]
     goal_description: str
     role_description: str
+    workflow_instruction: str
     task_label_description: str
     status_description: str
     status_action_description: str
@@ -166,14 +167,18 @@ def format_command_echo(raw_command: str) -> str:
 
 
 def tool_info(context: AppContext) -> ToolInfo:
-    roles = format_roles(context)
+    roles = format_tool_roles(context)
+    workflow_instruction = format_tool_workflow(context)
     prompts = context.config.prompts
     return ToolInfo(
-        description=prompts.tool_description.format(roles=roles),
+        description=prompts.tool_description.format(roles=roles)
+        + "\n\n"
+        + workflow_instruction,
         prompt_snippet=prompts.tool_prompt_snippet.format(roles=roles),
         prompt_guidelines=list(prompts.tool_prompt_guidelines),
         goal_description=prompts.tool_goal_description,
         role_description=prompts.tool_role_description.format(roles=roles),
+        workflow_instruction=workflow_instruction,
         task_label_description=prompts.tool_task_label_description,
         status_description=prompts.status_description,
         status_action_description=prompts.status_action_description,

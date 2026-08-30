@@ -111,6 +111,7 @@ class RoleConfig:
     command: list[str] | None = None
     harness_fallback: tuple[RoleHarnessFallback, ...] = ()
     prompt_addition: str = ""
+    workflow_instruction: str = ""
     model: str | None = None
     profile: str | None = None
     agent: str | None = None
@@ -338,6 +339,7 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                     or []
                 ),
                 prompt_addition=_get_optional_string(role_raw, "prompt_addition") or "",
+                workflow_instruction=_get_optional_string(role_raw, "workflow_instruction") or "",
                 model=_get_optional_string(role_raw, "model"),
                 profile=_get_optional_string(role_raw, "profile"),
                 agent=_get_optional_string(role_raw, "agent"),
@@ -377,6 +379,7 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                 or []
             ),
             prompt_addition=_get_optional_string(role_raw, "prompt_addition") or "",
+            workflow_instruction=_get_optional_string(role_raw, "workflow_instruction") or "",
             model=_get_optional_string(role_raw, "model"),
             profile=_get_optional_string(role_raw, "profile"),
             agent=_get_optional_string(role_raw, "agent"),
@@ -569,6 +572,7 @@ def _validate_role_keys(
     allowed_keys = {
         "harness_fallback",
         "prompt_addition",
+        "workflow_instruction",
         "model",
         "profile",
         "agent",

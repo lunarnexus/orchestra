@@ -46,6 +46,46 @@ def _enabled_roles(catalog: AgentCatalog) -> list[tuple[str, RoleConfig]]:
     ]
 
 
+def _dispatchable_roles(catalog: AgentCatalog) -> list[tuple[str, RoleConfig]]:
+    return [
+        (role_name, role)
+        for role_name, role in sorted(catalog.roles.items())
+        if role.enabled and role.enabled_mode != "auto"
+    ]
+
+
+def _format_workflow_instruction(role_name: str, role: RoleConfig) -> str:
+    instruction = role.workflow_instruction.strip()
+    if instruction:
+        return f"- {role_name}: {instruction}"
+    return f"- {role_name}"
+
+
+def format_tool_roles(context: AppContext) -> str:
+    roles = _dispatchable_roles(context.catalog)
+    lines = ["Configured roles", f"Default: {context.catalog.default_role}", ""]
+    if roles:
+        lines.extend(_format_role_lines(context, roles))
+    else:
+        lines.append("  - none")
+    return "\n".join(lines)
+
+
+def format_tool_workflow(context: AppContext) -> str:
+    roles = _dispatchable_roles(context.catalog)
+    role_names = {name for name, _ in roles}
+    lines = ["Workflow guidance"]
+    for role_name, role in roles:
+        if role.workflow_instruction.strip():
+            lines.append(_format_workflow_instruction(role_name, role))
+    if "researcher" not in role_names:
+        lines.append(
+            "- orchestrator: own necessary research in the main session "
+            "when no researcher role is dispatchable"
+        )
+    return "\n".join(lines)
+
+
 def _select_role(
     catalog: AgentCatalog,
     role_name: str | None,

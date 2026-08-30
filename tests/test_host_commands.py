@@ -5,6 +5,7 @@ from pathlib import Path
 
 import yaml
 
+from orchestra.config import RoleConfig
 from orchestra.context import AppContext, load_context
 from orchestra.host_commands import (
     HostActionEffect,
@@ -46,6 +47,8 @@ def test_tool_info_schema_uses_resolved_session_mode(tmp_path: Path) -> None:
     assert payload["main_session_mode"] == "off"
     assert payload["prompt_guidelines"]
     assert payload["description"]
+    assert "Workflow guidance" in payload["workflow_instruction"]
+    assert "researcher" in payload["workflow_instruction"]
 
 
 def test_session_mode_payload_matches_current_mode_resolution(tmp_path: Path) -> None:
@@ -60,6 +63,33 @@ def test_session_mode_payload_matches_current_mode_resolution(tmp_path: Path) ->
         "session_id": "pi:session-a",
         "effect": {"mode": "on", "tools_enabled": True, "trigger_turn": False},
     }
+
+
+def test_tool_info_payload_filters_disabled_and_auto_only_roles(tmp_path: Path) -> None:
+    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    context.catalog.roles["builder"] = RoleConfig(
+        harness_config="pi",
+        workflow_instruction="Use builder for implementation slices.",
+    )
+    context.catalog.roles["researcher"] = RoleConfig(harness_config="pi", enabled=False)
+    context.catalog.roles["verifier"] = RoleConfig(
+        harness_config="pi",
+        enabled_mode="auto",
+        workflow_instruction="Use verifier for acceptance checks.",
+    )
+    context.catalog.roles["navigator"] = RoleConfig(
+        harness_config="pi",
+        workflow_instruction="Use navigator for exploratory dispatch.",
+    )
+
+    payload = tool_info_payload(context, "pi:session-a").to_payload()
+
+    assert "builder" in payload["description"]
+    assert "  researcher" not in payload["description"]
+    assert "  verifier" not in payload["description"]
+    assert "navigator" in payload["description"]
+    assert "Use navigator for exploratory dispatch." in payload["workflow_instruction"]
+    assert "orchestrator: own necessary research" in payload["workflow_instruction"]
 
 
 def test_dispatch_command_payload_builds_core_dispatch_argv() -> None:

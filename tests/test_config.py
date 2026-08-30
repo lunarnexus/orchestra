@@ -376,11 +376,9 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
         (
             "researcher",
             (
-                "Answer one bounded evidence question. Stay read-only. Inspect only the "
-                "named docs, files, APIs, or narrow code area needed to answer that "
-                "question. Return concise findings with sources, confidence, gaps, "
-                "blockers, and risks. Update only the explicitly assigned RESEARCH.md "
-                "section when requested. Do not plan, implement, verify, review, or broaden scope."
+                "Gather evidence with sources from docs, web, or code. Do not change code. "
+                "Update only the explicitly assigned RESEARCH.md section when requested. "
+                "Return the compact schema only."
             ),
         ),
         (
@@ -553,6 +551,7 @@ roles:
       - harness_config: pi
         model: gpt-4.1-mini
     prompt_addition: Review only.
+    workflow_instruction: Use reviewer when the change needs an independent quality check.
     model: gpt-5
     profile: reviewer
     nested_dispatch_depth: 2
@@ -580,6 +579,7 @@ roles:
     assert reviewer.harness_fallback[0].agent is None
     assert reviewer.model == "gpt-5"
     assert reviewer.profile == "reviewer"
+    assert reviewer.workflow_instruction.startswith("Use reviewer")
     assert reviewer.nested_dispatch_depth == 2
     assert reviewer.turn_limit == 30
     assert reviewer.soft_timeout == 840
@@ -735,6 +735,18 @@ roles:
                 "role 'worker' harness_fallback entry 1 uses unsupported keys: command; "
                 "allowed keys are harness_config, model, profile, agent"
             ),
+        ),
+        (
+            "harness_configs:\n"
+            "  pi:\n"
+            "    harness: pi\n"
+            "    command:\n"
+            "      - pi\n"
+            "roles:\n"
+            "  worker:\n"
+            "    harness_config: pi\n"
+            "    workflow_instruction: 123\n",
+            "'workflow_instruction' must be a non-empty string when provided",
         ),
         (
             "harness_configs:\n"
