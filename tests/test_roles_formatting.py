@@ -57,9 +57,9 @@ def test_format_roles_includes_legend_and_default_marker(tmp_path: Path) -> None
     output = format_roles(_make_context(tmp_path), include_disabled=True)
 
     assert "Configured roles" in output
-    assert "Legend: ✓ enabled, ✗ disabled, D default" in output
+    assert "Legend: ✓ enabled, ✗ disabled, D default, A auto" in output
     assert "  D  reviewer [hermes]" in output
-    assert "  ✓  verifier [pi]" in output
+    assert "  A  verifier [pi]" in output
     assert "  ✗  worker [pi]" in output
     assert "Default: reviewer" not in output
     assert "  ✗  reviewer [hermes]" not in output

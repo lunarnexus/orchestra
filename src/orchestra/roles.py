@@ -47,7 +47,7 @@ def _enabled_roles(catalog: AgentCatalog) -> list[tuple[str, RoleConfig]]:
 
 
 def _format_role_legend() -> str:
-    return "Legend: ✓ enabled, ✗ disabled, D default"
+    return "Legend: ✓ enabled, ✗ disabled, D default, A auto"
 
 
 def format_tool_roles(context: AppContext) -> str:
@@ -175,6 +175,8 @@ def _format_role_lines(
             lines.append("")
         if role_name == context.catalog.default_role:
             role_marker = "D"
+        elif role.enabled_mode == "auto":
+            role_marker = "A"
         else:
             role_marker = "✓" if role.enabled else "✗"
         lines.append(f"  {role_marker}  {role_name} [{role.harness}]")
