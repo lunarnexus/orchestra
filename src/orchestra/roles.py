@@ -41,28 +41,18 @@ class SelectedRole:
 def _enabled_roles(catalog: AgentCatalog) -> list[tuple[str, RoleConfig]]:
     return [
         (role_name, role)
-        for role_name, role in sorted(catalog.roles.items())
-        if role.enabled
-    ]
-
-
-def _dispatchable_roles(catalog: AgentCatalog) -> list[tuple[str, RoleConfig]]:
-    return [
-        (role_name, role)
-        for role_name, role in sorted(catalog.roles.items())
+        for role_name, role in catalog.roles.items()
         if role.enabled and role.enabled_mode != "auto"
     ]
 
 
-def _format_workflow_instruction(role_name: str, role: RoleConfig) -> str:
+def _format_role_guidance(role_name: str, role: RoleConfig) -> str | None:
     instruction = role.workflow_instruction.strip()
-    if instruction:
-        return f"- {role_name}: {instruction}"
-    return f"- {role_name}"
+    return f"- {role_name}: {instruction}" if instruction else None
 
 
 def format_tool_roles(context: AppContext) -> str:
-    roles = _dispatchable_roles(context.catalog)
+    roles = _enabled_roles(context.catalog)
     lines = ["Configured roles", f"Default: {context.catalog.default_role}", ""]
     if roles:
         lines.extend(_format_role_lines(context, roles))
@@ -72,18 +62,35 @@ def format_tool_roles(context: AppContext) -> str:
 
 
 def format_tool_workflow(context: AppContext) -> str:
-    roles = _dispatchable_roles(context.catalog)
-    role_names = {name for name, _ in roles}
-    lines = ["Workflow guidance"]
-    for role_name, role in roles:
-        if role.workflow_instruction.strip():
-            lines.append(_format_workflow_instruction(role_name, role))
-    if "researcher" not in role_names:
-        lines.append(
-            "- orchestrator: own necessary research in the main session "
-            "when no researcher role is dispatchable"
-        )
+    lines = ["Workflow"]
+    step = 0
+    for role_name, role in context.catalog.roles.items():
+        if role.enabled_mode == "auto":
+            continue
+        if role.enabled:
+            instruction = role.workflow_instruction.strip()
+            if not instruction:
+                continue
+            step += 1
+            lines.append(f"{step}. {_workflow_label(role_name)}: {instruction}")
+            continue
+        instruction = role.main_session_instruction.strip()
+        if not instruction:
+            continue
+        step += 1
+        lines.append(f"{step}. {instruction}")
     return "\n".join(lines)
+
+
+def _workflow_label(role_name: str) -> str:
+    return {
+        "planner": "Planning",
+        "researcher": "Research",
+        "builder": "Build",
+        "verifier": "Verify",
+        "reviewer": "Review",
+        "appsec": "Appsec",
+    }.get(role_name, role_name)
 
 
 def _select_role(

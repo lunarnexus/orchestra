@@ -35,22 +35,20 @@ tool_description: >-
   Completed subagent reports return automatically. Do not poll. Do not call
   orch_status unless the user explicitly asks for status, history, roles, help,
   doctor, activation, or stop. {roles}
-tool_prompt_snippet: >-
-  The orchestrator session plans and dispatches only; subagents perform all
-  non-orchestration work.
-tool_prompt_guidelines:
-  - Do not perform delegated work in the orchestrator session.
-  - Trust successful subagent returns; do not double-test, re-read, rerun, or confirm their assigned scope.
-  - Do not call orch_status unless the user explicitly asks for a status/control/help action.
-  - If a result is missing, failed, blocked, timed out, cancelled, or incomplete, dispatch a smaller follow-up or ask for the blocking decision.
+tool_prompt_snippet: ""
+tool_prompt_guidelines: []
 tool_goal_description: >-
-  One small subagent slice: goal, exact scope, stop condition, and return shape.
+  One small subagent slice: goal, exact scope, prior evidence to reuse, stop
+  condition, and return shape.
 tool_role_description: >-
   Optional subagent capability. Choose the enabled role that best matches the
   slice. Omit role when no specialized enabled role is a better match than the
-  default. Use distinct roles for independent research, planning, implementation,
-  verification, review, and security judgment. {roles}
+  default. {roles}
 tool_task_label_description: Optional short request label.
+main_session_ownership_guidance: >-
+  The main-session orchestrator handles run status, failure diagnosis, returns,
+  logs, artifacts, recovery decisions, and synthesis. Follow-up dispatch
+  continues unfinished operational work only after diagnosis.
 status_description: >-
   Use orch_status only when the user explicitly asks for an Orchestra
   status/control/help action in the current session. Use status for active

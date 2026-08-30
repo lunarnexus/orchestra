@@ -62,6 +62,7 @@ class ToolInfoSchema:
     goal_description: str
     role_description: str
     workflow_instruction: str
+    main_session_ownership_guidance: str
     task_label_description: str
     status_description: str
     status_action_description: str
@@ -94,6 +95,7 @@ def tool_info_payload(context: AppContext, session_id: str | None = None) -> Too
         goal_description=info.goal_description,
         role_description=info.role_description,
         workflow_instruction=info.workflow_instruction,
+        main_session_ownership_guidance=info.main_session_ownership_guidance,
         task_label_description=info.task_label_description,
         status_description=info.status_description,
         status_action_description=info.status_action_description,

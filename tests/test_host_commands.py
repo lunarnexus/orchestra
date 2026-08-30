@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
@@ -45,10 +46,13 @@ def test_tool_info_schema_uses_resolved_session_mode(tmp_path: Path) -> None:
 
     assert payload["tools_enabled_by_default"] is False
     assert payload["main_session_mode"] == "off"
-    assert payload["prompt_guidelines"]
+    assert payload["prompt_snippet"] == ""
+    assert payload["prompt_guidelines"] == []
     assert payload["description"]
-    assert "Workflow guidance" in payload["workflow_instruction"]
-    assert "researcher" in payload["workflow_instruction"]
+    assert payload["workflow_instruction"] == "Workflow"
+    assert "main-session orchestrator handles run status" in payload[
+        "main_session_ownership_guidance"
+    ]
 
 
 def test_session_mode_payload_matches_current_mode_resolution(tmp_path: Path) -> None:
@@ -65,31 +69,105 @@ def test_session_mode_payload_matches_current_mode_resolution(tmp_path: Path) ->
     }
 
 
-def test_tool_info_payload_filters_disabled_and_auto_only_roles(tmp_path: Path) -> None:
+def test_tool_info_payload_renders_role_order_and_omits_auto_only_roles(tmp_path: Path) -> None:
     context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
-    context.catalog.roles["builder"] = RoleConfig(
-        harness_config="pi",
-        workflow_instruction="Use builder for implementation slices.",
-    )
-    context.catalog.roles["researcher"] = RoleConfig(harness_config="pi", enabled=False)
-    context.catalog.roles["verifier"] = RoleConfig(
-        harness_config="pi",
-        enabled_mode="auto",
-        workflow_instruction="Use verifier for acceptance checks.",
-    )
-    context.catalog.roles["navigator"] = RoleConfig(
-        harness_config="pi",
-        workflow_instruction="Use navigator for exploratory dispatch.",
+    context = replace(
+        context,
+        catalog=replace(
+            context.catalog,
+            default_role="builder",
+            roles={
+                "planner": RoleConfig(
+                    harness="pi",
+                    command=["pi"],
+                    enabled=False,
+                    main_session_instruction="Main session handles planning and sequencing.",
+                ),
+                "builder": RoleConfig(
+                    harness="pi",
+                    command=["pi"],
+                    workflow_instruction="Use builder for implementation slices.",
+                ),
+                "researcher": RoleConfig(harness="pi", command=["pi"], enabled=False),
+                "reviewer": RoleConfig(
+                    harness="pi",
+                    command=["pi"],
+                    workflow_instruction="Use reviewer to validate the slice.",
+                ),
+                "appsec": RoleConfig(
+                    harness="pi",
+                    command=["pi"],
+                    workflow_instruction="Use appsec to check security risk.",
+                ),
+                "verifier": RoleConfig(
+                    harness="pi",
+                    command=["pi"],
+                    enabled_mode="auto",
+                    workflow_instruction="Use verifier for acceptance checks.",
+                    main_session_instruction="Automatic verifier handles acceptance checks.",
+                ),
+                "intern": RoleConfig(harness="pi", command=["pi"]),
+                "critic": RoleConfig(harness="pi", command=["pi"], enabled=False),
+            },
+        ),
     )
 
     payload = tool_info_payload(context, "pi:session-a").to_payload()
 
-    assert "builder" in payload["description"]
-    assert "  researcher" not in payload["description"]
-    assert "  verifier" not in payload["description"]
-    assert "navigator" in payload["description"]
-    assert "Use navigator for exploratory dispatch." in payload["workflow_instruction"]
-    assert "orchestrator: own necessary research" in payload["workflow_instruction"]
+    assert payload["workflow_instruction"].splitlines() == [
+        "Workflow",
+        "1. Main session handles planning and sequencing.",
+        "2. Build: Use builder for implementation slices.",
+        "3. Review: Use reviewer to validate the slice.",
+        "4. Appsec: Use appsec to check security risk.",
+    ]
+    assert "verifier" not in payload["workflow_instruction"]
+    assert "acceptance checks" not in payload["workflow_instruction"]
+    assert "researcher" not in payload["workflow_instruction"]
+    assert "intern" not in payload["workflow_instruction"]
+    assert "critic" not in payload["workflow_instruction"]
+    assert "verifier" not in payload["description"]
+    assert "verifier" not in payload["role_description"]
+    assert "acceptance checks" not in payload["description"]
+    assert "acceptance checks" not in payload["role_description"]
+    assert payload["prompt_snippet"] == ""
+    assert payload["prompt_guidelines"] == []
+
+
+def test_tool_info_payload_places_custom_role_at_catalog_position(tmp_path: Path) -> None:
+    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    context = replace(
+        context,
+        catalog=replace(
+            context.catalog,
+            roles={
+                "builder": RoleConfig(
+                    harness="pi",
+                    command=["pi"],
+                    workflow_instruction="Use builder for implementation slices.",
+                ),
+                "custom": RoleConfig(
+                    harness="pi",
+                    command=["pi"],
+                    workflow_instruction="Use custom role for specialized work.",
+                ),
+                "reviewer": RoleConfig(
+                    harness="pi",
+                    command=["pi"],
+                    workflow_instruction="Use reviewer to validate the slice.",
+                ),
+            },
+        ),
+    )
+
+    payload = tool_info_payload(context, "pi:session-a").to_payload()
+
+    assert payload["workflow_instruction"].splitlines() == [
+        "Workflow",
+        "1. Build: Use builder for implementation slices.",
+        "2. custom: Use custom role for specialized work.",
+        "3. Review: Use reviewer to validate the slice.",
+    ]
 
 
 def test_dispatch_command_payload_builds_core_dispatch_argv() -> None:

@@ -59,6 +59,7 @@ class PromptConfig:
     tool_goal_description: str
     tool_role_description: str
     tool_task_label_description: str
+    main_session_ownership_guidance: str
     status_description: str
     status_action_description: str
     status_limit_description: str
@@ -112,6 +113,7 @@ class RoleConfig:
     harness_fallback: tuple[RoleHarnessFallback, ...] = ()
     prompt_addition: str = ""
     workflow_instruction: str = ""
+    main_session_instruction: str = ""
     model: str | None = None
     profile: str | None = None
     agent: str | None = None
@@ -212,6 +214,9 @@ def load_app_config(path: str | Path) -> AppConfig:
         tool_role_description=_get_required_prompt_string(prompts_raw, "tool_role_description"),
         tool_task_label_description=_get_required_prompt_string(
             prompts_raw, "tool_task_label_description"
+        ),
+        main_session_ownership_guidance=_get_required_prompt_string(
+            prompts_raw, "main_session_ownership_guidance"
         ),
         status_description=_get_required_prompt_string(prompts_raw, "status_description"),
         status_action_description=_get_required_prompt_string(
@@ -340,6 +345,9 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                 ),
                 prompt_addition=_get_optional_string(role_raw, "prompt_addition") or "",
                 workflow_instruction=_get_optional_string(role_raw, "workflow_instruction") or "",
+                main_session_instruction=(
+                    _get_optional_string(role_raw, "main_session_instruction") or ""
+                ),
                 model=_get_optional_string(role_raw, "model"),
                 profile=_get_optional_string(role_raw, "profile"),
                 agent=_get_optional_string(role_raw, "agent"),
@@ -380,6 +388,9 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
             ),
             prompt_addition=_get_optional_string(role_raw, "prompt_addition") or "",
             workflow_instruction=_get_optional_string(role_raw, "workflow_instruction") or "",
+            main_session_instruction=(
+                _get_optional_string(role_raw, "main_session_instruction") or ""
+            ),
             model=_get_optional_string(role_raw, "model"),
             profile=_get_optional_string(role_raw, "profile"),
             agent=_get_optional_string(role_raw, "agent"),
@@ -489,17 +500,45 @@ def _get_required_string(data: dict[str, Any], key: str, *, context: str) -> str
 
 
 def _get_required_prompt_string(data: dict[str, Any], key: str) -> str:
-    value = _get_optional_string(data, key)
-    if not value:
+    if key not in data:
         raise ConfigError(f"prompts.yaml is missing required prompt '{key}'")
+    value = data[key]
+    if not isinstance(value, str):
+        raise ConfigError(f"prompts.yaml requires '{key}' to be a string")
     return value
 
 
 def _get_required_prompt_string_list(data: dict[str, Any], key: str) -> tuple[str, ...]:
-    values = _get_optional_string_list(data, key, context="prompts")
-    if not values:
-        raise ConfigError(f"prompts.yaml is missing required prompt list '{key}'")
-    return tuple(values)
+    if key not in data:
+        raise ConfigError(f"prompts.yaml is missing required prompt '{key}'")
+    value = data[key]
+    if not isinstance(value, list):
+        raise ConfigError(f"prompts.yaml requires '{key}' to be a list of strings")
+    if any(not isinstance(item, str) for item in value):
+        raise ConfigError(f"prompts.yaml requires '{key}' to contain only strings")
+    return tuple(value)
+
+
+def _get_optional_prompt_string(data: dict[str, Any], key: str) -> str:
+    value = data.get(key)
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ConfigError(f"prompts.yaml requires '{key}' to be a string")
+    return value
+
+
+def _get_optional_prompt_string_list(data: dict[str, Any], key: str) -> tuple[str, ...]:
+    value = data.get(key)
+    if value is None:
+        return ()
+    if value == []:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigError(f"prompts.yaml requires '{key}' to be a list of strings")
+    if any(not isinstance(item, str) for item in value):
+        raise ConfigError(f"prompts.yaml requires '{key}' to contain only strings")
+    return tuple(value)
 
 
 def _get_optional_string(data: dict[str, Any], key: str) -> str | None:
@@ -573,6 +612,7 @@ def _validate_role_keys(
         "harness_fallback",
         "prompt_addition",
         "workflow_instruction",
+        "main_session_instruction",
         "model",
         "profile",
         "agent",

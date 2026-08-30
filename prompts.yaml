@@ -23,19 +23,18 @@ default_return_format: |-
   chat return. Omit empty fields. Do not include broad tables, history narratives,
   or lists of every file read unless material to a blocker or finding.
 tool_description: >-
-  For any non-orchestration work, call orch_dispatch. The orchestrator session
-  does not perform research, implementation, debugging, testing, verification,
-  review, security assessment, or detailed follow-up work itself. The
-  orchestrator session only decomposes requests, plans slices, sequences
-  dispatches, handles user decisions and approvals, resolves artifact conflicts,
-  manages git boundaries, and synthesizes compact returned results.
+  For non-orchestration work, dispatch a subagent. The orchestrator session
+  decomposes requests, plans slices, sequences dispatches, handles user
+  decisions and approvals, resolves artifact conflicts, manages git boundaries,
+  and synthesizes compact returned results.
 
   Inspect the whole request only to identify dispatch slices, dependencies,
   blockers, and approval needs. Dispatch one subagent per slice. Dispatch every
-  currently unblocked independent slice before doing anything else. Keep
-  dependency order strict: research before dependent design, implementation
-  after approved plan/evidence, verification after implementation, review after
-  coherent change, and appsec after security-relevant change exists.
+  currently unblocked independent slice in parallel before doing anything else.
+  Keep dependency order strict: research before dependent design,
+  implementation after approved plan/evidence, verification after implementation,
+  review after coherent change, and appsec after security-relevant change
+  exists.
 
   Dispatch transfers ownership of the assigned scope to the subagent. While a
   subagent owns a scope, the orchestrator must not read, grep, inspect, edit,
@@ -43,13 +42,14 @@ tool_description: >-
   dependencies, create virtualenvs, modify lockfiles, or mutate the tool
   environment for that scope. The orchestrator must not run duplicate commands
   or repeat checks that a subagent already ran.
-  Trust successful subagent returns for their assigned scope. Do not double-test,
-  re-read, or confirm successful subagent work. If evidence is missing, failed,
-  blocked, timed out, cancelled, or explicitly incomplete, dispatch a smaller
-  follow-up subagent or ask the user for the blocking decision. Do not take over
-  the work. Do not read source files, diffs, or artifacts merely to confirm a
-  successful return; read only for orchestration decisions, conflicts, blockers,
-  destructive/change-boundary approval, or final git handoff.
+  Trust successful subagent returns for their assigned scope. Do not
+  double-test, re-read, or confirm successful subagent work. If evidence is
+  missing, failed, blocked, timed out, cancelled, or explicitly incomplete,
+  dispatch a smaller follow-up subagent or ask the user for the blocking
+  decision. Do not take over the work. Do not read source files, diffs, or
+  artifacts merely to confirm a successful return; read only for orchestration
+  decisions, conflicts, blockers, destructive/change-boundary approval, or
+  final git handoff.
 
   Give each subagent a self-contained brief with one goal, exact scope,
   boundaries, prior evidence to reuse, artifact write target, stop condition,
@@ -59,28 +59,20 @@ tool_description: >-
   Completed subagent reports return automatically. Do not poll. Do not call
   orch_status unless the user explicitly asks for status, history, roles, help,
   doctor, activation, or stop. {roles}
-tool_prompt_snippet: >-
-  The orchestrator session plans and dispatches only; subagents perform all
-  non-orchestration work.
-tool_prompt_guidelines:
-  - Do not perform delegated work in the orchestrator session, including package installation, dependency setup, tests, debugging, or implementation commands.
-  - Trust successful subagent returns and artifact updates; do not double-test, re-read, rerun, inspect, or confirm their assigned scope.
-  - Do not call orch_status unless the user explicitly asks for a status/control/help action.
-  - If a result is missing, failed, blocked, timed out, cancelled, or incomplete, dispatch a smaller follow-up or ask for the blocking decision.
+tool_prompt_snippet: ""
+tool_prompt_guidelines: []
 tool_goal_description: >-
-  One small subagent slice: goal, exact scope, prior artifact/command evidence
-  to reuse, commands allowed or forbidden when relevant, stop condition, and
-  return shape. For researcher, ask one concrete evidence question and name the
-  specific docs, files, APIs, or code area to inspect.
+  One small subagent slice: goal, exact scope, prior evidence to reuse, stop
+  condition, and return shape.
 tool_role_description: >-
   Optional subagent capability. Choose the enabled role that best matches the
   slice. Omit role when no specialized enabled role is a better match than the
-  default. Use researcher only for a specific unanswered fact or evidence gap
-  that can change scope, design, ordering, verification, risk, or blockers. The
-  goal should name the exact question and source scope. Use builder for code
-  changes, verifier for acceptance checks, reviewer for quality judgment, and
-  appsec for security judgment. {roles}
+  default. {roles}
 tool_task_label_description: Optional short request label.
+main_session_ownership_guidance: >-
+  The main-session orchestrator handles run status, failure diagnosis, returns,
+  logs, artifacts, recovery decisions, and synthesis. Follow-up dispatch
+  continues unfinished operational work only after diagnosis.
 status_description: >-
   Use orch_status only when the user explicitly asks for an Orchestra
   status/control/help action in the current session. Use status for active

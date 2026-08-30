@@ -64,6 +64,7 @@ class ToolInfo:
     goal_description: str
     role_description: str
     workflow_instruction: str
+    main_session_ownership_guidance: str
     task_label_description: str
     status_description: str
     status_action_description: str
@@ -173,12 +174,15 @@ def tool_info(context: AppContext) -> ToolInfo:
     return ToolInfo(
         description=prompts.tool_description.format(roles=roles)
         + "\n\n"
-        + workflow_instruction,
-        prompt_snippet=prompts.tool_prompt_snippet.format(roles=roles),
-        prompt_guidelines=list(prompts.tool_prompt_guidelines),
+        + workflow_instruction
+        + "\n\n"
+        + prompts.main_session_ownership_guidance,
+        prompt_snippet="",
+        prompt_guidelines=[],
         goal_description=prompts.tool_goal_description,
         role_description=prompts.tool_role_description.format(roles=roles),
         workflow_instruction=workflow_instruction,
+        main_session_ownership_guidance=prompts.main_session_ownership_guidance,
         task_label_description=prompts.tool_task_label_description,
         status_description=prompts.status_description,
         status_action_description=prompts.status_action_description,

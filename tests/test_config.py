@@ -156,8 +156,8 @@ def test_root_tool_guidance_enforces_orchestrator_boundaries() -> None:
     prompts = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml").prompts
 
     for expected in (
-        "For any non-orchestration work, call orch_dispatch",
-        "does not perform research, implementation, debugging, testing",
+        "For non-orchestration work, dispatch a subagent",
+        "decomposes requests, plans slices, sequences dispatches",
         "Dispatch transfers ownership",
         "must not run duplicate commands",
         "Trust successful subagent returns",
@@ -169,8 +169,9 @@ def test_root_tool_guidance_enforces_orchestrator_boundaries() -> None:
         assert expected in prompts.tool_description
     assert "Use orch_status for status/control" not in prompts.tool_description
     assert "should normally" not in prompts.tool_description
-    assert "plans and dispatches only" in prompts.tool_prompt_snippet
-    assert any("Do not perform delegated work" in item for item in prompts.tool_prompt_guidelines)
+    assert prompts.tool_prompt_snippet == ""
+    assert prompts.tool_prompt_guidelines == ()
+    assert "main-session orchestrator handles run status" in prompts.main_session_ownership_guidance
     assert "Artifacts updated:" in prompts.default_return_format
     assert "Material evidence:" in prompts.default_return_format
     assert "Use orch_status only when the user explicitly asks" in prompts.status_description
@@ -438,6 +439,7 @@ tool_prompt_guidelines:
 tool_goal_description: Custom goal.
 tool_role_description: Custom role.
 tool_task_label_description: Custom label.
+main_session_ownership_guidance: Custom main-session guidance.
 status_description: Custom status description.
 status_action_description: Custom action description.
 status_limit_description: Custom limit description.
@@ -477,28 +479,108 @@ def test_load_app_config_rejects_missing_prompt_values(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     path.write_text("default_timeout: 30\n", encoding="utf-8")
-    prompts_path.write_text("default_return_format: ok\n", encoding="utf-8")
+    prompts_path.write_text(
+        """
+default_return_format: ok
+tool_description: ok
+tool_goal_description: ok
+tool_role_description: ok
+tool_task_label_description: ok
+main_session_ownership_guidance: ok
+status_description: ok
+status_action_description: ok
+status_limit_description: ok
+status_run_id_description: ok
+status_role_description: ok
+status_setting_description: ok
+status_value_description: ok
+host_help: ok
+budget_exceeded_prompt: ok
+""".lstrip(),
+        encoding="utf-8",
+    )
 
     with pytest.raises(
-        ConfigError, match="prompts.yaml is missing required prompt 'tool_description'"
+        ConfigError, match="prompts.yaml is missing required prompt 'tool_prompt_snippet'"
     ):
         load_app_config(path)
 
 
-def test_load_app_config_rejects_empty_prompt_values(tmp_path: Path) -> None:
+def test_load_app_config_accepts_explicitly_empty_prompt_values(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     path.write_text("default_timeout: 30\n", encoding="utf-8")
     prompts_path.write_text(
         """
 default_return_format: ok
-tool_description: ''
-tool_prompt_snippet: ok
-tool_prompt_guidelines:
-  - ok
+tool_description: ok
+tool_prompt_snippet: ''
+tool_prompt_guidelines: []
 tool_goal_description: ok
 tool_role_description: ok
 tool_task_label_description: ok
+main_session_ownership_guidance: ok
+status_description: ok
+status_action_description: ok
+status_limit_description: ok
+status_run_id_description: ok
+status_role_description: ok
+status_setting_description: ok
+status_value_description: ok
+host_help: ok
+budget_exceeded_prompt: ok
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    config = load_app_config(path)
+
+    assert config.prompts.tool_prompt_snippet == ""
+    assert config.prompts.tool_prompt_guidelines == ()
+
+
+def test_load_app_config_rejects_invalid_prompt_types(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text("default_timeout: 30\n", encoding="utf-8")
+    prompts_path.write_text(
+        """
+default_return_format: ok
+tool_description: ok
+tool_prompt_snippet: 1
+tool_prompt_guidelines: ok
+tool_goal_description: ok
+tool_role_description: ok
+tool_task_label_description: ok
+main_session_ownership_guidance: ok
+status_description: ok
+status_action_description: ok
+status_limit_description: ok
+status_run_id_description: ok
+status_role_description: ok
+status_setting_description: ok
+status_value_description: ok
+host_help: ok
+budget_exceeded_prompt: ok
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ConfigError, match="prompts.yaml requires 'tool_prompt_snippet' to be a string"
+    ):
+        load_app_config(path)
+
+    prompts_path.write_text(
+        """
+default_return_format: ok
+tool_description: ok
+tool_prompt_snippet: ok
+tool_prompt_guidelines: ok
+tool_goal_description: ok
+tool_role_description: ok
+tool_task_label_description: ok
+main_session_ownership_guidance: ok
 status_description: ok
 status_action_description: ok
 status_limit_description: ok
@@ -514,7 +596,7 @@ budget_exceeded_prompt: ok
 
     with pytest.raises(
         ConfigError,
-        match="'tool_description' must be a non-empty string when provided",
+        match="prompts.yaml requires 'tool_prompt_guidelines' to be a list of strings",
     ):
         load_app_config(path)
 
@@ -552,6 +634,7 @@ roles:
         model: gpt-4.1-mini
     prompt_addition: Review only.
     workflow_instruction: Use reviewer when the change needs an independent quality check.
+    main_session_instruction: Main session handles review recovery.
     model: gpt-5
     profile: reviewer
     nested_dispatch_depth: 2
@@ -580,6 +663,7 @@ roles:
     assert reviewer.model == "gpt-5"
     assert reviewer.profile == "reviewer"
     assert reviewer.workflow_instruction.startswith("Use reviewer")
+    assert reviewer.main_session_instruction == "Main session handles review recovery."
     assert reviewer.nested_dispatch_depth == 2
     assert reviewer.turn_limit == 30
     assert reviewer.soft_timeout == 840
