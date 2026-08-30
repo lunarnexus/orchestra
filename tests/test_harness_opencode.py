@@ -40,7 +40,7 @@ def test_opencode_harness_builds_command_without_shell_joining(
     role = RoleConfig(
         harness="opencode",
         model="test-model/agent",
-        prompt_addition="Focus on the assigned task.",
+        dispatch_hint="Focus on the assigned task.",
         command=[
             "opencode",
             "run",
@@ -73,7 +73,7 @@ def test_opencode_harness_omits_model_flag_when_none(
     role = RoleConfig(
         harness="opencode",
         model=None,
-        prompt_addition="",
+        dispatch_hint="",
         command=[
             "opencode",
             "run",
@@ -98,7 +98,7 @@ def test_opencode_harness_builds_scoped_prompt(worker_request: WorkerRequest) ->
     role = RoleConfig(
         harness="opencode",
         model="test-model/agent",
-        prompt_addition="Focus on the assigned task.",
+        dispatch_hint="Focus on the assigned task.",
         command=["opencode", "run", "{prompt}"],
     )
 
@@ -150,7 +150,7 @@ def test_opencode_harness_uses_shared_prompt_and_command_helpers(
     role = RoleConfig(
         harness="opencode",
         model="test-model/agent",
-        prompt_addition="Focus on the assigned task.",
+        dispatch_hint="Focus on the assigned task.",
         command=["opencode", "run", "--model", "{model}", "{prompt}"],
     )
 

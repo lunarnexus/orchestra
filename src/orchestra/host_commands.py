@@ -6,7 +6,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from orchestra.context import CONTRACT_VERSION, AppContext
-from orchestra.host_text import ToolInfo, render_orchestrator_skill_message, tool_info
+from orchestra.host_text import DISPATCH_TIMEOUT_ERROR, render_orchestrator_skill_message
+from orchestra.roles import format_tool_roles, format_tool_workflow
 from orchestra.session_mode import (
     default_main_session_mode,
     resolve_main_session_mode,
@@ -82,32 +83,40 @@ class ToolInfoSchema:
 
 
 def tool_info_payload(context: AppContext, session_id: str | None = None) -> ToolInfoSchema:
-    info: ToolInfo = tool_info(context)
+    roles = format_tool_roles(context)
+    workflow = format_tool_workflow(context)
+    prompts = context.config.prompts
     resolved_mode = (
         resolve_main_session_mode(context, session_id)
         if session_id and session_id.strip()
         else default_main_session_mode(context)
     )
     return ToolInfoSchema(
-        description=info.description,
-        prompt_snippet=info.prompt_snippet,
-        prompt_guidelines=info.prompt_guidelines,
-        goal_description=info.goal_description,
-        role_description=info.role_description,
-        workflow_instruction=info.workflow_instruction,
-        main_session_ownership_guidance=info.main_session_ownership_guidance,
-        task_label_description=info.task_label_description,
-        status_description=info.status_description,
-        status_action_description=info.status_action_description,
-        status_limit_description=info.status_limit_description,
-        status_run_id_description=info.status_run_id_description,
-        status_role_description=info.status_role_description,
-        status_setting_description=info.status_setting_description,
-        status_value_description=info.status_value_description,
-        dispatch_timeout_error=info.dispatch_timeout_error,
-        budget_trigger_label=info.budget_trigger_label,
-        soft_timeout_block_reason=info.soft_timeout_block_reason,
-        tools_enabled_by_default=info.tools_enabled_by_default,
+        description=(
+            prompts.tool_description.format(roles=roles)
+            + "\n\n"
+            + workflow
+            + "\n\n"
+            + prompts.main_session_ownership_guidance
+        ),
+        prompt_snippet="",
+        prompt_guidelines=[],
+        goal_description=prompts.tool_goal_description,
+        role_description=prompts.tool_role_description.format(roles=roles),
+        workflow_instruction=workflow,
+        main_session_ownership_guidance=prompts.main_session_ownership_guidance,
+        task_label_description=prompts.tool_task_label_description,
+        status_description=prompts.status_description,
+        status_action_description=prompts.status_action_description,
+        status_limit_description=prompts.status_limit_description,
+        status_run_id_description=prompts.status_run_id_description,
+        status_role_description=prompts.status_role_description,
+        status_setting_description=prompts.status_setting_description,
+        status_value_description=prompts.status_value_description,
+        dispatch_timeout_error=DISPATCH_TIMEOUT_ERROR,
+        budget_trigger_label=prompts.budget_trigger_label,
+        soft_timeout_block_reason=prompts.soft_timeout_block_reason,
+        tools_enabled_by_default=context.config.tools_enabled_by_default,
         main_session_mode=resolved_mode,
     )
 

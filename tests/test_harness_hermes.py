@@ -33,7 +33,7 @@ def test_hermes_harness_builds_oneshot_command_with_prompt(
         harness="hermes",
         profile="worker-profile",
         model="gpt-5.5",
-        prompt_addition="Act as focused one-shot worker.",
+        dispatch_hint="Act as focused one-shot worker.",
         command=[
             "hermes",
             "--profile",

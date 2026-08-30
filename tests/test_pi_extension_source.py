@@ -40,9 +40,9 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
         'value: Type.Optional(Type.String({ description: toolInfo.statusValueDescription }))'
         in extension_source
     )
-    assert 'const toolInfo = await loadToolInfo();' in extension_source
+    assert 'let currentToolInfo = await loadToolInfo();' in extension_source
     assert 'registerOrchStatusTool(toolInfo);' in extension_source
-    assert 'await refreshOrchDispatchToolRegistration(toolInfo);' in extension_source
+    assert 'await refreshOrchestraToolRegistrations(currentToolInfo);' in extension_source
     assert 'ctx.sessionManager.getSessionId()' in extension_source
     assert 'normalizePiSessionId(ctx.sessionManager.getSessionId())' in extension_source
     assert '["status", "--session-id", sessionId, "--json"]' in extension_source
@@ -77,7 +77,7 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert 'const registerDispatchTool = canDispatchOrchestraWorker();' in extension_source
     assert 'function registerOrchDispatchTool(toolInfo: ToolInfoPayload): void' in extension_source
     assert (
-        'async function refreshOrchDispatchToolRegistration('
+        'async function refreshOrchestraToolRegistrations('
         'toolInfo?: ToolInfoPayload): Promise<void>'
         in extension_source
     )
@@ -195,14 +195,17 @@ def test_pi_extension_budget_texts_come_from_loaded_tool_info() -> None:
 
     # Injection appends the core-owned trigger label; env override and steer delivery are kept.
     assert (
-        'pi.sendUserMessage(`${prompt}\\n\\n${toolInfo.budgetTriggerLabel}: ${reason}`, '
+        'pi.sendUserMessage(`${prompt}\\n\\n${currentToolInfo.budgetTriggerLabel}: ${reason}`, '
         '{ deliverAs: "steer" });'
         in extension_source
     )
     assert '"Budget trigger"' not in extension_source
 
     # Soft-timeout blocking uses the core-owned block reason.
-    assert 'return { block: true, reason: toolInfo.softTimeoutBlockReason };' in extension_source
+    assert (
+        'return { block: true, reason: currentToolInfo.softTimeoutBlockReason };'
+        in extension_source
+    )
     assert '"Orchestra soft timeout reached; return budget handoff"' not in extension_source
 
 
@@ -255,4 +258,7 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert "format_progress_notification" in core_host_text_source
     assert "format_dispatch_ack" in core_host_text_source
     assert "format_command_echo" in core_host_text_source
-    assert "tool_info" in core_host_text_source
+    assert "tool_info" not in core_host_text_source
+    assert "tool_info_payload" in Path("src/orchestra/host_commands.py").read_text(
+        encoding="utf-8"
+    )

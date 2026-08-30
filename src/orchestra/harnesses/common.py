@@ -71,8 +71,8 @@ def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:
     ]
     sections.extend(_role_skill_sections(role.skills, request.skill_roots))
     sections.append(f"Goal: {request.goal.strip()}")
-    if role.prompt_addition:
-        sections.append(f"Role instructions: {role.prompt_addition.strip()}")
+    if role.dispatch_hint:
+        sections.append(f"Role instructions: {role.dispatch_hint.strip()}")
     if request.approved_context.strip():
         sections.append(f"Approved context: {request.approved_context.strip()}")
     if request.boundaries.strip():

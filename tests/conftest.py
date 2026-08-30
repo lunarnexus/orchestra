@@ -32,6 +32,7 @@ def fake_worker_script(fixture_dir: Path) -> Path:
 @pytest.fixture
 def runtime_files_factory(
     python_executable: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Any:
     def factory(
         tmp_path: Path,
@@ -39,11 +40,13 @@ def runtime_files_factory(
         *,
         auto_return: bool = True,
     ) -> tuple[Path, Path, Path]:
-        return write_runtime_files(
+        paths = write_runtime_files(
             tmp_path,
             python_executable,
             command,
             auto_return=auto_return,
         )
+        monkeypatch.setenv("ORCHESTRA_AGENT_CATALOG", str(paths[1]))
+        return paths
 
     return factory

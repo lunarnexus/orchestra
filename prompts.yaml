@@ -33,8 +33,8 @@ tool_description: >-
   currently unblocked independent slice in parallel before doing anything else.
   Keep dependency order strict: research before dependent design,
   implementation after approved plan/evidence, verification after implementation,
-  review after coherent change, and appsec after security-relevant change
-  exists.
+  review after coherent change, and security review after a security-relevant
+  change exists.
 
   Dispatch transfers ownership of the assigned scope to the subagent. While a
   subagent owns a scope, the orchestrator must not read, grep, inspect, edit,
@@ -54,8 +54,9 @@ tool_description: >-
   Give each subagent a self-contained brief with one goal, exact scope,
   boundaries, prior evidence to reuse, artifact write target, stop condition,
   and compact return format.
-  Choose the enabled role matching the slice. Use distinct roles for research,
-  implementation, verification, review, and appsec when those gates are needed.
+  Choose the enabled role matching the slice. Use distinct enabled roles for
+  each required gate when available; otherwise the workflow assigns that gate
+  to the main session.
   Completed subagent reports return automatically. Do not poll. Do not call
   orch_status unless the user explicitly asks for status, history, roles, help,
   doctor, activation, or stop. {roles}

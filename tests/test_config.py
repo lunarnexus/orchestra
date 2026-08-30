@@ -352,7 +352,7 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
     builder = catalog.roles["builder"]
     assert builder.harness_config == "pi"
     assert builder.harness == "pi"
-    assert builder.prompt_addition == (
+    assert builder.dispatch_hint == (
         "Implement the assigned task only. Stay in scope. Return files changed, checks run, "
         "results, blockers, and risks."
     )
@@ -364,7 +364,7 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("role_name", "expected_prompt_addition"),
+    ("role_name", "expected_dispatch_hint"),
     [
         (
             "builder",
@@ -416,13 +416,13 @@ def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
         ),
     ],
 )
-def test_root_agent_catalog_phase_1_role_prompt_additions_match_plan(
+def test_root_agent_catalog_phase_1_role_dispatch_hints_match_plan(
     role_name: str,
-    expected_prompt_addition: str,
+    expected_dispatch_hint: str,
 ) -> None:
     catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
 
-    assert catalog.roles[role_name].prompt_addition == expected_prompt_addition
+    assert catalog.roles[role_name].dispatch_hint == expected_dispatch_hint
 
 
 def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
@@ -632,9 +632,9 @@ roles:
     harness_fallback:
       - harness_config: pi
         model: gpt-4.1-mini
-    prompt_addition: Review only.
-    workflow_instruction: Use reviewer when the change needs an independent quality check.
-    main_session_instruction: Main session handles review recovery.
+    dispatch_hint: Review only.
+    enabled_workflow_hint: Use reviewer when the change needs an independent quality check.
+    disabled_workflow_hint: Main session handles review recovery.
     model: gpt-5
     profile: reviewer
     nested_dispatch_depth: 2
@@ -662,8 +662,8 @@ roles:
     assert reviewer.harness_fallback[0].agent is None
     assert reviewer.model == "gpt-5"
     assert reviewer.profile == "reviewer"
-    assert reviewer.workflow_instruction.startswith("Use reviewer")
-    assert reviewer.main_session_instruction == "Main session handles review recovery."
+    assert reviewer.enabled_workflow_hint.startswith("Use reviewer")
+    assert reviewer.disabled_workflow_hint == "Main session handles review recovery."
     assert reviewer.nested_dispatch_depth == 2
     assert reviewer.turn_limit == 30
     assert reviewer.soft_timeout == 840
@@ -829,8 +829,8 @@ roles:
             "roles:\n"
             "  worker:\n"
             "    harness_config: pi\n"
-            "    workflow_instruction: 123\n",
-            "'workflow_instruction' must be a non-empty string when provided",
+            "    enabled_workflow_hint: 123\n",
+            "'enabled_workflow_hint' must be a non-empty string when provided",
         ),
         (
             "harness_configs:\n"

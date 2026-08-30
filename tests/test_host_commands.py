@@ -75,38 +75,48 @@ def test_tool_info_payload_renders_role_order_and_omits_auto_only_roles(tmp_path
         context,
         catalog=replace(
             context.catalog,
-            default_role="builder",
+            default_role="intern",
             roles={
                 "planner": RoleConfig(
                     harness="pi",
                     command=["pi"],
                     enabled=False,
-                    main_session_instruction="Main session handles planning and sequencing.",
+                    disabled_workflow_hint="Main session handles planning and sequencing.",
                 ),
                 "builder": RoleConfig(
                     harness="pi",
                     command=["pi"],
-                    workflow_instruction="Use builder for implementation slices.",
+                    enabled_workflow_hint="Use builder for implementation slices.",
                 ),
                 "researcher": RoleConfig(harness="pi", command=["pi"], enabled=False),
                 "reviewer": RoleConfig(
                     harness="pi",
                     command=["pi"],
-                    workflow_instruction="Use reviewer to validate the slice.",
+                    enabled=False,
+                    enabled_workflow_hint="Use reviewer to validate the slice.",
+                    disabled_workflow_hint="Main session handles code-quality review.",
                 ),
                 "appsec": RoleConfig(
                     harness="pi",
                     command=["pi"],
-                    workflow_instruction="Use appsec to check security risk.",
+                    enabled=False,
+                    enabled_workflow_hint="Use appsec to check security risk.",
+                    disabled_workflow_hint=(
+                        "Main session handles security review when the change is security-relevant."
+                    ),
                 ),
                 "verifier": RoleConfig(
                     harness="pi",
                     command=["pi"],
                     enabled_mode="auto",
-                    workflow_instruction="Use verifier for acceptance checks.",
-                    main_session_instruction="Automatic verifier handles acceptance checks.",
+                    enabled_workflow_hint="Use verifier for acceptance checks.",
+                    disabled_workflow_hint="Automatic verifier handles acceptance checks.",
                 ),
-                "intern": RoleConfig(harness="pi", command=["pi"]),
+                "intern": RoleConfig(
+                    harness="pi",
+                    command=["pi"],
+                    enabled_mode="auto",
+                ),
                 "critic": RoleConfig(harness="pi", command=["pi"], enabled=False),
             },
         ),
@@ -118,16 +128,27 @@ def test_tool_info_payload_renders_role_order_and_omits_auto_only_roles(tmp_path
         "Workflow",
         "1. Main session handles planning and sequencing.",
         "2. Build: Use builder for implementation slices.",
-        "3. Review: Use reviewer to validate the slice.",
-        "4. Appsec: Use appsec to check security risk.",
+        "3. Main session handles code-quality review.",
+        "4. Main session handles security review when the change is security-relevant.",
     ]
     assert "verifier" not in payload["workflow_instruction"]
     assert "acceptance checks" not in payload["workflow_instruction"]
     assert "researcher" not in payload["workflow_instruction"]
     assert "intern" not in payload["workflow_instruction"]
     assert "critic" not in payload["workflow_instruction"]
-    assert "verifier" not in payload["description"]
-    assert "verifier" not in payload["role_description"]
+    for hidden_role in (
+        "planner",
+        "researcher",
+        "verifier",
+        "reviewer",
+        "appsec",
+        "intern",
+        "critic",
+    ):
+        assert hidden_role not in payload["description"]
+        assert hidden_role not in payload["role_description"]
+    assert "Default: intern" not in payload["description"]
+    assert "Default: intern" not in payload["role_description"]
     assert "acceptance checks" not in payload["description"]
     assert "acceptance checks" not in payload["role_description"]
     assert payload["prompt_snippet"] == ""
@@ -144,17 +165,17 @@ def test_tool_info_payload_places_custom_role_at_catalog_position(tmp_path: Path
                 "builder": RoleConfig(
                     harness="pi",
                     command=["pi"],
-                    workflow_instruction="Use builder for implementation slices.",
+                    enabled_workflow_hint="Use builder for implementation slices.",
                 ),
                 "custom": RoleConfig(
                     harness="pi",
                     command=["pi"],
-                    workflow_instruction="Use custom role for specialized work.",
+                    enabled_workflow_hint="Use custom role for specialized work.",
                 ),
                 "reviewer": RoleConfig(
                     harness="pi",
                     command=["pi"],
-                    workflow_instruction="Use reviewer to validate the slice.",
+                    enabled_workflow_hint="Use reviewer to validate the slice.",
                 ),
             },
         ),

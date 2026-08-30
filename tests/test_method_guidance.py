@@ -40,7 +40,7 @@ def test_orchestrator_skill_scopes_verifier_failure_fixers() -> None:
 def test_default_catalog_reviewer_remains_read_only_without_duplicate_tests() -> None:
     catalog = yaml.safe_load(Path("agent-catalog.yaml").read_text(encoding="utf-8"))
 
-    reviewer_prompt = catalog["roles"]["reviewer"]["prompt_addition"]
+    reviewer_prompt = catalog["roles"]["reviewer"]["dispatch_hint"]
     assert "Stay read-only" in reviewer_prompt
     assert "Run no test commands" in reviewer_prompt
     assert "Return the compact schema only" in reviewer_prompt
@@ -122,7 +122,9 @@ def test_auto_verifier_assignment_stays_narrow_and_builder_specific() -> None:
 def test_orchestrator_delegates_package_installation_to_builder() -> None:
     orchestrator_skill = Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8")
     builder_skill = Path("skills/builder/SKILL.md").read_text(encoding="utf-8")
-    prompts = Path("prompts.yaml").read_text(encoding="utf-8")
+    prompts = yaml.safe_load(Path("prompts.yaml").read_text(encoding="utf-8"))[
+        "tool_description"
+    ]
 
     assert "pip install" in orchestrator_skill
     assert "npm install" in orchestrator_skill
@@ -130,7 +132,8 @@ def test_orchestrator_delegates_package_installation_to_builder() -> None:
     assert "does not run the install command itself" in orchestrator_skill
     assert "official project artifact sections" in orchestrator_skill
     assert "Builder owns implementation setup commands" in builder_skill
-    assert "package installation, dependency setup" in prompts
+    assert "install packages" in prompts
+    assert "update dependencies" in prompts
 
 
 def test_default_return_format_tracks_reused_evidence() -> None:

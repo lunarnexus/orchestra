@@ -41,7 +41,7 @@ roles:
     model: lmstudio/qwen/qwen3.8-27b
     skills:
     - builder
-    prompt_addition: Implement the assigned task only. Stay in scope. Run focused
+    dispatch_hint: Implement the assigned task only. Stay in scope. Run focused
       implementation commands. Update only assigned artifact sections. Return the
       compact schema only.
     enabled: true
@@ -53,7 +53,7 @@ roles:
     model: lmstudio/qwen/qwen3.8-27b
     skills:
     - verifier
-    prompt_addition: Independently prove whether the work satisfies its scope and
+    dispatch_hint: Independently prove whether the work satisfies its scope and
       acceptance criteria using fresh evidence. Stay read-only. Return verdict, evidence,
       missing checks, blockers, and risks. Do not write role-owned `.md` artifacts by default.
     enabled: auto
@@ -65,7 +65,7 @@ roles:
     model: lmstudio/qwen/qwen3.8-27b
     skills:
     - reviewer
-    prompt_addition: Independently review whether the change is correct, maintainable,
+    dispatch_hint: Independently review whether the change is correct, maintainable,
       appropriately scoped, and ready to merge. Stay read-only for source code. Run
       no test commands. Return the compact schema only.
     enabled: true
@@ -75,7 +75,7 @@ roles:
   researcher:
     harness_config: pi
     model: lmstudio/qwen/qwen3.8-27b
-    prompt_addition: Gather evidence with sources from docs, web, or code. Do not
+    dispatch_hint: Gather evidence with sources from docs, web, or code. Do not
       change code. Update only the explicitly assigned RESEARCH.md section when requested. Return
       the compact schema only.
     enabled: true
@@ -87,7 +87,7 @@ roles:
   intern:
     harness_config: pi
     model: lmstudio/qwen/qwen3.8-27b
-    prompt_addition: Focus on the assigned task and return a compact result.
+    dispatch_hint: Focus on the assigned task and return a compact result.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
@@ -97,7 +97,7 @@ roles:
     model: lmstudio/qwen/qwen3.8-27b
     skills:
     - appsec
-    prompt_addition: Independently identify realistic vulnerabilities across changed
+    dispatch_hint: Independently identify realistic vulnerabilities across changed
       trust boundaries. Stay read-only for source code. Return the compact schema only.
     enabled: true
     env:
@@ -108,7 +108,7 @@ roles:
     model: openai-codex/gpt-5.5
     skills:
     - planner
-    prompt_addition: Plan the work. Ask numbered questions for unknowns. May dispatch
+    dispatch_hint: Plan the work. Ask numbered questions for unknowns. May dispatch
       researchers for facts, docs, web, and code evidence. Return concise plan findings
       and open questions.
     enabled: false
@@ -119,7 +119,7 @@ roles:
   critic:
     harness_config: hermes
     profile: mina
-    prompt_addition: Focus on the assigned task and return a compact result.
+    dispatch_hint: Focus on the assigned task and return a compact result.
     enabled: false
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'

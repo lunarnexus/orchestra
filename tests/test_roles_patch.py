@@ -33,7 +33,7 @@ def test_patch_role_setting_text_preserves_comments_and_unrelated_formatting() -
         "\n"
         "  reviewer:\n"
         "    harness_config: hermes\n"
-        "    prompt_addition: keep  two  spaces\n"
+        "    dispatch_hint: keep  two  spaces\n"
     )
 
     patched = patch_role_setting_text(
@@ -52,7 +52,7 @@ def test_patch_role_setting_text_preserves_comments_and_unrelated_formatting() -
         "\n"
         "  reviewer:\n"
         "    harness_config: hermes\n"
-        "    prompt_addition: keep  two  spaces\n"
+        "    dispatch_hint: keep  two  spaces\n"
     )
 
 
@@ -213,6 +213,7 @@ def test_set_role_setting_rejects_unsupported_valid_yaml_shape(
                 tool_goal_description="",
                 tool_role_description="",
                 tool_task_label_description="",
+                main_session_ownership_guidance="",
                 status_description="",
                 status_action_description="",
                 status_limit_description="",
@@ -279,6 +280,7 @@ def test_set_role_setting_rejects_invalid_value_without_changing_file(
                 tool_goal_description="",
                 tool_role_description="",
                 tool_task_label_description="",
+                main_session_ownership_guidance="",
                 status_description="",
                 status_action_description="",
                 status_limit_description="",
@@ -341,7 +343,6 @@ def test_replace_catalog_text_atomically_replaces_with_candidate(
 
 
 def test_set_role_setting_uses_targeted_catalog_patch_and_preserves_comments(
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "agent-catalog.yaml"
@@ -361,7 +362,7 @@ def test_set_role_setting_uses_targeted_catalog_patch_and_preserves_comments(
         "\n"
         "  reviewer:\n"
         "    harness_config: hermes\n"
-        "    prompt_addition: keep  two  spaces\n",
+        "    dispatch_hint: keep  two  spaces\n",
         encoding="utf-8",
     )
     config = AppConfig(
@@ -374,6 +375,7 @@ def test_set_role_setting_uses_targeted_catalog_patch_and_preserves_comments(
             tool_goal_description="",
             tool_role_description="",
             tool_task_label_description="",
+            main_session_ownership_guidance="",
             status_description="",
             status_action_description="",
             status_limit_description="",
@@ -406,11 +408,6 @@ def test_set_role_setting_uses_targeted_catalog_patch_and_preserves_comments(
         paths=OrchestraPaths(config_path=tmp_path / "config.yaml", catalog_path=catalog_path),
     )
 
-    monkeypatch.setattr(
-        "orchestra.roles._write_catalog_mapping",
-        lambda *args, **kwargs: pytest.fail("unexpected full-file write"),
-    )
-
     result = set_role_setting(context, "builder", "harness", "hermes")
 
     assert "Updated role builder: harness_config=hermes" in result
@@ -430,5 +427,5 @@ def test_set_role_setting_uses_targeted_catalog_patch_and_preserves_comments(
         "\n"
         "  reviewer:\n"
         "    harness_config: hermes\n"
-        "    prompt_addition: keep  two  spaces\n"
+        "    dispatch_hint: keep  two  spaces\n"
     )

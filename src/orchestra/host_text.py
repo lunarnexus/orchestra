@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from orchestra.context import AppContext, AppError
 from orchestra.harnesses.common import SKILL_FILENAME, SKILL_LIBRARY_DIR
 from orchestra.init import _find_source_root
-from orchestra.roles import format_roles, format_tool_roles, format_tool_workflow
+from orchestra.roles import format_roles
 
 if TYPE_CHECKING:
     pass
@@ -17,7 +16,6 @@ if TYPE_CHECKING:
 __all__ = [
     "DISPATCH_TIMEOUT_ERROR",
     "ROLE_USAGE",
-    "ToolInfo",
     "dispatch_ack_payload",
     "format_command_echo",
     "format_dispatch_ack",
@@ -26,7 +24,6 @@ __all__ = [
     "format_progress_notification",
     "progress_notification_payload",
     "render_orchestrator_skill_message",
-    "tool_info",
 ]
 
 CONTRACT_VERSION = 1
@@ -54,30 +51,6 @@ Enabled values:
 DISPATCH_TIMEOUT_ERROR = (
     "timeout is not accepted by orch_dispatch; configured default_timeout applies."
 )
-
-
-@dataclass(frozen=True)
-class ToolInfo:
-    description: str
-    prompt_snippet: str
-    prompt_guidelines: list[str]
-    goal_description: str
-    role_description: str
-    workflow_instruction: str
-    main_session_ownership_guidance: str
-    task_label_description: str
-    status_description: str
-    status_action_description: str
-    status_limit_description: str
-    status_run_id_description: str
-    status_role_description: str
-    status_setting_description: str
-    status_value_description: str
-    dispatch_timeout_error: str
-    budget_trigger_label: str
-    soft_timeout_block_reason: str
-    tools_enabled_by_default: bool
-
 
 def _app_error(message: str) -> Exception:
     return AppError(message)
@@ -166,36 +139,6 @@ def format_command_echo(raw_command: str) -> str:
         return "/orch"
     return f"/orch {raw}"
 
-
-def tool_info(context: AppContext) -> ToolInfo:
-    roles = format_tool_roles(context)
-    workflow_instruction = format_tool_workflow(context)
-    prompts = context.config.prompts
-    return ToolInfo(
-        description=prompts.tool_description.format(roles=roles)
-        + "\n\n"
-        + workflow_instruction
-        + "\n\n"
-        + prompts.main_session_ownership_guidance,
-        prompt_snippet="",
-        prompt_guidelines=[],
-        goal_description=prompts.tool_goal_description,
-        role_description=prompts.tool_role_description.format(roles=roles),
-        workflow_instruction=workflow_instruction,
-        main_session_ownership_guidance=prompts.main_session_ownership_guidance,
-        task_label_description=prompts.tool_task_label_description,
-        status_description=prompts.status_description,
-        status_action_description=prompts.status_action_description,
-        status_limit_description=prompts.status_limit_description,
-        status_run_id_description=prompts.status_run_id_description,
-        status_role_description=prompts.status_role_description,
-        status_setting_description=prompts.status_setting_description,
-        status_value_description=prompts.status_value_description,
-        dispatch_timeout_error=DISPATCH_TIMEOUT_ERROR,
-        budget_trigger_label=prompts.budget_trigger_label,
-        soft_timeout_block_reason=prompts.soft_timeout_block_reason,
-        tools_enabled_by_default=context.config.tools_enabled_by_default,
-    )
 
 
 def render_orchestrator_skill_message(

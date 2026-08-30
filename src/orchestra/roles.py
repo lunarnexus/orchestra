@@ -67,13 +67,13 @@ def format_tool_workflow(context: AppContext) -> str:
         if role.enabled_mode == "auto":
             continue
         if role.enabled:
-            instruction = role.workflow_instruction.strip()
+            instruction = role.enabled_workflow_hint.strip()
             if not instruction:
                 continue
             step += 1
             lines.append(f"{step}. {_workflow_label(role_name)}: {instruction}")
             continue
-        instruction = role.main_session_instruction.strip()
+        instruction = role.disabled_workflow_hint.strip()
         if not instruction:
             continue
         step += 1
@@ -230,20 +230,6 @@ def format_roles(context: AppContext, *, include_disabled: bool = False) -> str:
     return "\n".join(lines)
 
 
-def _load_catalog_mapping(path: Path) -> dict[str, object]:
-    try:
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise _app_error(f"agent catalog not found: {path}") from exc
-    if not isinstance(loaded, dict):
-        raise _app_error(f"agent catalog must contain a mapping: {path}")
-    return loaded
-
-
-def _write_catalog_mapping(path: Path, catalog: dict[str, object]) -> None:
-    path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
-
-
 _ROLE_KEY_LINE = re.compile(r"^(?P<indent>  )(?P<name>[^:#\n]+):(?P<trailing>.*)$")
 _SETTING_LINE = re.compile(r"^(?P<indent>    )(?P<key>[A-Za-z0-9_][A-Za-z0-9_.-]*):(?P<value>.*)$")
 
@@ -372,21 +358,12 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
     if role_key not in context.catalog.roles:
         raise _app_error(f"unknown role: {role_key}")
 
-    raw_catalog = _load_catalog_mapping(context.paths.catalog_path)
-    roles_raw = raw_catalog.get("roles")
-    if not isinstance(roles_raw, dict):
-        raise _app_error("agent catalog roles must be a mapping")
-    role_raw = roles_raw.get(role_key)
-    if not isinstance(role_raw, dict):
-        raise _app_error(f"role '{role_key}' must be a mapping")
-
     if setting == "enabled":
         enabled, enabled_mode = _parse_user_enabled_mode(value, setting_name="enabled")
         if role_key == context.catalog.default_role and enabled_mode == "auto":
             raise _app_error(f"cannot make default role auto-only: {role_key}")
         if not enabled and role_key == context.catalog.default_role:
             raise _app_error(f"cannot disable default role: {role_key}")
-        role_raw["enabled"] = "auto" if enabled_mode == "auto" else enabled
         setting_key = "enabled"
         setting_value = "auto" if enabled_mode == "auto" else str(enabled).lower()
         changed = f"enabled={setting_value}"
@@ -394,7 +371,6 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
         model = value.strip()
         if not model:
             raise _app_error("model must be a non-empty string")
-        role_raw["model"] = model
         setting_key = "model"
         setting_value = model
         changed = f"model={model}"
@@ -402,7 +378,6 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
         profile = value.strip()
         if not profile:
             raise _app_error("profile must be a non-empty string")
-        role_raw["profile"] = profile
         setting_key = "profile"
         setting_value = profile
         changed = f"profile={profile}"
@@ -410,7 +385,6 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
         agent = value.strip()
         if not agent:
             raise _app_error("agent must be a non-empty string")
-        role_raw["agent"] = agent
         setting_key = "agent"
         setting_value = agent
         changed = f"agent={agent}"
@@ -418,12 +392,8 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
         harness_config = value.strip()
         if not harness_config:
             raise _app_error("harness must be a non-empty string")
-        harness_configs_raw = raw_catalog.get("harness_configs")
-        if not isinstance(harness_configs_raw, dict):
-            raise _app_error("agent catalog harness_configs must be a mapping")
-        if harness_config not in harness_configs_raw:
+        if harness_config not in context.catalog.harness_configs:
             raise _app_error(f"unknown harness config: {harness_config}")
-        role_raw["harness_config"] = harness_config
         setting_key = "harness_config"
         setting_value = harness_config
         changed = f"harness_config={harness_config}"
@@ -433,6 +403,13 @@ def set_role_setting(context: AppContext, role_name: str, setting: str, value: s
         )
 
     original_text = context.paths.catalog_path.read_text(encoding="utf-8")
+    raw_catalog = yaml.safe_load(original_text)
+    roles_raw = raw_catalog.get("roles") if isinstance(raw_catalog, dict) else None
+    if not isinstance(roles_raw, dict):
+        raise _app_error("agent catalog roles must be a mapping")
+    if not isinstance(roles_raw.get(role_key), dict):
+        raise _app_error(f"role '{role_key}' must be a mapping")
+
     candidate_text = patch_role_setting_text(
         original_text,
         role_name=role_key,

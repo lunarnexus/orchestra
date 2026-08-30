@@ -13,4 +13,4 @@ roles:
   builder:
     harness_config: pi
     model: lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved
-    prompt_addition: Implement the assigned task only. Stay in scope. Return files changed, checks run, results, blockers, and risks.
+    dispatch_hint: Implement the assigned task only. Stay in scope. Return files changed, checks run, results, blockers, and risks.

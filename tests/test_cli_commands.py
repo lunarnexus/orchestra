@@ -53,6 +53,7 @@ def load_root_prompt_config() -> PromptConfig:
         tool_goal_description=data["tool_goal_description"],
         tool_role_description=data["tool_role_description"],
         tool_task_label_description=data["tool_task_label_description"],
+        main_session_ownership_guidance=data["main_session_ownership_guidance"],
         status_description=data["status_description"],
         status_action_description=data["status_action_description"],
         status_limit_description=data["status_limit_description"],
@@ -744,7 +745,7 @@ def test_roles_lists_configured_worker_roles(
 
     assert exit_code == 0
     assert "Configured roles" in output
-    assert "Default: builder" in output
+    assert "Default: builder" not in output
     assert "  D  builder [pi]" in output
     assert "      harness: pi" in output
 
@@ -1562,17 +1563,17 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
 
     assert default_exit_code == 0
     assert "Configured roles" in default_output
-    assert "Default: reviewer" in default_output
+    assert "Default: reviewer" not in default_output
     assert "  D  reviewer [hermes]" in default_output
-    assert "  ✓  verifier [pi]" in default_output
+    assert "  A  verifier [pi]" in default_output
     assert "      enabled: auto" in default_output
     assert "      dispatch: auto-only" in default_output
     assert "  ✗  worker [pi]" not in default_output
 
     assert all_exit_code == 0
-    assert "Default: reviewer" in all_output
+    assert "Default: reviewer" not in all_output
     assert "  D  reviewer [hermes]" in all_output
-    assert "  ✓  verifier [pi]" in all_output
+    assert "  A  verifier [pi]" in all_output
     assert "      enabled: auto" in all_output
     assert "      dispatch: auto-only" in all_output
     assert "  ✗  worker [pi]" in all_output
@@ -1752,7 +1753,7 @@ def test_roles_command_accepts_auto_enabled_value(
 
     assert exit_code == 0
     assert "Updated role reviewer: enabled=auto" in output
-    assert "  ✓  reviewer [pi]" in output
+    assert "  A  reviewer [pi]" in output
     assert "      enabled: auto" in output
     assert "      dispatch: auto-only" in output
     assert catalog["roles"]["reviewer"]["enabled"] == "auto"
@@ -2109,15 +2110,17 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert "  D  reviewer [hermes]" not in help_output
     assert "      model: gpt-5" not in help_output
     assert "  ✗  critic" not in help_output
-    assert "  ✓  worker [pi]" in tool_info["description"]
-    assert "  D  reviewer [hermes]" in tool_info["description"]
-    assert "      model: gpt-5" in tool_info["description"]
+    assert "Selectable roles" in tool_info["description"]
+    assert "- worker" in tool_info["description"]
+    assert "- reviewer (default)" in tool_info["description"]
+    assert "model: gpt-5" not in tool_info["description"]
     assert tool_info["roleDescription"].startswith("Optional subagent capability.")
     assert "enabled role that best matches" in tool_info["roleDescription"]
-    assert "  ✓  worker [pi]" in tool_info["roleDescription"]
-    assert "  D  reviewer [hermes]" in tool_info["roleDescription"]
-    assert "  ✗  critic" not in tool_info["description"]
-    assert "  ✗  critic" not in tool_info["roleDescription"]
+    assert "- worker" in tool_info["roleDescription"]
+    assert "- reviewer (default)" in tool_info["roleDescription"]
+    assert "critic" not in tool_info["description"]
+    assert "critic" not in tool_info["roleDescription"]
+    assert "Legend:" not in tool_info["description"]
     assert tool_info["statusDescription"].startswith(
         "Use orch_status only when the user explicitly asks"
     )
@@ -2377,7 +2380,7 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
                         "harness_config": "hermes",
                         "harness_fallback": [{"harness_config": "pi", "model": "fallback-model"}],
                         "model": "requested-model",
-                        "prompt_addition": "Review only.",
+                        "dispatch_hint": "Review only.",
                         "skills": ["reviewer"],
                         "nested_dispatch_depth": 2,
                         "env": {"ROLE_ENV_TEST": "configured"},

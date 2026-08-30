@@ -111,9 +111,9 @@ class RoleConfig:
     harness: str = ""
     command: list[str] | None = None
     harness_fallback: tuple[RoleHarnessFallback, ...] = ()
-    prompt_addition: str = ""
-    workflow_instruction: str = ""
-    main_session_instruction: str = ""
+    dispatch_hint: str = ""
+    enabled_workflow_hint: str = ""
+    disabled_workflow_hint: str = ""
     model: str | None = None
     profile: str | None = None
     agent: str | None = None
@@ -343,10 +343,12 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                     )
                     or []
                 ),
-                prompt_addition=_get_optional_string(role_raw, "prompt_addition") or "",
-                workflow_instruction=_get_optional_string(role_raw, "workflow_instruction") or "",
-                main_session_instruction=(
-                    _get_optional_string(role_raw, "main_session_instruction") or ""
+                dispatch_hint=_get_optional_string(role_raw, "dispatch_hint") or "",
+                enabled_workflow_hint=(
+                    _get_optional_string(role_raw, "enabled_workflow_hint") or ""
+                ),
+                disabled_workflow_hint=(
+                    _get_optional_string(role_raw, "disabled_workflow_hint") or ""
                 ),
                 model=_get_optional_string(role_raw, "model"),
                 profile=_get_optional_string(role_raw, "profile"),
@@ -386,10 +388,12 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                 )
                 or []
             ),
-            prompt_addition=_get_optional_string(role_raw, "prompt_addition") or "",
-            workflow_instruction=_get_optional_string(role_raw, "workflow_instruction") or "",
-            main_session_instruction=(
-                _get_optional_string(role_raw, "main_session_instruction") or ""
+            dispatch_hint=_get_optional_string(role_raw, "dispatch_hint") or "",
+            enabled_workflow_hint=(
+                _get_optional_string(role_raw, "enabled_workflow_hint") or ""
+            ),
+            disabled_workflow_hint=(
+                _get_optional_string(role_raw, "disabled_workflow_hint") or ""
             ),
             model=_get_optional_string(role_raw, "model"),
             profile=_get_optional_string(role_raw, "profile"),
@@ -610,9 +614,9 @@ def _validate_role_keys(
 ) -> None:
     allowed_keys = {
         "harness_fallback",
-        "prompt_addition",
-        "workflow_instruction",
-        "main_session_instruction",
+        "dispatch_hint",
+        "enabled_workflow_hint",
+        "disabled_workflow_hint",
         "model",
         "profile",
         "agent",

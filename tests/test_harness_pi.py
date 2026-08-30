@@ -72,7 +72,7 @@ def test_pi_harness_builds_command_without_shell_joining(
     role = RoleConfig(
         harness="pi",
         model=model,
-        prompt_addition="Focus on the assigned task.",
+        dispatch_hint="Focus on the assigned task.",
         command=["pi", "--model", "{model}", "-p", "{prompt}"],
     )
 
@@ -86,7 +86,7 @@ def test_pi_harness_builds_scoped_prompt(worker_request: WorkerRequest) -> None:
     harness = PiHarness()
     role = RoleConfig(
         harness="pi",
-        prompt_addition="Focus on the assigned task.",
+        dispatch_hint="Focus on the assigned task.",
         command=["pi", "-p", "{prompt}"],
     )
 
@@ -238,7 +238,7 @@ def test_pi_harness_uses_shared_prompt_and_command_helpers(worker_request: Worke
         harness="pi",
         model="test-model",
         profile="test-profile",
-        prompt_addition="Focus on the assigned task.",
+        dispatch_hint="Focus on the assigned task.",
         command=["pi", "--model", "{model}", "--profile", "{profile}", "-p", "{prompt}"],
     )
 
