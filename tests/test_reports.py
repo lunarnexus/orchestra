@@ -9,6 +9,8 @@ from orchestra.config import load_app_config
 from orchestra.context import load_context
 from orchestra.reports import (
     SessionStatusDetails,
+    aggregate_completed_run_accounting,
+    build_session_report,
     consume_pending_session_report,
     format_orchestrator_return,
     format_run_report,
@@ -66,6 +68,140 @@ def test_return_gives_status_owned_hint(
         assert "next:" not in report
     else:
         assert f"next: {expected_hint}" in report
+
+
+def test_aggregate_completed_run_accounting_handles_empty_missing_partial_and_populated(
+    tmp_path: Path,
+) -> None:
+    empty = aggregate_completed_run_accounting([])
+    assert empty == {
+        "completed_runs": 0,
+        "elapsed_seconds": None,
+        "elapsed_seconds_complete": True,
+        "input_tokens": None,
+        "output_tokens": None,
+        "cache_read_tokens": None,
+        "cache_write_tokens": None,
+        "tokens_complete": True,
+        "total_tokens": None,
+    }
+
+    missing = aggregate_completed_run_accounting(
+        [
+            RunRecord(
+                run_id="missing",
+                orchestrator_session_id="manual:agg",
+                harness="pi",
+                role="builder",
+                task_label="missing",
+                log_path=tmp_path / "missing.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                started_at="2026-01-01T00:00:00Z",
+                ended_at="2026-01-01T00:00:05Z",
+                status=STATUS_DONE,
+            )
+        ]
+    )
+    assert missing == {
+        "completed_runs": 1,
+        "elapsed_seconds": 5,
+        "elapsed_seconds_complete": True,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "tokens_complete": False,
+        "total_tokens": None,
+    }
+
+    partial = aggregate_completed_run_accounting(
+        [
+            RunRecord(
+                run_id="partial-a",
+                orchestrator_session_id="manual:agg",
+                harness="pi",
+                role="builder",
+                task_label="partial-a",
+                log_path=tmp_path / "partial-a.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                started_at="2026-01-01T00:00:00Z",
+                ended_at="2026-01-01T00:00:02Z",
+                status=STATUS_DONE,
+                input_tokens=10,
+                output_tokens=5,
+            ),
+            RunRecord(
+                run_id="partial-b",
+                orchestrator_session_id="manual:agg",
+                harness="pi",
+                role="builder",
+                task_label="partial-b",
+                log_path=tmp_path / "partial-b.jsonl",
+                created_at="2026-01-01T00:00:01Z",
+                started_at="2026-01-01T00:00:01Z",
+                ended_at="2026-01-01T00:00:03Z",
+                status=STATUS_DONE,
+                input_tokens=7,
+            ),
+        ]
+    )
+    assert partial["completed_runs"] == 2
+    assert partial["elapsed_seconds"] == 4
+    assert partial["elapsed_seconds_complete"] is True
+    assert partial["input_tokens"] == 17
+    assert partial["output_tokens"] == 5
+    assert partial["cache_read_tokens"] == 0
+    assert partial["cache_write_tokens"] == 0
+    assert partial["tokens_complete"] is False
+    assert partial["total_tokens"] is None
+
+    populated = aggregate_completed_run_accounting(
+        [
+            RunRecord(
+                run_id="full-a",
+                orchestrator_session_id="manual:agg",
+                harness="pi",
+                role="builder",
+                task_label="full-a",
+                log_path=tmp_path / "full-a.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                started_at="2026-01-01T00:00:00Z",
+                ended_at="2026-01-01T00:00:02Z",
+                status=STATUS_DONE,
+                input_tokens=10,
+                output_tokens=5,
+                cache_read_tokens=3,
+                cache_write_tokens=2,
+            ),
+            RunRecord(
+                run_id="full-b",
+                orchestrator_session_id="manual:agg",
+                harness="pi",
+                role="builder",
+                task_label="full-b",
+                log_path=tmp_path / "full-b.jsonl",
+                created_at="2026-01-01T00:00:01Z",
+                started_at="2026-01-01T00:00:01Z",
+                ended_at="2026-01-01T00:00:04Z",
+                status=STATUS_DONE,
+                input_tokens=7,
+                output_tokens=1,
+                cache_read_tokens=4,
+                cache_write_tokens=6,
+            ),
+        ]
+    )
+    assert populated == {
+        "completed_runs": 2,
+        "elapsed_seconds": 5,
+        "elapsed_seconds_complete": True,
+        "input_tokens": 17,
+        "output_tokens": 6,
+        "cache_read_tokens": 7,
+        "cache_write_tokens": 8,
+        "tokens_complete": True,
+        "total_tokens": 38,
+    }
 
 
 def test_return_hints_come_from_prompts_yaml(
@@ -214,6 +350,10 @@ def test_consolidated_report_suppresses_auto_verify_next_hint_for_child_run(
         status=STATUS_DONE,
         result_summary="builder ok",
         result_output="builder full return",
+        input_tokens=21,
+        output_tokens=9,
+        cache_read_tokens=4,
+        cache_write_tokens=2,
     )
     verifier_run = RunRecord(
         run_id="verifier-run",
@@ -236,10 +376,43 @@ def test_consolidated_report_suppresses_auto_verify_next_hint_for_child_run(
 
     assert report.startswith("[orchestra: 2 subagents returned]\n\n")
     assert f"[orchestra: builder {builder_run.run_id} success]" in report
+    assert "tokens: input=21 output=9 cache_read=4 cache_write=2" in report
     assert f"[orchestra: verifier {verifier_run.run_id} success]" in report
     assert "artifact:" not in report
     verifier_block = report.split(f"[orchestra: verifier {verifier_run.run_id} success]", 1)[1]
     assert "next:" not in verifier_block.split("\n\n", 1)[0]
+
+
+def test_build_session_report_includes_aggregate_accounting_totals(
+    tmp_path: Path,
+) -> None:
+    report = build_session_report(
+        "manual:report",
+        [
+            RunRecord(
+                run_id="done-run",
+                orchestrator_session_id="manual:report",
+                harness="pi",
+                role="builder",
+                task_label="builder task",
+                log_path=tmp_path / "done.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                started_at="2026-01-01T00:00:00Z",
+                ended_at="2026-01-01T00:00:04Z",
+                status=STATUS_DONE,
+                input_tokens=10,
+                output_tokens=5,
+                cache_read_tokens=2,
+                cache_write_tokens=1,
+            )
+        ],
+        active_remaining=0,
+    )
+
+    assert "reported_runs: 1" in report
+    assert "accounting_completed_runs: 1" in report
+    assert "accounting_elapsed_seconds: 4" in report
+    assert "accounting_total_tokens: 18" in report
 
 
 def test_consolidated_report_surfaces_auto_verify_dispatch_failure_without_full_return_load(

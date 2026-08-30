@@ -10,7 +10,12 @@ from typing import TYPE_CHECKING
 
 from orchestra.config import PromptConfig
 from orchestra.context import CONTRACT_VERSION, AppContext, AppError
-from orchestra.reports import clean_result_summary, format_run_report, session_status_details
+from orchestra.reports import (
+    aggregate_completed_run_accounting,
+    clean_result_summary,
+    format_run_report,
+    session_status_details,
+)
 from orchestra.session_mode import default_main_session_mode, resolve_main_session_mode
 from orchestra.state import STATUS_INCOMPLETE, RunRecord
 
@@ -52,8 +57,45 @@ def _append_session_status_details(lines: list[str], details: SessionStatusDetai
     )
 
 
+def _token_accounting_payload(run: RunRecord) -> dict[str, int | None]:
+    return {
+        "input_tokens": run.input_tokens,
+        "output_tokens": run.output_tokens,
+        "cache_read_tokens": run.cache_read_tokens,
+        "cache_write_tokens": run.cache_write_tokens,
+    }
+
+
+def _aggregate_accounting_payload(runs: list[RunRecord]) -> dict[str, int | bool | None]:
+    return aggregate_completed_run_accounting(runs)
+
+
+def _append_accounting_totals(lines: list[str], accounting: dict[str, int | bool | None]) -> None:
+    lines.append(f"accounting_elapsed_seconds_complete: {accounting['elapsed_seconds_complete']}")
+    lines.append(f"accounting_tokens_complete: {accounting['tokens_complete']}")
+    lines.append(f"accounting_completed_runs: {accounting['completed_runs']}")
+    lines.append(f"accounting_elapsed_seconds: {accounting['elapsed_seconds']}")
+    lines.append(f"accounting_input_tokens: {accounting['input_tokens']}")
+    lines.append(f"accounting_output_tokens: {accounting['output_tokens']}")
+    lines.append(f"accounting_cache_read_tokens: {accounting['cache_read_tokens']}")
+    lines.append(f"accounting_cache_write_tokens: {accounting['cache_write_tokens']}")
+    lines.append(f"accounting_total_tokens: {accounting['total_tokens']}")
+
+
 def _compact_active_run_line(run: RunRecord, *, include_owner: bool = False) -> str:
     parts = [f"- {run.run_id}", run.role, run.status, f"task={json.dumps(run.task_label)}"]
+    token_bits = [
+        bit
+        for bit in (
+            f"input={run.input_tokens}" if run.input_tokens is not None else None,
+            f"output={run.output_tokens}" if run.output_tokens is not None else None,
+            f"cache_read={run.cache_read_tokens}" if run.cache_read_tokens is not None else None,
+            f"cache_write={run.cache_write_tokens}" if run.cache_write_tokens is not None else None,
+        )
+        if bit is not None
+    ]
+    if token_bits:
+        parts.append("tokens=" + ",".join(token_bits))
     if include_owner:
         parts.append(f"owner={run.orchestrator_session_id}")
     if run.cycle_id:
@@ -256,6 +298,7 @@ def status_payload(context: AppContext, session_id: str | None = None) -> dict[s
     per_session_limit = context.config.concurrency.per_session_limit
     if session_id is not None:
         _require_session_id(session_id)
+
     payload: dict[str, object] = {
         "contract_version": CONTRACT_VERSION,
         "kind": "status",
@@ -277,6 +320,9 @@ def status_payload(context: AppContext, session_id: str | None = None) -> dict[s
         },
     }
     if session_id is None:
+        payload["accounting"] = _aggregate_accounting_payload(
+            context.store.list_all_runs(limit=10_000_000)
+        )
         payload["active_runs"] = {
             "count": len(global_runs),
             "limit": global_limit,
@@ -310,6 +356,10 @@ def status_payload(context: AppContext, session_id: str | None = None) -> dict[s
         return payload
 
     lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
+    accounting_runs = _list_runs_for_session_ids(
+        context, lineage_session_ids, limit=10_000_000
+    )
+    payload["accounting"] = _aggregate_accounting_payload(accounting_runs)
     runs = _list_active_runs_for_session_ids(context, lineage_session_ids)
     role_counts: dict[str, int] = {}
     for run in runs:
@@ -328,7 +378,9 @@ def status_payload(context: AppContext, session_id: str | None = None) -> dict[s
                         "role": run.role,
                         "status": run.status,
                         "task_label": run.task_label,
+                        "owner": run.orchestrator_session_id,
                         "model": run.model,
+                        **_token_accounting_payload(run),
                         **(
                             {
                                 "cycle_id": run.cycle_id,
@@ -380,6 +432,12 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
             for model in sorted(model_limits):
                 active = sum(1 for run in global_runs if run.model == model)
                 lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
+        _append_accounting_totals(
+            lines,
+            _aggregate_accounting_payload(
+                context.store.list_all_runs(limit=10_000_000)
+            ),
+        )
         if not global_runs:
             lines.append("status: no active runs")
             return "\n".join(lines)
@@ -411,6 +469,14 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
             active = sum(1 for run in runs if run.model == model)
             lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
     details = session_status_details(context, lineage_session_ids, active_runs=runs)
+    _append_accounting_totals(
+        lines,
+        _aggregate_accounting_payload(
+            _list_runs_for_session_ids(
+                context, lineage_session_ids, limit=10_000_000
+            )
+        ),
+    )
     if not runs:
         lines.append("status: no active runs")
         _append_session_status_details(lines, details)
@@ -583,6 +649,7 @@ def format_history(context: AppContext, session_id: str, limit: int) -> str:
         lines.append(f"lineage_current_session_id: {lineage_session_ids[-1]}")
         lines.append(f"lineage_session_ids: {', '.join(lineage_session_ids)}")
     lines.append(f"history_count: {len(runs)}")
+    _append_accounting_totals(lines, _aggregate_accounting_payload(runs))
     if not runs:
         lines.append("history: no runs found")
         return "\n".join(lines)

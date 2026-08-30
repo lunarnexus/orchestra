@@ -99,6 +99,10 @@ def _done_result() -> WorkerResult:
         worker_session_id=None,
         transcript_path=None,
         approval_needed=False,
+        input_tokens=11,
+        output_tokens=7,
+        cache_read_tokens=3,
+        cache_write_tokens=2,
     )
 
 

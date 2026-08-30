@@ -72,7 +72,7 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == 12
+    assert row[0] == 14
     with sqlite3.connect(state_store.database_path) as connection:
         columns = [str(row[1]) for row in connection.execute("PRAGMA table_info(runs)")]
 
@@ -419,7 +419,7 @@ def test_migrating_old_schema_creates_sessions_table_and_preserves_runs(
         run_ids = [str(row[0]) for row in connection.execute("SELECT run_id FROM runs")]
         run_rows = list(connection.execute("SELECT * FROM runs ORDER BY run_id"))
 
-    assert version == 12
+    assert version == 14
     run = store.get_run("old-run-0")
     assert run.cycle_id is None
     assert run.triggered_by_run_id is None
@@ -514,6 +514,10 @@ def test_update_run_tracks_state_transitions_and_metadata(
             triggered_by_run_id="run-parent-2",
             trigger_reason="auto_verify",
             sequence_index=1,
+            input_tokens=41,
+            output_tokens=17,
+            cache_read_tokens=9,
+            cache_write_tokens=5,
         ),
     )
     done = state_store.update_run(
@@ -534,6 +538,10 @@ def test_update_run_tracks_state_transitions_and_metadata(
     assert running.triggered_by_run_id == "run-parent-2"
     assert running.trigger_reason == "auto_verify"
     assert running.sequence_index == 1
+    assert running.input_tokens == 41
+    assert running.output_tokens == 17
+    assert running.cache_read_tokens == 9
+    assert running.cache_write_tokens == 5
     assert "worker-session-1" in running.log_path.read_text(encoding="utf-8")
     assert running.transcript_path == tmp_path / "transcripts" / "run-2.md"
     assert done.ended_at is not None
@@ -544,6 +552,10 @@ def test_update_run_tracks_state_transitions_and_metadata(
     assert done.triggered_by_run_id == "run-parent-2"
     assert done.trigger_reason == "auto_verify"
     assert done.sequence_index == 1
+    assert done.input_tokens == 41
+    assert done.output_tokens == 17
+    assert done.cache_read_tokens == 9
+    assert done.cache_write_tokens == 5
 
 
 def test_late_terminal_update_is_ignored(state_store: StateStore, tmp_path: Path) -> None:

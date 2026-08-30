@@ -51,6 +51,7 @@ tag_regex = "^v(?P<version>\\d+\\.\\d+\\.\\d+)$"
 
 [tool.pytest.ini_options]
 addopts = "-ra --ignore=evals --ignore=docs/research"
+pythonpath = ["src"]
 
 [tool.ruff]
 target-version = "py311"

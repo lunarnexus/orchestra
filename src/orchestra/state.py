@@ -28,7 +28,7 @@ ALLOWED_MAIN_SESSION_MODES = frozenset(
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
-_SCHEMA_VERSION = 12
+_SCHEMA_VERSION = 14
 _CONNECT_ATTEMPTS = 8
 _CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
 _CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
@@ -76,6 +76,10 @@ class RunRecord:
     worker_session_id: str | None = None
     transcript_path: Path | None = None
     approval_needed: bool = False
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
     report_claimed_at: str | None = None
     reported_at: str | None = None
     cycle_id: str | None = None
@@ -146,6 +150,10 @@ class RunUpdate:
     worker_session_id: str | None = None
     transcript_path: Path | None = None
     approval_needed: bool | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
     reported_at: str | None = None
     cycle_id: str | None = None
     triggered_by_run_id: str | None = None
@@ -210,6 +218,10 @@ class StateStore:
                     worker_session_id TEXT,
                     transcript_path TEXT,
                     approval_needed INTEGER NOT NULL DEFAULT 0,
+                    input_tokens INTEGER,
+                    output_tokens INTEGER,
+                    cache_read_tokens INTEGER,
+                    cache_write_tokens INTEGER,
                     report_claimed_at TEXT,
                     reported_at TEXT,
                     cycle_id TEXT,
@@ -231,6 +243,10 @@ class StateStore:
                 "result_summary_truncated",
                 "INTEGER NOT NULL DEFAULT 0",
             )
+            self._ensure_column(connection, "runs", "input_tokens", "INTEGER")
+            self._ensure_column(connection, "runs", "output_tokens", "INTEGER")
+            self._ensure_column(connection, "runs", "cache_read_tokens", "INTEGER")
+            self._ensure_column(connection, "runs", "cache_write_tokens", "INTEGER")
             self._ensure_column(connection, "runs", "report_claimed_at", "TEXT")
             self._ensure_column(connection, "runs", "reported_at", "TEXT")
             self._ensure_column(connection, "runs", "cycle_id", "TEXT")
@@ -349,6 +365,10 @@ class StateStore:
                     worker_session_id,
                     transcript_path,
                     approval_needed,
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_write_tokens,
                     report_claimed_at,
                     reported_at,
                     cycle_id,
@@ -356,8 +376,9 @@ class StateStore:
                     trigger_reason,
                     sequence_index
                 ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 self._serialize_record(record),
@@ -508,6 +529,19 @@ class StateStore:
                 LIMIT ?
                 """,
                 (orchestrator_session_id, limit),
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
+    def list_all_runs(self, *, limit: int = 20) -> list[RunRecord]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM runs
+                ORDER BY created_at DESC, run_id DESC
+                LIMIT ?
+                """,
+                (limit,),
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
@@ -951,6 +985,22 @@ class StateStore:
                 if update.approval_needed is not None
                 else current.approval_needed
             ),
+            input_tokens=(
+                update.input_tokens if update.input_tokens is not None else current.input_tokens
+            ),
+            output_tokens=(
+                update.output_tokens if update.output_tokens is not None else current.output_tokens
+            ),
+            cache_read_tokens=(
+                update.cache_read_tokens
+                if update.cache_read_tokens is not None
+                else current.cache_read_tokens
+            ),
+            cache_write_tokens=(
+                update.cache_write_tokens
+                if update.cache_write_tokens is not None
+                else current.cache_write_tokens
+            ),
             report_claimed_at=current.report_claimed_at,
             reported_at=(
                 update.reported_at if update.reported_at is not None else current.reported_at
@@ -1007,6 +1057,10 @@ class StateStore:
                 worker_session_id = ?,
                 transcript_path = ?,
                 approval_needed = ?,
+                input_tokens = ?,
+                output_tokens = ?,
+                cache_read_tokens = ?,
+                cache_write_tokens = ?,
                 report_claimed_at = ?,
                 reported_at = ?,
                 cycle_id = ?,
@@ -1035,6 +1089,10 @@ class StateStore:
                 record.worker_session_id,
                 str(record.transcript_path) if record.transcript_path else None,
                 int(record.approval_needed),
+                record.input_tokens,
+                record.output_tokens,
+                record.cache_read_tokens,
+                record.cache_write_tokens,
                 record.report_claimed_at,
                 record.reported_at,
                 record.cycle_id,
@@ -1074,6 +1132,10 @@ class StateStore:
             record.worker_session_id,
             str(record.transcript_path) if record.transcript_path else None,
             int(record.approval_needed),
+            record.input_tokens,
+            record.output_tokens,
+            record.cache_read_tokens,
+            record.cache_write_tokens,
             record.report_claimed_at,
             record.reported_at,
             record.cycle_id,
@@ -1119,6 +1181,10 @@ class StateStore:
                 Path(str(row["transcript_path"])) if row["transcript_path"] is not None else None
             ),
             approval_needed=bool(row["approval_needed"]),
+            input_tokens=_optional_int(row["input_tokens"]),
+            output_tokens=_optional_int(row["output_tokens"]),
+            cache_read_tokens=_optional_int(row["cache_read_tokens"]),
+            cache_write_tokens=_optional_int(row["cache_write_tokens"]),
             report_claimed_at=_optional_text(row["report_claimed_at"]),
             reported_at=_optional_text(row["reported_at"]),
             cycle_id=_optional_text(row["cycle_id"]),
@@ -1166,6 +1232,19 @@ def _optional_text(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
 
 
 def _report_claim_stale_before() -> str:

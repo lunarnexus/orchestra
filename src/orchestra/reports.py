@@ -7,6 +7,7 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from orchestra.config import (
@@ -21,6 +22,7 @@ from orchestra.state import (
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_INCOMPLETE,
+    TERMINAL_STATUSES,
     RunRecord,
 )
 
@@ -28,6 +30,7 @@ __all__ = [
     "REPORT_HEADER",
     "SessionReport",
     "SessionStatusDetails",
+    "aggregate_completed_run_accounting",
     "await_run_terminal_status",
     "await_session_report",
     "await_session_report_payload",
@@ -111,6 +114,105 @@ def _list_runs_for_session_ids(
     return runs[:limit]
 
 
+def _parse_iso_timestamp(value: str) -> datetime:
+    normalized = value.replace("Z", "+00:00")
+    dt = datetime.fromisoformat(normalized)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def aggregate_completed_run_accounting(runs: list[RunRecord]) -> dict[str, int | bool | None]:
+    completed_runs = [run for run in runs if run.status in TERMINAL_STATUSES]
+    totals: dict[str, int | bool | None] = {
+        "completed_runs": len(completed_runs),
+        "elapsed_seconds": None,
+        "elapsed_seconds_complete": True,
+        "input_tokens": None,
+        "output_tokens": None,
+        "cache_read_tokens": None,
+        "cache_write_tokens": None,
+        "tokens_complete": True,
+        "total_tokens": None,
+    }
+    if not completed_runs:
+        return totals
+
+    elapsed_seconds = 0
+    input_tokens = 0
+    output_tokens = 0
+    cache_read_tokens = 0
+    cache_write_tokens = 0
+
+    for run in completed_runs:
+        if run.started_at is None or run.ended_at is None:
+            totals["elapsed_seconds_complete"] = False
+        else:
+            elapsed_seconds += int(
+                (
+                    _parse_iso_timestamp(run.ended_at)
+                    - _parse_iso_timestamp(run.started_at)
+                ).total_seconds()
+            )
+
+        for key, value in (
+            ("input_tokens", run.input_tokens),
+            ("output_tokens", run.output_tokens),
+            ("cache_read_tokens", run.cache_read_tokens),
+            ("cache_write_tokens", run.cache_write_tokens),
+        ):
+            if value is None:
+                totals["tokens_complete"] = False
+            elif key == "input_tokens":
+                input_tokens += value
+            elif key == "output_tokens":
+                output_tokens += value
+            elif key == "cache_read_tokens":
+                cache_read_tokens += value
+            else:
+                cache_write_tokens += value
+
+    totals["elapsed_seconds"] = elapsed_seconds if totals["elapsed_seconds_complete"] else None
+    totals["input_tokens"] = input_tokens
+    totals["output_tokens"] = output_tokens
+    totals["cache_read_tokens"] = cache_read_tokens
+    totals["cache_write_tokens"] = cache_write_tokens
+    if totals["tokens_complete"]:
+        totals["total_tokens"] = (
+            input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
+        )
+    return totals
+
+
+def _format_token_accounting(run: RunRecord) -> str | None:
+    parts: list[str] = []
+    if run.input_tokens is not None:
+        parts.append(f"input={run.input_tokens}")
+    if run.output_tokens is not None:
+        parts.append(f"output={run.output_tokens}")
+    if run.cache_read_tokens is not None:
+        parts.append(f"cache_read={run.cache_read_tokens}")
+    if run.cache_write_tokens is not None:
+        parts.append(f"cache_write={run.cache_write_tokens}")
+    if not parts:
+        return None
+    return "tokens: " + " ".join(parts)
+
+
+def _format_accounting_totals(accounting: dict[str, int | bool | None]) -> list[str]:
+    return [
+        f"accounting_elapsed_seconds_complete: {accounting['elapsed_seconds_complete']}",
+        f"accounting_tokens_complete: {accounting['tokens_complete']}",
+        f"accounting_completed_runs: {accounting['completed_runs']}",
+        f"accounting_elapsed_seconds: {accounting['elapsed_seconds']}",
+        f"accounting_input_tokens: {accounting['input_tokens']}",
+        f"accounting_output_tokens: {accounting['output_tokens']}",
+        f"accounting_cache_read_tokens: {accounting['cache_read_tokens']}",
+        f"accounting_cache_write_tokens: {accounting['cache_write_tokens']}",
+        f"accounting_total_tokens: {accounting['total_tokens']}",
+    ]
+
+
 def format_run_report(
     record: RunRecord,
     *,
@@ -149,6 +251,9 @@ def format_run_report(
         lines.append(f"error: {record.error_text}")
     if record.blocker_text:
         lines.append(f"blocker: {record.blocker_text}")
+    token_accounting = _format_token_accounting(record)
+    if token_accounting:
+        lines.append(token_accounting)
     hint = (
         prompts.return_hint_incomplete
         if prompts is not None
@@ -240,6 +345,9 @@ def format_orchestrator_return(
             f"[orchestra: {run.role} {run.run_id} {outcome}]",
             f"summary: {_format_run_summary(run)}",
         ]
+        token_accounting = _format_token_accounting(run)
+        if token_accounting:
+            lines.append(token_accounting)
         dispatch_failure = _auto_verify_dispatch_failure_note(run)
         if dispatch_failure:
             lines.append(f"auto_verify: {dispatch_failure}")
@@ -265,6 +373,7 @@ def build_session_report(session_id: str, runs: list[RunRecord], *, active_remai
         f"reported_runs: {len(runs)}",
         f"active_runs_remaining: {active_remaining}",
     ]
+    lines.extend(_format_accounting_totals(aggregate_completed_run_accounting(runs)))
     if not runs:
         lines.append("runs: none")
         return "\n".join(lines)
@@ -275,6 +384,9 @@ def build_session_report(session_id: str, runs: list[RunRecord], *, active_remai
         lines.append(
             f"- {run.run_id} [{run.status}] {run.role} :: {run.task_label} :: {summary}"
         )
+        token_accounting = _format_token_accounting(run)
+        if token_accounting:
+            lines.append(f"  {token_accounting}")
         dispatch_failure = _auto_verify_dispatch_failure_note(run)
         if dispatch_failure:
             lines.append(f"  auto_verify: {dispatch_failure}")

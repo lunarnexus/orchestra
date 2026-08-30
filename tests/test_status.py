@@ -79,6 +79,10 @@ def test_format_status_shows_auto_verify_linkage_metadata_for_active_run(
     assert "triggered_by=builder-run" in output
     assert "trigger=auto_verify" in output
     assert "seq=1" in output
+    assert "accounting_elapsed_seconds_complete: True" in output
+    assert "accounting_tokens_complete: False" in output
+    assert "accounting_completed_runs: 1" in output
+    assert "accounting_total_tokens: None" in output
 
 
 def test_format_history_shows_auto_verify_linkage_metadata(tmp_path: Path) -> None:
@@ -137,6 +141,8 @@ def test_format_history_shows_auto_verify_linkage_metadata(tmp_path: Path) -> No
     assert "  triggered_by_run_id: builder-run" in output
     assert "  trigger_reason: auto_verify" in output
     assert "  sequence_index: 1" in output
+    assert "accounting_completed_runs: 2" in output
+    assert "accounting_total_tokens: None" in output
 
 
 def test_format_debug_run_includes_full_return_output(tmp_path: Path) -> None:
@@ -187,14 +193,33 @@ def test_status_payload_includes_linkage_metadata_for_active_runs(tmp_path: Path
             sequence_index=1,
         )
     )
-    store.update_run("verifier-run", RunUpdate(status=STATUS_RUNNING, process_id=1234))
+    store.update_run(
+        "verifier-run",
+        RunUpdate(
+            status=STATUS_RUNNING,
+            process_id=1234,
+            input_tokens=12,
+            output_tokens=8,
+            cache_read_tokens=4,
+            cache_write_tokens=1,
+        ),
+    )
 
     payload = cast(dict[str, Any], status_payload(context, "manual:cycle"))
 
     assert payload["active_runs"]["runs"][0]["cycle_id"] == "builder-run"
+    assert payload["active_runs"]["runs"][0]["input_tokens"] == 12
+    assert payload["active_runs"]["runs"][0]["output_tokens"] == 8
+    assert payload["active_runs"]["runs"][0]["cache_read_tokens"] == 4
+    assert payload["active_runs"]["runs"][0]["cache_write_tokens"] == 1
     assert payload["active_runs"]["runs"][0]["triggered_by_run_id"] == "builder-run"
     assert payload["active_runs"]["runs"][0]["trigger_reason"] == "auto_verify"
     assert payload["active_runs"]["runs"][0]["sequence_index"] == 1
+    assert payload["accounting"]["completed_runs"] == 0
+    assert payload["accounting"]["elapsed_seconds_complete"] is True
+    assert payload["accounting"]["tokens_complete"] is True
+    assert payload["accounting"]["input_tokens"] is None
+    assert payload["accounting"]["total_tokens"] is None
 
 
 def test_format_debug_run_shows_auto_verify_linkage_metadata(tmp_path: Path) -> None:

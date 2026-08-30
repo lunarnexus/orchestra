@@ -139,11 +139,10 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     footer_body = extension_source[footer_start:footer_end]
     assert 'if (!mode || mode === "off") return undefined;' in footer_body
     assert 'theme.fg("dim", `Orchestra:${mode}`)' in footer_body
-    assert (
-        "status && status.activeCount > 0 ? renderOrchestraWorkerStatus(theme, "
-        "status.roleCounts) : undefined"
-        in footer_body
-    )
+    assert 'theme.fg("dim", `↑${status.activeCount}`)' in footer_body
+    assert 'theme.fg("dim", `R${status.roleCounts.length}`)' in footer_body
+    assert 'renderOrchestraWorkerStatus(theme, status.roleCounts)' in footer_body
+    assert 'ctx.ui.setWidget("orchestra", { text }, { placement: "belowEditor" });' in extension_source
     # The existing role renderer is preserved.
     assert (
         "function renderOrchestraWorkerStatus(theme: OrchestraFooterTheme, "

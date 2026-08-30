@@ -57,6 +57,10 @@ class WorkerResult:
     worker_session_id: str | None = None
     transcript_path: Path | None = None
     approval_needed: bool = False
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
 
 
 class Harness(Protocol):

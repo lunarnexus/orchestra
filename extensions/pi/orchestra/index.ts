@@ -69,20 +69,23 @@ function renderOrchestraFooterStatus(
 ): string | undefined {
   if (!mode || mode === "off") return undefined;
   const parts: string[] = [theme.fg("dim", `Orchestra:${mode}`)];
-  const roleText =
-    status && status.activeCount > 0 ? renderOrchestraWorkerStatus(theme, status.roleCounts) : undefined;
-  if (roleText) {
-    parts.push(roleText);
+  if (status && status.activeCount > 0) {
+    parts.push(theme.fg("dim", `↑${status.activeCount}`));
+    parts.push(theme.fg("dim", `R${status.roleCounts.length}`));
+    const roleText = renderOrchestraWorkerStatus(theme, status.roleCounts);
+    if (roleText) parts.push(roleText);
   }
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
 function setOrchestraWorkerStatus(
-  ctx: { ui: { setStatus: (key: string, msg: string | undefined) => void; theme: OrchestraFooterTheme } },
+  ctx: { ui: { setWidget: (key: string, widget: { text: string }, options?: { placement?: string }) => void; theme: OrchestraFooterTheme } },
   status: ActiveSessionStatus | null,
   mode?: string | null,
 ): void {
-  ctx.ui.setStatus("orchestra", renderOrchestraFooterStatus(ctx.ui.theme, mode ?? null, status));
+  const text = renderOrchestraFooterStatus(ctx.ui.theme, mode ?? null, status);
+  if (!text) return;
+  ctx.ui.setWidget("orchestra", { text }, { placement: "belowEditor" });
 }
 
 function orchestraDispatchBudget(): number {
