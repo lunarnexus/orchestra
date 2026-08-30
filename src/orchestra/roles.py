@@ -46,18 +46,17 @@ def _enabled_roles(catalog: AgentCatalog) -> list[tuple[str, RoleConfig]]:
     ]
 
 
-def _format_role_guidance(role_name: str, role: RoleConfig) -> str | None:
-    instruction = role.workflow_instruction.strip()
-    return f"- {role_name}: {instruction}" if instruction else None
+def _format_role_legend() -> str:
+    return "Legend: ✓ enabled, ✗ disabled, D default"
 
 
 def format_tool_roles(context: AppContext) -> str:
-    roles = _enabled_roles(context.catalog)
-    lines = ["Configured roles", f"Default: {context.catalog.default_role}", ""]
-    if roles:
-        lines.extend(_format_role_lines(context, roles))
-    else:
-        lines.append("  - none")
+    lines = ["Selectable roles"]
+    for role_name, _role in _enabled_roles(context.catalog):
+        default_suffix = " (default)" if role_name == context.catalog.default_role else ""
+        lines.append(f"- {role_name}{default_suffix}")
+    if len(lines) == 1:
+        lines.append("- none")
     return "\n".join(lines)
 
 
@@ -209,7 +208,11 @@ def _format_role_lines(
 
 
 def format_roles(context: AppContext, *, include_disabled: bool = False) -> str:
-    enabled_roles = _enabled_roles(context.catalog)
+    enabled_roles = [
+        (role_name, role)
+        for role_name, role in context.catalog.roles.items()
+        if role.enabled
+    ]
     disabled_roles = [
         (role_name, role)
         for role_name, role in sorted(context.catalog.roles.items())
@@ -217,7 +220,7 @@ def format_roles(context: AppContext, *, include_disabled: bool = False) -> str:
     ]
 
     visible_roles = [*enabled_roles, *(disabled_roles if include_disabled else [])]
-    lines = ["Configured roles", f"Default: {context.catalog.default_role}", ""]
+    lines = ["Configured roles", _format_role_legend(), ""]
     if visible_roles:
         lines.extend(_format_role_lines(context, visible_roles))
     else:
