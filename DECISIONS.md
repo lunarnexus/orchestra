@@ -1,5 +1,7 @@
 # Project Decisions
 
+NEVER EVER EDIT THIS FILE WITHOUT THE USER EXPRESSLY SAYING "edit DECISIONS.md".  If you're not sure, ask the user to confirm.  DO NOT ASSUME YOU HAVE APPROVAL, DO NOT INFER APPROVAL, ALWAYS CONFIRM WITH THE USER.
+
 This file is the authoritative record of project decisions made by the project
 owner. Decisions belong here regardless of size.
 
