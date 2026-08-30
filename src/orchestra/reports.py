@@ -331,6 +331,21 @@ def _auto_verify_dispatch_failure_note(run: RunRecord) -> str | None:
     return None
 
 
+def _semantic_failure_verdict(run: RunRecord) -> str | None:
+    verdict_re = re.compile(
+        r"\b(?:Verdict|Status):\s*(fail|failed|blocked)\b",
+        re.IGNORECASE,
+    )
+    for text in (run.result_summary, run.result_output):
+        if text is None:
+            continue
+        match = verdict_re.search(text)
+        if match:
+            verdict = match.group(1).lower()
+            return "fail" if verdict == "failed" else verdict
+    return None
+
+
 def format_orchestrator_return(
     runs: list[RunRecord],
     *,
@@ -338,9 +353,14 @@ def format_orchestrator_return(
 ) -> str:
     if not runs:
         return "[orchestra: all background processes returned]"
+    semantic_failures = [_semantic_failure_verdict(run) for run in runs]
+    report_has_issue = any(
+        run.status != STATUS_DONE or semantic_failure
+        for run, semantic_failure in zip(runs, semantic_failures, strict=True)
+    )
     blocks = []
-    for run in runs:
-        outcome = "success" if run.status == STATUS_DONE else "fail"
+    for run, semantic_failure in zip(runs, semantic_failures, strict=True):
+        outcome = "success" if run.status == STATUS_DONE and not semantic_failure else "fail"
         lines = [
             f"[orchestra: {run.role} {run.run_id} {outcome}]",
             f"summary: {_format_run_summary(run)}",
@@ -351,13 +371,29 @@ def format_orchestrator_return(
         dispatch_failure = _auto_verify_dispatch_failure_note(run)
         if dispatch_failure:
             lines.append(f"auto_verify: {dispatch_failure}")
-        hint = _return_hint(run, prompts=prompts) if _should_show_return_hint(run, runs) else None
+        if semantic_failure:
+            hint = prompts.return_hint_failed if prompts is not None else DEFAULT_RETURN_HINT_FAILED
+        elif report_has_issue and run.status == STATUS_DONE:
+            hint = None
+        else:
+            hint = (
+                _return_hint(run, prompts=prompts)
+                if _should_show_return_hint(run, runs)
+                else None
+            )
         if hint:
             lines.append(f"next: {hint}")
-        if outcome != "success":
+        if outcome != "success" or semantic_failure:
+            if semantic_failure:
+                lines.append(f"verdict: {semantic_failure}")
             lines.append(f"status: {run.status}")
+            lines.append(f"run_id: {run.run_id}")
+            lines.append(f"debug: orchestra debug --run-id {run.run_id}")
+            lines.append("DB location: runs.result_output")
             if run.worker_session_id:
                 lines.append(f"worker_session: {run.worker_session_id}")
+            if run.transcript_path:
+                lines.append(f"transcript: {run.transcript_path}")
             lines.append(f"log: {run.log_path}")
         blocks.append("\n".join(lines))
     report = "\n\n".join(blocks)

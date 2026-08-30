@@ -621,6 +621,137 @@ def test_failed_worker_with_long_stdout_and_short_stderr_does_not_mark_summary_t
     assert "Full result:" not in report
 
 
+def test_semantic_failure_verdict_in_result_summary_adds_debug_guidance(
+    tmp_path: Path,
+) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="verifier-run",
+                orchestrator_session_id="manual:report-cycle",
+                harness="pi",
+                role="verifier",
+                task_label="verifier task",
+                log_path=tmp_path / "verifier-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_DONE,
+                result_summary="Verdict: fail; checked the patch",
+                result_output=(
+                    "Verifier return\n\nVerdict: fail\nrun_id: verifier-run\n"
+                    "worker_session_id: worker-123\nDB location: runs.result_output"
+                ),
+                worker_session_id="worker-123",
+            )
+        ]
+    )
+
+    assert "[orchestra: verifier verifier-run fail]" in report
+    assert "summary: Verdict: fail; checked the patch" in report
+    assert "next: inspect the debug trace and dispatch one targeted recovery" in report
+    assert "status: done" in report
+    assert "debug: orchestra debug --run-id verifier-run" in report
+    assert "DB location: runs.result_output" in report
+    assert "worker_session: worker-123" in report
+    assert "log: " in report
+
+
+def test_semantic_blocked_verdict_in_result_output_adds_guidance(
+    tmp_path: Path,
+) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="builder-run",
+                orchestrator_session_id="manual:report-cycle",
+                harness="pi",
+                role="builder",
+                task_label="builder task",
+                log_path=tmp_path / "builder-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_DONE,
+                result_summary="looks okay",
+                result_output=(
+                    "Verdict: blocked\nrun_id: builder-run\n"
+                    "worker_session_id: worker-456"
+                ),
+                worker_session_id="worker-456",
+            )
+        ]
+    )
+
+    assert "[orchestra: builder builder-run fail]" in report
+    assert "summary: looks okay" in report
+    assert "next: inspect the debug trace and dispatch one targeted recovery" in report
+    assert "debug: orchestra debug --run-id builder-run" in report
+    assert "worker_session: worker-456" in report
+    assert "DB location: runs.result_output" in report
+
+
+def test_semantic_blocked_status_in_result_output_adds_guidance(
+    tmp_path: Path,
+) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="status-blocked-run",
+                orchestrator_session_id="manual:report-cycle",
+                harness="pi",
+                role="verifier",
+                task_label="verifier task",
+                log_path=tmp_path / "status-blocked-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_DONE,
+                result_summary="review completed",
+                result_output="Status: blocked\nBlockers: needs a decision",
+            )
+        ]
+    )
+
+    assert "[orchestra: verifier status-blocked-run fail]" in report
+    assert "verdict: blocked" in report
+    assert "debug: orchestra debug --run-id status-blocked-run" in report
+    assert "DB location: runs.result_output" in report
+
+
+def test_auto_verify_semantic_failure_keeps_debug_guidance_with_builder_return(
+    tmp_path: Path,
+) -> None:
+    builder = RunRecord(
+        run_id="builder-run",
+        orchestrator_session_id="manual:report-cycle",
+        harness="pi",
+        role="builder",
+        task_label="builder task",
+        log_path=tmp_path / "builder-run.jsonl",
+        created_at="2026-01-01T00:00:00Z",
+        status=STATUS_DONE,
+        result_summary="Status: complete Verdict: pass",
+    )
+    verifier = RunRecord(
+        run_id="auto-verifier-run",
+        orchestrator_session_id="manual:report-cycle",
+        harness="pi",
+        role="verifier",
+        task_label="auto verify builder-run",
+        log_path=tmp_path / "auto-verifier-run.jsonl",
+        created_at="2026-01-01T00:00:01Z",
+        status=STATUS_DONE,
+        result_summary="Status: complete Verdict: fail",
+        result_output="Status: complete\nVerdict: fail\nFindings: mismatch",
+        triggered_by_run_id="builder-run",
+        trigger_reason="auto_verify",
+    )
+
+    report = format_orchestrator_return([builder, verifier])
+
+    assert "[orchestra: builder builder-run success]" in report
+    assert "advance the plan using this subagent return" not in report
+    assert "[orchestra: verifier auto-verifier-run fail]" in report
+    assert "debug: orchestra debug --run-id auto-verifier-run" in report
+    assert "DB location: runs.result_output" in report
+    assert "next: inspect the debug trace and dispatch one targeted recovery" in report
+
+
 def test_long_stderr_marks_failed_summary_truncated(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
