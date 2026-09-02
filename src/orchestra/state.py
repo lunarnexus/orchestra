@@ -28,7 +28,7 @@ ALLOWED_MAIN_SESSION_MODES = frozenset(
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
-_SCHEMA_VERSION = 14
+_SCHEMA_VERSION = 15
 _CONNECT_ATTEMPTS = 8
 _CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
 _CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
@@ -78,8 +78,10 @@ class RunRecord:
     approval_needed: bool = False
     input_tokens: int | None = None
     output_tokens: int | None = None
+    reasoning_tokens: int | None = None
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
+    cost_usd: float | None = None
     report_claimed_at: str | None = None
     reported_at: str | None = None
     cycle_id: str | None = None
@@ -152,8 +154,10 @@ class RunUpdate:
     approval_needed: bool | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    reasoning_tokens: int | None = None
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
+    cost_usd: float | None = None
     reported_at: str | None = None
     cycle_id: str | None = None
     triggered_by_run_id: str | None = None
@@ -220,8 +224,10 @@ class StateStore:
                     approval_needed INTEGER NOT NULL DEFAULT 0,
                     input_tokens INTEGER,
                     output_tokens INTEGER,
+                    reasoning_tokens INTEGER,
                     cache_read_tokens INTEGER,
                     cache_write_tokens INTEGER,
+                    cost_usd REAL,
                     report_claimed_at TEXT,
                     reported_at TEXT,
                     cycle_id TEXT,
@@ -245,8 +251,10 @@ class StateStore:
             )
             self._ensure_column(connection, "runs", "input_tokens", "INTEGER")
             self._ensure_column(connection, "runs", "output_tokens", "INTEGER")
+            self._ensure_column(connection, "runs", "reasoning_tokens", "INTEGER")
             self._ensure_column(connection, "runs", "cache_read_tokens", "INTEGER")
             self._ensure_column(connection, "runs", "cache_write_tokens", "INTEGER")
+            self._ensure_column(connection, "runs", "cost_usd", "REAL")
             self._ensure_column(connection, "runs", "report_claimed_at", "TEXT")
             self._ensure_column(connection, "runs", "reported_at", "TEXT")
             self._ensure_column(connection, "runs", "cycle_id", "TEXT")
@@ -367,8 +375,10 @@ class StateStore:
                     approval_needed,
                     input_tokens,
                     output_tokens,
+                    reasoning_tokens,
                     cache_read_tokens,
                     cache_write_tokens,
+                    cost_usd,
                     report_claimed_at,
                     reported_at,
                     cycle_id,
@@ -378,7 +388,7 @@ class StateStore:
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 self._serialize_record(record),
@@ -1035,6 +1045,11 @@ class StateStore:
             output_tokens=(
                 update.output_tokens if update.output_tokens is not None else current.output_tokens
             ),
+            reasoning_tokens=(
+                update.reasoning_tokens
+                if update.reasoning_tokens is not None
+                else current.reasoning_tokens
+            ),
             cache_read_tokens=(
                 update.cache_read_tokens
                 if update.cache_read_tokens is not None
@@ -1045,6 +1060,7 @@ class StateStore:
                 if update.cache_write_tokens is not None
                 else current.cache_write_tokens
             ),
+            cost_usd=update.cost_usd if update.cost_usd is not None else current.cost_usd,
             report_claimed_at=current.report_claimed_at,
             reported_at=(
                 update.reported_at if update.reported_at is not None else current.reported_at
@@ -1103,8 +1119,10 @@ class StateStore:
                 approval_needed = ?,
                 input_tokens = ?,
                 output_tokens = ?,
+                reasoning_tokens = ?,
                 cache_read_tokens = ?,
                 cache_write_tokens = ?,
+                cost_usd = ?,
                 report_claimed_at = ?,
                 reported_at = ?,
                 cycle_id = ?,
@@ -1135,8 +1153,10 @@ class StateStore:
                 int(record.approval_needed),
                 record.input_tokens,
                 record.output_tokens,
+                record.reasoning_tokens,
                 record.cache_read_tokens,
                 record.cache_write_tokens,
+                record.cost_usd,
                 record.report_claimed_at,
                 record.reported_at,
                 record.cycle_id,
@@ -1178,8 +1198,10 @@ class StateStore:
             int(record.approval_needed),
             record.input_tokens,
             record.output_tokens,
+            record.reasoning_tokens,
             record.cache_read_tokens,
             record.cache_write_tokens,
+            record.cost_usd,
             record.report_claimed_at,
             record.reported_at,
             record.cycle_id,
@@ -1227,8 +1249,10 @@ class StateStore:
             approval_needed=bool(row["approval_needed"]),
             input_tokens=_optional_int(row["input_tokens"]),
             output_tokens=_optional_int(row["output_tokens"]),
+            reasoning_tokens=_optional_int(row["reasoning_tokens"]),
             cache_read_tokens=_optional_int(row["cache_read_tokens"]),
             cache_write_tokens=_optional_int(row["cache_write_tokens"]),
+            cost_usd=float(row["cost_usd"]) if row["cost_usd"] is not None else None,
             report_claimed_at=_optional_text(row["report_claimed_at"]),
             reported_at=_optional_text(row["reported_at"]),
             cycle_id=_optional_text(row["cycle_id"]),

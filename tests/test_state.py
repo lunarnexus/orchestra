@@ -72,7 +72,7 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == 14
+    assert row[0] == 15
     with sqlite3.connect(state_store.database_path) as connection:
         columns = [str(row[1]) for row in connection.execute("PRAGMA table_info(runs)")]
 
@@ -453,7 +453,7 @@ def test_migrating_old_schema_creates_sessions_table_and_preserves_runs(
         run_ids = [str(row[0]) for row in connection.execute("SELECT run_id FROM runs")]
         run_rows = list(connection.execute("SELECT * FROM runs ORDER BY run_id"))
 
-    assert version == 14
+    assert version == 15
     run = store.get_run("old-run-0")
     assert run.cycle_id is None
     assert run.triggered_by_run_id is None
@@ -550,8 +550,10 @@ def test_update_run_tracks_state_transitions_and_metadata(
             sequence_index=1,
             input_tokens=41,
             output_tokens=17,
+            reasoning_tokens=7,
             cache_read_tokens=9,
             cache_write_tokens=5,
+            cost_usd=0.125,
         ),
     )
     done = state_store.update_run(
@@ -574,8 +576,10 @@ def test_update_run_tracks_state_transitions_and_metadata(
     assert running.sequence_index == 1
     assert running.input_tokens == 41
     assert running.output_tokens == 17
+    assert running.reasoning_tokens == 7
     assert running.cache_read_tokens == 9
     assert running.cache_write_tokens == 5
+    assert running.cost_usd == 0.125
     assert "worker-session-1" in running.log_path.read_text(encoding="utf-8")
     assert running.transcript_path == tmp_path / "transcripts" / "run-2.md"
     assert done.ended_at is not None
@@ -588,8 +592,10 @@ def test_update_run_tracks_state_transitions_and_metadata(
     assert done.sequence_index == 1
     assert done.input_tokens == 41
     assert done.output_tokens == 17
+    assert done.reasoning_tokens == 7
     assert done.cache_read_tokens == 9
     assert done.cache_write_tokens == 5
+    assert done.cost_usd == 0.125
 
 
 def test_late_terminal_update_is_ignored(state_store: StateStore, tmp_path: Path) -> None:
@@ -903,6 +909,32 @@ def test_state_store_writes_jsonl_lifecycle_logs(state_store: StateStore, tmp_pa
     assert events[1]["status"] == STATUS_RUNNING
     assert events[2]["status"] == STATUS_CANCELLED
     assert events[2]["blocker_text"] == "User requested stop"
+
+
+def test_state_store_persists_accounting_fields(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    store.initialize()
+    record = make_run(tmp_path, run_id="run-10", session_id="pi:session-b")
+    store.create_run(record)
+    updated = store.update_run(
+        "run-10",
+        RunUpdate(
+            status=STATUS_RUNNING,
+            input_tokens=11,
+            output_tokens=7,
+            reasoning_tokens=3,
+            cache_read_tokens=2,
+            cache_write_tokens=1,
+            cost_usd=0.42,
+        ),
+    )
+
+    assert updated.input_tokens == 11
+    assert updated.output_tokens == 7
+    assert updated.reasoning_tokens == 3
+    assert updated.cache_read_tokens == 2
+    assert updated.cache_write_tokens == 1
+    assert updated.cost_usd == 0.42
 
 
 def test_append_jsonl_event_omits_empty_noise_fields(tmp_path: Path) -> None:

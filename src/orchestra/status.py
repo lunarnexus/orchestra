@@ -57,29 +57,36 @@ def _append_session_status_details(lines: list[str], details: SessionStatusDetai
     )
 
 
-def _token_accounting_payload(run: RunRecord) -> dict[str, int | None]:
+def _token_accounting_payload(run: RunRecord) -> dict[str, int | float | None]:
     return {
         "input_tokens": run.input_tokens,
         "output_tokens": run.output_tokens,
+        "reasoning_tokens": run.reasoning_tokens,
         "cache_read_tokens": run.cache_read_tokens,
         "cache_write_tokens": run.cache_write_tokens,
+        "cost_usd": run.cost_usd,
     }
 
 
-def _aggregate_accounting_payload(runs: list[RunRecord]) -> dict[str, int | bool | None]:
+def _aggregate_accounting_payload(runs: list[RunRecord]) -> dict[str, int | bool | float | None]:
     return aggregate_completed_run_accounting(runs)
 
 
-def _append_accounting_totals(lines: list[str], accounting: dict[str, int | bool | None]) -> None:
+def _append_accounting_totals(
+    lines: list[str],
+    accounting: dict[str, int | bool | float | None],
+) -> None:
     lines.append(f"accounting_elapsed_seconds_complete: {accounting['elapsed_seconds_complete']}")
     lines.append(f"accounting_tokens_complete: {accounting['tokens_complete']}")
     lines.append(f"accounting_completed_runs: {accounting['completed_runs']}")
     lines.append(f"accounting_elapsed_seconds: {accounting['elapsed_seconds']}")
     lines.append(f"accounting_input_tokens: {accounting['input_tokens']}")
     lines.append(f"accounting_output_tokens: {accounting['output_tokens']}")
+    lines.append(f"accounting_reasoning_tokens: {accounting['reasoning_tokens']}")
     lines.append(f"accounting_cache_read_tokens: {accounting['cache_read_tokens']}")
     lines.append(f"accounting_cache_write_tokens: {accounting['cache_write_tokens']}")
     lines.append(f"accounting_total_tokens: {accounting['total_tokens']}")
+    lines.append(f"accounting_cost_usd: {accounting['cost_usd']}")
 
 
 def _compact_active_run_line(run: RunRecord, *, include_owner: bool = False) -> str:
@@ -89,8 +96,10 @@ def _compact_active_run_line(run: RunRecord, *, include_owner: bool = False) -> 
         for bit in (
             f"input={run.input_tokens}" if run.input_tokens is not None else None,
             f"output={run.output_tokens}" if run.output_tokens is not None else None,
+            f"reasoning={run.reasoning_tokens}" if run.reasoning_tokens is not None else None,
             f"cache_read={run.cache_read_tokens}" if run.cache_read_tokens is not None else None,
             f"cache_write={run.cache_write_tokens}" if run.cache_write_tokens is not None else None,
+            f"cost_usd={run.cost_usd}" if run.cost_usd is not None else None,
         )
         if bit is not None
     ]

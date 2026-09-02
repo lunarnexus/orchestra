@@ -45,12 +45,90 @@ def _require_session_id(session_id: str) -> None:
         raise AppError("session_id is required")
 
 
+def _find_pi_worker_transcript(worker_session_id: str) -> Path | None:
+    agent_dir = Path(os.environ.get("PI_CODING_AGENT_DIR", str(Path.home() / ".pi" / "agent")))
+    session_root = Path(os.environ.get("PI_CODING_AGENT_SESSION_DIR", str(agent_dir / "sessions")))
+    if not session_root.is_dir():
+        return None
+    matches = list(session_root.rglob(f"*_{worker_session_id}.jsonl"))
+    if not matches:
+        return None
+    return max(matches, key=lambda path: path.stat().st_mtime)
+
+
+def _empty_accounting() -> dict[str, int | float | None]:
+    return {
+        "input_tokens": None,
+        "output_tokens": None,
+        "reasoning_tokens": None,
+        "cache_read_tokens": None,
+        "cache_write_tokens": None,
+        "cost_usd": None,
+    }
+
+
+def _pi_worker_accounting(
+    worker_session_id: str | None,
+    transcript_path: Path | None,
+) -> dict[str, int | float | None]:
+    if not worker_session_id:
+        return _empty_accounting()
+    transcript = transcript_path or _find_pi_worker_transcript(worker_session_id)
+    if transcript is None:
+        return _empty_accounting()
+    for attempt in range(_PI_USAGE_READ_ATTEMPTS):
+        try:
+            lines = transcript.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            if attempt < _PI_USAGE_READ_ATTEMPTS - 1:
+                time.sleep(_PI_USAGE_READ_DELAY_SECONDS)
+                continue
+            return _empty_accounting()
+        accounting: dict[str, int | float | None] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cost_usd": 0.0,
+        }
+        found = False
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if event.get("type") != "message":
+                continue
+            message = event.get("message")
+            if not isinstance(message, dict):
+                continue
+            usage = message.get("usage")
+            if not isinstance(usage, dict):
+                continue
+            found = True
+            accounting["input_tokens"] += int(usage.get("input") or 0)
+            accounting["output_tokens"] += int(usage.get("output") or 0)
+            accounting["reasoning_tokens"] += int(usage.get("reasoning") or 0)
+            accounting["cache_read_tokens"] += int(usage.get("cacheRead") or 0)
+            accounting["cache_write_tokens"] += int(usage.get("cacheWrite") or 0)
+            cost = usage.get("cost")
+            if isinstance(cost, dict) and cost.get("total") is not None:
+                accounting["cost_usd"] += float(cost.get("total"))
+        if found:
+            return accounting
+        return _empty_accounting()
+    return _empty_accounting()
+
+
 WORKER_EMPTY_RESULT_ERROR = "Worker exited successfully without a meaningful result"
 WORKER_EMPTY_RESULT_BLOCKER = "Worker protocol error: empty result"
 WORKER_BUDGET_EXCEEDED_BLOCKER = (
     "Worker budget exceeded; redispatch from continuation handoff"
 )
 SUPERVISOR_STARTUP_TIMEOUT_SECONDS = 30
+_PI_USAGE_READ_ATTEMPTS = 5
+_PI_USAGE_READ_DELAY_SECONDS = 0.2
 
 
 @dataclass(frozen=True)
@@ -809,6 +887,7 @@ def _result_from_completed_worker(
     stderr: str,
 ) -> WorkerResult:
     result_summary = _meaningful_worker_summary(stdout)
+    accounting = _pi_worker_accounting(worker.worker_session_id, worker.transcript_path)
     if worker.process.returncode == 0:
         if _is_incomplete_worker_result(stdout):
             return WorkerResult(
@@ -825,6 +904,7 @@ def _result_from_completed_worker(
                 worker_session_id=worker.worker_session_id,
                 transcript_path=worker.transcript_path,
                 approval_needed=worker.approval_needed,
+                **accounting,
             )
         if not result_summary:
             return WorkerResult(
@@ -841,6 +921,7 @@ def _result_from_completed_worker(
                 worker_session_id=worker.worker_session_id,
                 transcript_path=worker.transcript_path,
                 approval_needed=worker.approval_needed,
+                **accounting,
             )
         return WorkerResult(
             status=STATUS_DONE,
@@ -856,6 +937,7 @@ def _result_from_completed_worker(
             worker_session_id=worker.worker_session_id,
             transcript_path=worker.transcript_path,
             approval_needed=worker.approval_needed,
+            **accounting,
         )
     return WorkerResult(
         status=STATUS_FAILED,
@@ -871,6 +953,7 @@ def _result_from_completed_worker(
         worker_session_id=worker.worker_session_id,
         transcript_path=worker.transcript_path,
         approval_needed=worker.approval_needed,
+        **accounting,
     )
 
 
@@ -917,8 +1000,10 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
             approval_needed=result.approval_needed,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
+            reasoning_tokens=result.reasoning_tokens,
             cache_read_tokens=result.cache_read_tokens,
             cache_write_tokens=result.cache_write_tokens,
+            cost_usd=result.cost_usd,
             cycle_id=auto_verify_cycle_id,
             sequence_index=auto_verify_sequence_index,
         ),

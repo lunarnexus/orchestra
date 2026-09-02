@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -18,9 +19,44 @@ from orchestra.state import (
     StateStore,
 )
 from orchestra.status import format_status
-from orchestra.supervision import reconcile_stale_queued_runs
+from orchestra.supervision import _result_from_completed_worker, reconcile_stale_queued_runs
 from tests.helpers import extract_run_id, run_cli, wait_for_condition
 from tests.types import RuntimeFilesFactory
+
+
+def test_result_from_completed_worker_reads_pi_transcript_usage(
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "sessions" / "worker_orchestra-worker-run-1.jsonl"
+    transcript_path.parent.mkdir(parents=True, exist_ok=True)
+    transcript_path.write_text(
+        "\n".join(
+            [
+                "not json",
+                '{"type":"message","message":{"usage":{"input":10,"output":4,"reasoning":3,"cacheRead":2,"cacheWrite":1,"cost":{"total":0.125}}}}',
+                '{"type":"other","message":{"usage":{"input":999}}}',
+                '{"type":"message","message":{"usage":{"input":5,"output":6,"reasoning":7,"cacheRead":0,"cacheWrite":4,"cost":{"total":0.5}}}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    worker = SimpleNamespace(
+        process=SimpleNamespace(returncode=0),
+        command=["pi"],
+        prompt="prompt",
+        worker_session_id="orchestra-worker-run-1",
+        transcript_path=transcript_path,
+        approval_needed=False,
+    )
+
+    result = _result_from_completed_worker(worker, "done", "")
+
+    assert result.input_tokens == 15
+    assert result.output_tokens == 10
+    assert result.reasoning_tokens == 10
+    assert result.cache_read_tokens == 2
+    assert result.cache_write_tokens == 5
+    assert result.cost_usd == 0.625
 
 
 def test_stop_terminates_owned_worker_process(

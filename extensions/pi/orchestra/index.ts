@@ -27,6 +27,14 @@ interface ActiveSessionStatus {
   activeCount: number;
   roleCounts: ActiveRoleCount[];
   runIds: string[];
+  accounting?: {
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    reasoning_tokens?: number | null;
+    cache_read_tokens?: number | null;
+    cache_write_tokens?: number | null;
+    cost_usd?: number | null;
+  };
 }
 
 interface DispatchPayload {
@@ -39,6 +47,14 @@ interface DispatchPayload {
 interface StatusPayload {
   active_runs?: { count?: number; runs?: Array<{ run_id?: string; role?: string }> };
   role_counts?: Array<{ role?: string; count?: number }>;
+  accounting?: {
+    input_tokens?: number | null;
+    output_tokens?: number | null;
+    reasoning_tokens?: number | null;
+    cache_read_tokens?: number | null;
+    cache_write_tokens?: number | null;
+    cost_usd?: number | null;
+  };
 }
 
 interface AwaitRunPayload {
@@ -68,10 +84,21 @@ function renderOrchestraFooterStatus(
   status: ActiveSessionStatus | null,
 ): string | undefined {
   if (!mode || mode === "off") return undefined;
-  const parts: string[] = [theme.fg("dim", `Orchestra:${mode}`)];
+  const parts: string[] = [];
+  const accounting = status?.accounting;
+  if (accounting) {
+    const cacheRead = accounting.cache_read_tokens ?? 0;
+    const cacheWrite = accounting.cache_write_tokens ?? 0;
+    const cacheTotal = cacheRead + cacheWrite;
+    const cacheHit = cacheTotal > 0 ? Math.round((cacheRead / cacheTotal) * 100) : 0;
+    parts.push(theme.fg("dim", `↑${accounting.input_tokens ?? 0}`));
+    parts.push(theme.fg("dim", `↓${accounting.output_tokens ?? 0}`));
+    parts.push(theme.fg("dim", `R${accounting.reasoning_tokens ?? 0}`));
+    parts.push(theme.fg("dim", `CH${cacheHit}%`));
+    parts.push(theme.fg("dim", `$${(accounting.cost_usd ?? 0).toFixed(3)}`));
+  }
+  parts.push(theme.fg("dim", `(Orchestra:${mode})`));
   if (status && status.activeCount > 0) {
-    parts.push(theme.fg("dim", `↑${status.activeCount}`));
-    parts.push(theme.fg("dim", `R${status.roleCounts.length}`));
     const roleText = renderOrchestraWorkerStatus(theme, status.roleCounts);
     if (roleText) parts.push(roleText);
   }
@@ -85,7 +112,7 @@ function setOrchestraWorkerStatus(
 ): void {
   const text = renderOrchestraFooterStatus(ctx.ui.theme, mode ?? null, status);
   if (!text) return;
-  ctx.ui.setWidget("orchestra", { text }, { placement: "belowEditor" });
+  ctx.ui.setWidget("orchestra", text ? [text] : undefined, { placement: "belowEditor" });
 }
 
 function orchestraDispatchBudget(): number {
@@ -397,6 +424,7 @@ function parseActiveSessionStatus(output: string): ActiveSessionStatus {
     activeCount: typeof payload.active_runs?.count === "number" ? payload.active_runs.count : runIds.length,
     roleCounts,
     runIds,
+    accounting: payload.accounting,
   };
 }
 

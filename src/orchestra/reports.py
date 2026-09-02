@@ -123,16 +123,20 @@ def _parse_iso_timestamp(value: str) -> datetime:
     return dt.astimezone(UTC)
 
 
-def aggregate_completed_run_accounting(runs: list[RunRecord]) -> dict[str, int | bool | None]:
+def aggregate_completed_run_accounting(
+    runs: list[RunRecord],
+) -> dict[str, int | bool | float | None]:
     completed_runs = [run for run in runs if run.status in TERMINAL_STATUSES]
-    totals: dict[str, int | bool | None] = {
+    totals: dict[str, int | bool | float | None] = {
         "completed_runs": len(completed_runs),
         "elapsed_seconds": None,
         "elapsed_seconds_complete": True,
         "input_tokens": None,
         "output_tokens": None,
+        "reasoning_tokens": None,
         "cache_read_tokens": None,
         "cache_write_tokens": None,
+        "cost_usd": None,
         "tokens_complete": True,
         "total_tokens": None,
     }
@@ -142,8 +146,10 @@ def aggregate_completed_run_accounting(runs: list[RunRecord]) -> dict[str, int |
     elapsed_seconds = 0
     input_tokens = 0
     output_tokens = 0
+    reasoning_tokens = 0
     cache_read_tokens = 0
     cache_write_tokens = 0
+    cost_usd = 0.0
 
     for run in completed_runs:
         if run.started_at is None or run.ended_at is None:
@@ -159,6 +165,7 @@ def aggregate_completed_run_accounting(runs: list[RunRecord]) -> dict[str, int |
         for key, value in (
             ("input_tokens", run.input_tokens),
             ("output_tokens", run.output_tokens),
+            ("reasoning_tokens", run.reasoning_tokens),
             ("cache_read_tokens", run.cache_read_tokens),
             ("cache_write_tokens", run.cache_write_tokens),
         ):
@@ -168,19 +175,27 @@ def aggregate_completed_run_accounting(runs: list[RunRecord]) -> dict[str, int |
                 input_tokens += value
             elif key == "output_tokens":
                 output_tokens += value
+            elif key == "reasoning_tokens":
+                reasoning_tokens += value
             elif key == "cache_read_tokens":
                 cache_read_tokens += value
             else:
                 cache_write_tokens += value
+        if run.cost_usd is None:
+            totals["tokens_complete"] = False
+        else:
+            cost_usd += run.cost_usd
 
     totals["elapsed_seconds"] = elapsed_seconds if totals["elapsed_seconds_complete"] else None
     totals["input_tokens"] = input_tokens
     totals["output_tokens"] = output_tokens
+    totals["reasoning_tokens"] = reasoning_tokens
     totals["cache_read_tokens"] = cache_read_tokens
     totals["cache_write_tokens"] = cache_write_tokens
+    totals["cost_usd"] = cost_usd
     if totals["tokens_complete"]:
         totals["total_tokens"] = (
-            input_tokens + output_tokens + cache_read_tokens + cache_write_tokens
+            input_tokens + output_tokens + reasoning_tokens + cache_read_tokens + cache_write_tokens
         )
     return totals
 
@@ -191,16 +206,20 @@ def _format_token_accounting(run: RunRecord) -> str | None:
         parts.append(f"input={run.input_tokens}")
     if run.output_tokens is not None:
         parts.append(f"output={run.output_tokens}")
+    if run.reasoning_tokens is not None:
+        parts.append(f"reasoning={run.reasoning_tokens}")
     if run.cache_read_tokens is not None:
         parts.append(f"cache_read={run.cache_read_tokens}")
     if run.cache_write_tokens is not None:
         parts.append(f"cache_write={run.cache_write_tokens}")
+    if run.cost_usd is not None:
+        parts.append(f"cost_usd={run.cost_usd}")
     if not parts:
         return None
     return "tokens: " + " ".join(parts)
 
 
-def _format_accounting_totals(accounting: dict[str, int | bool | None]) -> list[str]:
+def _format_accounting_totals(accounting: dict[str, int | bool | float | None]) -> list[str]:
     return [
         f"accounting_elapsed_seconds_complete: {accounting['elapsed_seconds_complete']}",
         f"accounting_tokens_complete: {accounting['tokens_complete']}",
@@ -208,8 +227,10 @@ def _format_accounting_totals(accounting: dict[str, int | bool | None]) -> list[
         f"accounting_elapsed_seconds: {accounting['elapsed_seconds']}",
         f"accounting_input_tokens: {accounting['input_tokens']}",
         f"accounting_output_tokens: {accounting['output_tokens']}",
+        f"accounting_reasoning_tokens: {accounting['reasoning_tokens']}",
         f"accounting_cache_read_tokens: {accounting['cache_read_tokens']}",
         f"accounting_cache_write_tokens: {accounting['cache_write_tokens']}",
+        f"accounting_cost_usd: {accounting['cost_usd']}",
         f"accounting_total_tokens: {accounting['total_tokens']}",
     ]
 

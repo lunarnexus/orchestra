@@ -200,8 +200,10 @@ def test_status_payload_includes_linkage_metadata_for_active_runs(tmp_path: Path
             process_id=1234,
             input_tokens=12,
             output_tokens=8,
+            reasoning_tokens=5,
             cache_read_tokens=4,
             cache_write_tokens=1,
+            cost_usd=0.25,
         ),
     )
 
@@ -210,8 +212,10 @@ def test_status_payload_includes_linkage_metadata_for_active_runs(tmp_path: Path
     assert payload["active_runs"]["runs"][0]["cycle_id"] == "builder-run"
     assert payload["active_runs"]["runs"][0]["input_tokens"] == 12
     assert payload["active_runs"]["runs"][0]["output_tokens"] == 8
+    assert payload["active_runs"]["runs"][0]["reasoning_tokens"] == 5
     assert payload["active_runs"]["runs"][0]["cache_read_tokens"] == 4
     assert payload["active_runs"]["runs"][0]["cache_write_tokens"] == 1
+    assert payload["active_runs"]["runs"][0]["cost_usd"] == 0.25
     assert payload["active_runs"]["runs"][0]["triggered_by_run_id"] == "builder-run"
     assert payload["active_runs"]["runs"][0]["trigger_reason"] == "auto_verify"
     assert payload["active_runs"]["runs"][0]["sequence_index"] == 1
@@ -220,6 +224,118 @@ def test_status_payload_includes_linkage_metadata_for_active_runs(tmp_path: Path
     assert payload["accounting"]["tokens_complete"] is True
     assert payload["accounting"]["input_tokens"] is None
     assert payload["accounting"]["total_tokens"] is None
+    assert payload["accounting"]["reasoning_tokens"] is None
+    assert payload["accounting"]["cost_usd"] is None
+
+
+def test_status_payload_aggregates_completed_run_accounting_with_reasoning_and_cost(
+    tmp_path: Path,
+) -> None:
+    context = _make_context(tmp_path)
+    store = context.store
+    store.create_run(
+        RunRecord(
+            run_id="done-1",
+            orchestrator_session_id="manual:cycle",
+            harness="shell",
+            role="builder",
+            task_label="builder task",
+            log_path=tmp_path / "logs" / "done-1.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    store.create_run(
+        RunRecord(
+            run_id="done-2",
+            orchestrator_session_id="manual:cycle",
+            harness="shell",
+            role="verifier",
+            task_label="verifier task",
+            log_path=tmp_path / "logs" / "done-2.jsonl",
+            created_at="2026-01-01T00:00:02Z",
+        )
+    )
+    store.update_run("done-1", RunUpdate(status=STATUS_RUNNING, process_id=1001))
+    store.update_run("done-2", RunUpdate(status=STATUS_RUNNING, process_id=1002))
+    store.update_run(
+        "done-1",
+        RunUpdate(
+            status=STATUS_DONE,
+            started_at="2026-01-01T00:00:00Z",
+            ended_at="2026-01-01T00:00:01Z",
+            input_tokens=10,
+            output_tokens=4,
+            reasoning_tokens=3,
+            cache_read_tokens=2,
+            cache_write_tokens=1,
+            cost_usd=0.25,
+        ),
+    )
+    store.update_run(
+        "done-2",
+        RunUpdate(
+            status=STATUS_DONE,
+            started_at="2026-01-01T00:00:02Z",
+            ended_at="2026-01-01T00:00:04Z",
+            input_tokens=5,
+            output_tokens=6,
+            reasoning_tokens=7,
+            cache_read_tokens=0,
+            cache_write_tokens=4,
+            cost_usd=0.5,
+        ),
+    )
+
+    payload = cast(dict[str, Any], status_payload(context, "manual:cycle"))
+
+    assert payload["accounting"]["completed_runs"] == 2
+    assert payload["accounting"]["elapsed_seconds"] == 3
+    assert payload["accounting"]["input_tokens"] == 15
+    assert payload["accounting"]["output_tokens"] == 10
+    assert payload["accounting"]["reasoning_tokens"] == 10
+    assert payload["accounting"]["cache_read_tokens"] == 2
+    assert payload["accounting"]["cache_write_tokens"] == 5
+    assert payload["accounting"]["cost_usd"] == 0.75
+    assert payload["accounting"]["tokens_complete"] is True
+    assert payload["accounting"]["total_tokens"] == 42
+
+
+def test_status_payload_marks_tokens_incomplete_when_completed_run_lacks_cost(
+    tmp_path: Path,
+) -> None:
+    context = _make_context(tmp_path)
+    store = context.store
+    store.create_run(
+        RunRecord(
+            run_id="done-1",
+            orchestrator_session_id="manual:cycle",
+            harness="shell",
+            role="builder",
+            task_label="builder task",
+            log_path=tmp_path / "logs" / "done-1.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+        )
+    )
+    store.update_run("done-1", RunUpdate(status=STATUS_RUNNING, process_id=1001))
+    store.update_run(
+        "done-1",
+        RunUpdate(
+            status=STATUS_DONE,
+            started_at="2026-01-01T00:00:00Z",
+            ended_at="2026-01-01T00:00:01Z",
+            input_tokens=10,
+            output_tokens=4,
+            reasoning_tokens=3,
+            cache_read_tokens=2,
+            cache_write_tokens=1,
+        ),
+    )
+
+    payload = cast(dict[str, Any], status_payload(context, "manual:cycle"))
+
+    assert payload["accounting"]["completed_runs"] == 1
+    assert payload["accounting"]["tokens_complete"] is False
+    assert payload["accounting"]["cost_usd"] == 0.0
 
 
 def test_format_debug_run_shows_auto_verify_linkage_metadata(tmp_path: Path) -> None:

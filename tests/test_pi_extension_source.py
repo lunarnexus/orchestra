@@ -138,12 +138,15 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     footer_end = extension_source.index("function setOrchestraWorkerStatus(", footer_start)
     footer_body = extension_source[footer_start:footer_end]
     assert 'if (!mode || mode === "off") return undefined;' in footer_body
-    assert 'theme.fg("dim", `Orchestra:${mode}`)' in footer_body
-    assert 'theme.fg("dim", `↑${status.activeCount}`)' in footer_body
-    assert 'theme.fg("dim", `R${status.roleCounts.length}`)' in footer_body
+    assert 'theme.fg("dim", `↑${accounting.input_tokens ?? 0}`)' in footer_body
+    assert 'theme.fg("dim", `↓${accounting.output_tokens ?? 0}`)' in footer_body
+    assert 'theme.fg("dim", `R${accounting.reasoning_tokens ?? 0}`)' in footer_body
+    assert 'theme.fg("dim", `CH${cacheHit}%`)' in footer_body
+    assert 'theme.fg("dim", `$${(accounting.cost_usd ?? 0).toFixed(3)}`)' in footer_body
+    assert 'theme.fg("dim", `(Orchestra:${mode})`)' in footer_body
     assert 'renderOrchestraWorkerStatus(theme, status.roleCounts)' in footer_body
     assert (
-        'ctx.ui.setWidget("orchestra", { text }, { placement: "belowEditor" });'
+        'ctx.ui.setWidget("orchestra", text ? [text] : undefined, { placement: "belowEditor" });'
         in extension_source
     )
     # The existing role renderer is preserved.
