@@ -699,6 +699,40 @@ class StateStore:
             failed_paths=tuple(failed_paths),
         )
 
+    def _has_pending_automatic_continuation(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> bool:
+        from orchestra.supervision import AUTOMATIC_DISPATCH_CHAINS
+
+        run_id = str(row["run_id"])
+        for chain in AUTOMATIC_DISPATCH_CHAINS.values():
+            if not chain.child_hints_suppressed():
+                continue
+            child = connection.execute(
+                """
+                SELECT 1
+                FROM runs
+                WHERE triggered_by_run_id = ?
+                  AND trigger_reason = ?
+                  AND reported_at IS NULL
+                  AND status NOT IN (?, ?, ?, ?)
+                LIMIT 1
+                """,
+                (
+                    run_id,
+                    chain.auto_return_key(),
+                    STATUS_DONE,
+                    STATUS_FAILED,
+                    STATUS_CANCELLED,
+                    STATUS_INCOMPLETE,
+                ),
+            ).fetchone()
+            if child is not None:
+                return True
+        return False
+
     def list_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
         claim_stale_before = _report_claim_stale_before()
         with self._connect() as connection:
@@ -735,7 +769,12 @@ class StateStore:
                     claim_stale_before,
                 ),
             ).fetchall()
-        return [self._row_to_record(row) for row in rows]
+            filtered_rows = [
+                row
+                for row in rows
+                if not self._has_pending_automatic_continuation(connection, row)
+            ]
+        return [self._row_to_record(row) for row in filtered_rows]
 
     def claim_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
         claim_stale_before = _report_claim_stale_before()
@@ -775,6 +814,11 @@ class StateStore:
                     claim_stale_before,
                 ),
             ).fetchall()
+            rows = [
+                row
+                for row in rows
+                if not self._has_pending_automatic_continuation(connection, row)
+            ]
             if not rows:
                 connection.rollback()
                 return []

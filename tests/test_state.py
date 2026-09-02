@@ -224,6 +224,40 @@ def test_plan_prune_reports_old_terminal_runs_and_owned_paths(tmp_path: Path) ->
     assert plan.orphan_candidates == (orphan_log,)
 
 
+def test_claim_pending_report_runs_holds_builder_until_auto_child_finishes(
+    tmp_path: Path,
+) -> None:
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    store.initialize()
+    builder = make_run(
+        tmp_path,
+        "builder-run",
+        "manual:session-a",
+        cycle_id="builder-run",
+    )
+    store.create_run(builder)
+    store.update_run(builder.run_id, RunUpdate(status=STATUS_RUNNING))
+    store.update_run(builder.run_id, RunUpdate(status=STATUS_DONE, result_output="builder ok"))
+    verifier = make_run(
+        tmp_path,
+        "verifier-run",
+        "manual:session-a",
+        cycle_id="builder-run",
+        triggered_by_run_id=builder.run_id,
+        trigger_reason="auto_verify",
+        sequence_index=1,
+    )
+    store.create_run(verifier)
+    store.update_run(verifier.run_id, RunUpdate(status=STATUS_RUNNING))
+
+    assert store.claim_pending_report_runs("manual:session-a") == []
+
+    store.update_run(verifier.run_id, RunUpdate(status=STATUS_DONE, result_output="verifier ok"))
+    claimed = store.claim_pending_report_runs("manual:session-a")
+
+    assert [run.run_id for run in claimed] == [builder.run_id, verifier.run_id]
+
+
 def test_delete_prune_candidates_removes_runs_owned_files_and_empty_sessions(
     tmp_path: Path,
 ) -> None:

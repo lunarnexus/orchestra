@@ -103,6 +103,7 @@ def test_opencode_command_template_routes_through_tools() -> None:
     ) in command_source
     assert 'orch_status({ action: "on" })' in command_source
     assert 'orch_dispatch({ goal, role?, taskLabel? })' in command_source
+    assert 'orchestra config' in command_source
     assert "/orch stop" not in command_source
 
 

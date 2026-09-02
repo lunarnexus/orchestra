@@ -7,7 +7,13 @@ import json
 import sys
 from collections.abc import Sequence
 
-from orchestra.config import ConfigError
+from orchestra.config import (
+    ConfigError,
+    list_config_values,
+    read_config_value,
+    resolve_config_path,
+    update_config_value,
+)
 from orchestra.context import AppError, load_context
 from orchestra.dispatch import format_started_run, start_run, started_run_payload
 from orchestra.host_commands import (
@@ -93,6 +99,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
             "Examples:\n"
             "  orchestra doctor\n"
             "  orchestra roles\n"
+            "  orchestra config\n"
             "  orchestra do --session-id manual:demo --goal \"smoke test\"\n"
             "  orchestra history --session-id manual:demo"
         ),
@@ -170,6 +177,11 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     )
     roles_parser.add_argument("value", nargs="?", help="new role setting value")
     roles_parser.set_defaults(handler=_handle_roles)
+
+    config_parser = subparsers.add_parser("config", help="read or update config values")
+    config_parser.add_argument("key", nargs="?", help="config key to read or update")
+    config_parser.add_argument("value", nargs="?", help="new config value")
+    config_parser.set_defaults(handler=_handle_config)
 
     if include_internal:
         help_parser = subparsers.add_parser("help-host", help=argparse.SUPPRESS)
@@ -508,6 +520,20 @@ def _handle_roles(args: argparse.Namespace) -> int:
         print(set_role_setting(context, args.role, args.setting, args.value))
         return 0
     print(format_roles(context, include_disabled=args.all))
+    return 0
+
+
+def _handle_config(args: argparse.Namespace) -> int:
+    config_path = resolve_config_path(args.config)
+    if args.key is None:
+        values = list_config_values(config_path)
+        for key, value in values.items():
+            print(f"{key}: {value}")
+        return 0
+    if args.value is None:
+        print(read_config_value(config_path, args.key))
+        return 0
+    print(update_config_value(config_path, args.key, args.value))
     return 0
 
 

@@ -143,6 +143,8 @@ Nested dispatch:
 
 Before implementation, complete the multi-turn planning checkpoints and produce a plan a builder can execute without inventing requirements, interfaces, dependencies, or verification.
 
+Plans must include a full live end-to-end test when possible. The assigned agent should run it if the environment allows; otherwise the plan and final report must say why it was skipped.
+
 ## Multi-turn planning checkpoints
 
 When the user asks for a plan, plan through user-visible checkpoints before implementation.

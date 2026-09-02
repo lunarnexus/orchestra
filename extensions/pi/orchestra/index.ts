@@ -1092,6 +1092,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       { token: "doctor", description: "Check Orchestra setup" },
       { token: "do ", description: "Dispatch a subagent" },
       { token: "roles ", description: "Show or update configured roles" },
+      { token: "config ", description: "Show or update supported config values" },
       { token: "status", description: "Show active subagents for this session" },
       { token: "stop ", description: "Stop an active worker." },
       { token: "history ", description: "Show recent results for this session" },
@@ -1418,6 +1419,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
       if (subcommand === "doctor") {
         const result = await runOrchestra(["doctor"]);
+        emitEntryOutput(ctx, result.stdout || result.stderr);
+        return;
+      }
+
+      if (subcommand === "config") {
+        const result = await runOrchestra(rest.length > 0 ? ["config", ...rest] : ["config"]);
         emitEntryOutput(ctx, result.stdout || result.stderr);
         return;
       }

@@ -21,6 +21,7 @@ from orchestra.state import (
     ACTIVE_STATUSES,
     STATUS_CANCELLED,
     STATUS_DONE,
+    STATUS_FAILED,
     STATUS_INCOMPLETE,
     TERMINAL_STATUSES,
     RunRecord,
@@ -279,9 +280,16 @@ def clean_result_summary(summary: str | None) -> str:
 
 
 def _return_hint(run: RunRecord, *, prompts: PromptConfig | None = None) -> str | None:
-    if run.status == STATUS_DONE:
+    if run.role == "builder" and run.status == STATUS_DONE:
         return (
             prompts.return_hint_done if prompts is not None else DEFAULT_RETURN_HINT_DONE
+        )
+    if run.role == "builder" and run.status in {STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}:
+        if prompts is not None and prompts.return_hint_failed != DEFAULT_RETURN_HINT_FAILED:
+            return prompts.return_hint_failed
+        return (
+            "examine durable builder references and redispatch one bounded "
+            "fix-only builder follow-up"
         )
     if run.status == STATUS_INCOMPLETE:
         return (
@@ -291,6 +299,10 @@ def _return_hint(run: RunRecord, *, prompts: PromptConfig | None = None) -> str 
         )
     if run.status == STATUS_CANCELLED:
         return None
+    if run.status == STATUS_DONE:
+        return (
+            prompts.return_hint_done if prompts is not None else DEFAULT_RETURN_HINT_DONE
+        )
     return prompts.return_hint_failed if prompts is not None else DEFAULT_RETURN_HINT_FAILED
 
 
@@ -302,7 +314,12 @@ def _format_run_summary(run: RunRecord) -> str:
 
 
 def _should_show_return_hint(run: RunRecord, runs: list[RunRecord]) -> bool:
-    if run.trigger_reason != "auto_verify" or not run.triggered_by_run_id:
+    from orchestra.supervision import AUTOMATIC_DISPATCH_CHAINS
+
+    if not run.trigger_reason or not run.triggered_by_run_id:
+        return True
+    chain = AUTOMATIC_DISPATCH_CHAINS.get(run.trigger_reason)
+    if chain is None or not chain.child_hints_suppressed():
         return True
     return not any(other.run_id == run.triggered_by_run_id for other in runs)
 
@@ -319,15 +336,14 @@ def _auto_verify_dispatch_failure_note(run: RunRecord) -> str | None:
             event = json.loads(line)
         except ValueError:
             continue
-        if event.get("event") != "auto_verify.dispatch_failed":
+        from orchestra.supervision import AUTOMATIC_DISPATCH_CHAINS
+
+        chain = AUTOMATIC_DISPATCH_CHAINS["auto_verify"]
+        if event.get("event") != chain.auto_return_event():
             continue
         error_type = event.get("error_type")
         error = event.get("error")
-        if error_type and error:
-            return f"auto-verify dispatch failed: {error_type}: {error}"
-        if error:
-            return f"auto-verify dispatch failed: {error}"
-        return "auto-verify dispatch failed"
+        return chain.dispatch_failure_note(error_type, error)
     return None
 
 

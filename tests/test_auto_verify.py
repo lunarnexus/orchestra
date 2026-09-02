@@ -10,7 +10,12 @@ from orchestra.dispatch import PendingRunRequest, StartedRun, start_run
 from orchestra.harnesses.base import HarnessRegistry, WorkerResult
 from orchestra.reports import consume_pending_session_report
 from orchestra.state import STATUS_DONE, STATUS_FAILED, STATUS_RUNNING, RunUpdate, StateStore
-from orchestra.supervision import _finalize_run, build_auto_verifier_assignment
+from orchestra.supervision import (
+    AUTO_VERIFY_CHAIN,
+    _auto_dispatch_chain_for_run,
+    _finalize_run,
+    build_auto_verifier_assignment,
+)
 from tests.test_cli_commands import load_root_prompt_config
 
 
@@ -83,13 +88,13 @@ def _start_linked_run(
     return started
 
 
-def _done_result() -> WorkerResult:
+def _done_result(*, stdout: str = "builder completed") -> WorkerResult:
     return WorkerResult(
         status=STATUS_DONE,
         command=["echo", "builder"],
         prompt="prompt",
         exit_code=0,
-        stdout="builder completed",
+        stdout=stdout,
         stderr="",
         result_summary="builder completed",
         error_text=None,
@@ -125,6 +130,27 @@ def _failed_result() -> WorkerResult:
     )
 
 
+def test_auto_verify_chain_helper_matches_builder_success_trigger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(tmp_path, auto_verify=True)
+    builder_started = _start_linked_run(context, monkeypatch)
+    finalized = _finalize_run(context, builder_started.record.run_id, _done_result())
+
+    chain = _auto_dispatch_chain_for_run(finalized)
+
+    assert chain is not None
+    assert chain is AUTO_VERIFY_CHAIN
+    assert chain.trigger_role == "builder"
+    assert chain.trigger_status == STATUS_DONE
+    assert chain.next_role == "verifier"
+    assert chain.trigger_reason == "auto_verify"
+    assert chain.sequence_index == 1
+    assert chain.auto_return_event() == "auto_verify.dispatch_failed"
+    assert chain.child_hints_suppressed() is True
+
+
 def test_auto_verify_dispatches_linked_verifier_after_builder_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -149,13 +175,44 @@ def test_auto_verify_dispatches_linked_verifier_after_builder_success(
     assert verifier.sequence_index == 1
 
 
+def test_auto_verify_builder_success_is_held_until_verifier_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(tmp_path, auto_verify=True)
+    builder_started = _start_linked_run(context, monkeypatch)
+
+    _finalize_run(context, builder_started.record.run_id, _done_result())
+    assert consume_pending_session_report(context, "manual:test") is None
+
+    verifier = [
+        run
+        for run in context.store.list_runs("manual:test", limit=10)
+        if run.trigger_reason == "auto_verify"
+    ][0]
+    context.store.update_run(verifier.run_id, RunUpdate(status=STATUS_RUNNING))
+    context.store.update_run(
+        verifier.run_id,
+        RunUpdate(status=STATUS_DONE, result_output="verifier done"),
+    )
+
+    report = consume_pending_session_report(context, "manual:test")
+    assert report is not None
+    assert builder_started.record.run_id in report
+    assert verifier.run_id in report
+
+
 def test_auto_verify_assignment_uses_trusted_metadata_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     context = _make_context(tmp_path, auto_verify=True)
     builder_started = _start_linked_run(context, monkeypatch)
-    finalized = _finalize_run(context, builder_started.record.run_id, _done_result())
+    finalized = _finalize_run(
+        context,
+        builder_started.record.run_id,
+        _done_result(stdout="builder artifact"),
+    )
 
     request = PendingRunRequest(
         run_id=builder_started.record.run_id,
@@ -175,6 +232,8 @@ def test_auto_verify_assignment_uses_trusted_metadata_only(
     assert "Builder status: done" in assignment.approved_context
     assert "Builder result summary: builder completed" in assignment.approved_context
     assert "Builder run id: " + builder_started.record.run_id in assignment.approved_context
+    assert "builder artifact" in assignment.approved_context
+    assert "Original goal: Implement the parser fix" in assignment.approved_context
 
 
 def test_auto_verify_dispatch_start_failure_is_reported(
@@ -233,6 +292,7 @@ def test_auto_verify_skips_builder_failure_and_non_builder_roles(
 
     failed_builder = _start_linked_run(context, monkeypatch)
     _finalize_run(context, failed_builder.record.run_id, _failed_result())
+    failure_report = consume_pending_session_report(context, "manual:test")
 
     non_builder = _start_linked_run(context, monkeypatch, role_name="reviewer")
     _finalize_run(context, non_builder.record.run_id, _done_result())
@@ -244,6 +304,11 @@ def test_auto_verify_skips_builder_failure_and_non_builder_roles(
     verifier_runs = [run for run in runs if run.trigger_reason == "auto_verify"]
 
     assert verifier_runs == []
+    assert failure_report is not None
+    assert "fix-only builder follow-up" in failure_report
+    assert failed_builder.record.run_id in failure_report
+    assert failure_report.count("next:") == 1
+    assert "do not launch an investigation-only subagent" not in failure_report
 
 
 def test_auto_verify_does_not_duplicate_existing_auto_verifier_run(

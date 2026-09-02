@@ -128,6 +128,8 @@ def format_opencode_help() -> str:
 - /orch history [limit] — show recent subagent results for this OpenCode session
 - /orch roles — show roles
 - /orch roles ROLE SETTING VALUE — update harness|enabled|model|profile|agent
+- /orch config — show config values
+- /orch config KEY [VALUE] — read or update supported config values
 - /orch doctor — check setup
 - /orch do [--role ROLE] <request> — dispatch a worker
 """.strip()

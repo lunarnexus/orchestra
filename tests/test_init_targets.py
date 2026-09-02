@@ -23,6 +23,8 @@ Call exactly one Orchestra tool for this command, then return the tool output to
 - `doctor` -> `orch_status({ action: "doctor" })`
 - `roles` -> `orch_status({ action: "roles" })`
 - `roles ROLE SETTING VALUE` -> `orch_status({ action: "roles", role, setting, value })`
+- `config` -> `orchestra config`
+- `config KEY [VALUE]` -> `orchestra config KEY [VALUE]`
 - `do [--role ROLE] ...` -> `orch_dispatch({ goal, role?, taskLabel? })`
 
 Use only fields shown for the selected action. Never invent a session id.

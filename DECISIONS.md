@@ -563,6 +563,28 @@ DB-backed returns.
 
 **Source:** Owner clarification during DB-backed return planning.
 
+### D-RETURN-016 — Builder failure skips auto-verification and requests fix-only follow-up
+
+**Decision:** When `auto_verify` is enabled and a `builder` run fails, times out,
+is cancelled, or returns incomplete, Orchestra does not dispatch the automatic
+verifier. The orchestrator-facing return uses a custom failure prompt telling the
+main session to examine the builder's compact return and durable references, then
+redispatch a bounded fix-only builder follow-up. It must not dispatch a separate
+investigation-only subagent for the builder failure.
+
+**Source:** Owner correction during auto-verification lifecycle repair.
+
+### D-RETURN-017 — Automatic dispatch chains are generic and pluggable
+
+**Decision:** Automatic role continuations, including builder-to-verifier
+auto-verification, are implemented as generic chained dispatch behavior in core
+rather than host-adapter or role-specific lifecycle hacks. A chain defines its
+trigger role, required trigger status, next role, handoff construction, report
+gating, and grouped return behavior so later automatic role chains can be added
+without duplicating builder/verifier-specific control flow.
+
+**Source:** Owner correction during auto-verification lifecycle repair.
+
 ## State, logs, and artifacts
 
 ### D-STATE-001 — SQLite plus JSONL and artifacts

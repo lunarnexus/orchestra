@@ -13,8 +13,6 @@ Orchestra roadmap items are split into:
 3. [ ] Cache config into memory, create load command and function, config
        to me session specific, saved to file specifically.
 
-4. [ ] Add compatability with pi-offload-router, specifically token counts, money saved.
-
 6. [ ] Add a multi-step dispatch structure for sequential subagent chains.
    - Support multiple different subagent dispatches in sequence, where each step can depend on the previous step's outcome.
    - Pass return artifacts from one step to the next seamlessly so downstream steps receive upstream evidence without manual re-attachment by the orchestrator session.
@@ -56,10 +54,6 @@ Orchestra roadmap items are split into:
      take better advantage of hints to prod the orchestrator along
      This means tracking the workflow steps in orchestra rather than the
      orchestrator session (not so much anyway).
-6. [ ] Create the "lunar cycle", verifier mode.  This can just be a hint
-   that returns after each builder run to verify.  If mode is disabled
-   then the hint doesn't fire.  We can remove "verify" from the orchestrator
-   skill and move the functionality to the orchestra core.  
 7. [ ] Adjust skill injection to be injected as part of the system prompt
    rather than dumped into context.  This allows us to have more flexibility
    passing context around between subagents, and keep skills perfectly fresh   each turn.
@@ -68,6 +62,8 @@ Orchestra roadmap items are split into:
 9. [ ] Investigate RPC mode and holding long running subagent sessions open
    until completion.  Enables live investigation, complex control, 
    park/resume, message (approval returns), possibly context pass-back.
+   Possibly integrate with a tty/cmux/tmux, assigning and spawning durable 
+   reconnectable ttys.
 10. [ ] More formal ToDo tool, can create a task list through the orch tool
    as tasks are marked complete, hints propose the next step, integrated 
    into workflow tracking and verifier mode.
@@ -80,3 +76,4 @@ Orchestra roadmap items are split into:
     - Decompose the goal into independent slices first, then fan out one subagent per slice as a grouped batch in a single dispatch round.
     - Study oh-my-pi's parallel decomposed-work approach as prior art before designing the Orchestra equivalent.  
 14. [ ] Git commit integration.
+

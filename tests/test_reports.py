@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestra.config import load_app_config
+from orchestra.config import DEFAULT_RETURN_HINT_INCOMPLETE, load_app_config
 from orchestra.context import load_context
 from orchestra.reports import (
     SessionStatusDetails,
@@ -68,6 +68,32 @@ def test_return_gives_status_owned_hint(
         assert "next:" not in report
     else:
         assert f"next: {expected_hint}" in report
+
+
+def test_auto_verify_builder_non_success_uses_fix_only_follow_up_prompt(
+    tmp_path: Path,
+) -> None:
+    for status in (STATUS_FAILED, STATUS_INCOMPLETE, STATUS_CANCELLED):
+        report = format_orchestrator_return(
+            [
+                RunRecord(
+                    run_id=f"builder-{status}",
+                    orchestrator_session_id="manual:hints",
+                    harness="pi",
+                    role="builder",
+                    task_label="hint test",
+                    log_path=tmp_path / f"builder-{status}.jsonl",
+                    created_at="2026-01-01T00:00:00Z",
+                    status=status,
+                    result_summary="builder stopped",
+                )
+            ]
+        )
+        assert (
+            "examine durable builder references and redispatch one bounded "
+            "fix-only builder follow-up"
+        ) in report
+        assert DEFAULT_RETURN_HINT_INCOMPLETE not in report
 
 
 def test_aggregate_completed_run_accounting_handles_empty_missing_partial_and_populated(
@@ -232,7 +258,7 @@ def test_return_hints_come_from_prompts_yaml(
             run_id="hint-run",
             orchestrator_session_id="manual:hints-config",
             harness="pi",
-            role="builder",
+            role="custom-role",
             task_label="config hint test",
             log_path=tmp_path / "hint-run.jsonl",
             created_at="2026-01-01T00:00:00Z",
@@ -278,6 +304,41 @@ def test_return_hints_come_from_prompts_yaml(
         prompts=config.prompts,
     )
     assert done_payload["next"] is None
+
+
+def test_auto_chain_child_hint_is_suppressed_when_parent_is_present(
+    tmp_path: Path,
+) -> None:
+    builder = RunRecord(
+        run_id="builder-run",
+        orchestrator_session_id="manual:hints-config",
+        harness="pi",
+        role="builder",
+        task_label="builder",
+        log_path=tmp_path / "builder-run.jsonl",
+        created_at="2026-01-01T00:00:00Z",
+        status=STATUS_DONE,
+        result_summary="builder complete",
+    )
+    verifier = RunRecord(
+        run_id="verifier-run",
+        orchestrator_session_id="manual:hints-config",
+        harness="pi",
+        role="verifier",
+        task_label="verifier",
+        log_path=tmp_path / "verifier-run.jsonl",
+        created_at="2026-01-01T00:00:01Z",
+        status=STATUS_DONE,
+        trigger_reason="auto_verify",
+        triggered_by_run_id="builder-run",
+        sequence_index=1,
+        result_summary="verifier complete",
+    )
+
+    report = format_orchestrator_return([builder, verifier])
+
+    assert report.count("next:") == 1
+    assert f"[orchestra: verifier {verifier.run_id} success]" in report
 
 
 def test_consolidated_report_includes_all_unreported_terminal_runs(

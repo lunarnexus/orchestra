@@ -11,10 +11,13 @@ from orchestra.config import (
     DEFAULT_PER_SESSION_CONCURRENCY,
     DEFAULT_STATE_DIR,
     ConfigError,
+    list_config_values,
     load_agent_catalog,
     load_app_config,
+    read_config_value,
     resolve_agent_catalog_path,
     resolve_config_path,
+    update_config_value,
 )
 
 ROOT_PROMPTS = Path(__file__).resolve().parents[1] / "prompts.yaml"
@@ -310,6 +313,26 @@ def test_load_app_config_reads_retention_days(tmp_path: Path) -> None:
     assert config.retention_days == 45
 
 
+def test_list_read_and_write_supported_config_values(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text(
+        "default_timeout: 120\nauto_verify: false\nconcurrency:\n  global: 4\n  per_session: 3\n",
+        encoding="utf-8",
+    )
+    write_root_prompts(prompts_path)
+
+    values = list_config_values(path)
+    assert values["default_timeout"] == 120
+    assert values["auto_verify"] is False
+    assert read_config_value(path, "concurrency.global_limit") == 4
+
+    update_config_value(path, "auto_verify", "true")
+    update_config_value(path, "concurrency.per_session_limit", "6")
+    assert load_app_config(path).auto_verify is True
+    assert load_app_config(path).concurrency.per_session_limit == 6
+
+
 @pytest.mark.parametrize(
     ("content", "expected_message"),
     [
@@ -343,6 +366,36 @@ def test_load_app_config_rejects_invalid_values(
 
     with pytest.raises(ConfigError, match=expected_message):
         load_app_config(path)
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "expected_message"),
+    [
+        ("unknown", "1", "unknown config key: unknown"),
+        ("default_timeout", "0", "'default_timeout' must be a positive integer"),
+        ("auto_verify", "maybe", "'auto_verify' must be a boolean"),
+        ("concurrency.global_limit", "-1", "'concurrency.global_limit' must be a positive integer"),
+    ],
+)
+def test_update_config_value_rejects_invalid_values_without_writing(
+    tmp_path: Path,
+    key: str,
+    value: str,
+    expected_message: str,
+) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    original = (
+        "default_timeout: 120\nauto_verify: false\nconcurrency:\n"
+        "  global: 4\n  per_session: 3\n"
+    )
+    path.write_text(original, encoding="utf-8")
+    write_root_prompts(prompts_path)
+
+    with pytest.raises(ConfigError, match=expected_message):
+        update_config_value(path, key, value)
+
+    assert path.read_text(encoding="utf-8") == original
 
 
 def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:

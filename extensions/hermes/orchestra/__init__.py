@@ -1068,6 +1068,17 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
             result = _run_orchestra(["roles", "--all"])
         return result.stdout or result.stderr
 
+    if subcommand == "config":
+        if rest.strip():
+            try:
+                config_args = shlex.split(rest)
+            except ValueError as exc:
+                return f"Invalid /orch config arguments: {exc}"
+            result = _run_orchestra(["config", *config_args])
+        else:
+            result = _run_orchestra(["config"])
+        return result.stdout or result.stderr
+
     runtime_session_id = _slash_session_id(ctx)
     if runtime_session_id is None:
         return (
@@ -1224,7 +1235,7 @@ def register(ctx: Any) -> None:
         "orch",
         handler=command_handler,
         description=(
-            "Orchestra host adapter: /orch help|on|off|do|roles|status|stop|doctor|history "
+            "Orchestra host adapter: /orch help|on|off|do|roles|config|status|stop|doctor|history "
             "(use /orch on to inject the orchestrator skill)"
         ),
         args_hint=_ORCH_COMMAND_ARGS_HINT,

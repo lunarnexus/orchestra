@@ -40,6 +40,8 @@ DEFAULT_SOFT_TIMEOUT_BLOCK_REASON = (
 SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RESERVED_ENV_PREFIXES = ("ORCHESTRA_",)
+
+
 class ConfigError(ValueError):
     """Raised when configuration is missing or invalid."""
 
@@ -272,6 +274,198 @@ def load_app_config(path: str | Path) -> AppConfig:
         retention_days=retention_days,
         prompts=prompts,
     )
+
+
+CONFIG_MUTABLE_FIELDS = {
+    "auto_verify",
+    "auto_return",
+    "tools_enabled_by_default",
+    "default_timeout",
+    "retention_days",
+    "concurrency.global_limit",
+    "concurrency.per_session_limit",
+}
+
+
+def load_app_config_values(path: str | Path) -> dict[str, object]:
+    config = load_app_config(path)
+    return {
+        "auto_verify": config.auto_verify,
+        "auto_return": config.auto_return,
+        "tools_enabled_by_default": config.tools_enabled_by_default,
+        "default_timeout": config.default_timeout,
+        "retention_days": config.retention_days,
+        "concurrency.global_limit": config.concurrency.global_limit,
+        "concurrency.per_session_limit": config.concurrency.per_session_limit,
+    }
+
+
+def read_config_value(path: str | Path, key: str) -> object:
+    values = load_app_config_values(path)
+    if key not in values:
+        raise ConfigError(f"unknown config key: {key}")
+    return values[key]
+
+
+def update_config_value(path: str | Path, key: str, raw_value: str) -> object:
+    source = Path(path)
+    data = _load_yaml_mapping(source)
+    _apply_config_value(data, key, raw_value)
+    _validate_config_mutation(data, source)
+    source.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    return read_config_value(source, key)
+
+
+def list_config_values(path: str | Path) -> dict[str, object]:
+    return load_app_config_values(path)
+
+
+def _apply_config_value(data: dict[str, Any], key: str, raw_value: str) -> None:
+    if key == "auto_verify" or key == "auto_return" or key == "tools_enabled_by_default":
+        data[key] = _parse_bool(raw_value, key)
+        return
+    if key == "default_timeout" or key == "retention_days":
+        data[key] = _parse_positive_int(raw_value, key)
+        return
+    if key == "concurrency.global_limit" or key == "concurrency.per_session_limit":
+        concurrency = data.get("concurrency")
+        if concurrency is None:
+            concurrency = {}
+            data["concurrency"] = concurrency
+        if not isinstance(concurrency, dict):
+            raise ConfigError("'concurrency' must be a mapping")
+        concurrency["global" if key.endswith("global_limit") else "per_session"] = (
+            _parse_positive_int(raw_value, key)
+        )
+        return
+    raise ConfigError(f"unknown config key: {key}")
+
+
+def _validate_config_mutation(data: dict[str, Any], source: Path) -> None:
+    load_app_config_from_mapping(data, source)
+
+
+def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> AppConfig:
+    state_dir = Path(
+        _get_optional_string(raw, "state_dir") or DEFAULT_STATE_DIR
+    ).expanduser()
+    log_dir = Path(
+        _get_optional_string(raw, "log_dir") or DEFAULT_LOG_DIR
+    ).expanduser()
+    default_timeout = _get_required_positive_int(raw, "default_timeout")
+    turn_limit = _get_optional_positive_int_or_none(raw, "turn_limit")
+    soft_timeout = _get_optional_positive_int_or_none(raw, "soft_timeout")
+    if soft_timeout is not None and soft_timeout >= default_timeout:
+        raise ConfigError("'soft_timeout' must be less than 'default_timeout'")
+    auto_return = _get_optional_bool(raw, "auto_return", DEFAULT_AUTO_RETURN)
+    auto_verify = _get_optional_bool(raw, "auto_verify", DEFAULT_AUTO_VERIFY)
+    tools_enabled_by_default = _get_optional_bool(
+        raw,
+        "tools_enabled_by_default",
+        DEFAULT_TOOLS_ENABLED_BY_DEFAULT,
+    )
+    retention_days = _get_optional_positive_int(raw, "retention_days", 90)
+    concurrency_raw = raw.get("concurrency", {})
+    if not isinstance(concurrency_raw, dict):
+        raise ConfigError("'concurrency' must be a mapping")
+    concurrency = ConcurrencyConfig(
+        global_limit=_get_optional_positive_int(
+            concurrency_raw,
+            "global",
+            DEFAULT_GLOBAL_CONCURRENCY,
+        ),
+        per_session_limit=_get_optional_positive_int(
+            concurrency_raw,
+            "per_session",
+            DEFAULT_PER_SESSION_CONCURRENCY,
+        ),
+    )
+    prompts_raw = _load_yaml_mapping(_prompts_path_for(source))
+    prompts = PromptConfig(
+        default_return_format=_get_required_prompt_string(prompts_raw, "default_return_format"),
+        tool_description=_get_required_prompt_string(prompts_raw, "tool_description"),
+        tool_prompt_snippet=_get_required_prompt_string(prompts_raw, "tool_prompt_snippet"),
+        tool_prompt_guidelines=_get_required_prompt_string_list(
+            prompts_raw, "tool_prompt_guidelines"
+        ),
+        tool_goal_description=_get_required_prompt_string(prompts_raw, "tool_goal_description"),
+        tool_role_description=_get_required_prompt_string(prompts_raw, "tool_role_description"),
+        tool_task_label_description=_get_required_prompt_string(
+            prompts_raw, "tool_task_label_description"
+        ),
+        main_session_ownership_guidance=_get_required_prompt_string(
+            prompts_raw, "main_session_ownership_guidance"
+        ),
+        status_description=_get_required_prompt_string(prompts_raw, "status_description"),
+        status_action_description=_get_required_prompt_string(
+            prompts_raw, "status_action_description"
+        ),
+        status_limit_description=_get_required_prompt_string(
+            prompts_raw, "status_limit_description"
+        ),
+        status_run_id_description=_get_required_prompt_string(
+            prompts_raw, "status_run_id_description"
+        ),
+        status_role_description=_get_required_prompt_string(
+            prompts_raw, "status_role_description"
+        ),
+        status_setting_description=_get_required_prompt_string(
+            prompts_raw, "status_setting_description"
+        ),
+        status_value_description=_get_required_prompt_string(
+            prompts_raw, "status_value_description"
+        ),
+        host_help=_get_required_prompt_string(prompts_raw, "host_help"),
+        budget_exceeded_prompt=_get_required_prompt_string(prompts_raw, "budget_exceeded_prompt"),
+        return_hint_done=_get_optional_string(prompts_raw, "return_hint_done")
+        or DEFAULT_RETURN_HINT_DONE,
+        return_hint_incomplete=(
+            _get_optional_string(prompts_raw, "return_hint_incomplete")
+            or DEFAULT_RETURN_HINT_INCOMPLETE
+        ),
+        return_hint_failed=(_get_optional_string(prompts_raw, "return_hint_failed")
+        or DEFAULT_RETURN_HINT_FAILED),
+        budget_trigger_label=(
+            _get_optional_string(prompts_raw, "budget_trigger_label")
+            or DEFAULT_BUDGET_TRIGGER_LABEL
+        ),
+        soft_timeout_block_reason=(
+            _get_optional_string(prompts_raw, "soft_timeout_block_reason")
+            or DEFAULT_SOFT_TIMEOUT_BLOCK_REASON
+        ),
+    )
+    return AppConfig(
+        state_dir=state_dir,
+        log_dir=log_dir,
+        default_timeout=default_timeout,
+        turn_limit=turn_limit,
+        soft_timeout=soft_timeout,
+        concurrency=concurrency,
+        auto_return=auto_return,
+        auto_verify=auto_verify,
+        tools_enabled_by_default=tools_enabled_by_default,
+        retention_days=retention_days,
+        prompts=prompts,
+    )
+
+
+def _parse_bool(raw_value: str, key: str) -> bool:
+    normalized = raw_value.strip().lower()
+    if normalized in {"true", "yes", "on", "1"}:
+        return True
+    if normalized in {"false", "no", "off", "0"}:
+        return False
+    raise ConfigError(f"'{key}' must be a boolean")
+
+
+def _parse_positive_int(raw_value: str, key: str) -> int:
+    try:
+        value = int(raw_value.strip())
+    except ValueError as exc:
+        raise ConfigError(f"'{key}' must be a positive integer") from exc
+    if value <= 0:
+        raise ConfigError(f"'{key}' must be a positive integer")
+    return value
 
 
 def load_agent_catalog(path: str | Path) -> AgentCatalog:
