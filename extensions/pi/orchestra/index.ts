@@ -78,6 +78,19 @@ function renderOrchestraWorkerStatus(theme: OrchestraFooterTheme, roleCounts: Ac
     .join(" ");
 }
 
+function formatCompactTokenCount(value: number | null | undefined): string {
+  const numeric = value ?? 0;
+  const abs = Math.abs(numeric);
+  const compact = (divisor: number, suffix: string): string => {
+    const scaled = numeric / divisor;
+    const decimals = Math.abs(scaled) < 10 ? 1 : 0;
+    return `${scaled.toFixed(decimals).replace(/\.0$/, "")}${suffix}`;
+  };
+  if (abs >= 1_000_000) return compact(1_000_000, "M");
+  if (abs >= 1_000) return compact(1_000, "k");
+  return String(numeric);
+}
+
 function renderOrchestraFooterStatus(
   theme: OrchestraFooterTheme,
   mode: string | null,
@@ -91,9 +104,9 @@ function renderOrchestraFooterStatus(
     const cacheWrite = accounting.cache_write_tokens ?? 0;
     const cacheTotal = cacheRead + cacheWrite;
     const cacheHit = cacheTotal > 0 ? Math.round((cacheRead / cacheTotal) * 100) : 0;
-    parts.push(theme.fg("dim", `↑${accounting.input_tokens ?? 0}`));
-    parts.push(theme.fg("dim", `↓${accounting.output_tokens ?? 0}`));
-    parts.push(theme.fg("dim", `R${accounting.reasoning_tokens ?? 0}`));
+    parts.push(theme.fg("dim", `↑${formatCompactTokenCount(accounting.input_tokens)}`));
+    parts.push(theme.fg("dim", `↓${formatCompactTokenCount(accounting.output_tokens)}`));
+    parts.push(theme.fg("dim", `R${formatCompactTokenCount(accounting.reasoning_tokens)}`));
     parts.push(theme.fg("dim", `CH${cacheHit}%`));
     parts.push(theme.fg("dim", `$${(accounting.cost_usd ?? 0).toFixed(3)}`));
   }

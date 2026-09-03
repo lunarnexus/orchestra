@@ -138,9 +138,11 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     footer_end = extension_source.index("function setOrchestraWorkerStatus(", footer_start)
     footer_body = extension_source[footer_start:footer_end]
     assert 'if (!mode || mode === "off") return undefined;' in footer_body
-    assert 'theme.fg("dim", `↑${accounting.input_tokens ?? 0}`)' in footer_body
-    assert 'theme.fg("dim", `↓${accounting.output_tokens ?? 0}`)' in footer_body
-    assert 'theme.fg("dim", `R${accounting.reasoning_tokens ?? 0}`)' in footer_body
+    assert 'function formatCompactTokenCount(value: number | null | undefined): string' in extension_source
+    assert 'const decimals = Math.abs(scaled) < 10 ? 1 : 0;' in extension_source
+    assert 'theme.fg("dim", `↑${formatCompactTokenCount(accounting.input_tokens)}`)' in footer_body
+    assert 'theme.fg("dim", `↓${formatCompactTokenCount(accounting.output_tokens)}`)' in footer_body
+    assert 'theme.fg("dim", `R${formatCompactTokenCount(accounting.reasoning_tokens)}`)' in footer_body
     assert 'theme.fg("dim", `CH${cacheHit}%`)' in footer_body
     assert 'theme.fg("dim", `$${(accounting.cost_usd ?? 0).toFixed(3)}`)' in footer_body
     assert 'theme.fg("dim", `(Orchestra:${mode})`)' in footer_body
