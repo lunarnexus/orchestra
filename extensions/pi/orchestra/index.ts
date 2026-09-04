@@ -124,8 +124,11 @@ function setOrchestraWorkerStatus(
   mode?: string | null,
 ): void {
   const text = renderOrchestraFooterStatus(ctx.ui.theme, mode ?? null, status);
-  if (!text) return;
-  ctx.ui.setWidget("orchestra", text ? [text] : undefined, { placement: "belowEditor" });
+  if (!text) {
+    ctx.ui.setWidget("orchestra", undefined, { placement: "belowEditor" });
+    return;
+  }
+  ctx.ui.setWidget("orchestra", [text], { placement: "belowEditor" });
 }
 
 function orchestraDispatchBudget(): number {
