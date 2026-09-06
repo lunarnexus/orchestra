@@ -114,12 +114,12 @@ def main(argv: list[str] | None = None) -> int:
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     state_dir = _resolve_configured_path(repo_root, str(config["state_dir"]))
     db_path = state_dir / "orchestra.db"
-    _assert_db_backed_return(db_path, run_id)
+    _assert_canonical_return(state_dir, run_id)
     _assert_no_return_artifact(state_dir, run_id)
 
     auto_verify = bool(config.get("auto_verify"))
     if auto_verify:
-        verifier_run_id = _assert_linked_verifier(db_path, run_id)
+        verifier_run_id = _assert_linked_verifier(db_path, state_dir, run_id)
         if verifier_run_id not in history_output:
             raise SystemExit("history did not include the linked verifier run id")
         _assert_no_return_artifact(state_dir, verifier_run_id)
@@ -253,13 +253,12 @@ def _resolve_configured_path(repo_root: Path, value: str) -> Path:
     return path.resolve()
 
 
-def _assert_db_backed_return(db_path: Path, run_id: str) -> None:
-    if not db_path.exists():
-        raise SystemExit(f"database not found: {db_path}")
-    with sqlite3.connect(db_path) as conn:
-        row = conn.execute("select result_output from runs where run_id = ?", (run_id,)).fetchone()
-    if row is None or not row[0]:
-        raise SystemExit(f"missing result_output in sqlite for run {run_id}")
+def _assert_canonical_return(state_dir: Path, run_id: str) -> None:
+    artifact = state_dir / "runs" / run_id / "return.md"
+    if not artifact.exists():
+        raise SystemExit(f"canonical return artifact not found: {artifact}")
+    if not artifact.read_text(encoding="utf-8").strip():
+        raise SystemExit(f"canonical return artifact is empty: {artifact}")
 
 
 def _assert_no_return_artifact(state_dir: Path, run_id: str) -> None:
@@ -297,11 +296,11 @@ def _output_shows_follow_up_delivery(output: str, _task_label: str) -> bool:
     return False
 
 
-def _assert_linked_verifier(db_path: Path, builder_run_id: str) -> str:
+def _assert_linked_verifier(db_path: Path, state_dir: Path, builder_run_id: str) -> str:
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
             """
-            select run_id, status, result_output
+            select run_id, status
             from runs
             where triggered_by_run_id = ? and role = 'verifier'
             order by created_at desc
@@ -311,11 +310,10 @@ def _assert_linked_verifier(db_path: Path, builder_run_id: str) -> str:
         ).fetchone()
     if row is None:
         raise SystemExit("auto_verify is enabled but no linked verifier run was stored")
-    run_id, status, result_output = row
+    run_id, status = row
     if status != "done":
         raise SystemExit(f"linked verifier {run_id} did not complete successfully: {status}")
-    if not result_output:
-        raise SystemExit(f"linked verifier {run_id} is missing sqlite result_output")
+    _assert_canonical_return(state_dir, str(run_id))
     return str(run_id)
 
 

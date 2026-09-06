@@ -210,6 +210,30 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     )
 
 
+def test_pi_extension_refreshes_footer_and_confirms_report_delivery() -> None:
+    extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
+
+    report_start = extension_source.index("function watchSessionReport(")
+    session_start = extension_source.index('pi.on("session_start"', report_start)
+    report_block = extension_source[report_start:session_start]
+
+    assert '"_await-session-report"' in report_block
+    assert '"--timeout"' not in report_block
+    assert 'child.on("error"' in report_block
+    assert "scheduleSessionReportRetry(" in report_block
+    assert "REPORT_WATCHER_MAX_ATTEMPTS" in extension_source
+
+    send_idx = report_block.index("pi.sendUserMessage(message")
+    message_handler_idx = report_block.index('pi.on("message_end"')
+    assert "_mark-session-report-delivered" not in report_block[send_idx:message_handler_idx]
+    assert 'pi.on("message_end"' in extension_source
+    assert "pendingSessionReports.set(sessionId" in report_block
+    assert "releasePendingSessionReport(" in extension_source
+
+    assert "updateStatus?.({ activeCount: 0" not in extension_source
+    assert "if (result.code !== 0) throw new Error" in extension_source
+
+
 def test_pi_extension_budget_texts_come_from_loaded_tool_info() -> None:
     extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
 
@@ -260,7 +284,7 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     )
     assert adapter_description in extension_source
     assert (
-        'pi.sendUserMessage(message, { deliverAs: "followUp", triggerTurn: true });'
+        'pi.sendUserMessage(message, { deliverAs: "followUp" });'
         in extension_source
     )
     assert (

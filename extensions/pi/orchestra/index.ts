@@ -10,6 +10,9 @@ const ORCHESTRA_TURN_BUDGET_ENV = "ORCHESTRA_TURN_BUDGET";
 const ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV = "ORCHESTRA_SOFT_TIMEOUT_SECONDS";
 const ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV = "ORCHESTRA_BUDGET_EXCEEDED_PROMPT";
 const WATCHER_TIMEOUT_MARGIN_SECONDS = 30;
+const REPORT_WATCHER_MAX_ATTEMPTS = 3;
+const REPORT_WATCHER_RETRY_MS = 500;
+const REPORT_DELIVERY_CONFIRMATION_MS = 30_000;
 
 interface OrchestraFooterTheme {
   bold(text: string): string;
@@ -55,6 +58,16 @@ interface StatusPayload {
     cache_write_tokens?: number | null;
     cost_usd?: number | null;
   };
+}
+
+interface PendingSessionReport {
+  runIds: string[];
+  message: string;
+  anchorRunId: string;
+  updateStatus?: (status: ActiveSessionStatus | null) => void;
+  sessionGeneration: number;
+  confirmationTimer: ReturnType<typeof setTimeout>;
+  confirmed: boolean;
 }
 
 interface AwaitRunPayload {
@@ -516,6 +529,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   const sessionCompletedRuns = new Map<string, Set<string>>();
   const sessionGenerations = new Map<string, number>();
   const sessionRefreshRequests = new Map<string, number>();
+  const reportWatcherRetries = new Map<string, ReturnType<typeof setTimeout>>();
+  const pendingSessionReports = new Map<string, PendingSessionReport>();
   let cachedRoleNames: { expiresAt: number; roles: string[]; harnessConfigs: string[] } | null = null;
   let cachedActiveStatus: { expiresAt: number; sessionId: string; status: ActiveSessionStatus } | null = null;
   let turnBudget = parseBudgetEnv(ORCHESTRA_TURN_BUDGET_ENV);
@@ -657,6 +672,15 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     if (!sessionId) return;
     stopWatcherSet(awaitRunWatchers, sessionId);
     stopWatcherSet(reportWatchers, sessionId);
+    const retry = reportWatcherRetries.get(sessionId);
+    if (retry) clearTimeout(retry);
+    reportWatcherRetries.delete(sessionId);
+    const pending = pendingSessionReports.get(sessionId);
+    if (pending) {
+      clearTimeout(pending.confirmationTimer);
+      pendingSessionReports.delete(sessionId);
+      void releaseSessionReport(sessionId, pending.runIds);
+    }
     sessionRefreshRequests.delete(sessionId);
     sessionRuns.delete(sessionId);
     sessionCompletedRuns.delete(sessionId);
@@ -742,37 +766,44 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         return;
       }
       if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
-      const completed = sessionCompletedRuns.get(sessionId) ?? new Set<string>();
-      completed.add(runId);
-      sessionCompletedRuns.set(sessionId, completed);
-      const awaitPayload = JSON.parse(stdout) as AwaitRunPayload;
-      const status = awaitPayload.status ?? null;
-      const role = awaitPayload.role ?? null;
-      const blocker = awaitPayload.blocker ?? null;
-      const activeRemaining = typeof awaitPayload.active_runs_remaining === "number" ? awaitPayload.active_runs_remaining : null;
-      const total = sessionRuns.get(sessionId)?.size ?? completed.size + (activeRemaining ?? 0);
-      const command = [
-        "_progress-message",
-        "--completed",
-        String(completed.size),
-        "--total",
-        String(total),
-        "--run-id",
-        runId,
-        "--status",
-        status ?? "done",
-      ];
-      if (role) command.push("--role", role);
-      void runOrchestra(command).then(async (result) => {
-        if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
-        const message = parseProgressNotification(result.stdout).message;
-        notifier.notify(message ? (blocker ? `${message} :: ${blocker}` : message) : result.stdout);
-        const activeCount = await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true, expectedGeneration: sessionGeneration });
-        if (activeCount === 0 && isCurrentSessionGeneration(sessionId, sessionGeneration)) {
-          sessionRuns.delete(sessionId);
-          sessionCompletedRuns.delete(sessionId);
+      void (async () => {
+        try {
+          const completed = sessionCompletedRuns.get(sessionId) ?? new Set<string>();
+          completed.add(runId);
+          sessionCompletedRuns.set(sessionId, completed);
+          const awaitPayload = JSON.parse(stdout) as AwaitRunPayload;
+          const status = awaitPayload.status ?? null;
+          const role = awaitPayload.role ?? null;
+          const blocker = awaitPayload.blocker ?? null;
+          const activeRemaining = typeof awaitPayload.active_runs_remaining === "number" ? awaitPayload.active_runs_remaining : null;
+          const total = sessionRuns.get(sessionId)?.size ?? completed.size + (activeRemaining ?? 0);
+          const command = [
+            "_progress-message",
+            "--completed",
+            String(completed.size),
+            "--total",
+            String(total),
+            "--run-id",
+            runId,
+            "--status",
+            status ?? "done",
+          ];
+          if (role) command.push("--role", role);
+          const result = await runOrchestra(command);
+          if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
+          const message = parseProgressNotification(result.stdout).message;
+          notifier.notify(message ? (blocker ? `${message} :: ${blocker}` : message) : result.stdout);
+        } catch (error) {
+          const err = error as { message?: string };
+          process.stderr.write(`orchestra progress notification failed: ${err.message ?? String(error)}\n`);
+        } finally {
+          const activeCount = await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true, expectedGeneration: sessionGeneration });
+          if (activeCount === 0 && isCurrentSessionGeneration(sessionId, sessionGeneration)) {
+            sessionRuns.delete(sessionId);
+            sessionCompletedRuns.delete(sessionId);
+          }
         }
-      });
+      })();
     });
   }
 
@@ -813,7 +844,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         ? dispatch.timeout_seconds
         : undefined;
       watchRunProgress(sessionId, runId, notifier, updateStatus, effectiveTimeout);
-      watchSessionReport(sessionId, runId, updateStatus, effectiveTimeout);
+      watchSessionReport(sessionId, runId, updateStatus);
       const role = typeof dispatch?.role === "string" && dispatch.role.trim() ? dispatch.role : (requestedRole || "worker");
       const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId, "--role", role]);
       await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true });
@@ -825,35 +856,87 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     return { code: result.code, runId: null, output: (dispatch?.message || result.stdout || result.stderr) };
   }
 
+  function reportRunIdArgs(runIds: string[]): string[] {
+    return runIds.flatMap((id) => ["--run-id", id]);
+  }
+
+  async function releaseSessionReport(sessionId: string, runIds: string[]): Promise<void> {
+    if (runIds.length === 0) return;
+    const result = await runOrchestra([
+      "_release-session-report",
+      "--session-id",
+      sessionId,
+      ...reportRunIdArgs(runIds),
+    ]);
+    if (result.code !== 0) {
+      process.stderr.write(`orchestra report release failed: ${result.stderr || result.stdout}\n`);
+    }
+  }
+
+  function scheduleSessionReportRetry(
+    sessionId: string,
+    runId: string,
+    updateStatus: ((status: ActiveSessionStatus | null) => void) | undefined,
+    sessionGeneration: number,
+    failedAttempt: number,
+  ): void {
+    if (failedAttempt >= REPORT_WATCHER_MAX_ATTEMPTS - 1 || reportWatcherRetries.has(sessionId)) return;
+    const retry = setTimeout(() => {
+      reportWatcherRetries.delete(sessionId);
+      if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
+      watchSessionReport(sessionId, runId, updateStatus, failedAttempt + 1);
+    }, REPORT_WATCHER_RETRY_MS * (failedAttempt + 1));
+    reportWatcherRetries.set(sessionId, retry);
+  }
+
+  async function releasePendingSessionReport(sessionId: string, retry: boolean): Promise<void> {
+    const pending = pendingSessionReports.get(sessionId);
+    if (!pending) return;
+    pendingSessionReports.delete(sessionId);
+    clearTimeout(pending.confirmationTimer);
+    await releaseSessionReport(sessionId, pending.runIds);
+    await refreshOrchestraWorkerStatus(sessionId, pending.updateStatus, {
+      fresh: true,
+      expectedGeneration: pending.sessionGeneration,
+    });
+    if (retry && isCurrentSessionGeneration(sessionId, pending.sessionGeneration)) {
+      scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);
+    }
+  }
+
   function watchSessionReport(
     sessionId: string,
     runId: string,
     updateStatus?: (status: ActiveSessionStatus | null) => void,
-    effectiveTimeout?: number,
+    attempt = 0,
   ): void {
-    if (reportWatchers.has(sessionId)) return;
+    if (reportWatchers.has(sessionId) || pendingSessionReports.has(sessionId)) return;
 
     const sessionGeneration = ensureSessionGeneration(sessionId);
-    const timeout = effectiveTimeout !== undefined
-      ? effectiveTimeout + WATCHER_TIMEOUT_MARGIN_SECONDS
-      : undefined;
-    const child = spawn(
-      "orchestra",
-      [
-        ...orchestraBaseArgs(),
-        "_await-session-report",
-        "--session-id",
-        sessionId,
-        "--run-id",
-        runId,
-        ...(timeout !== undefined ? ["--timeout", String(timeout)] : []),
-        "--json",
-      ],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      child = spawn(
+        "orchestra",
+        [
+          ...orchestraBaseArgs(),
+          "_await-session-report",
+          "--session-id",
+          sessionId,
+          "--run-id",
+          runId,
+          "--json",
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
+    } catch (error) {
+      const err = error as { message?: string };
+      process.stderr.write(`orchestra auto-return watcher failed: ${err.message ?? String(error)}\n`);
+      scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
+      return;
+    }
 
+    const watchers = new Set<ChildProcessWithoutNullStreams>([child]);
+    reportWatchers.set(sessionId, watchers);
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {
@@ -862,80 +945,103 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
     });
+    child.on("error", (error) => {
+      stderr = error.message;
+    });
 
-    const watchers = reportWatchers.get(sessionId) ?? new Set<ChildProcessWithoutNullStreams>();
-    watchers.add(child);
-    reportWatchers.set(sessionId, watchers);
-
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    if (timeout !== undefined) {
-      timeoutId = setTimeout(() => {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          // ignore if already closed
-        }
-      }, timeout * 1000);
-    }
-
-    child.on("close", async (code) => {
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
+    child.on("close", (code) => {
       watchers.delete(child);
-      if (watchers.size === 0) reportWatchers.delete(sessionId);
+      if (reportWatchers.get(sessionId) === watchers) reportWatchers.delete(sessionId);
       if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
 
       const rawReport = stdout.trim();
-      if (code === 0 && rawReport) {
-        let runIds: string[] = [];
-        try {
-          const payload = JSON.parse(rawReport) as { runIds?: string[]; report?: string };
-          runIds = payload.runIds ?? [];
-          const message = payload.report?.trim() ?? "";
-          if (!message) return;
-          pi.sendUserMessage(message, { deliverAs: "followUp", triggerTurn: true });
-          if (runIds.length > 0) {
-            const markResult = await runOrchestra([
-              "_mark-session-report-delivered",
-              "--session-id",
-              sessionId,
-              ...runIds.flatMap((id) => ["--run-id", id]),
-            ]);
-            if (markResult.code !== 0) {
-              await runOrchestra([
-                "_release-session-report",
-                "--session-id",
-                sessionId,
-                ...runIds.flatMap((id) => ["--run-id", id]),
-              ]);
-              throw new Error(markResult.stderr || markResult.stdout || "orchestra report delivery mark failed");
-            }
-          }
-          cachedActiveStatus = null;
-          updateStatus?.({ activeCount: 0, roleCounts: [], runIds: [] });
-        } catch (error) {
-          if (runIds.length > 0) {
-            void runOrchestra([
-              "_release-session-report",
-              "--session-id",
-              sessionId,
-              ...runIds.flatMap((id) => ["--run-id", id]),
-            ]);
-          }
-          const err = error as { message?: string };
-          process.stderr.write(`orchestra auto-return reinjection failed: ${err.message ?? String(error)}\n`);
-        }
+      if (code !== 0) {
+        process.stderr.write(`orchestra auto-return watcher failed: ${stderr.trim() || `exit ${code}`}\n`);
+        scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
         return;
       }
+      if (!rawReport) return;
 
-      const errorText = stderr.trim();
-      if (code && errorText) {
-        process.stderr.write(`orchestra auto-return watcher failed: ${errorText}\n`);
+      let runIds: string[] = [];
+      try {
+        const payload = JSON.parse(rawReport) as { runIds?: unknown; report?: unknown };
+        runIds = Array.isArray(payload.runIds)
+          ? payload.runIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+          : [];
+        const message = typeof payload.report === "string" ? payload.report.trim() : "";
+        if (!message || runIds.length === 0) {
+          void releaseSessionReport(sessionId, runIds).then(() => {
+            scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
+          });
+          return;
+        }
+        const confirmationTimer = setTimeout(() => {
+          void releasePendingSessionReport(sessionId, true);
+        }, REPORT_DELIVERY_CONFIRMATION_MS);
+        pendingSessionReports.set(sessionId, {
+          runIds,
+          message,
+          anchorRunId: runId,
+          updateStatus,
+          sessionGeneration,
+          confirmationTimer,
+          confirmed: false,
+        });
+        pi.sendUserMessage(message, { deliverAs: "followUp" });
+      } catch (error) {
+        void releaseSessionReport(sessionId, runIds).then(() => {
+          scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
+        });
+        const err = error as { message?: string };
+        process.stderr.write(`orchestra auto-return reinjection failed: ${err.message ?? String(error)}\n`);
       }
     });
   }
+
+  function userMessageText(message: unknown): string | null {
+    const value = message as { role?: unknown; content?: unknown };
+    if (value.role !== "user") return null;
+    if (typeof value.content === "string") return value.content;
+    if (!Array.isArray(value.content)) return null;
+    return value.content
+      .filter((part): part is { type: "text"; text: string } => (
+        typeof part === "object" && part !== null
+        && (part as { type?: unknown }).type === "text"
+        && typeof (part as { text?: unknown }).text === "string"
+      ))
+      .map((part) => part.text)
+      .join("\n");
+  }
+
+  pi.on("message_end", (event) => {
+    if (!currentSessionId) return;
+    const sessionId = currentSessionId;
+    const pending = pendingSessionReports.get(sessionId);
+    if (!pending || pending.confirmed || userMessageText(event.message) !== pending.message) return;
+    pending.confirmed = true;
+    clearTimeout(pending.confirmationTimer);
+    setImmediate(() => {
+      void (async () => {
+        if (pendingSessionReports.get(sessionId) !== pending) return;
+        pendingSessionReports.delete(sessionId);
+        const markResult = await runOrchestra([
+          "_mark-session-report-delivered",
+          "--session-id",
+          sessionId,
+          ...reportRunIdArgs(pending.runIds),
+        ]);
+        if (markResult.code !== 0) {
+          await releaseSessionReport(sessionId, pending.runIds);
+          scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);
+          process.stderr.write(`orchestra report delivery mark failed: ${markResult.stderr || markResult.stdout}\n`);
+        }
+        await refreshOrchestraWorkerStatus(sessionId, pending.updateStatus, {
+          fresh: true,
+          expectedGeneration: pending.sessionGeneration,
+        });
+      })();
+    });
+  });
 
   pi.on("session_start", async (_event, ctx) => {
     turnBudget = parseBudgetEnv(ORCHESTRA_TURN_BUDGET_ENV);
@@ -1013,7 +1119,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       return cachedActiveStatus.status;
     }
     const result = await runOrchestra(["status", "--session-id", sessionId, "--json"]);
-    const status = result.code === 0 ? parseActiveSessionStatus(result.stdout) : { activeCount: 0, roleCounts: [], runIds: [] };
+    if (result.code !== 0) throw new Error(result.stderr || result.stdout || "orchestra status failed");
+    const status = parseActiveSessionStatus(result.stdout);
     cachedActiveStatus = { expiresAt: now + 2_000, sessionId, status };
     return status;
   }
@@ -1040,7 +1147,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       return activeStatus.activeCount;
     } catch {
       if (!isCurrentRefreshRequest(sessionId, sessionGeneration, requestId)) return null;
-      updateStatus?.(null);
       return null;
     }
   }
@@ -1390,6 +1496,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
             return failure("runId is required for orch_status stop.");
           }
           const result = await runOrchestra(["stop", "--session-id", sessionId, "--run-id", runId]);
+          await refreshOrchestraWorkerStatus(
+            sessionId,
+            (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode),
+            { fresh: true },
+          );
           return success(result.stdout || result.stderr);
         }
 
