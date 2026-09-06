@@ -121,9 +121,6 @@ function orchestraBaseArgs(): string[] {
   if (process.env.ORCHESTRA_CONFIG) {
     args.push("--config", process.env.ORCHESTRA_CONFIG);
   }
-  if (process.env.ORCHESTRA_AGENT_CATALOG) {
-    args.push("--agent-catalog", process.env.ORCHESTRA_AGENT_CATALOG);
-  }
   return args;
 }
 

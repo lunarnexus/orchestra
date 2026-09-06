@@ -59,9 +59,7 @@ def test_global_concurrency_limit_is_atomic(
     def invoke(session_id: str) -> tuple[int, str]:
         result = run_cli(
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             session_id,
@@ -128,9 +126,7 @@ def test_per_session_concurrency_limit_is_atomic(
     def invoke() -> tuple[int, str]:
         result = run_cli(
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:shared",

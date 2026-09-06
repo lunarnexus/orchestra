@@ -1,0 +1,122 @@
+<mxfile host="Electron" agent="pi">
+  <diagram id="dispatch-runtime-flow" name="Dispatch Runtime Flow">
+    <mxGraphModel dx="1103" dy="635" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="950" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;fontSize=22;fontStyle=1;strokeColor=none;fillColor=none;align=left;" value="Orchestra dispatch runtime flow" vertex="1">
+          <mxGeometry height="40" width="560" x="40" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="lane-host" parent="1" style="swimlane;html=1;horizontal=0;startSize=34;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" value="Main session / host adapter" vertex="1">
+          <mxGeometry height="760" width="200" x="40" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="lane-core" parent="1" style="swimlane;html=1;horizontal=0;startSize=34;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;" value="Python core" vertex="1">
+          <mxGeometry height="760" width="260" x="240" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="lane-scheduler" parent="1" style="swimlane;html=1;horizontal=0;startSize=34;fillColor=#fff2cc;strokeColor=#d79b00;fontStyle=1;" value="Scheduler / supervisor" vertex="1">
+          <mxGeometry height="760" width="240" x="500" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="s5" parent="lane-scheduler" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;" value="5. Atomic concurrency&lt;br&gt;checks" vertex="1">
+          <mxGeometry height="65" width="150" x="60" y="250" as="geometry" />
+        </mxCell>
+        <mxCell id="s7" parent="lane-scheduler" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;" value="7. Start detached&lt;br&gt;supervisor" vertex="1">
+          <mxGeometry height="65" width="150" x="60" y="363" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" edge="1" parent="lane-scheduler" source="s5" style="endArrow=block;html=1;rounded=0;" target="s7" value="supervise">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="s12" parent="lane-scheduler" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;dashed=1;" value="12. Optional chain:&lt;br&gt;successful &lt;b&gt;builder&lt;/b&gt; → &lt;b&gt;verifier&lt;/b&gt;" vertex="1">
+          <mxGeometry height="80" width="150" x="60" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="e13" edge="1" parent="lane-scheduler" source="s12" style="endArrow=block;html=1;rounded=0;dashed=1;" target="s5" value="new linked run">
+          <mxGeometry relative="1" x="-0.0673" as="geometry">
+            <mxPoint as="offset" />
+            <Array as="points">
+              <mxPoint x="140" y="190" />
+            </Array>
+            <mxPoint x="181.53846153846166" y="580" as="sourcePoint" />
+            <mxPoint x="142.3178807947022" y="210" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="lane-harness" parent="1" style="swimlane;html=1;horizontal=0;startSize=34;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" value="Harness connector" vertex="1">
+          <mxGeometry height="760" width="230" x="740" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="s8" parent="lane-harness" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="8. Render focused&lt;br&gt;subagent prompt" vertex="1">
+          <mxGeometry height="65" width="150" x="60" y="365" as="geometry" />
+        </mxCell>
+        <mxCell id="lane-subagent" parent="1" style="swimlane;html=1;horizontal=0;startSize=34;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" value="Subagent process" vertex="1">
+          <mxGeometry height="760" width="220" x="970" y="80" as="geometry" />
+        </mxCell>
+        <mxCell id="s10" parent="lane-subagent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="10. Complete, fail,&lt;br&gt;timeout, or stop" vertex="1">
+          <mxGeometry height="65" width="150" x="50" y="525" as="geometry" />
+        </mxCell>
+        <mxCell id="lane-state" parent="1" style="swimlane;html=1;horizontal=0;startSize=34;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" value="SQLite / logs" vertex="1">
+          <mxGeometry height="760" width="240" x="1190" y="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s11" parent="lane-state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" value="11. Store compact result&lt;br&gt;and DB-backed full return" vertex="1">
+          <mxGeometry height="75" width="150" x="70" y="600" as="geometry" />
+        </mxCell>
+        <mxCell id="s6" parent="lane-state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" value="6. Record run&lt;br&gt;queued/running metadata" vertex="1">
+          <mxGeometry height="65" width="150" x="70" y="265" as="geometry" />
+        </mxCell>
+        <mxCell id="s1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="1. Invoke&lt;br&gt;&lt;b&gt;orch_dispatch&lt;/b&gt; or &lt;b&gt;/orch do&lt;/b&gt;" vertex="1">
+          <mxGeometry height="70" width="140" x="70" y="125" as="geometry" />
+        </mxCell>
+        <mxCell id="s2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="2. Runtime session id&lt;br&gt;from host context" vertex="1">
+          <mxGeometry height="65" width="140" x="70" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="s3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;" value="3. Load config,&lt;br&gt;prompts, catalog" vertex="1">
+          <mxGeometry height="65" width="150" x="295" y="230" as="geometry" />
+        </mxCell>
+        <mxCell id="s4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;" value="4. Resolve role&lt;br&gt;and harness" vertex="1">
+          <mxGeometry height="65" width="150" x="295" y="335" as="geometry" />
+        </mxCell>
+        <mxCell id="s9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="9. Launch argv-list&lt;br&gt;subprocess" vertex="1">
+          <mxGeometry height="65" width="150" x="1005" y="445" as="geometry" />
+        </mxCell>
+        <mxCell id="s13" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;" value="13. Build one&lt;br&gt;consolidated report" vertex="1">
+          <mxGeometry height="65" width="150" x="295" y="680" as="geometry" />
+        </mxCell>
+        <mxCell id="s14" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" value="14. Deliver to exact&lt;br&gt;owning session" vertex="1">
+          <mxGeometry height="65" width="140" x="70" y="680" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" edge="1" parent="1" source="s1" style="endArrow=block;html=1;rounded=0;" target="s2" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" edge="1" parent="1" source="s2" style="endArrow=block;html=1;rounded=0;" target="s3" value="dispatch request">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" edge="1" parent="1" source="s3" style="endArrow=block;html=1;rounded=0;" target="s4" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" edge="1" parent="1" source="s4" style="endArrow=block;html=1;rounded=0;" target="s5" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" edge="1" parent="1" source="s5" style="endArrow=block;html=1;rounded=0;" target="s6" value="reserve + persist">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e7" edge="1" parent="1" source="s7" style="endArrow=block;html=1;rounded=0;" target="s8" value="selected role">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e8" edge="1" parent="1" source="s8" style="endArrow=block;html=1;rounded=0;" target="s9" value="start">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e9" edge="1" parent="1" source="s9" style="endArrow=block;html=1;rounded=0;" target="s10" value="run">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e10" edge="1" parent="1" source="s10" style="endArrow=block;html=1;rounded=0;" target="s11" value="result">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e11" edge="1" parent="1" source="s11" style="endArrow=block;html=1;rounded=0;" target="s13" value="active-count check">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e12" edge="1" parent="1" source="s11" style="endArrow=block;html=1;rounded=0;dashed=1;" target="s12" value="auto_verify enabled">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e14" edge="1" parent="1" source="s13" style="endArrow=block;html=1;rounded=0;" target="s14" value="auto-return">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

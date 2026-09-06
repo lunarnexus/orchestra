@@ -9,6 +9,13 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from orchestra.artifacts import (
+    canonical_events_path,
+    canonical_request_path,
+    canonical_return_path,
+    legacy_lifecycle_path,
+    legacy_request_path,
+)
 from orchestra.logs import append_jsonl_event, utc_now
 
 STATUS_QUEUED = "queued"
@@ -28,7 +35,7 @@ ALLOWED_MAIN_SESSION_MODES = frozenset(
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE})
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
-_SCHEMA_VERSION = 15
+_SCHEMA_VERSION = 16
 _CONNECT_ATTEMPTS = 8
 _CONNECT_RETRY_BASE_DELAY_SECONDS = 0.25
 _CONNECT_RETRY_MAX_DELAY_SECONDS = 3.0
@@ -71,6 +78,7 @@ class RunRecord:
     result_summary: str | None = None
     result_output: str | None = None
     result_summary_truncated: bool = False
+    semantic_verdict: str | None = None
     error_text: str | None = None
     blocker_text: str | None = None
     worker_session_id: str | None = None
@@ -147,6 +155,7 @@ class RunUpdate:
     result_summary: str | None = None
     result_output: str | None = None
     result_summary_truncated: bool | None = None
+    semantic_verdict: str | None = None
     error_text: str | None = None
     blocker_text: str | None = None
     worker_session_id: str | None = None
@@ -216,6 +225,7 @@ class StateStore:
                     result_summary TEXT,
                     result_output TEXT,
                     result_summary_truncated INTEGER NOT NULL DEFAULT 0,
+                    semantic_verdict TEXT,
                     error_text TEXT,
                     blocker_text TEXT,
                     log_path TEXT NOT NULL,
@@ -249,6 +259,7 @@ class StateStore:
                 "result_summary_truncated",
                 "INTEGER NOT NULL DEFAULT 0",
             )
+            self._ensure_column(connection, "runs", "semantic_verdict", "TEXT")
             self._ensure_column(connection, "runs", "input_tokens", "INTEGER")
             self._ensure_column(connection, "runs", "output_tokens", "INTEGER")
             self._ensure_column(connection, "runs", "reasoning_tokens", "INTEGER")
@@ -367,6 +378,7 @@ class StateStore:
                     result_summary,
                     result_output,
                     result_summary_truncated,
+                    semantic_verdict,
                     error_text,
                     blocker_text,
                     log_path,
@@ -388,7 +400,7 @@ class StateStore:
                 ) VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 self._serialize_record(record),
@@ -581,6 +593,7 @@ class StateStore:
             all_rows = connection.execute("SELECT * FROM runs ORDER BY run_id").fetchall()
         candidates = []
         owned_paths: set[Path] = set()
+        state_dir = request_dir.parent if request_dir is not None else None
         for row in rows:
             record = self._row_to_record(row)
             prune_at = _prune_reference_timestamp(record)
@@ -589,10 +602,14 @@ class StateStore:
             candidate_paths = tuple(
                 path
                 for path in (
+                    canonical_events_path(state_dir, record.run_id) if state_dir else None,
+                    canonical_request_path(state_dir, record.run_id) if state_dir else None,
+                    canonical_return_path(state_dir, record.run_id) if state_dir else None,
                     record.log_path,
-                    record.transcript_path,
                     record.supervisor_output_path,
                     request_dir / f"{record.run_id}.json" if request_dir is not None else None,
+                    legacy_request_path(state_dir, record.run_id) if state_dir else None,
+                    legacy_lifecycle_path(log_dir, record.run_id) if log_dir is not None else None,
                 )
                 if path is not None
             )
@@ -613,10 +630,14 @@ class StateStore:
             owned_paths.update(
                 path
                 for path in (
+                    canonical_events_path(state_dir, record.run_id) if state_dir else None,
+                    canonical_request_path(state_dir, record.run_id) if state_dir else None,
+                    canonical_return_path(state_dir, record.run_id) if state_dir else None,
                     record.log_path,
-                    record.transcript_path,
                     record.supervisor_output_path,
                     request_dir / f"{record.run_id}.json" if request_dir is not None else None,
+                    legacy_request_path(state_dir, record.run_id) if state_dir else None,
+                    legacy_lifecycle_path(log_dir, record.run_id) if log_dir is not None else None,
                 )
                 if path is not None
             )
@@ -1018,6 +1039,11 @@ class StateStore:
                 if update.result_summary_truncated is not None
                 else current.result_summary_truncated
             ),
+            semantic_verdict=(
+                update.semantic_verdict
+                if update.semantic_verdict is not None
+                else current.semantic_verdict
+            ),
             error_text=(
                 update.error_text if update.error_text is not None else current.error_text
             ),
@@ -1112,6 +1138,7 @@ class StateStore:
                 result_summary = ?,
                 result_output = ?,
                 result_summary_truncated = ?,
+                semantic_verdict = ?,
                 error_text = ?,
                 blocker_text = ?,
                 worker_session_id = ?,
@@ -1146,6 +1173,7 @@ class StateStore:
                 record.result_summary,
                 record.result_output,
                 int(record.result_summary_truncated),
+                record.semantic_verdict,
                 record.error_text,
                 record.blocker_text,
                 record.worker_session_id,
@@ -1190,6 +1218,7 @@ class StateStore:
             record.result_summary,
             record.result_output,
             int(record.result_summary_truncated),
+            record.semantic_verdict,
             record.error_text,
             record.blocker_text,
             str(record.log_path),
@@ -1239,6 +1268,11 @@ class StateStore:
             result_summary=_optional_text(row["result_summary"]),
             result_output=_optional_text(row["result_output"]),
             result_summary_truncated=bool(row["result_summary_truncated"]),
+            semantic_verdict=(
+                _optional_text(row["semantic_verdict"])
+                if "semantic_verdict" in row.keys()
+                else None
+            ),
             error_text=_optional_text(row["error_text"]),
             blocker_text=_optional_text(row["blocker_text"]),
             log_path=Path(str(row["log_path"])),

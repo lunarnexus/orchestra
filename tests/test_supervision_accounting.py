@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from orchestra.harnesses.base import WorkerProcess
 from orchestra.state import STATUS_DONE
 from orchestra.supervision import _result_from_completed_worker
@@ -11,7 +13,7 @@ from orchestra.supervision import _result_from_completed_worker
 
 def test_successful_pi_worker_result_reads_accounting_from_worker_session(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent_dir = tmp_path / "agent"
     session_dir = agent_dir / "sessions" / "--repo--"
@@ -57,7 +59,9 @@ def test_successful_pi_worker_result_reads_accounting_from_worker_session(
     )
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(agent_dir))
 
-    process = subprocess.CompletedProcess(args=["pi"], returncode=0)
+    process: subprocess.CompletedProcess[str] = subprocess.CompletedProcess(
+        args=["pi"], returncode=0
+    )
     worker = WorkerProcess(
         process=process,  # type: ignore[arg-type]
         command=["pi"],

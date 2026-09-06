@@ -64,9 +64,7 @@ def test_python_module_do_smoke(tmp_path: Path) -> None:
             "-m",
             "orchestra",
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:smoke",
@@ -106,9 +104,7 @@ def test_python_module_do_without_role_uses_builder_default(tmp_path: Path) -> N
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:builder-default",
@@ -158,9 +154,7 @@ def test_python_module_requested_role_fallback_is_visible_in_history_and_final_r
 
     do = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:fallback-smoke",
@@ -182,9 +176,7 @@ def test_python_module_requested_role_fallback_is_visible_in_history_and_final_r
 
     history = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "history",
         "--session-id",
         "manual:fallback-smoke",
@@ -195,9 +187,7 @@ def test_python_module_requested_role_fallback_is_visible_in_history_and_final_r
 
     report = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "_await-session-report",
         "--session-id",
         "manual:fallback-smoke",
@@ -239,9 +229,7 @@ def test_python_module_rejects_disabled_requested_role_before_fallback(tmp_path:
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:disabled-role",
@@ -275,9 +263,7 @@ def test_python_module_roles_enabled_accepts_on_off_and_rejects_maybe(tmp_path: 
 
     enable = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "roles",
         "reviewer",
         "enabled",
@@ -290,9 +276,7 @@ def test_python_module_roles_enabled_accepts_on_off_and_rejects_maybe(tmp_path: 
 
     disable = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "roles",
         "reviewer",
         "enabled",
@@ -305,9 +289,7 @@ def test_python_module_roles_enabled_accepts_on_off_and_rejects_maybe(tmp_path: 
 
     invalid = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "roles",
         "reviewer",
         "enabled",

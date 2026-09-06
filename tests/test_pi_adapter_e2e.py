@@ -26,11 +26,10 @@ def _configure_builder_role(catalog_path: Path) -> None:
     catalog_path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
 
 
-def _runtime_env(config_path: Path, catalog_path: Path, pi_dir: Path) -> dict[str, str]:
+def _runtime_env(config_path: Path, _catalog_path: Path, pi_dir: Path) -> dict[str, str]:
     return {
         **os.environ,
-        "ORCHESTRA_CONFIG": str(config_path),
-        "ORCHESTRA_AGENT_CATALOG": str(catalog_path),
+        "ORCHESTRA_CONFIG": str(config_path.parent),
         "PI_CODING_AGENT_DIR": str(pi_dir),
     }
 

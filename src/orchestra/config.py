@@ -16,7 +16,6 @@ DEFAULT_CONFIG_FILENAME = "config.yaml"
 DEFAULT_PROMPTS_FILENAME = "prompts.yaml"
 DEFAULT_CATALOG_FILENAME = "agent-catalog.yaml"
 ORCHESTRA_CONFIG_ENV = "ORCHESTRA_CONFIG"
-ORCHESTRA_AGENT_CATALOG_ENV = "ORCHESTRA_AGENT_CATALOG"
 PI_CODING_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
 DEFAULT_GLOBAL_CONCURRENCY = 4
 DEFAULT_PER_SESSION_CONCURRENCY = 3
@@ -146,25 +145,56 @@ def default_pi_orchestra_dir() -> Path:
     return Path(pi_dir) / "orchestra" if pi_dir else Path.home() / ".pi" / "agent" / "orchestra"
 
 
-def resolve_config_path(path: str | Path | None = None) -> Path:
-    return _resolve_path(
+def resolve_config_dir(path: str | Path | None = None) -> Path | None:
+    raw_path = _resolve_optional_path(
         explicit=path,
         env_var=ORCHESTRA_CONFIG_ENV,
-        global_default=default_pi_orchestra_dir() / DEFAULT_CONFIG_FILENAME,
-        cwd_default=Path(DEFAULT_CONFIG_FILENAME),
     )
+    if raw_path is None:
+        return None
+    config_dir = raw_path.expanduser()
+    if config_dir.is_file():
+        return config_dir.parent
+    if not config_dir.is_dir():
+        raise ConfigError(f"--config must be a directory: {config_dir}")
+    return config_dir
+
+
+def _default_config_path(filename: str) -> Path:
+    global_default = default_pi_orchestra_dir() / filename
+    if global_default.exists():
+        return global_default
+    return Path(filename)
+
+
+def resolve_config_path(path: str | Path | None = None) -> Path:
+    raw_path = _resolve_optional_path(explicit=path, env_var=ORCHESTRA_CONFIG_ENV)
+    if raw_path is not None and raw_path.expanduser().is_file():
+        return raw_path.expanduser()
+    config_dir = resolve_config_dir(path)
+    override_path = config_dir / DEFAULT_CONFIG_FILENAME if config_dir is not None else None
+    if override_path is not None and override_path.exists():
+        return override_path
+    return _default_config_path(DEFAULT_CONFIG_FILENAME)
+
+
+def resolve_prompts_path(path: str | Path | None = None) -> Path:
+    config_dir = resolve_config_dir(path)
+    override_path = config_dir / DEFAULT_PROMPTS_FILENAME if config_dir is not None else None
+    if override_path is not None and override_path.exists():
+        return override_path
+    return _default_config_path(DEFAULT_PROMPTS_FILENAME)
 
 
 def resolve_agent_catalog_path(path: str | Path | None = None) -> Path:
-    return _resolve_path(
-        explicit=path,
-        env_var=ORCHESTRA_AGENT_CATALOG_ENV,
-        global_default=default_pi_orchestra_dir() / DEFAULT_CATALOG_FILENAME,
-        cwd_default=Path(DEFAULT_CATALOG_FILENAME),
-    )
+    config_dir = resolve_config_dir(path)
+    override_path = config_dir / DEFAULT_CATALOG_FILENAME if config_dir is not None else None
+    if override_path is not None and override_path.exists():
+        return override_path
+    return _default_config_path(DEFAULT_CATALOG_FILENAME)
 
 
-def load_app_config(path: str | Path) -> AppConfig:
+def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None) -> AppConfig:
     raw = _load_yaml_mapping(path)
 
     state_dir = Path(
@@ -204,7 +234,7 @@ def load_app_config(path: str | Path) -> AppConfig:
         ),
     )
 
-    prompts_raw = _load_yaml_mapping(_prompts_path_for(path))
+    prompts_raw = _load_yaml_mapping(prompts_path or _prompts_path_for(path))
     prompts = PromptConfig(
         default_return_format=_get_required_prompt_string(prompts_raw, "default_return_format"),
         tool_description=_get_required_prompt_string(prompts_raw, "tool_description"),
@@ -243,22 +273,16 @@ def load_app_config(path: str | Path) -> AppConfig:
         budget_exceeded_prompt=_get_required_prompt_string(
             prompts_raw, "budget_exceeded_prompt"
         ),
-        return_hint_done=_get_optional_string(prompts_raw, "return_hint_done")
-        or DEFAULT_RETURN_HINT_DONE,
-        return_hint_incomplete=(
-            _get_optional_string(prompts_raw, "return_hint_incomplete")
-            or DEFAULT_RETURN_HINT_INCOMPLETE
+        return_hint_done=_get_required_prompt_string(prompts_raw, "return_hint_done"),
+        return_hint_incomplete=_get_required_prompt_string(
+            prompts_raw, "return_hint_incomplete"
         ),
-        return_hint_failed=(_get_optional_string(prompts_raw, "return_hint_failed")
-        or DEFAULT_RETURN_HINT_FAILED),
+        return_hint_failed=_get_required_prompt_string(prompts_raw, "return_hint_failed"),
         budget_trigger_label=(
             _get_optional_string(prompts_raw, "budget_trigger_label")
             or DEFAULT_BUDGET_TRIGGER_LABEL
         ),
-        soft_timeout_block_reason=(
-            _get_optional_string(prompts_raw, "soft_timeout_block_reason")
-            or DEFAULT_SOFT_TIMEOUT_BLOCK_REASON
-        ),
+        soft_timeout_block_reason=DEFAULT_SOFT_TIMEOUT_BLOCK_REASON,
     )
 
     return AppConfig(
@@ -287,8 +311,12 @@ CONFIG_MUTABLE_FIELDS = {
 }
 
 
-def load_app_config_values(path: str | Path) -> dict[str, object]:
-    config = load_app_config(path)
+def load_app_config_values(
+    path: str | Path,
+    *,
+    prompts_path: str | Path | None = None,
+) -> dict[str, object]:
+    config = load_app_config(path, prompts_path=prompts_path)
     return {
         "auto_verify": config.auto_verify,
         "auto_return": config.auto_return,
@@ -300,8 +328,13 @@ def load_app_config_values(path: str | Path) -> dict[str, object]:
     }
 
 
-def read_config_value(path: str | Path, key: str) -> object:
-    values = load_app_config_values(path)
+def read_config_value(
+    path: str | Path,
+    key: str,
+    *,
+    prompts_path: str | Path | None = None,
+) -> object:
+    values = load_app_config_values(path, prompts_path=prompts_path)
     if key not in values:
         raise ConfigError(f"unknown config key: {key}")
     return values[key]
@@ -316,8 +349,12 @@ def update_config_value(path: str | Path, key: str, raw_value: str) -> object:
     return read_config_value(source, key)
 
 
-def list_config_values(path: str | Path) -> dict[str, object]:
-    return load_app_config_values(path)
+def list_config_values(
+    path: str | Path,
+    *,
+    prompts_path: str | Path | None = None,
+) -> dict[str, object]:
+    return load_app_config_values(path, prompts_path=prompts_path)
 
 
 def _apply_config_value(data: dict[str, Any], key: str, raw_value: str) -> None:
@@ -653,21 +690,17 @@ def _load_model_limits(raw: object) -> dict[str, ModelLimitConfig]:
     return model_limits
 
 
-def _resolve_path(
+def _resolve_optional_path(
     *,
     explicit: str | Path | None,
     env_var: str,
-    global_default: Path,
-    cwd_default: Path,
-) -> Path:
+) -> Path | None:
     if explicit is not None:
         return Path(explicit)
     env_value = os.environ.get(env_var)
     if env_value:
         return Path(env_value)
-    if global_default.exists():
-        return global_default
-    return cwd_default
+    return None
 
 
 def _prompts_path_for(path: str | Path) -> Path:

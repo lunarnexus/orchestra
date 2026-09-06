@@ -111,9 +111,7 @@ def test_auto_return_enabled_exposes_one_pending_report(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:auto",
@@ -146,9 +144,7 @@ def test_await_session_report_returns_once_final_run_completes(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:await",
@@ -295,9 +291,7 @@ def test_auto_return_disabled_stays_quiet(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:no-auto",

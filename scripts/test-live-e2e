@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONFIG_PATH="$ROOT/test-config"
+ORCHESTRA_BIN="python3 -m orchestra"
+SESSION_ID="manual:live-e2e-$(date +%Y%m%d-%H%M%S)"
+WAIT_TIMEOUT_SECONDS="1800"
+WORK_DIR="$ROOT/tmp/live-e2e-work"
+
+fail() {
+  echo "[live-e2e] FAIL: $*" >&2
+  exit 1
+}
+
+note() {
+  echo "[live-e2e] $*" >&2
+}
+
+run_cli() {
+  # shellcheck disable=SC2086
+  $ORCHESTRA_BIN --config "$CONFIG_PATH" "$@"
+}
+
+json_value() {
+  local expr="$1"
+  python3 -c 'import json,sys; data=json.load(sys.stdin); value=eval(sys.argv[1], {}, {"data": data}); print("" if value is None else value)' "$expr"
+}
+
+require_file() {
+  local path="$1"
+  [[ -f "$path" ]] || fail "missing file: $path"
+}
+
+if [[ ! -d "$CONFIG_PATH" ]]; then
+  fail "config directory not found: $CONFIG_PATH
+Create it and copy whichever real config files you want to override, e.g.:
+  mkdir -p $ROOT/test-config
+  cp $ROOT/config.yaml $ROOT/test-config/config.yaml
+  cp $ROOT/agent-catalog.yaml $ROOT/test-config/agent-catalog.yaml"
+fi
+
+mkdir -p "$WORK_DIR"
+TARGET_FILE="$WORK_DIR/result.txt"
+rm -f "$TARGET_FILE"
+
+note "config: $CONFIG_PATH"
+note "session: $SESSION_ID"
+note "work file: $TARGET_FILE"
+
+note "doctor"
+run_cli doctor
+
+GOAL="Live E2E smoke test. Create or overwrite exactly this file: $TARGET_FILE. The file content must be exactly: orchestra-live-e2e-ok. Do not modify repository source files. Return a compact report with summary, verdict, files changed, and verification."
+
+note "dispatch builder run"
+DO_JSON="$(run_cli do \
+  --session-id "$SESSION_ID" \
+  --role builder \
+  --goal "$GOAL" \
+  --approved-context "This is a live Orchestra end-to-end smoke test. Work only on the target file path in the goal." \
+  --boundaries "Do not edit repository source, docs, config, tests, or git state." \
+  --acceptance-target "The target file exists and contains exactly orchestra-live-e2e-ok." \
+  --return-format "Return only a compact report with summary, verdict, files changed, tests/checks run, and blockers." \
+  --task-label live-e2e \
+  --json)"
+
+echo "$DO_JSON"
+RUN_ID="$(printf '%s' "$DO_JSON" | json_value 'data["run_id"]')"
+[[ -n "$RUN_ID" ]] || fail "could not parse run_id from do --json output"
+note "builder run: $RUN_ID"
+
+note "await session report"
+REPORT_JSON="$(run_cli _await-session-report --session-id "$SESSION_ID" --run-id "$RUN_ID" --timeout "$WAIT_TIMEOUT_SECONDS" --json)"
+echo "$REPORT_JSON"
+REPORT_TEXT="$(printf '%s' "$REPORT_JSON" | json_value 'data.get("report")')"
+[[ -n "$REPORT_TEXT" ]] || fail "empty session report"
+
+[[ -f "$TARGET_FILE" ]] || fail "target file was not created: $TARGET_FILE"
+TARGET_CONTENT="$(cat "$TARGET_FILE")"
+[[ "$TARGET_CONTENT" == "orchestra-live-e2e-ok" ]] || fail "target file content mismatch: '$TARGET_CONTENT'"
+
+[[ "$REPORT_TEXT" == *"return_path:"* ]] || fail "session report does not reference return_path"
+[[ "$REPORT_TEXT" != *"[orchestra: builder $RUN_ID fail]"* ]] || fail "builder report header says fail for terminal success"
+[[ "$REPORT_TEXT" != *"## stdout"* ]] || fail "session report includes full stdout block"
+[[ ${#REPORT_TEXT} -lt 50000 ]] || fail "session report is too large: ${#REPORT_TEXT} bytes"
+
+RETURN_PATH="$(printf '%s' "$REPORT_TEXT" | awk -F'return_path: ' '/return_path: / {print $2; exit}')"
+EVENTS_PATH="$(printf '%s' "$REPORT_TEXT" | awk -F'events_path: ' '/events_path: / {print $2; exit}')"
+[[ -n "$RETURN_PATH" ]] || fail "could not parse return_path from report"
+require_file "$RETURN_PATH"
+[[ -n "$EVENTS_PATH" ]] && require_file "$EVENTS_PATH"
+
+RUN_DIR="$(dirname "$RETURN_PATH")"
+require_file "$RUN_DIR/request.json"
+require_file "$RUN_DIR/events.jsonl"
+require_file "$RUN_DIR/return.md"
+[[ ! -f "$RUN_DIR/supervisor.log" ]] || fail "unexpected supervisor.log created: $RUN_DIR/supervisor.log"
+
+note "history"
+HISTORY_OUT="$(run_cli history --session-id "$SESSION_ID" --limit 10)"
+echo "$HISTORY_OUT"
+[[ "$HISTORY_OUT" == *"$RUN_ID"* ]] || fail "history missing builder run id"
+[[ "$HISTORY_OUT" == *"return_path:"* ]] || fail "history missing return_path"
+
+note "status"
+STATUS_OUT="$(run_cli status --session-id "$SESSION_ID")"
+echo "$STATUS_OUT"
+[[ ${#STATUS_OUT} -lt 50000 ]] || fail "status output is too large: ${#STATUS_OUT} bytes"
+
+note "debug"
+DEBUG_OUT="$(run_cli debug --run-id "$RUN_ID")"
+echo "$DEBUG_OUT"
+[[ "$DEBUG_OUT" == *"Canonical request"* ]] || fail "debug missing canonical request section"
+[[ "$DEBUG_OUT" == *"Canonical events"* ]] || fail "debug missing canonical events section"
+[[ "$DEBUG_OUT" == *"Canonical return"* ]] || fail "debug missing canonical return section"
+[[ "$DEBUG_OUT" == *"orchestra-live-e2e-ok"* ]] || fail "debug missing live target evidence"
+
+note "prune dry-run"
+PRUNE_OUT="$(run_cli prune)"
+echo "$PRUNE_OUT"
+[[ "$PRUNE_OUT" != *"deleted"* ]] || fail "prune output suggests deletion during live e2e"
+
+note "PASS"
+note "session: $SESSION_ID"
+note "builder run: $RUN_ID"
+note "run dir: $RUN_DIR"
+note "target file: $TARGET_FILE"

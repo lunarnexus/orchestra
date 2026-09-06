@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from orchestra.artifacts import canonical_events_path, canonical_return_path
 from orchestra.config import (
     DEFAULT_RETURN_HINT_DONE,
     DEFAULT_RETURN_HINT_FAILED,
@@ -48,6 +49,9 @@ __all__ = [
 ]
 
 REPORT_HEADER = "Orchestra session report"
+SUCCESS_SEMANTIC_VERDICTS = frozenset(
+    {"complete", "completed", "done", "pass", "passed", "success"}
+)
 
 
 @dataclass(frozen=True)
@@ -369,23 +373,23 @@ def _auto_verify_dispatch_failure_note(run: RunRecord) -> str | None:
 
 
 def _semantic_failure_verdict(run: RunRecord) -> str | None:
-    verdict_re = re.compile(
-        r"\b(?:Verdict|Status):\s*(fail|failed|blocked)\b",
-        re.IGNORECASE,
-    )
-    for text in (run.result_summary, run.result_output):
-        if text is None:
-            continue
-        match = verdict_re.search(text)
-        if match:
-            verdict = match.group(1).lower()
-            return "fail" if verdict == "failed" else verdict
-    return None
+    verdict_source = run.semantic_verdict
+    if verdict_source is None and run.result_output:
+        from orchestra.harnesses.common import parse_child_return
+
+        _, verdict_source, _, _ = parse_child_return(run.result_output)
+    if verdict_source is None:
+        return None
+    verdict = verdict_source.lower().strip()
+    if verdict in SUCCESS_SEMANTIC_VERDICTS:
+        return None
+    return verdict
 
 
 def format_orchestrator_return(
     runs: list[RunRecord],
     *,
+    state_dir: str | Path | None = None,
     prompts: PromptConfig | None = None,
 ) -> str:
     if not runs:
@@ -420,13 +424,15 @@ def format_orchestrator_return(
             )
         if hint:
             lines.append(f"next: {hint}")
-        if outcome != "success" or semantic_failure:
+        resolved_state_dir = state_dir or Path("state")
+        lines.append(f"return_path: {canonical_return_path(resolved_state_dir, run.run_id)}")
+        if outcome != "success" or semantic_failure or run.result_summary_truncated:
             if semantic_failure:
                 lines.append(f"verdict: {semantic_failure}")
             lines.append(f"status: {run.status}")
             lines.append(f"run_id: {run.run_id}")
             lines.append(f"debug: orchestra debug --run-id {run.run_id}")
-            lines.append("DB location: runs.result_output")
+            lines.append(f"events_path: {canonical_events_path(resolved_state_dir, run.run_id)}")
             if run.worker_session_id:
                 lines.append(f"worker_session: {run.worker_session_id}")
             if run.transcript_path:
@@ -480,7 +486,11 @@ def pending_session_report(context: AppContext, session_id: str) -> SessionRepor
         return None
     return SessionReport(
         run_ids=[run.run_id for run in runs],
-        text=format_orchestrator_return(runs, prompts=context.config.prompts),
+        text=format_orchestrator_return(
+            runs,
+            state_dir=context.config.state_dir,
+            prompts=context.config.prompts,
+        ),
     )
 
 
@@ -505,7 +515,11 @@ def consume_pending_session_report(context: AppContext, session_id: str) -> str 
     runs = context.store.consume_pending_report_runs(session_id)
     if not runs:
         return None
-    return format_orchestrator_return(runs, prompts=context.config.prompts)
+    return format_orchestrator_return(
+        runs,
+        state_dir=context.config.state_dir,
+        prompts=context.config.prompts,
+    )
 
 
 def await_run_terminal_status(

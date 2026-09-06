@@ -77,3 +77,5 @@ Orchestra roadmap items are split into:
     - Study oh-my-pi's parallel decomposed-work approach as prior art before designing the Orchestra equivalent.  
 14. [ ] Git commit integration.
 
+15. [ ] Investigate verifier/reviewer run limits to prevent spiraling fix loops.  
+    Specifically gpt-5.5/5.6 are bad about nitpicking everything to death.

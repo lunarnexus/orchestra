@@ -139,14 +139,13 @@ def test_opencode_plugin_reuses_core_tool_info_and_dispatch_budget_guard() -> No
     assert 'promptSnippet: "Use Orchestra tools to delegate work."' not in source
 
 
-def test_opencode_plugin_forwards_orchestra_config_and_catalog_to_cli_calls() -> None:
+def test_opencode_plugin_forwards_orchestra_config_dir_to_cli_calls() -> None:
     source = Path("extensions/opencode/orchestra/index.ts").read_text(encoding="utf-8")
 
     assert 'function orchestraBaseArgs(): string[] {' in source
     assert 'if (process.env.ORCHESTRA_CONFIG) {' in source
     assert 'args.push("--config", process.env.ORCHESTRA_CONFIG);' in source
-    assert 'if (process.env.ORCHESTRA_AGENT_CATALOG) {' in source
-    assert 'args.push("--agent-catalog", process.env.ORCHESTRA_AGENT_CATALOG);' in source
+    assert "--agent-catalog" not in source
     assert 'execFileAsync(file, [...orchestraBaseArgs(), ...args], { encoding: "utf8" });' in source
 
 

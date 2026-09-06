@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from orchestra.config import DEFAULT_RETURN_HINT_INCOMPLETE, load_app_config
+from orchestra.artifacts import canonical_events_path, canonical_return_path
+from orchestra.config import (
+    DEFAULT_RETURN_HINT_INCOMPLETE,
+    DEFAULT_SOFT_TIMEOUT_BLOCK_REASON,
+    load_app_config,
+)
 from orchestra.context import load_context
 from orchestra.reports import (
     SessionStatusDetails,
@@ -61,13 +66,64 @@ def test_return_gives_status_owned_hint(
                 status=status,
                 error_text="provider error",
             )
-        ]
+        ],
+        state_dir=tmp_path,
     )
 
     if expected_hint is None:
         assert "next:" not in report
     else:
         assert f"next: {expected_hint}" in report
+
+
+def test_done_run_with_success_semantic_verdict_formats_as_success(tmp_path: Path) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="done-run",
+                orchestrator_session_id="manual:semantic",
+                harness="pi",
+                role="builder",
+                task_label="semantic test",
+                log_path=tmp_path / "done-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_DONE,
+                result_summary="Status: complete Verdict: pass",
+                semantic_verdict="complete",
+            )
+        ],
+        state_dir=tmp_path,
+    )
+
+    assert "[orchestra: builder done-run success]" in report
+    assert "verdict: complete" not in report
+
+
+@pytest.mark.parametrize("semantic_verdict", ["failed", "blocked", "incomplete"])
+def test_done_run_with_problem_semantic_verdict_formats_as_fail(
+    tmp_path: Path,
+    semantic_verdict: str,
+) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="problem-run",
+                orchestrator_session_id="manual:semantic",
+                harness="pi",
+                role="builder",
+                task_label="semantic test",
+                log_path=tmp_path / "problem-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_DONE,
+                result_summary="Status: complete Verdict: problem",
+                semantic_verdict=semantic_verdict,
+            )
+        ],
+        state_dir=tmp_path,
+    )
+
+    assert "[orchestra: builder problem-run fail]" in report
+    assert f"verdict: {semantic_verdict}" in report
 
 
 def test_auto_verify_builder_non_success_uses_fix_only_follow_up_prompt(
@@ -106,8 +162,10 @@ def test_aggregate_completed_run_accounting_handles_empty_missing_partial_and_po
         "elapsed_seconds_complete": True,
         "input_tokens": None,
         "output_tokens": None,
+        "reasoning_tokens": None,
         "cache_read_tokens": None,
         "cache_write_tokens": None,
+        "cost_usd": None,
         "tokens_complete": True,
         "total_tokens": None,
     }
@@ -134,8 +192,10 @@ def test_aggregate_completed_run_accounting_handles_empty_missing_partial_and_po
         "elapsed_seconds_complete": True,
         "input_tokens": 0,
         "output_tokens": 0,
+        "reasoning_tokens": 0,
         "cache_read_tokens": 0,
         "cache_write_tokens": 0,
+        "cost_usd": 0.0,
         "tokens_complete": False,
         "total_tokens": None,
     }
@@ -196,8 +256,10 @@ def test_aggregate_completed_run_accounting_handles_empty_missing_partial_and_po
                 status=STATUS_DONE,
                 input_tokens=10,
                 output_tokens=5,
+                reasoning_tokens=4,
                 cache_read_tokens=3,
                 cache_write_tokens=2,
+                cost_usd=0.25,
             ),
             RunRecord(
                 run_id="full-b",
@@ -212,8 +274,10 @@ def test_aggregate_completed_run_accounting_handles_empty_missing_partial_and_po
                 status=STATUS_DONE,
                 input_tokens=7,
                 output_tokens=1,
+                reasoning_tokens=0,
                 cache_read_tokens=4,
                 cache_write_tokens=6,
+                cost_usd=0.5,
             ),
         ]
     )
@@ -223,10 +287,12 @@ def test_aggregate_completed_run_accounting_handles_empty_missing_partial_and_po
         "elapsed_seconds_complete": True,
         "input_tokens": 17,
         "output_tokens": 6,
+        "reasoning_tokens": 4,
         "cache_read_tokens": 7,
         "cache_write_tokens": 8,
+        "cost_usd": 0.75,
         "tokens_complete": True,
-        "total_tokens": 38,
+        "total_tokens": 42,
     }
 
 
@@ -252,6 +318,7 @@ def test_return_hints_come_from_prompts_yaml(
         == "custom incomplete hint from prompts"
     )
     assert config.prompts.return_hint_failed == "custom failed hint from prompts"
+    assert config.prompts.soft_timeout_block_reason == DEFAULT_SOFT_TIMEOUT_BLOCK_REASON
 
     def record(status: str) -> RunRecord:
         return RunRecord(
@@ -354,9 +421,7 @@ def test_consolidated_report_includes_all_unreported_terminal_runs(
 
     first = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:report",
@@ -365,9 +430,7 @@ def test_consolidated_report_includes_all_unreported_terminal_runs(
     )
     second = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:report",
@@ -473,7 +536,7 @@ def test_build_session_report_includes_aggregate_accounting_totals(
     assert "reported_runs: 1" in report
     assert "accounting_completed_runs: 1" in report
     assert "accounting_elapsed_seconds: 4" in report
-    assert "accounting_total_tokens: 18" in report
+    assert "accounting_total_tokens: None" in report
 
 
 def test_consolidated_report_surfaces_auto_verify_dispatch_failure_without_full_return_load(
@@ -519,9 +582,7 @@ def test_truncated_report_points_to_full_return_artifact(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:truncated-report",
@@ -535,16 +596,15 @@ def test_truncated_report_points_to_full_return_artifact(
     record = store.get_run(run_id)
 
     assert record.result_summary_truncated is True
-    assert record.result_output is not None
-    assert long_output in record.result_output
+    assert record.result_output is None
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     report = consume_pending_session_report(context, "manual:truncated-report")
 
     assert report is not None
     assert "[truncated]" in report
-    assert "artifact:" not in report
-    assert f"log: {record.log_path}" not in report
+    assert "return_path: " in report
+    assert f"log: {record.log_path}" in report
 
 
 def test_short_report_includes_artifact_pointer(
@@ -560,9 +620,7 @@ def test_short_report_includes_artifact_pointer(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:short-report",
@@ -576,8 +634,7 @@ def test_short_report_includes_artifact_pointer(
     record = store.get_run(run_id)
 
     assert record.result_summary_truncated is False
-    assert record.result_output is not None
-    assert "short ok" in record.result_output
+    assert record.result_output is None
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     report = consume_pending_session_report(context, "manual:short-report")
@@ -610,9 +667,7 @@ def test_failed_worker_return_artifact_includes_stderr(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:failed-artifact",
@@ -625,9 +680,7 @@ def test_failed_worker_return_artifact_includes_stderr(
     assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_FAILED, timeout=5)
     record = store.get_run(run_id)
 
-    assert record.result_output is not None
-    assert "stdout data" in record.result_output
-    assert "stderr detail" in record.result_output
+    assert record.result_output is None
 
 
 def test_failed_worker_with_long_stdout_and_short_stderr_does_not_mark_summary_truncated(
@@ -652,9 +705,7 @@ def test_failed_worker_with_long_stdout_and_short_stderr_does_not_mark_summary_t
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:failed-short-stderr",
@@ -668,8 +719,7 @@ def test_failed_worker_with_long_stdout_and_short_stderr_does_not_mark_summary_t
     record = store.get_run(run_id)
 
     assert record.result_summary_truncated is False
-    assert record.result_output is not None
-    assert long_stdout in record.result_output
+    assert record.result_output is None
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     report = consume_pending_session_report(context, "manual:failed-short-stderr")
@@ -703,7 +753,8 @@ def test_semantic_failure_verdict_in_result_summary_adds_debug_guidance(
                 ),
                 worker_session_id="worker-123",
             )
-        ]
+        ],
+        state_dir=tmp_path,
     )
 
     assert "[orchestra: verifier verifier-run fail]" in report
@@ -711,7 +762,8 @@ def test_semantic_failure_verdict_in_result_summary_adds_debug_guidance(
     assert "next: inspect the debug trace and dispatch one targeted recovery" in report
     assert "status: done" in report
     assert "debug: orchestra debug --run-id verifier-run" in report
-    assert "DB location: runs.result_output" in report
+    assert "return_path: " in report
+    assert "events_path: " in report
     assert "worker_session: worker-123" in report
     assert "log: " in report
 
@@ -737,15 +789,17 @@ def test_semantic_blocked_verdict_in_result_output_adds_guidance(
                 ),
                 worker_session_id="worker-456",
             )
-        ]
+        ],
+        state_dir=tmp_path,
     )
 
     assert "[orchestra: builder builder-run fail]" in report
     assert "summary: looks okay" in report
     assert "next: inspect the debug trace and dispatch one targeted recovery" in report
     assert "debug: orchestra debug --run-id builder-run" in report
+    assert "return_path: " in report
+    assert "events_path: " in report
     assert "worker_session: worker-456" in report
-    assert "DB location: runs.result_output" in report
 
 
 def test_semantic_blocked_status_in_result_output_adds_guidance(
@@ -765,13 +819,15 @@ def test_semantic_blocked_status_in_result_output_adds_guidance(
                 result_summary="review completed",
                 result_output="Status: blocked\nBlockers: needs a decision",
             )
-        ]
+        ],
+        state_dir=tmp_path,
     )
 
     assert "[orchestra: verifier status-blocked-run fail]" in report
     assert "verdict: blocked" in report
     assert "debug: orchestra debug --run-id status-blocked-run" in report
-    assert "DB location: runs.result_output" in report
+    assert "return_path: " in report
+    assert "events_path: " in report
 
 
 def test_auto_verify_semantic_failure_keeps_debug_guidance_with_builder_return(
@@ -809,7 +865,8 @@ def test_auto_verify_semantic_failure_keeps_debug_guidance_with_builder_return(
     assert "advance the plan using this subagent return" not in report
     assert "[orchestra: verifier auto-verifier-run fail]" in report
     assert "debug: orchestra debug --run-id auto-verifier-run" in report
-    assert "DB location: runs.result_output" in report
+    assert "return_path: " in report
+    assert "events_path: " in report
     assert "next: inspect the debug trace and dispatch one targeted recovery" in report
 
 
@@ -835,9 +892,7 @@ def test_long_stderr_marks_failed_summary_truncated(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:failed-long-stderr",
@@ -850,7 +905,7 @@ def test_long_stderr_marks_failed_summary_truncated(
     assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_FAILED, timeout=5)
     record = store.get_run(run_id)
 
-    assert record.result_output is not None
+    assert record.result_output is None
     assert record.result_summary_truncated is True
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
@@ -907,9 +962,7 @@ def test_fallback_note_appears_in_final_report(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:fallback-report",
@@ -930,3 +983,40 @@ def test_fallback_note_appears_in_final_report(
     assert report is not None
     assert f"[orchestra: reviewer {run_id} success]" in report
     assert f"summary: {note}; worker ok" in report
+
+
+def test_format_orchestrator_return_uses_canonical_artifact_paths(tmp_path: Path) -> None:
+    report = format_orchestrator_return([
+        RunRecord(
+            run_id="run-1",
+            orchestrator_session_id="manual:paths",
+            harness="pi",
+            role="builder",
+            task_label="task",
+            log_path=tmp_path / "run-1.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+            status=STATUS_FAILED,
+            result_summary="summary",
+            semantic_verdict="fail",
+        )
+    ], state_dir=tmp_path)
+    assert f"return_path: {canonical_return_path(tmp_path, 'run-1')}" in report
+    assert f"events_path: {canonical_events_path(tmp_path, 'run-1')}" in report
+    assert "result_output" not in report
+
+def test_format_orchestrator_return_keeps_success_reports_compact(tmp_path: Path) -> None:
+    report = format_orchestrator_return([
+        RunRecord(
+            run_id="run-2",
+            orchestrator_session_id="manual:paths",
+            harness="pi",
+            role="builder",
+            task_label="task",
+            log_path=tmp_path / "run-2.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+            status=STATUS_DONE,
+            result_summary="summary",
+        )
+    ], state_dir=tmp_path)
+    assert "return_path:" in report
+    assert "events_path:" not in report

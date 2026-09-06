@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 import yaml
 
+from orchestra.artifacts import canonical_return_path
 from orchestra.config import (
     AgentCatalog,
     AppConfig,
@@ -370,9 +371,7 @@ def test_do_output_exposes_effective_timeout_seconds(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:test-session",
@@ -406,9 +405,7 @@ def test_do_status_history_flow(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:test-session",
@@ -430,9 +427,7 @@ def test_do_status_history_flow(
     history_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "history",
             "--session-id",
             "manual:test-session",
@@ -494,9 +489,7 @@ def test_prune_reports_dry_run_candidates_without_deleting(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "prune",
             "--retention-days",
             "30",
@@ -558,9 +551,7 @@ def test_prune_delete_removes_old_runs_owned_files_and_orphans(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "prune",
             "--delete",
         ]
@@ -598,9 +589,7 @@ def test_do_rejects_over_model_limit(
     first_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:model-limit-a",
@@ -616,9 +605,7 @@ def test_do_rejects_over_model_limit(
     second_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:model-limit-b",
@@ -658,9 +645,7 @@ def test_do_uses_role_nested_dispatch_depth_for_worker_env(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:nested-dispatch-depth-role",
@@ -698,9 +683,7 @@ def test_do_rejects_when_orchestra_dispatch_budget_is_exhausted(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:worker-budget-exhausted",
@@ -735,9 +718,7 @@ def test_roles_lists_configured_worker_roles(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "roles",
         ]
     )
@@ -767,9 +748,7 @@ def test_status_reports_active_run(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:test-session",
@@ -789,9 +768,7 @@ def test_status_reports_active_run(
     status_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "status",
             "--session-id",
             "manual:test-session",
@@ -963,9 +940,7 @@ def test_status_without_session_id_reports_global_active_runs(
     first_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:first",
@@ -979,9 +954,7 @@ def test_status_without_session_id_reports_global_active_runs(
     second_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:second",
@@ -1002,9 +975,7 @@ def test_status_without_session_id_reports_global_active_runs(
     status_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "status",
         ]
     )
@@ -1039,12 +1010,12 @@ def test_status_prose_and_json_include_resolved_orchestra_tools(
 
     from orchestra.cli import main
 
-    status_exit = main(["--config", str(config_path), "status"])
+    status_exit = main(["--config", str(config_path.parent), "status"])
     assert status_exit == 0
     assert capsys.readouterr().out.splitlines()[0] == "orchestra_tools: on"
 
     json_exit = main(
-        ["--config", str(config_path), "status", "--json"]
+        ["--config", str(config_path.parent), "status", "--json"]
     )
     payload = json.loads(capsys.readouterr().out)
 
@@ -1055,7 +1026,7 @@ def test_status_prose_and_json_include_resolved_orchestra_tools(
     session_exit = main(
         [
             "--config",
-            str(config_path),
+            str(config_path.parent),
             "status",
             "--session-id",
             "manual:mode-session",
@@ -1080,12 +1051,12 @@ def test_bare_status_reports_config_resolved_default_when_disabled(
 
     from orchestra.cli import main
 
-    status_exit = main(["--config", str(config_path), "status"])
+    status_exit = main(["--config", str(config_path.parent), "status"])
     assert status_exit == 0
     assert capsys.readouterr().out.splitlines()[0] == "orchestra_tools: off"
 
     json_exit = main(
-        ["--config", str(config_path), "status", "--json"]
+        ["--config", str(config_path.parent), "status", "--json"]
     )
     payload = json.loads(capsys.readouterr().out)
 
@@ -1111,7 +1082,7 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
     set_exit = main(
         [
             "--config",
-            str(config_path),
+            str(config_path.parent),
             "_session-mode",
             "set",
             "--session-id",
@@ -1126,7 +1097,7 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
     set_json_exit = main(
         [
             "--config",
-            str(config_path),
+            str(config_path.parent),
             "_session-mode",
             "set",
             "--session-id",
@@ -1150,7 +1121,7 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
     get_exit = main(
         [
             "--config",
-            str(config_path),
+            str(config_path.parent),
             "_session-mode",
             "get",
             "--session-id",
@@ -1168,7 +1139,7 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
     other_get_exit = main(
         [
             "--config",
-            str(config_path),
+            str(config_path.parent),
             "_session-mode",
             "get",
             "--session-id",
@@ -1185,7 +1156,7 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
     status_json_exit = main(
         [
             "--config",
-            str(config_path),
+            str(config_path.parent),
             "status",
             "--session-id",
             "manual:mode-session",
@@ -1197,7 +1168,7 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
     assert status_json_exit == 0
     assert status_payload["orchestra_tools"] == "off"
 
-    bare_status_exit = main(["--config", str(config_path), "status"])
+    bare_status_exit = main(["--config", str(config_path.parent), "status"])
     assert bare_status_exit == 0
     assert capsys.readouterr().out.splitlines()[0] == "orchestra_tools: off"
 
@@ -1219,7 +1190,7 @@ def test_session_mode_set_invalid_mode_errors_cleanly(
     exit_code = main(
         [
             "--config",
-            str(config_path),
+            str(config_path.parent),
             "_session-mode",
             "set",
             "--session-id",
@@ -1252,9 +1223,7 @@ def test_stop_command_enforces_ownership(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "stop",
             "--session-id",
             "manual:other",
@@ -1285,9 +1254,7 @@ def test_doctor_command_checks_local_setup(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "doctor",
         ]
     )
@@ -1454,9 +1421,7 @@ def test_internal_await_run_outputs_role(
     dispatch_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:test-session",
@@ -1477,9 +1442,7 @@ def test_internal_await_run_outputs_role(
     wait_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "_await-run",
             "--session-id",
             "manual:test-session",
@@ -1541,9 +1504,7 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
     default_exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "roles",
         ]
     )
@@ -1552,9 +1513,7 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
     all_exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "roles",
             "--all",
         ]
@@ -1621,9 +1580,7 @@ def test_roles_command_accepts_common_true_enabled_values(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "roles",
             "reviewer",
             "enabled",
@@ -1681,9 +1638,7 @@ def test_roles_command_accepts_common_false_enabled_values(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "roles",
             "reviewer",
             "enabled",
@@ -1739,9 +1694,7 @@ def test_roles_command_accepts_auto_enabled_value(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "roles",
             "reviewer",
             "enabled",
@@ -1796,9 +1749,7 @@ def test_roles_command_rejects_disabling_default_role(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "roles",
             "builder",
             "enabled",
@@ -1858,9 +1809,7 @@ def test_roles_command_updates_role_routing_settings(
         exit_code = main(
             [
                 "--config",
-                str(config_path),
-                "--agent-catalog",
-                str(catalog_path),
+                str(config_path.parent),
                 "roles",
                 "worker",
                 setting,
@@ -1940,9 +1889,7 @@ def test_roles_command_rejects_invalid_role_mutations(
         exit_code = main(
             [
                 "--config",
-                str(config_path),
-                "--agent-catalog",
-                str(catalog_path),
+                str(config_path.parent),
                 "roles",
                 *role_args,
             ]
@@ -2003,9 +1950,7 @@ def test_role_metadata_lists_unused_harness_configs(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "_role-metadata",
         ]
     )
@@ -2072,9 +2017,7 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     help_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "help-host",
         ]
     )
@@ -2083,9 +2026,7 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     tool_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "_tool-info",
         ]
     )
@@ -2195,8 +2136,8 @@ def test_tool_info_exposes_tools_default_and_resolved_session_mode(
 ) -> None:
     from orchestra.cli import main
 
-    config_path, catalog_path = _write_tool_info_fixture(tmp_path)
-    base_args = ["--config", str(config_path), "--agent-catalog", str(catalog_path)]
+    config_path, _catalog_path = _write_tool_info_fixture(tmp_path)
+    base_args = ["--config", str(config_path.parent)]
 
     exit_code = main([*base_args, "_tool-info"])
     payload = json.loads(capsys.readouterr().out)
@@ -2243,7 +2184,7 @@ def test_tool_info_reflects_disabled_tools_default(
     )
 
     exit_code = main(
-        ["--config", str(config_path), "--agent-catalog", str(catalog_path), "_tool-info"]
+        ["--config", str(config_path.parent), "_tool-info"]
     )
     payload = json.loads(capsys.readouterr().out)
 
@@ -2297,9 +2238,7 @@ def test_disabled_role_is_rejected_without_fallback(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:test-session",
@@ -2397,9 +2336,7 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:fallback-requested-role",
@@ -2423,9 +2360,10 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
     assert record.result_summary is not None
     assert note in record.result_summary
     assert not record.blocker_text
-    assert record.result_output is not None
+    assert record.result_output is None
 
-    payload = json.loads(record.result_output.split("## stdout\n\n", 1)[1].strip())
+    return_text = canonical_return_path(tmp_path / "state", run_id).read_text(encoding="utf-8")
+    payload = json.loads(return_text.split("## stdout\n\n", 1)[1].strip())
     assert payload["argv"] == ["--model", "fallback-model"]
     assert payload["nested_dispatch_depth"] == "2"
     assert payload["role_env"] == "configured"
@@ -2439,9 +2377,7 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
     history_exit = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "history",
             "--session-id",
             "manual:fallback-requested-role",
@@ -2499,9 +2435,7 @@ def test_do_without_role_uses_default_role(
     exit_code = main(
         [
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             "manual:default-role",

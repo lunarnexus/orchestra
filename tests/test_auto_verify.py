@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from orchestra.artifacts import canonical_return_path
 from orchestra.config import AgentCatalog, AppConfig, ConcurrencyConfig, RoleConfig
 from orchestra.context import AppContext, OrchestraPaths
 from orchestra.dispatch import PendingRunRequest, StartedRun, start_run
@@ -165,7 +166,8 @@ def test_auto_verify_dispatches_linked_verifier_after_builder_success(
     assert finalized.status == STATUS_DONE
     assert finalized.cycle_id == builder_started.record.run_id
     assert finalized.sequence_index == 0
-    assert finalized.result_output is not None
+    assert finalized.result_output is None
+    assert canonical_return_path(context.config.state_dir, finalized.run_id).is_file()
     assert len(verifier_runs) == 1
     verifier = verifier_runs[0]
     assert verifier.role == "verifier"
@@ -232,7 +234,9 @@ def test_auto_verify_assignment_uses_trusted_metadata_only(
     assert "Builder status: done" in assignment.approved_context
     assert "Builder result summary: builder completed" in assignment.approved_context
     assert "Builder run id: " + builder_started.record.run_id in assignment.approved_context
-    assert "builder artifact" in assignment.approved_context
+    assert "builder artifact" not in assignment.approved_context
+    assert "Builder return path:" in assignment.approved_context
+    assert "Builder events path:" in assignment.approved_context
     assert "Original goal: Implement the parser fix" in assignment.approved_context
 
 
@@ -253,7 +257,8 @@ def test_auto_verify_dispatch_start_failure_is_reported(
     verifier_runs = [run for run in runs if run.trigger_reason == "auto_verify"]
 
     assert finalized.status == STATUS_DONE
-    assert finalized.result_output is not None
+    assert finalized.result_output is None
+    assert canonical_return_path(context.config.state_dir, finalized.run_id).is_file()
     assert verifier_runs == []
     assert report is not None
     assert f"[orchestra: builder {builder_started.record.run_id} success]" in report
@@ -275,7 +280,8 @@ def test_auto_verify_reports_disabled_verifier_failure_visibly(
     verifier_runs = [run for run in runs if run.trigger_reason == "auto_verify"]
 
     assert finalized.status == STATUS_DONE
-    assert finalized.result_output is not None
+    assert finalized.result_output is None
+    assert canonical_return_path(context.config.state_dir, finalized.run_id).is_file()
     assert verifier_runs == []
     assert report is not None
     assert (

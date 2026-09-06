@@ -2525,9 +2525,7 @@ def test_run_orchestra_uses_bounded_subprocess_timeout(monkeypatch: pytest.Monke
             "args": [
                 "orchestra",
                 "--config",
-                str(runtime_root / "config.yaml"),
-                "--agent-catalog",
-                str(runtime_root / "agent-catalog.yaml"),
+                str(runtime_root),
                 "_tool-info",
             ],
             "check": False,
@@ -2561,9 +2559,7 @@ def test_watcher_subprocess_calls_use_larger_hard_stop(monkeypatch: pytest.Monke
             "args": [
                 "orchestra",
                 "--config",
-                str(runtime_root / "config.yaml"),
-                "--agent-catalog",
-                str(runtime_root / "agent-catalog.yaml"),
+                str(runtime_root),
                 "_await-run",
                 "--timeout",
                 "35",

@@ -43,9 +43,7 @@ def test_session_scoped_status_and_history_do_not_cross_sessions(
 
     first = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "pi:one",
@@ -54,9 +52,7 @@ def test_session_scoped_status_and_history_do_not_cross_sessions(
     )
     second = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "pi:two",
@@ -68,9 +64,7 @@ def test_session_scoped_status_and_history_do_not_cross_sessions(
 
     history_one = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "history",
         "--session-id",
         "pi:one",

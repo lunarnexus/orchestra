@@ -12,6 +12,7 @@ from orchestra.config import (
     load_app_config,
     resolve_agent_catalog_path,
     resolve_config_path,
+    resolve_prompts_path,
 )
 from orchestra.harnesses import (
     HarnessRegistry,
@@ -69,8 +70,13 @@ def load_context(
     registry: HarnessRegistry | None = None,
 ) -> AppContext:
     config_file = resolve_config_path(config_path)
-    catalog_file = resolve_agent_catalog_path(catalog_path)
-    config = load_app_config(config_file)
+    prompts_file = resolve_prompts_path(config_path)
+    catalog_file = (
+        Path(catalog_path)
+        if catalog_path is not None
+        else resolve_agent_catalog_path(config_path)
+    )
+    config = load_app_config(config_file, prompts_path=prompts_file)
     catalog = load_agent_catalog(catalog_file)
     resolved_registry = registry or create_default_registry()
     register_catalog_harnesses(resolved_registry, _catalog_harness_names(catalog))

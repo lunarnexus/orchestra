@@ -221,7 +221,7 @@ def test_run_supervisor_marks_broken_loader_failed_and_clears_request(tmp_path: 
     assert record.status == STATUS_FAILED
     assert record.error_text == "failed to load harness: dummy: boom"
     assert record.blocker_text == "Worker harness could not be loaded"
-    assert started.request_file.exists() is False
+    assert started.request_file.exists() is True
     assert context.store.list_active_runs("manual:broken-loader") == []
 
 

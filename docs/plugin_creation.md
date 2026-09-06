@@ -63,10 +63,9 @@ These features already live in Orchestra core or core CLI helpers. New plugins s
 
 ### Core configuration contract
 
-Plugins should forward these environment-driven core config selectors when invoking `orchestra`:
-
-- `ORCHESTRA_CONFIG`
-- `ORCHESTRA_AGENT_CATALOG`
+Plugins should forward `ORCHESTRA_CONFIG` when invoking `orchestra`. It points to a
+config directory that may contain `config.yaml`, `agent-catalog.yaml`, and/or
+`prompts.yaml` overrides.
 
 Plugins should also honor `ORCHESTRA_DISPATCH_BUDGET` for dispatch-budget handling when the host adapter launches work on behalf of the current session. Pi additionally uses `ORCHESTRA_DISPATCH_BUDGET=1` to withhold `orch_dispatch` registration while leaving `orch_status` available, so hosts with runtime tool registration should decide whether budget gating affects dispatch execution only or dispatch tool visibility as well.
 
@@ -233,7 +232,7 @@ Before implementing a new host plugin, answer these questions.
 7. **Lifecycle** — What session end/shutdown hook can clean up watchers?
 8. **UI** — What native status, notification, output, or completion APIs should be used?
 9. **Install** — Does the host need an `orchestra init <host>` target?
-10. **Config** — How will plugin invocations forward `ORCHESTRA_CONFIG` and `ORCHESTRA_AGENT_CATALOG`?
+10. **Config** — How will plugin invocations forward `ORCHESTRA_CONFIG`?
 
 ## Minimum viable plugin
 

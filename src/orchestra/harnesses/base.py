@@ -53,6 +53,7 @@ class WorkerResult:
     error_text: str | None
     blocker_text: str | None
     result_summary_truncated: bool = False
+    semantic_verdict: str | None = None
     timed_out: bool = False
     worker_session_id: str | None = None
     transcript_path: Path | None = None

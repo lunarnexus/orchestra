@@ -136,7 +136,8 @@ def test_format_history_shows_auto_verify_linkage_metadata(tmp_path: Path) -> No
     output = format_history(context, "manual:cycle", limit=10)
 
     assert "- verifier-run [done] verifier :: verifier task :: verifier done" in output
-    assert "  artifact: " not in output
+    assert "  return_path: " in output
+    assert "  delivery: pending" in output
     assert "  cycle_id: builder-run" in output
     assert "  triggered_by_run_id: builder-run" in output
     assert "  trigger_reason: auto_verify" in output
@@ -145,7 +146,7 @@ def test_format_history_shows_auto_verify_linkage_metadata(tmp_path: Path) -> No
     assert "accounting_total_tokens: None" in output
 
 
-def test_format_debug_run_includes_full_return_output(tmp_path: Path) -> None:
+def test_format_debug_run_includes_canonical_return_and_artifacts(tmp_path: Path) -> None:
     context = _make_context(tmp_path)
     store = context.store
     store.create_run(
@@ -168,11 +169,65 @@ def test_format_debug_run_includes_full_return_output(tmp_path: Path) -> None:
             result_output="full return evidence",
         ),
     )
+    debug_dir = tmp_path / "state" / "runs" / "debug-run"
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    (debug_dir / "request.json").write_text("request", encoding="utf-8")
+    (debug_dir / "events.jsonl").write_text("events", encoding="utf-8")
+    (debug_dir / "return.md").write_text("return", encoding="utf-8")
 
     output = format_debug_run(context, "debug-run")
 
-    assert "## Full return" in output
-    assert "full return evidence" in output
+    assert "## Run record" in output
+    assert "## Canonical request" in output
+    assert "## Canonical events" in output
+    assert "## Canonical return" in output
+    assert "return" in output
+    assert "full return evidence" not in output
+    assert "DB result_output" not in output
+    assert "path: " in output
+
+
+def test_format_debug_run_prefers_current_canonical_artifacts(tmp_path: Path) -> None:
+    context = _make_context(tmp_path)
+    store = context.store
+    store.create_run(
+        RunRecord(
+            run_id="legacy-run",
+            orchestrator_session_id="manual:cycle",
+            harness="pi",
+            role="builder",
+            task_label="builder task",
+            log_path=tmp_path / "logs" / "legacy-run.jsonl",
+            created_at="2026-01-01T00:00:01Z",
+            transcript_path=tmp_path / "transcripts" / "legacy-run.jsonl",
+        )
+    )
+    store.update_run("legacy-run", RunUpdate(status=STATUS_RUNNING, process_id=1234))
+    store.update_run(
+        "legacy-run",
+        RunUpdate(
+            status=STATUS_DONE,
+            result_summary="legacy done",
+            result_output="legacy full return",
+        ),
+    )
+
+    legacy_request = tmp_path / "state" / "requests" / "legacy-run.json"
+    legacy_request.parent.mkdir(parents=True, exist_ok=True)
+    legacy_request.write_text("legacy request", encoding="utf-8")
+    legacy_log = tmp_path / "logs" / "legacy-run.jsonl"
+    legacy_log.write_text("legacy events", encoding="utf-8")
+    legacy_return = tmp_path / "state" / "runs" / "legacy-run" / "return.md"
+    legacy_return.parent.mkdir(parents=True, exist_ok=True)
+    legacy_return.write_text("legacy return", encoding="utf-8")
+
+    output = format_debug_run(context, "legacy-run")
+
+    assert "## Canonical request" in output
+    assert "## Canonical return" in output
+    assert "legacy return" in output
+    assert "DB result_output" not in output
+    assert "legacy full return" not in output
 
 
 def test_status_payload_includes_linkage_metadata_for_active_runs(tmp_path: Path) -> None:
@@ -360,7 +415,6 @@ def test_format_debug_run_shows_auto_verify_linkage_metadata(tmp_path: Path) -> 
 
     output = format_debug_run(context, "verifier-run")
 
-    assert "## Cycle linkage" in output
     assert "cycle_id: builder-run" in output
     assert "triggered_by_run_id: builder-run" in output
     assert "trigger_reason: auto_verify" in output

@@ -91,6 +91,9 @@ status_setting_description: Reserved for role updates; model-callable roles are 
 status_value_description: Reserved for role updates; model-callable roles are read-only for now.
 budget_trigger_label: Budget trigger
 soft_timeout_block_reason: Orchestra soft timeout reached; return budget handoff
+return_hint_done: advance the plan using this subagent return; do not repeat its work
+return_hint_incomplete: redispatch from the continuation handoff; preserve completed work
+return_hint_failed: inspect the debug trace and dispatch one targeted recovery
 budget_exceeded_prompt: |-
   [Orchestra subagent budget exceeded]
   Stop everything you're doing immediately.

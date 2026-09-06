@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from orchestra.artifacts import canonical_request_path, run_state_dir, write_json_atomically
 from orchestra.config import ModelLimitConfig, PromptConfig
 from orchestra.context import CONTRACT_VERSION, AppContext, AppError
 from orchestra.harnesses.common import orchestra_can_dispatch
@@ -155,11 +155,11 @@ def start_run(
     role = selected_role.config
 
     run_id = uuid.uuid4().hex[:12]
-    log_path = context.config.log_dir / f"{run_id}.jsonl"
+    run_dir = run_state_dir(context.config.state_dir, run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    log_path = run_dir / "events.jsonl"
     effective_task_label = task_label.strip() or _default_task_label(goal)
-    request_dir = context.config.state_dir / "requests"
-    request_dir.mkdir(parents=True, exist_ok=True)
-    request_file = request_dir / f"{run_id}.json"
+    request_file = canonical_request_path(context.config.state_dir, run_id)
     effective_timeout = timeout_seconds or context.config.default_timeout
     effective_soft_timeout = role.soft_timeout or context.config.soft_timeout
     if effective_soft_timeout is not None and effective_soft_timeout >= effective_timeout:
@@ -214,25 +214,23 @@ def start_run(
             _format_concurrency_limit_error(str(exc), context=context, session_id=session_id)
         ) from exc
 
-    request_file.write_text(
-        json.dumps(
-            {
-                "run_id": pending_request.run_id,
-                "role_name": pending_request.role_name,
-                "goal": pending_request.goal,
-                "approved_context": pending_request.approved_context,
-                "boundaries": pending_request.boundaries,
-                "acceptance_target": pending_request.acceptance_target,
-                "return_format": pending_request.return_format,
-                "timeout_seconds": pending_request.timeout_seconds,
-                "task_label": pending_request.task_label,
-                "cycle_id": pending_request.cycle_id,
-                "triggered_by_run_id": pending_request.triggered_by_run_id,
-                "trigger_reason": pending_request.trigger_reason,
-                "sequence_index": pending_request.sequence_index,
-            }
-        ),
-        encoding="utf-8",
+    write_json_atomically(
+        request_file,
+        {
+            "run_id": pending_request.run_id,
+            "role_name": pending_request.role_name,
+            "goal": pending_request.goal,
+            "approved_context": pending_request.approved_context,
+            "boundaries": pending_request.boundaries,
+            "acceptance_target": pending_request.acceptance_target,
+            "return_format": pending_request.return_format,
+            "timeout_seconds": pending_request.timeout_seconds,
+            "task_label": pending_request.task_label,
+            "cycle_id": pending_request.cycle_id,
+            "triggered_by_run_id": pending_request.triggered_by_run_id,
+            "trigger_reason": pending_request.trigger_reason,
+            "sequence_index": pending_request.sequence_index,
+        },
     )
     _spawn_supervisor(context, request_file, run_id)
     return StartedRun(

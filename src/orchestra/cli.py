@@ -6,12 +6,14 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 from orchestra.config import (
     ConfigError,
     list_config_values,
     read_config_value,
     resolve_config_path,
+    resolve_prompts_path,
     update_config_value,
 )
 from orchestra.context import AppError, load_context
@@ -109,13 +111,10 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         "--config",
         metavar="PATH",
         default=None,
-        help="config file path",
-    )
-    parser.add_argument(
-        "--agent-catalog",
-        metavar="PATH",
-        default=None,
-        help="agent catalog file path",
+        help=(
+            "config directory containing config.yaml, agent-catalog.yaml, "
+            "and/or prompts.yaml overrides"
+        ),
     )
 
     subparsers = parser.add_subparsers(dest="command", metavar="<command>", title="commands")
@@ -406,6 +405,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     effective_argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser(include_internal=_uses_internal_command(effective_argv))
     args = parser.parse_args(effective_argv)
+    config_arg = getattr(args, "config", None)
+    if config_arg is not None and Path(config_arg).expanduser().is_file():
+        print(f"error: --config must be a directory: {config_arg}")
+        return 1
     handler = getattr(args, "handler", None)
     if handler is None:
         parser.print_help()
@@ -436,7 +439,7 @@ def _positive_int(raw: str) -> int:
 
 
 def _handle_do(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     started = start_run(
         context,
         session_id=args.session_id,
@@ -462,7 +465,7 @@ def _handle_do(args: argparse.Namespace) -> int:
 
 
 def _handle_status(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     if args.json:
         print(json.dumps(status_payload(context, args.session_id)))
     else:
@@ -471,7 +474,7 @@ def _handle_status(args: argparse.Namespace) -> int:
 
 
 def _handle_session_mode(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     if not args.session_id.strip():
         raise AppError("session_id is required")
     action = args.session_mode_action
@@ -499,20 +502,20 @@ def _handle_session_mode(args: argparse.Namespace) -> int:
 
 
 def _handle_stop(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     record = stop_run(context, args.session_id, args.run_id)
     print(format_run_report(record, prompts=context.config.prompts))
     return 0
 
 
 def _handle_doctor(args: argparse.Namespace) -> int:
-    checks = run_doctor(config_path=args.config, catalog_path=args.agent_catalog)
+    checks = run_doctor(config_path=args.config, catalog_path=None)
     print(format_doctor_checks(checks))
     return 0 if doctor_checks_pass(checks) else 1
 
 
 def _handle_roles(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     role_update_args = (args.role, args.setting, args.value)
     if any(value is not None for value in role_update_args):
         if any(value is None for value in role_update_args):
@@ -525,20 +528,21 @@ def _handle_roles(args: argparse.Namespace) -> int:
 
 def _handle_config(args: argparse.Namespace) -> int:
     config_path = resolve_config_path(args.config)
+    prompts_path = resolve_prompts_path(args.config)
     if args.key is None:
-        values = list_config_values(config_path)
+        values = list_config_values(config_path, prompts_path=prompts_path)
         for key, value in values.items():
             print(f"{key}: {value}")
         return 0
     if args.value is None:
-        print(read_config_value(config_path, args.key))
+        print(read_config_value(config_path, args.key, prompts_path=prompts_path))
         return 0
     print(update_config_value(config_path, args.key, args.value))
     return 0
 
 
 def _handle_help_host(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     print(format_host_help(context))
     return 0
 
@@ -550,7 +554,7 @@ def _handle_help_opencode(args: argparse.Namespace) -> int:
 
 
 def _handle_history(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     if args.limit < 1:
         raise AppError("limit must be a positive integer")
     print(format_history(context, args.session_id, args.limit))
@@ -558,7 +562,7 @@ def _handle_history(args: argparse.Namespace) -> int:
 
 
 def _handle_prune(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     retention_days = args.retention_days or context.config.retention_days
     plan = context.store.plan_prune(
         retention_days,
@@ -634,7 +638,7 @@ def _handle_prune(args: argparse.Namespace) -> int:
 
 
 def _handle_debug(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     if args.run_id:
         print(format_debug_run(context, args.run_id))
     else:
@@ -689,7 +693,7 @@ def _handle_init_all(args: argparse.Namespace) -> int:
     result = init_all(
         force=bool(args.force),
         copy=bool(args.copy),
-        catalog_path=args.agent_catalog,
+        catalog_path=None,
     )
     if result.pi is not None:
         print("[pi]")
@@ -742,7 +746,7 @@ def _handle_command_echo(args: argparse.Namespace) -> int:
 
 
 def _handle_tool_info(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     session_id = args.session_id
     info = tool_info_payload(context, session_id).to_payload()
     print(
@@ -773,7 +777,7 @@ def _handle_tool_info(args: argparse.Namespace) -> int:
 
 
 def _handle_role_metadata(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     print(json.dumps(role_metadata(context)))
     return 0
 
@@ -811,13 +815,13 @@ def _handle_progress_message(args: argparse.Namespace) -> int:
 
 
 def _handle_run_supervisor(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     run_supervisor_guarded(context, run_id=args.run_id, request_file=args.request_file)
     return 0
 
 
 def _handle_pending_report(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     report = consume_pending_session_report(context, args.session_id)
     if report:
         print(report)
@@ -825,7 +829,7 @@ def _handle_pending_report(args: argparse.Namespace) -> int:
 
 
 def _handle_await_session_report(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     if args.json:
         report = await_session_report_payload(
             context,
@@ -849,19 +853,19 @@ def _handle_await_session_report(args: argparse.Namespace) -> int:
 
 
 def _handle_mark_session_report_delivered(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     mark_session_report_delivered(context, args.session_id, list(args.run_id))
     return 0
 
 
 def _handle_release_session_report(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     release_session_report(context, args.session_id, list(args.run_id))
     return 0
 
 
 def _handle_await_run(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=args.agent_catalog)
+    context = load_context(config_path=args.config, catalog_path=None)
     record, active_remaining, details = await_run_terminal_status(
         context,
         args.session_id,

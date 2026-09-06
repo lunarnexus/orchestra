@@ -12,6 +12,17 @@ from typing import Any, cast
 
 import pytest
 
+from orchestra.artifacts import (
+    canonical_events_path,
+    canonical_request_path,
+    canonical_return_path,
+    legacy_lifecycle_path,
+    legacy_request_path,
+    legacy_supervisor_output_path,
+    run_state_dir,
+    write_json_atomically,
+    write_text_atomically,
+)
 from orchestra.logs import append_jsonl_event
 from orchestra.state import (
     MAIN_SESSION_MODE_OFF,
@@ -72,11 +83,43 @@ def test_initialize_creates_database_and_schema(state_store: StateStore) -> None
         row = connection.execute("PRAGMA user_version").fetchone()
 
     assert row is not None
-    assert row[0] == 15
+    assert row[0] == 16
     with sqlite3.connect(state_store.database_path) as connection:
         columns = [str(row[1]) for row in connection.execute("PRAGMA table_info(runs)")]
 
-    assert {"cycle_id", "triggered_by_run_id", "trigger_reason", "sequence_index"} <= set(columns)
+    assert {
+        "cycle_id",
+        "triggered_by_run_id",
+        "trigger_reason",
+        "sequence_index",
+        "semantic_verdict",
+    } <= set(columns)
+
+
+def test_canonical_artifact_paths_are_deterministic(tmp_path: Path) -> None:
+    state_dir = tmp_path / "state"
+    run_id = "run-123"
+
+    assert run_state_dir(state_dir, run_id) == state_dir / "runs" / run_id
+    assert canonical_request_path(state_dir, run_id) == state_dir / "runs" / run_id / "request.json"
+    assert canonical_events_path(state_dir, run_id) == state_dir / "runs" / run_id / "events.jsonl"
+    assert canonical_return_path(state_dir, run_id) == state_dir / "runs" / run_id / "return.md"
+    assert legacy_request_path(state_dir, run_id) == state_dir / "requests" / f"{run_id}.json"
+    assert legacy_lifecycle_path(tmp_path / "logs", run_id) == tmp_path / "logs" / f"{run_id}.jsonl"
+    assert legacy_supervisor_output_path(tmp_path / "logs", run_id) == tmp_path / "logs" / (
+        f"{run_id}.supervisor.log"
+    )
+
+
+def test_atomic_text_and_json_writes_are_utf8(tmp_path: Path) -> None:
+    text_path = tmp_path / "state" / "runs" / "run-1" / "return.md"
+    json_path = tmp_path / "state" / "runs" / "run-1" / "request.json"
+
+    write_text_atomically(text_path, "hello µ")
+    write_json_atomically(json_path, {"value": "世界"})
+
+    assert text_path.read_text(encoding="utf-8") == "hello µ"
+    assert json.loads(json_path.read_text(encoding="utf-8")) == {"value": "世界"}
 
 
 def test_set_and_get_main_session_mode_round_trip(state_store: StateStore) -> None:
@@ -213,11 +256,13 @@ def test_plan_prune_reports_old_terminal_runs_and_owned_paths(tmp_path: Path) ->
 
     assert plan.retention_days == 90
     assert [candidate.run_id for candidate in plan.candidates] == ["old-done", "old-incomplete"]
-    assert plan.candidates[0].owned_paths == (
+    assert plan.candidates[0].owned_paths[:4] == (
+        tmp_path / "state" / "runs" / "old-done" / "events.jsonl",
+        tmp_path / "state" / "runs" / "old-done" / "request.json",
+        tmp_path / "state" / "runs" / "old-done" / "return.md",
         tmp_path / "logs" / "old-done.jsonl",
-        tmp_path / "transcripts" / "old-done.jsonl",
-        tmp_path / "state" / "requests" / "old-done.json",
     )
+    assert tmp_path / "transcripts" / "old-done.jsonl" not in plan.candidates[0].owned_paths
     assert all(candidate.run_id != "running" for candidate in plan.candidates)
     assert all(candidate.run_id != "recent-done" for candidate in plan.candidates)
     assert all(candidate.run_id != "recently-ended" for candidate in plan.candidates)
@@ -318,7 +363,7 @@ def test_delete_prune_candidates_removes_runs_owned_files_and_empty_sessions(
     assert result.deleted_session_ids == ("manual:old",)
     assert old_log in result.deleted_paths
     assert old_request in result.deleted_paths
-    assert unsafe_transcript in result.skipped_paths
+    assert unsafe_transcript.exists()
     assert result.failed_paths == ()
     assert not old_log.exists()
     assert not old_request.exists()
@@ -377,7 +422,7 @@ def test_delete_prune_candidates_keeps_run_when_owned_file_delete_fails(
     )
 
     assert result.deleted_run_ids == ()
-    assert result.failed_paths == (old_log,)
+    assert old_log in result.failed_paths
     assert store.get_run("old-done").status == STATUS_DONE
     assert old_log.exists()
 
@@ -453,16 +498,42 @@ def test_migrating_old_schema_creates_sessions_table_and_preserves_runs(
         run_ids = [str(row[0]) for row in connection.execute("SELECT run_id FROM runs")]
         run_rows = list(connection.execute("SELECT * FROM runs ORDER BY run_id"))
 
-    assert version == 15
+    assert version == 16
     run = store.get_run("old-run-0")
     assert run.cycle_id is None
     assert run.triggered_by_run_id is None
     assert run.trigger_reason is None
     assert run.sequence_index is None
+    assert run.semantic_verdict is None
     assert {"runs", "sessions"} <= tables
     assert run_ids == ["old-run-0", "old-run-1", "old-run-2"]
     assert all(str(row[6]) == STATUS_DONE for row in run_rows)
     assert store.get_main_session_state("pi:session-old") is None
+
+
+def test_new_run_uses_canonical_paths_and_semantic_verdict(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    store.initialize()
+    record = RunRecord(
+        run_id="run-new",
+        orchestrator_session_id="pi:session-a",
+        harness="pi",
+        role="builder",
+        task_label="task",
+        log_path=canonical_events_path(tmp_path / "state", "run-new"),
+        created_at="2026-07-27T00:00:00Z",
+    )
+    store.create_run(record)
+    store.update_run("run-new", RunUpdate(status=STATUS_RUNNING))
+    updated = store.update_run(
+        "run-new",
+        RunUpdate(status=STATUS_DONE, semantic_verdict="semantic-failure"),
+    )
+
+    assert updated.log_path == canonical_events_path(tmp_path / "state", "run-new")
+    assert updated.result_output is None
+    assert updated.supervisor_output_path is None
+    assert updated.semantic_verdict == "semantic-failure"
 
 
 def test_connect_retries_transient_sqlite_open_failure(

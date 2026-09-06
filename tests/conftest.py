@@ -46,7 +46,7 @@ def runtime_files_factory(
             command,
             auto_return=auto_return,
         )
-        monkeypatch.setenv("ORCHESTRA_AGENT_CATALOG", str(paths[1]))
+        monkeypatch.setenv("ORCHESTRA_CONFIG", str(paths[0].parent))
         return paths
 
     return factory

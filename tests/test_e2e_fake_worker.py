@@ -20,9 +20,7 @@ def test_fake_worker_e2e_stop_history_and_pending_report(
 
     do = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:e2e",
@@ -34,9 +32,7 @@ def test_fake_worker_e2e_stop_history_and_pending_report(
 
     status = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "status",
         "--session-id",
         "manual:e2e",
@@ -46,9 +42,7 @@ def test_fake_worker_e2e_stop_history_and_pending_report(
 
     stop = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "stop",
         "--session-id",
         "manual:e2e",
@@ -62,9 +56,7 @@ def test_fake_worker_e2e_stop_history_and_pending_report(
 
     history = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "history",
         "--session-id",
         "manual:e2e",
@@ -74,9 +66,7 @@ def test_fake_worker_e2e_stop_history_and_pending_report(
 
     report = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "_pending-report",
         "--session-id",
         "manual:e2e",

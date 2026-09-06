@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -144,6 +145,46 @@ def expand_command_template(role: RoleConfig, prompt: str) -> list[str]:
         command.append(token)
 
     return command
+
+
+def parse_child_return(
+    text: str, *, limit: int = 280
+) -> tuple[str | None, str | None, str | None, bool]:
+    lines = [line.strip() for line in text.splitlines()]
+    verdict: str | None = None
+    blocker: str | None = None
+    evidence: str | None = None
+    explicit = False
+    for line in lines:
+        if not line:
+            continue
+        match = re.match(
+            r"^(Status|Verdict|Blocker|Blockers|Material evidence):\s*(.*)$",
+            line,
+            re.IGNORECASE,
+        )
+        if not match:
+            continue
+        label = match.group(1).lower()
+        value = match.group(2).strip()
+        if value.lower() == "none":
+            explicit = True
+            continue
+        explicit = True
+        if label == "verdict":
+            verdict = value.lower()
+        elif label == "status" and verdict is None:
+            verdict = value.lower()
+        elif label in {"blocker", "blockers"} and blocker is None:
+            blocker = value
+        elif label == "material evidence" and evidence is None:
+            evidence = value
+    summary_source = "\n".join(lines)
+    summary = compact_summary(summary_source, limit=limit)
+    if summary is None and not explicit:
+        return None, None, None, False
+    truncated = summary is not None and len(_normalized_summary_text(summary_source)) > limit
+    return summary, verdict, blocker or evidence, truncated
 
 
 def compact_summary(text: str, *, limit: int = 280) -> str | None:

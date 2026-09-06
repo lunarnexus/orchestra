@@ -168,9 +168,6 @@ function orchestraBaseArgs(): string[] {
   if (process.env.ORCHESTRA_CONFIG) {
     args.push("--config", process.env.ORCHESTRA_CONFIG);
   }
-  if (process.env.ORCHESTRA_AGENT_CATALOG) {
-    args.push("--agent-catalog", process.env.ORCHESTRA_AGENT_CATALOG);
-  }
   return args;
 }
 
@@ -881,7 +878,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }, timeout * 1000);
     }
 
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
       if (timeoutId !== null) {
         clearTimeout(timeoutId);
         timeoutId = null;
@@ -900,12 +897,21 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           if (!message) return;
           pi.sendUserMessage(message, { deliverAs: "followUp", triggerTurn: true });
           if (runIds.length > 0) {
-            void runOrchestra([
+            const markResult = await runOrchestra([
               "_mark-session-report-delivered",
               "--session-id",
               sessionId,
               ...runIds.flatMap((id) => ["--run-id", id]),
             ]);
+            if (markResult.code !== 0) {
+              await runOrchestra([
+                "_release-session-report",
+                "--session-id",
+                sessionId,
+                ...runIds.flatMap((id) => ["--run-id", id]),
+              ]);
+              throw new Error(markResult.stderr || markResult.stdout || "orchestra report delivery mark failed");
+            }
           }
           cachedActiveStatus = null;
           updateStatus?.({ activeCount: 0, roleCounts: [], runIds: [] });

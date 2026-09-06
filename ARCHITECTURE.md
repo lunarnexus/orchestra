@@ -28,8 +28,7 @@ Main agent session / CLI
       -> harness connector
         -> subagent CLI process
       -> SQLite state
-      -> JSONL lifecycle logs
-      -> DB-backed per-run returns
+      -> per-run request, event, and return artifacts
   -> optional consolidated auto-return to the owning session
 ```
 
@@ -104,8 +103,8 @@ Core code lives under `src/orchestra/`. It owns behavior shared by every host:
 - terminal-state updates
 - automatic builder-to-verifier dispatch when `auto_verify` is enabled
 - harness fallback
-- SQLite state and JSONL lifecycle logging
-- DB-backed full final return persistence
+- SQLite state and JSONL event logging
+- file-backed full final return persistence
 - compact result and consolidated-report formatting
 - pending-report acquisition, delivery, and release state
 
@@ -186,14 +185,14 @@ fail-fast rather than queueing.
 9. Orchestra records lifecycle events and process metadata while the harness
    owns the subagent's full session context.
 10. The subagent completes, fails, times out, or is stopped.
-11. Core stores a compact result on the run and stores the full final return in
-    SQLite as `result_output` on that same run record.
+11. Core stores compact result metadata on the run and writes the full final
+    return to `state/runs/<run-id>/return.md`.
 12. If `auto_verify` is enabled and the completed run is a successful exact
     `builder` role run, core dispatches a linked normal `verifier` run for the
     same scope. Builder failures skip automatic verification.
 13. Core checks whether the owning main session has any active subagents left.
 14. When none remain, core creates one consolidated session report. Successful
-    reports stay compact and do not load or inject full `result_output` content.
+    reports stay compact and do not load or inject full return artifact content.
     Linked auto-verification cycles are presented coherently with builder and
     verifier run ids.
 15. If auto-return is enabled and supported, the host adapter delivers that
@@ -357,14 +356,13 @@ reserved `ORCHESTRA_` prefix and are not a secret store.
 
 Generic CLI/core configuration resolution is:
 
-1. explicit CLI flags
-2. `ORCHESTRA_CONFIG` and `ORCHESTRA_AGENT_CATALOG`
-3. Pi runtime defaults under
+1. `--config DIR` or `ORCHESTRA_CONFIG=DIR`
+2. Pi runtime defaults under
    `${PI_CODING_AGENT_DIR:-~/.pi/agent}/orchestra/`
-4. current-working-directory fallback for local development
+3. current-working-directory fallback for local development
 
-`prompts.yaml` resolves from the selected `config.yaml` directory. Hermes passes
-explicit Hermes-local runtime paths rather than relying on Pi defaults.
+A config directory may contain any subset of `config.yaml`, `agent-catalog.yaml`,
+and `prompts.yaml`; present files override the corresponding defaults.
 
 ## Roles and skills
 
@@ -438,7 +436,7 @@ The database stores compact operational fields such as:
 - supervisor/process metadata
 - task label
 - compact result, error, or blocker
-- lifecycle-log paths and compact result/output fields
+- event-log paths and compact result fields
 - optional harness session/transcript metadata
 - report-delivery state
 - fallback metadata
@@ -450,32 +448,30 @@ call. SQLite uses WAL mode. Existing current databases avoid unnecessary schema
 writes; write contention and selected transient open failures use bounded retry.
 Persistent failures remain visible errors.
 
-### Lifecycle logs
+### Run artifacts
 
-`logs/<run-id>.jsonl` records lean lifecycle events such as run creation,
-supervisor and subagent start, process exit, artifact creation, and terminal
-updates. Logs omit empty optional values where practical.
-
-Detached supervisor stdout and stderr are available at:
+New runs use one canonical Orchestra-owned directory:
 
 ```text
-logs/<run-id>.supervisor.log
+state/runs/<run-id>/
+  request.json
+  events.jsonl
+  return.md
 ```
 
-### Request files and DB-backed returns
+`request.json` stores the dispatch assignment. `events.jsonl` records structured
+Orchestra lifecycle events such as supervisor spawn/start/failure, subagent
+start/exit, artifact writes, terminal updates, and structured supervisor crash
+tracebacks. `return.md` stores the complete final child stdout/stderr.
 
-Preserved requests live under:
-
-```text
-state/requests/<run-id>.json
-```
-
-Full final subagent output is stored on the run record in SQLite as `result_output`.
-The main session reads only compact results for normal success handling and
-retrieves full return content only for explicit debug or non-success follow-up.
+SQLite stores compact metadata and artifact references. Legacy runs may still
+have old `state/requests/<run-id>.json`, `logs/<run-id>.jsonl`,
+`logs/<run-id>.supervisor.log`, or DB `result_output` data, and debug/prune keep
+compatibility for those records.
 
 Harness-owned session logs remain with the harness. Orchestra stores a native
-session ID or transcript path only when available.
+session ID or transcript path only when available and does not copy or prune
+harness transcripts.
 
 ### Prune
 
@@ -504,7 +500,7 @@ Successful returns stay compact and do not load or inject the full per-run
 return content.
 
 For an auto-verification cycle, the builder and verifier remain separate normal
-runs with separate DB-backed returns and history entries. The consolidated
+runs with separate return artifacts and history entries. The consolidated
 return marks the relationship and includes both run ids. A verifier failure,
 timeout, or crash is reported as part of the cycle and does not change a
 successful builder run into a failed builder run.

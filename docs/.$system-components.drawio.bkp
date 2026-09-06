@@ -1,0 +1,51 @@
+<mxfile host="app.diagrams.net" modified="2026-09-05T00:00:00.000Z" agent="pi" version="24.7.17">
+  <diagram id="system-components" name="System Components">
+    <mxGraphModel dx="1500" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" value="Orchestra system components" style="text;html=1;fontSize=22;fontStyle=1;strokeColor=none;fillColor=none;align=left;" vertex="1" parent="1"><mxGeometry x="40" y="20" width="520" height="40" as="geometry" /></mxCell>
+
+        <mxCell id="actor" value="User / main agent session" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="150" width="180" height="70" as="geometry" /></mxCell>
+        <mxCell id="cli-entry" value="CLI entrypoint&lt;br&gt;&lt;b&gt;orchestra ...&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="275" width="180" height="70" as="geometry" /></mxCell>
+
+        <mxCell id="host-adapters" value="Host adapters: main-session integrations" style="swimlane;html=1;startSize=34;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="285" y="90" width="300" height="320" as="geometry" /></mxCell>
+        <mxCell id="host-pi" value="Pi host adapter&lt;br&gt;slash commands, tools,&lt;br&gt;notifications, auto-return" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="host-adapters"><mxGeometry x="30" y="55" width="240" height="65" as="geometry" /></mxCell>
+        <mxCell id="host-hermes" value="Hermes host adapter&lt;br&gt;plugin tools and commands" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="host-adapters"><mxGeometry x="30" y="140" width="240" height="55" as="geometry" /></mxCell>
+        <mxCell id="host-opencode" value="OpenCode host adapter&lt;br&gt;plugin tools, commands,&lt;br&gt;session-targeted return" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="host-adapters"><mxGeometry x="30" y="215" width="240" height="65" as="geometry" /></mxCell>
+
+        <mxCell id="core" value="Python core&lt;br&gt;&lt;b&gt;src/orchestra/&lt;/b&gt;" style="swimlane;html=1;startSize=34;fillColor=#ffe6cc;strokeColor=#d79b00;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="665" y="90" width="360" height="440" as="geometry" /></mxCell>
+        <mxCell id="core-commands" value="Command handling&lt;br&gt;and internal JSON APIs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;" vertex="1" parent="core"><mxGeometry x="30" y="60" width="135" height="65" as="geometry" /></mxCell>
+        <mxCell id="core-config" value="Config, prompts,&lt;br&gt;catalog loading" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;" vertex="1" parent="core"><mxGeometry x="195" y="60" width="135" height="65" as="geometry" /></mxCell>
+        <mxCell id="core-resolution" value="Role and harness&lt;br&gt;resolution" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;" vertex="1" parent="core"><mxGeometry x="30" y="155" width="135" height="65" as="geometry" /></mxCell>
+        <mxCell id="core-scheduler" value="Scheduler and&lt;br&gt;detached supervisor" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;" vertex="1" parent="core"><mxGeometry x="195" y="155" width="135" height="65" as="geometry" /></mxCell>
+        <mxCell id="core-reports" value="Report creation&lt;br&gt;and delivery state" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d79b00;" vertex="1" parent="core"><mxGeometry x="112" y="260" width="135" height="65" as="geometry" /></mxCell>
+
+        <mxCell id="configs" value="YAML configuration" style="swimlane;html=1;startSize=34;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="675" y="615" width="340" height="170" as="geometry" /></mxCell>
+        <mxCell id="config-yaml" value="config.yaml" style="shape=document;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="configs"><mxGeometry x="30" y="60" width="85" height="50" as="geometry" /></mxCell>
+        <mxCell id="prompts-yaml" value="prompts.yaml" style="shape=document;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="configs"><mxGeometry x="128" y="60" width="85" height="50" as="geometry" /></mxCell>
+        <mxCell id="catalog-yaml" value="agent-catalog.yaml" style="shape=document;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="configs"><mxGeometry x="226" y="60" width="90" height="50" as="geometry" /></mxCell>
+
+        <mxCell id="harness" value="Harness connectors: subagent launch path" style="swimlane;html=1;startSize=34;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1090" y="100" width="310" height="240" as="geometry" /></mxCell>
+        <mxCell id="harness-builtins" value="Built-in harness connectors&lt;br&gt;Pi / Hermes / OpenCode" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="harness"><mxGeometry x="35" y="60" width="240" height="60" as="geometry" /></mxCell>
+        <mxCell id="harness-subprocess" value="Catalog-defined one-shot&lt;br&gt;subprocess harnesses" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="harness"><mxGeometry x="35" y="145" width="240" height="60" as="geometry" /></mxCell>
+
+        <mxCell id="subagents" value="Subagent process&lt;br&gt;/ harness-owned session" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1135" y="420" width="220" height="85" as="geometry" /></mxCell>
+
+        <mxCell id="state" value="Runtime state" style="swimlane;html=1;startSize=34;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="1100" y="610" width="300" height="165" as="geometry" /></mxCell>
+        <mxCell id="sqlite" value="SQLite&lt;br&gt;run records + DB-backed returns" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="state"><mxGeometry x="25" y="58" width="120" height="75" as="geometry" /></mxCell>
+        <mxCell id="logs" value="JSONL lifecycle logs&lt;br&gt;supervisor logs" style="shape=document;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;" vertex="1" parent="state"><mxGeometry x="170" y="65" width="105" height="60" as="geometry" /></mxCell>
+
+        <mxCell id="e1" value="uses host surface" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="actor" target="host-adapters"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e2" value="uses terminal" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="actor" target="cli-entry"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e3" value="invoke CLI/internal JSON commands" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="host-adapters" target="core"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e4" value="calls core command handlers" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="cli-entry" target="core"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e5" value="load" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="configs" target="core-config"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e6" value="launch via argv-list" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="core-scheduler" target="harness"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e7" value="starts" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="harness" target="subagents"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e8" value="records / reads" style="endArrow=block;html=1;rounded=0;" edge="1" parent="1" source="core" target="state"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="e9" value="host delivery of consolidated report" style="endArrow=block;html=1;rounded=0;dashed=1;" edge="1" parent="1" source="core-reports" target="host-adapters"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

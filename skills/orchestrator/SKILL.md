@@ -141,7 +141,7 @@ Nested dispatch:
 
 ## Planning standard
 
-Before implementation, complete the multi-turn planning checkpoints and produce a plan a builder can execute without inventing requirements, interfaces, dependencies, or verification.
+Before implementation, complete the multi-turn planning checkpoints and produce a plan that first defines the intended end-state behavior, then gives builders enough execution detail to avoid inventing requirements, interfaces, dependencies, or verification.
 
 Plans must include a full live end-to-end test when possible. The assigned agent should run it if the environment allows; otherwise the plan and final report must say why it was skipped.
 
@@ -150,14 +150,15 @@ Plans must include a full live end-to-end test when possible. The assigned agent
 When the user asks for a plan, plan through user-visible checkpoints before implementation.
 
 Checkpoint 1 — Planning map:
-- Show the user the high-level phases or work areas needed for success.
-- For each phase, list the essential concerns: behavior, files/modules, interfaces, data flow, tests, artifacts, risks, verification, and likely dependencies.
+- Show the user the intended end state first: what the system should do, what the user/operator should see, and how success fits the user’s specification.
+- Then show the high-level phases or work areas needed to reach that end state.
+- For each phase, list the essential concerns: user-visible behavior, acceptance fit, files/modules, interfaces, data flow, tests, artifacts, risks, verification, and likely dependencies.
 - Classify unknowns as known evidence, local evidence to inspect, researcher-owned evidence, user decision, spike, or safe assumption.
 - End with the recommended next action and ask: `Continue to phase fill-in?`
 
 Checkpoint 2 — Phase fill-in and parallelization check:
-- After user confirmation, expand each phase into executable vertical slices.
-- Include exact files/modules, interfaces, dependency marker, stop condition, verification command, risk tier, and gates.
+- After user confirmation, expand each phase into executable vertical slices that preserve the intended user-visible outcome.
+- Include observable behavior, exact files/modules, interfaces, dependency marker, stop condition, verification command, risk tier, and gates.
 - Add a `Parallelization check` section to the plan:
   - slices that can run in parallel;
   - slices that must run sequentially;
@@ -168,13 +169,14 @@ Checkpoint 2 — Phase fill-in and parallelization check:
 - End with the recommended next action and ask: `Continue to coherence validation?`
 
 Checkpoint 3 — Coherence validation and implementation approval:
-- After user confirmation, validate acceptance coverage, dependency correctness, interface consistency, evidence sufficiency, artifact updates, verification specificity, risk handling, and scope boundaries.
+- After user confirmation, validate end-state fit against the user’s specification, acceptance coverage, dependency correctness, interface consistency, evidence sufficiency, artifact updates, verification specificity, risk handling, and scope boundaries.
 - Confirm that each unblocked builder slice can be executed without inventing requirements, interfaces, or verification.
 - Re-check the `Parallelization check` against the finalized slices and gates.
 - If user input is needed, ask the decision-blocking question with a recommendation.
 - Otherwise update `PLAN.md` and ask: `Approve implementation dispatch?`
 
 A plan must state:
+- intended end-state behavior and user-visible result
 - goal and acceptance criteria
 - in scope, out of scope, constraints, assumptions, and user-owned decisions
 - evidence used and evidence still missing

@@ -7,6 +7,11 @@ from typing import Any, cast
 
 import pytest
 
+from orchestra.artifacts import (
+    canonical_events_path,
+    canonical_request_path,
+    canonical_return_path,
+)
 from orchestra.config import AgentCatalog, AppConfig, ConcurrencyConfig, RoleConfig
 from orchestra.context import AppContext, AppError, OrchestraPaths
 from orchestra.dispatch import StartedRun, format_started_run, start_run, started_run_payload
@@ -222,6 +227,11 @@ def test_start_run_round_trips_linkage_metadata(
     stored_run = context.store.get_run(started.record.run_id)
     request_payload = json.loads(started.request_file.read_text(encoding="utf-8"))
 
+    assert started.record.log_path == canonical_events_path(
+        tmp_path / "state", started.record.run_id
+    )
+    assert started.request_file == canonical_request_path(tmp_path / "state", started.record.run_id)
+    assert canonical_return_path(tmp_path / "state", started.record.run_id).name == "return.md"
     assert started.record.cycle_id == "cycle-1"
     assert started.record.triggered_by_run_id == "parent-1"
     assert started.record.trigger_reason == "auto_verify"

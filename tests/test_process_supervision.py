@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 import yaml
 
 from orchestra.context import load_context
 from orchestra.dispatch import start_run
+from orchestra.harnesses.base import WorkerProcess
 from orchestra.state import (
     STATUS_CANCELLED,
     STATUS_DONE,
@@ -49,7 +51,7 @@ def test_result_from_completed_worker_reads_pi_transcript_usage(
         approval_needed=False,
     )
 
-    result = _result_from_completed_worker(worker, "done", "")
+    result = _result_from_completed_worker(cast(WorkerProcess, worker), "done", "")
 
     assert result.input_tokens == 15
     assert result.output_tokens == 10
@@ -83,9 +85,7 @@ def test_stop_terminates_owned_worker_process(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:proc",
@@ -101,9 +101,7 @@ def test_stop_terminates_owned_worker_process(
 
     stop = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "stop",
         "--session-id",
         "manual:proc",
@@ -131,9 +129,7 @@ def test_timeout_marks_run_failed_and_keeps_terminal_state(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:timeout",
@@ -154,9 +150,7 @@ def test_timeout_marks_run_failed_and_keeps_terminal_state(
 
     history = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "history",
         "--session-id",
         "manual:timeout",
@@ -190,9 +184,7 @@ def test_status_reconciles_stale_queued_run_without_supervisor_owner(
 
     status = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "status",
         "--session-id",
         "manual:stale",
@@ -203,7 +195,9 @@ def test_status_reconciles_stale_queued_run_without_supervisor_owner(
     assert record.status == STATUS_FAILED
     assert record.error_text == "Worker supervisor ownership was not recorded"
     assert "active_runs: 0" in status.stdout
-    assert "supervisor.reconciled" in (tmp_path / "logs" / "stalequeued1.jsonl").read_text()
+    assert "supervisor.reconciled" in (
+        tmp_path / "state" / "runs" / "stalequeued1" / "events.jsonl"
+    ).read_text()
 
 
 def test_reconcile_does_not_fail_queued_run_with_live_supervisor_after_startup_deadline(
@@ -279,7 +273,9 @@ def test_status_reconciles_stale_running_run_with_dead_worker_and_supervisor(
     assert record.error_text == "worker process exited/disappeared without terminal status"
     assert record.blocker_text == "stale running worker reconciled"
     assert "active_runs: 0" in status
-    assert "worker.reconciled" in (tmp_path / "logs" / "stalerunning1.jsonl").read_text()
+    assert "worker.reconciled" in (
+        tmp_path / "state" / "runs" / "stalerunning1" / "events.jsonl"
+    ).read_text()
 
 
 def test_start_run_reconciles_stale_running_model_slot_before_reserve(
@@ -385,9 +381,7 @@ def test_zero_exit_empty_output_marks_run_failed_for_pi_hermes_and_opencode(
     for harness in ("pi", "hermes", "opencode"):
         result = run_cli(
             "--config",
-            str(config_path),
-            "--agent-catalog",
-            str(catalog_path),
+            str(config_path.parent),
             "do",
             "--session-id",
             f"manual:empty-output-{harness}",
@@ -431,9 +425,7 @@ def test_budget_handoff_marker_marks_run_incomplete(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:incomplete",
@@ -453,9 +445,7 @@ def test_budget_handoff_marker_marks_run_incomplete(
 
     await_run = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "_await-run",
         "--session-id",
         "manual:incomplete",
@@ -467,19 +457,17 @@ def test_budget_handoff_marker_marks_run_incomplete(
 
     debug = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "debug",
         "--run-id",
         run_id,
     )
     assert debug.returncode == 0
     assert "# Orchestra debug bundle" in debug.stdout
-    assert "## Lifecycle log" in debug.stdout
+    assert "## Canonical events" in debug.stdout
     assert "supervisor.spawned" in debug.stdout
     assert "worker.started" in debug.stdout
-    assert "## Full return" in debug.stdout
+    assert "## Canonical return" in debug.stdout
     assert "## Harness transcript" in debug.stdout
 
 
@@ -502,9 +490,7 @@ def test_zero_exit_bootstrap_only_output_marks_run_failed(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:bootstrap-output",
@@ -558,9 +544,7 @@ def test_soft_timeout_must_be_less_than_effective_worker_timeout(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:bad-soft-timeout",
@@ -608,9 +592,7 @@ def test_catalog_defined_harness_name_uses_generic_subprocess_runner(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:missing-harness",
@@ -633,9 +615,7 @@ def test_catalog_defined_harness_name_uses_generic_subprocess_runner(
 
     status = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "status",
         "--session-id",
         "manual:missing-harness",
@@ -692,9 +672,7 @@ def test_prestart_failure_uses_requested_role_harness_fallback(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:fallback",
@@ -720,9 +698,7 @@ def test_prestart_failure_uses_requested_role_harness_fallback(
 
     await_run = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "_await-run",
         "--session-id",
         "manual:fallback",
@@ -736,9 +712,7 @@ def test_prestart_failure_uses_requested_role_harness_fallback(
 
     history = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "history",
         "--session-id",
         "manual:fallback",
@@ -747,9 +721,7 @@ def test_prestart_failure_uses_requested_role_harness_fallback(
 
     status = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "status",
         "--session-id",
         "manual:fallback",
@@ -803,9 +775,7 @@ def test_poststart_worker_failure_does_not_fall_back_to_default_role(
 
     result = run_cli(
         "--config",
-        str(config_path),
-        "--agent-catalog",
-        str(catalog_path),
+        str(config_path.parent),
         "do",
         "--session-id",
         "manual:no-fallback",

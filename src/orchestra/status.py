@@ -8,16 +8,27 @@ import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from orchestra.artifacts import (
+    canonical_events_path,
+    canonical_request_path,
+    canonical_return_path,
+    legacy_supervisor_output_path,
+)
 from orchestra.config import PromptConfig
 from orchestra.context import CONTRACT_VERSION, AppContext, AppError
 from orchestra.reports import (
     aggregate_completed_run_accounting,
     clean_result_summary,
-    format_run_report,
     session_status_details,
 )
 from orchestra.session_mode import default_main_session_mode, resolve_main_session_mode
-from orchestra.state import STATUS_INCOMPLETE, RunRecord
+from orchestra.state import (
+    STATUS_CANCELLED,
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_INCOMPLETE,
+    RunRecord,
+)
 
 if TYPE_CHECKING:
     from orchestra.reports import SessionStatusDetails
@@ -441,19 +452,20 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
             for model in sorted(model_limits):
                 active = sum(1 for run in global_runs if run.model == model)
                 lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
-        _append_accounting_totals(
-            lines,
-            _aggregate_accounting_payload(
-                context.store.list_all_runs(limit=10_000_000)
-            ),
+        accounting_runs = (
+            context.store.list_all_runs(limit=10_000_000)
+            if hasattr(context.store, "list_all_runs")
+            else global_runs
         )
         if not global_runs:
             lines.append("status: no active runs")
+            _append_accounting_totals(lines, _aggregate_accounting_payload(accounting_runs))
             return "\n".join(lines)
 
         lines.append("active:")
         for run in global_runs:
             lines.append(_compact_active_run_line(run, include_owner=True))
+        _append_accounting_totals(lines, _aggregate_accounting_payload(accounting_runs))
         return "\n".join(lines)
 
     _require_session_id(session_id)
@@ -478,23 +490,22 @@ def format_status(context: AppContext, session_id: str | None = None) -> str:
             active = sum(1 for run in runs if run.model == model)
             lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
     details = session_status_details(context, lineage_session_ids, active_runs=runs)
-    _append_accounting_totals(
-        lines,
-        _aggregate_accounting_payload(
-            _list_runs_for_session_ids(
-                context, lineage_session_ids, limit=10_000_000
-            )
-        ),
+    accounting_runs = (
+        _list_runs_for_session_ids(context, lineage_session_ids, limit=10_000_000)
+        if hasattr(context.store, "list_runs")
+        else runs
     )
     if not runs:
         lines.append("status: no active runs")
         _append_session_status_details(lines, details)
+        _append_accounting_totals(lines, _aggregate_accounting_payload(accounting_runs))
         return "\n".join(lines)
 
     _append_session_status_details(lines, details)
     lines.append("active:")
     for run in runs:
         lines.append(_compact_active_run_line(run, include_owner=len(lineage_session_ids) > 1))
+    _append_accounting_totals(lines, _aggregate_accounting_payload(accounting_runs))
     return "\n".join(lines)
 
 
@@ -582,6 +593,53 @@ def _debug_file_section(title: str, path: Path) -> str:
     return "\n".join(lines)
 
 
+def _format_debug_field_lines(record: RunRecord) -> list[str]:
+    lines = [
+        f"run_id: {record.run_id}",
+        f"status: {record.status}",
+        f"session_id: {record.orchestrator_session_id}",
+        f"role: {record.role}",
+        f"harness: {record.harness}",
+        f"task: {record.task_label}",
+        f"created_at: {record.created_at}",
+        f"log_path: {record.log_path}",
+    ]
+    for label, value in (
+        ("batch_id", record.batch_id),
+        ("model", record.model),
+        ("started_at", record.started_at),
+        ("ended_at", record.ended_at),
+        ("supervisor_pid", record.supervisor_pid),
+        ("supervisor_started_at", record.supervisor_started_at),
+        ("supervisor_output_path", record.supervisor_output_path),
+        ("process_id", record.process_id),
+        ("process_group_id", record.process_group_id),
+        ("result_summary", record.result_summary),
+        ("result_summary_truncated", record.result_summary_truncated),
+        ("semantic_verdict", record.semantic_verdict),
+        ("error_text", record.error_text),
+        ("blocker_text", record.blocker_text),
+        ("worker_session_id", record.worker_session_id),
+        ("transcript_path", record.transcript_path),
+        ("approval_needed", record.approval_needed),
+        ("input_tokens", record.input_tokens),
+        ("output_tokens", record.output_tokens),
+        ("reasoning_tokens", record.reasoning_tokens),
+        ("cache_read_tokens", record.cache_read_tokens),
+        ("cache_write_tokens", record.cache_write_tokens),
+        ("cost_usd", record.cost_usd),
+        ("report_claimed_at", record.report_claimed_at),
+        ("reported_at", record.reported_at),
+        ("cycle_id", record.cycle_id),
+        ("triggered_by_run_id", record.triggered_by_run_id),
+        ("trigger_reason", record.trigger_reason),
+        ("sequence_index", record.sequence_index),
+    ):
+        if value is not None:
+            lines.append(f"{label}: {value}")
+    return lines
+
+
 def _debug_transcript_section(record: RunRecord) -> str:
     lines = ["## Harness transcript"]
     if record.worker_session_id:
@@ -606,27 +664,35 @@ def _debug_transcript_section(record: RunRecord) -> str:
 
 
 def _format_debug_bundle(context: AppContext, record: RunRecord) -> str:
+    canonical_events = canonical_events_path(context.config.state_dir, record.run_id)
     sections = [
         "# Orchestra debug bundle",
         "",
-        "## Run state",
-        format_run_report(record, prompts=context.config.prompts),
+        "## Run record",
+        "\n".join(_format_debug_field_lines(record)),
     ]
-    linkage_details = _format_run_linkage_details(record)
-    if linkage_details is not None:
-        sections.append(linkage_details)
-    request_path = context.config.state_dir / "requests" / f"{record.run_id}.json"
-    sections.append(_debug_file_section("Request", request_path))
-    sections.append(_debug_file_section("Lifecycle log", record.log_path))
-    supervisor_output_path = record.supervisor_output_path or (
-        record.log_path.parent / f"{record.run_id}.supervisor.log"
+    sections.append(
+        _debug_file_section(
+            "Canonical request", canonical_request_path(context.config.state_dir, record.run_id)
+        )
     )
-    sections.append(_debug_file_section("Supervisor output", supervisor_output_path))
-    if record.result_output:
-        sections.append("## Full return")
-        sections.append(record.result_output.rstrip())
+    sections.append(_debug_file_section("Canonical events", canonical_events))
+    sections.append(
+        _debug_file_section(
+            "Canonical return", canonical_return_path(context.config.state_dir, record.run_id)
+        )
+    )
+    if record.log_path != canonical_events:
+        sections.append(_debug_file_section("Legacy lifecycle log", record.log_path))
+    if record.supervisor_output_path:
+        sections.append(_debug_file_section("Supervisor output", record.supervisor_output_path))
     else:
-        sections.append("## Full return\nmissing")
+        sections.append(
+            _debug_file_section(
+                "Supervisor output",
+                legacy_supervisor_output_path(context.config.log_dir, record.run_id),
+            )
+        )
     sections.append(_debug_transcript_section(record))
     return "\n\n".join(sections)
 
@@ -680,6 +746,14 @@ def format_history(context: AppContext, session_id: str, limit: int) -> str:
             lines.append(f"  trigger_reason: {run.trigger_reason}")
         if run.sequence_index is not None:
             lines.append(f"  sequence_index: {run.sequence_index}")
+        return_path = canonical_return_path(context.config.state_dir, run.run_id)
+        lines.append(f"  return_path: {return_path}")
+        if run.reported_at:
+            lines.append("  delivery: delivered")
+        elif run.status in {STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}:
+            lines.append("  delivery: pending")
+        else:
+            lines.append("  delivery: unavailable")
         if run.worker_session_id:
             lines.append(f"  worker_session_id: {run.worker_session_id}")
         lines.append(f"  log: {run.log_path}")

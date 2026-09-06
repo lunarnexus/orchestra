@@ -1,5 +1,6 @@
 # Secrets & config
 .env
+test-config/
 
 # OS junk
 .DS_Store
@@ -48,3 +49,6 @@ node_modules/
 
 # Data (track if your project needs it — customize this rule)
 data/
+
+# Local live-test output
+tmp/

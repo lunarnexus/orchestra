@@ -88,17 +88,17 @@ def test_config_command_reads_and_updates_values(
     )
     prompts_path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
 
-    exit_code = main(["--config", str(config_path), "config"])
+    exit_code = main(["--config", str(config_path.parent), "config"])
     output = capsys.readouterr().out
     assert exit_code == 0
     assert "default_timeout: 120" in output
 
-    exit_code = main(["--config", str(config_path), "config", "auto_verify"])
+    exit_code = main(["--config", str(config_path.parent), "config", "auto_verify"])
     output = capsys.readouterr().out
     assert exit_code == 0
     assert output.strip() == "False"
 
-    exit_code = main(["--config", str(config_path), "config", "auto_verify", "true"])
+    exit_code = main(["--config", str(config_path.parent), "config", "auto_verify", "true"])
     output = capsys.readouterr().out
     assert exit_code == 0
     assert output.strip() == "True"

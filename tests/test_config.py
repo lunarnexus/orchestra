@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from orchestra.config import (
     DEFAULT_AUTO_RETURN,
@@ -39,10 +40,14 @@ def test_resolve_config_paths_prefer_explicit_then_env_then_pi_global_then_cwd(
     cwd_catalog = cwd / "agent-catalog.yaml"
     global_config = pi_dir / "orchestra" / "config.yaml"
     global_catalog = pi_dir / "orchestra" / "agent-catalog.yaml"
-    explicit_config = tmp_path / "explicit-config.yaml"
-    explicit_catalog = tmp_path / "explicit-catalog.yaml"
-    env_config = tmp_path / "env-config.yaml"
-    env_catalog = tmp_path / "env-catalog.yaml"
+    explicit_dir = tmp_path / "explicit"
+    env_dir = tmp_path / "env"
+    explicit_dir.mkdir()
+    env_dir.mkdir()
+    explicit_config = explicit_dir / "config.yaml"
+    explicit_catalog = explicit_dir / "agent-catalog.yaml"
+    env_config = env_dir / "config.yaml"
+    env_catalog = env_dir / "agent-catalog.yaml"
 
     for path in (
         cwd_config,
@@ -59,22 +64,19 @@ def test_resolve_config_paths_prefer_explicit_then_env_then_pi_global_then_cwd(
     monkeypatch.chdir(cwd)
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
     monkeypatch.delenv("ORCHESTRA_CONFIG", raising=False)
-    monkeypatch.delenv("ORCHESTRA_AGENT_CATALOG", raising=False)
 
-    assert resolve_config_path(explicit_config) == explicit_config
-    assert resolve_agent_catalog_path(explicit_catalog) == explicit_catalog
+    assert resolve_config_path(explicit_dir) == explicit_config
+    assert resolve_agent_catalog_path(explicit_dir) == explicit_catalog
     assert resolve_config_path() == global_config
     assert resolve_agent_catalog_path() == global_catalog
 
-    monkeypatch.setenv("ORCHESTRA_CONFIG", str(env_config))
-    monkeypatch.setenv("ORCHESTRA_AGENT_CATALOG", str(env_catalog))
+    monkeypatch.setenv("ORCHESTRA_CONFIG", str(env_dir))
     assert resolve_config_path() == env_config
     assert resolve_agent_catalog_path() == env_catalog
 
     global_config.unlink()
     global_catalog.unlink()
     monkeypatch.delenv("ORCHESTRA_CONFIG")
-    monkeypatch.delenv("ORCHESTRA_AGENT_CATALOG")
     assert resolve_config_path() == Path("config.yaml")
     assert resolve_agent_catalog_path() == Path("agent-catalog.yaml")
 
@@ -502,6 +504,9 @@ status_setting_description: Custom setting description.
 status_value_description: Custom value description.
 host_help: Custom help {roles}
 budget_exceeded_prompt: Custom budget handoff.
+return_hint_done: Custom done hint.
+return_hint_incomplete: Custom incomplete hint.
+return_hint_failed: Custom failed hint.
 """.lstrip(),
         encoding="utf-8",
     )
@@ -549,6 +554,9 @@ status_setting_description: ok
 status_value_description: ok
 host_help: ok
 budget_exceeded_prompt: ok
+return_hint_done: ok
+return_hint_incomplete: ok
+return_hint_failed: ok
 """.lstrip(),
         encoding="utf-8",
     )
@@ -582,6 +590,9 @@ status_setting_description: ok
 status_value_description: ok
 host_help: ok
 budget_exceeded_prompt: ok
+return_hint_done: ok
+return_hint_incomplete: ok
+return_hint_failed: ok
 """.lstrip(),
         encoding="utf-8",
     )
@@ -1162,4 +1173,16 @@ def test_missing_prompts_file_raises_clear_error(tmp_path: Path) -> None:
     path.write_text("default_timeout: 30\n", encoding="utf-8")
 
     with pytest.raises(ConfigError, match="configuration file not found"):
+        load_app_config(path)
+
+
+def test_return_hints_are_required_and_soft_timeout_reason_is_core_owned(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text("default_timeout: 30\n", encoding="utf-8")
+    data = yaml.safe_load(ROOT_PROMPTS.read_text(encoding="utf-8"))
+    for key in ("return_hint_done", "return_hint_incomplete", "return_hint_failed"):
+        data.pop(key, None)
+    prompts_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ConfigError, match="return_hint_done"):
         load_app_config(path)

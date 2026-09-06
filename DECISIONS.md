@@ -636,23 +636,6 @@ not require transcript merging or storing full prompts/transcripts in core state
 
 **Source:** Owner approval during lunar-cycle planning.
 
-### D-STATE-008 — Full per-run returns are DB-backed
-
-**Decision:** Every subagent role stores its full final return on its existing
-SQLite run record. New runs do not write per-run return-artifact files. Builders,
-auto-verifiers, researchers, reviewers, and appsec use the same run-return
-mechanism. An auto-verifier stores its own linked run return and does not use
-`VERIFY.md` as per-run return storage.
-
-**Reconciliation:** This supersedes the return-artifact storage portions of
-D-RETURN-001, D-RETURN-004, D-RETURN-010, D-RETURN-011, D-RETURN-013,
-D-STATE-001, D-STATE-002, and D-STATE-003. Their compact-report, sparse-state,
-logging, transcript, and session-context requirements remain in force. Storing a
-full final return in SQLite does not authorize injecting it into the main-session
-context.
-
-**Source:** Owner approval during DB-backed return planning.
-
 ### D-STATE-009 — Role-owned operational artifacts are DB-backed except research
 
 **Decision:** Verification, review, and appsec outputs are stored in the

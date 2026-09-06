@@ -53,13 +53,13 @@ roles:
     nested_dispatch_depth: 2
   researcher:
     harness_config: pi
-    model: openai-codex/gpt-5.4
+    model: lmstudio/LOADED
     dispatch_hint: Gather evidence with sources from docs, web, or code. Do not
       change code. Update only the explicitly assigned RESEARCH.md section when requested. Return
       the compact schema only.
     enabled_workflow_hint: Use researcher for evidence gathering.
     disabled_workflow_hint: Main session handles research and evidence gathering.
-    enabled: false
+    enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
       HINDSIGHT4PI_AUTO_RECALL: '0'
@@ -67,7 +67,7 @@ roles:
     - researcher
   builder:
     harness_config: pi
-    model: openai-codex/gpt-5.4-mini
+    model: lmstudio/LOADED
     skills:
     - builder
     dispatch_hint: Implement the assigned task only. Stay in scope. Run focused
@@ -81,7 +81,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   verifier:
     harness_config: pi
-    model: openai-codex/gpt-5.4-mini
+    model: lmstudio/LOADED
     skills:
     - verifier
     dispatch_hint: Independently prove whether the work satisfies its scope and
@@ -95,7 +95,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   reviewer:
     harness_config: pi
-    model: openai-codex/gpt-5.4
+    model: lmstudio/LOADED
     skills:
     - reviewer
     dispatch_hint: Independently review whether the change is correct, maintainable,
@@ -103,26 +103,26 @@ roles:
       no test commands. Return the compact schema only.
     enabled_workflow_hint: Use reviewer for code-quality review.
     disabled_workflow_hint: Main session handles code-quality review.
-    enabled: false
+    enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
       HINDSIGHT4PI_AUTO_RECALL: '0'
   appsec:
     harness_config: pi
-    model: openai-codex/gpt-5.4
+    model: lmstudio/LOADED
     skills:
     - appsec
     dispatch_hint: Independently identify realistic vulnerabilities across changed
       trust boundaries. Stay read-only for source code. Return the compact schema only.
     enabled_workflow_hint: Use appsec for security review.
     disabled_workflow_hint: Main session handles security review when the change is security-relevant.
-    enabled: false
+    enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
       HINDSIGHT4PI_AUTO_RECALL: '0'
   intern:
     harness_config: pi
-    model: openai-codex/gpt-5.4-mini
+    model: lmstudio/LOADED
     dispatch_hint: Focus on the assigned task and return a compact result.
     enabled: true
     env:
