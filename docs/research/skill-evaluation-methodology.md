@@ -274,8 +274,8 @@ Each `results.jsonl` row should include:
     "handoff_pass": true
   },
   "refs": {
-    "log": "logs/<run-id>.jsonl",
-    "artifact": "state/return-artifacts/<run-id>.md",
+    "events": "state/runs/<run-id>/events.jsonl",
+    "artifact": "state/runs/<run-id>/return.md",
     "debug": "orchestra debug --run-id <run-id>"
   }
 }

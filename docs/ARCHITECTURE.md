@@ -5,8 +5,7 @@ This document describes Orchestra's current technical design and behavior.
 document conflicts with a recorded decision, identify the conflict rather than
 silently treating implementation as a new decision.
 
-`ROADMAP.md` tracks future work. Detailed host-integration requirements live in
-`docs/plugin_creation.md`, and operational diagnosis lives in `docs/debug.md`.
+Detailed host-integration requirements live in `docs/plugin_creation.md`.
 
 ## System overview
 
@@ -35,6 +34,20 @@ Main agent session / CLI
 The main-session host, subagent harness, configured role, and role model are
 separate runtime choices. A host integration obtains the main session's identity
 from host runtime context; the selected harness starts the subagent process.
+
+## Architecture diagrams
+
+### End-to-end orchestration workflow
+
+![End-to-end orchestration workflow](diagrams/orchestra-end-to-end-workflow.svg)
+
+Editable source: `docs/diagrams/orchestra-end-to-end-workflow.drawio`
+
+### Messaging and artifact map
+
+![Messaging and artifact map](diagrams/orchestra-messaging-artifacts.svg)
+
+Editable source: `docs/diagrams/orchestra-messaging-artifacts.drawio`
 
 ## User workflow
 
@@ -362,7 +375,8 @@ Generic CLI/core configuration resolution is:
 3. current-working-directory fallback for local development
 
 A config directory may contain any subset of `config.yaml`, `agent-catalog.yaml`,
-and `prompts.yaml`; present files override the corresponding defaults.
+and `prompts.yaml`; present files override the corresponding defaults. Catalog
+file overrides live in the selected configuration directory.
 
 ## Roles and skills
 
@@ -464,10 +478,7 @@ Orchestra lifecycle events such as supervisor spawn/start/failure, subagent
 start/exit, artifact writes, terminal updates, and structured supervisor crash
 tracebacks. `return.md` stores the complete final child stdout/stderr.
 
-SQLite stores compact metadata and artifact references. Legacy runs may still
-have old `state/requests/<run-id>.json`, `logs/<run-id>.jsonl`,
-`logs/<run-id>.supervisor.log`, or DB `result_output` data, and debug/prune keep
-compatibility for those records.
+SQLite stores compact metadata and artifact references.
 
 Harness-owned session logs remain with the harness. Orchestra stores a native
 session ID or transcript path only when available and does not copy or prune
@@ -598,12 +609,8 @@ adapters, and configured harness executables.
 
 - `DECISIONS.md` — authoritative owner-approved decisions
 - `ARCHITECTURE.md` — current implementation and system design
-- `ROADMAP.md` — TODO and wishlist backlog
-- `KNOWN_BUGS.md` — confirmed open defects
 - `docs/plugin_creation.md` — host-plugin implementation contract
-- `docs/debug.md` — runtime diagnostic procedures
 - `docs/research/` — durable research notes and evaluations
 
-`PLAN.md` and root `RESEARCH.md` are operational artifacts used by active
-Orchestra development sessions. They are not part of the public project-
-documentation contract.
+`PLAN.md` is an operational artifact used by active Orchestra development
+sessions. It is not part of the public project-documentation contract.

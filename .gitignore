@@ -13,6 +13,7 @@ desktop.ini
 *.swp
 *.swo
 *~
+docs/.$*.drawio.bkp
 
 # Qwen
 .qwen/

@@ -248,7 +248,6 @@ Decision direction:
 
 - `DECISIONS.md` is the authoritative record of owner-approved project decisions. Recorded decisions change only with explicit owner approval.
 - `ARCHITECTURE.md` should describe current technical design and can change during the build.
-- `RESEARCH.md` should store research findings, sources, options, and evidence.
 - `PLAN.md` should store the active execution plan. It can be cleared or replaced after completion.
 - Git is the long-term completed-work record.
 - Rigid artifact templates are deferred; skills should describe expected content. Add templates later only if artifacts become inconsistent.
@@ -260,8 +259,7 @@ Decision direction:
 Working default flow:
 
 1. Add stable project decisions to `DECISIONS.md` only after explicit owner approval.
-2. Put research findings in `RESEARCH.md`.
-3. Ask numbered planning questions.
+2. Ask numbered planning questions.
 4. Iterate until unknowns are resolved.
 5. Write `PLAN.md` as Phases -> optional Steps -> Slices.
 6. Dispatch builders/researchers by dependency order.
@@ -328,7 +326,6 @@ Prefer lightweight continuity over a heavy workflow cockpit:
 
 - `DECISIONS.md` for authoritative owner-approved project decisions
 - `ARCHITECTURE.md` for current technical design
-- `RESEARCH.md` for research findings and evidence
 - `PLAN.md` for active work plan
 - Orchestra runtime/history state for runs and worker outcomes
 - git for completed-work history
@@ -377,8 +374,8 @@ Shipped behavior:
 - `/orch on` is a manual, one-time Pi main-session injection of the
   `orchestrator` skill.
 - The injected workflow source is `skills/orchestrator/SKILL.md`.
-- MVP does not include `/orch off`.
-- Main-session orchestrator injection is Pi-first; worker role skill injection
+- `/orch off` is implemented according to host-supported behavior.
+- Main-session orchestrator injection is Pi-first; subagent role skill injection
   remains core/catalog behavior.
 - Worker role skills still resolve local-first from `skills/<skill-name>/SKILL.md`
   with native-skill fallback when no local file exists.
@@ -388,8 +385,7 @@ Shipped behavior:
   `harness_config` plus optional runtime overrides such as `model`, `profile`,
   or `agent`.
 - Successful fallback is surfaced in final reports/history.
-- Standard artifacts are `DECISIONS.md`, `ARCHITECTURE.md`, `RESEARCH.md`,
-  and `PLAN.md`.
+- Standard artifacts are `DECISIONS.md`, `ARCHITECTURE.md`, and `PLAN.md`.
 - Planner may dispatch researchers initially; other roles do not nested-dispatch
   in MVP.
 
@@ -398,7 +394,7 @@ Differences from earlier provisional ideas:
 - The main-session skill is not always on; it is loaded only when `/orch on` is
   used.
 - `/orch on` is one-time per Pi session, not compaction-aware reinjection.
-- There is still no `/orch off` command.
-- Main-session orchestration skill injection and worker role skill injection are
+- `/orch off` is implemented according to host-supported behavior.
+- Main-session orchestration skill injection and subagent role skill injection are
   separate paths.
 - Equivalent non-Pi host support is still future work.

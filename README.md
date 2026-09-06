@@ -138,7 +138,7 @@ on|off` gives you direct control over Orchestra's main-session behavior.
 - Keep dispatch asynchronous so the main session remains responsive.
 - Return one compact consolidated report after a session's active subagents
   finish.
-- Preserve full subagent output in SQLite run records and harness-owned sessions.
+- Preserve detailed subagent results outside the main-session context.
 - Inject configured role skills from local files or native harness skill systems.
 - Keep configuration YAML-first and editable.
 - Install or refresh host integrations with `orchestra init ...`.
@@ -232,10 +232,13 @@ python3 scripts/smoke-pi-live
 ```
 
 It requires both `orchestra` and `pi` on `PATH`, runs `orchestra init pi --force`,
-opens one long-lived Pi RPC parent session, sends `/orch help`, `/orch doctor`,
-`/orch roles`, and `/orch do` through that session, watches stdout JSONL/event
-output for the injected follow-up return prompt, and checks the SQLite return
-plus the absence of a per-run `state/return-artifacts/<run-id>.md` file.
+and checks the Pi `/orch` command flow end to end.
+
+For broader live regression coverage from the repo root:
+
+```bash
+scripts/test-live-e2e
+```
 
 ## Plugin feature matrix
 
@@ -323,8 +326,6 @@ orchestra debug --run-id <run-id>
 CLI `--session-id` is a local/manual identifier. It is not a source of trusted
 host runtime identity.
 
-See `docs/debug.md` for database-backed run returns, lifecycle-log,
-supervisor-output, request, and harness-session tracing.
 
 ## Development
 
@@ -353,15 +354,12 @@ global host location.
 
 - `DECISIONS.md` — authoritative owner-approved project decisions
 - `ARCHITECTURE.md` — current technical architecture and behavior
-- `ROADMAP.md` — TODO and wishlist backlog
-- `KNOWN_BUGS.md` — confirmed open defects
 - `docs/plugin_creation.md` — host-plugin implementation contract
-- `docs/debug.md` — runtime diagnosis and tracing
 - `docs/research/` — durable research notes and evaluations
 - `config.yaml` — runtime configuration
 - `agent-catalog.yaml` — role and harness catalog
 - `prompts.yaml` — shared prompt and tool text
 
-Root `PLAN.md` and `RESEARCH.md` are optional operational artifacts for active
-Orchestra development sessions. They are not part of the public project-
-documentation contract.
+Root `PLAN.md` is an optional operational artifact for active Orchestra
+development sessions. It is not part of the public project-documentation
+contract.

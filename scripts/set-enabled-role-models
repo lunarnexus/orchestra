@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Set model for every enabled role in agent-catalog.yaml.
+"""Set model for every enabled or auto role in agent-catalog.yaml.
 
 Usage:
   ./set-enabled-role-models [model]
@@ -13,6 +13,9 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 DEFAULT_MODEL = "lmstudio/llmfan46/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved"
 #DEFAULT_MODEL = "lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved"
@@ -33,7 +36,7 @@ def _repo_root() -> Path:
         for candidate in (script_path.parent, *script_path.parents):
             if (candidate / "agent-catalog.yaml").is_file():
                 return candidate
-        raise SystemExit("could not find repository root containing agent-catalog.yaml")
+        raise SystemExit("could not find repository root containing agent-catalog.yaml") from None
 
     root = Path(result.stdout.strip())
     if not (root / "agent-catalog.yaml").is_file():
@@ -43,6 +46,20 @@ def _repo_root() -> Path:
 
 def _catalog_path() -> Path:
     return _repo_root() / "agent-catalog.yaml"
+
+
+def _role_is_enabled(chunk: str) -> bool:
+    try:
+        loaded = yaml.safe_load(chunk)
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"could not parse role YAML: {exc}") from exc
+    if not isinstance(loaded, dict) or len(loaded) != 1:
+        return False
+    role_data = next(iter(loaded.values()))
+    if not isinstance(role_data, dict):
+        return False
+    enabled: Any = role_data.get("enabled", True)
+    return enabled is True or (isinstance(enabled, str) and enabled.strip().lower() == "auto")
 
 
 def _set_enabled_role_models(text: str, model: str) -> tuple[str, int]:
@@ -70,7 +87,7 @@ def _set_enabled_role_models(text: str, model: str) -> tuple[str, int]:
     changed = 0
     out: list[str] = []
     for chunk in chunks:
-        if chunk == marker or "    enabled: true" not in chunk:
+        if chunk == marker or not _role_is_enabled(chunk):
             out.append(chunk)
             continue
         new_chunk, count = re.subn(
