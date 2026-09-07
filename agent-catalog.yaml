@@ -5,9 +5,9 @@ model_limits:
   lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved:
     concurrency: 2
   lmstudio/qwen/qwen3.8-27b:
-    concurrency: 2
+    concurrency: 1
   lmstudio/LOADED:
-    concurrency: 2
+    concurrency: 1
 harness_configs:
   pi:
     harness: pi
