@@ -336,7 +336,9 @@ def test_opencode_plugin_prompts_final_reports_through_the_owning_session() -> N
     assert 'function markSessionReportDelivered(' in source
     assert 'function releaseSessionReport(' in source
     assert 'function buildMarkSessionReportDeliveredCommand(' in source
-    assert 'function buildReleaseSessionReportCommand(' in source
+    # Failed delivery leaves runs unreported; hosts never call a core release command.
+    assert "buildReleaseSessionReportCommand" not in source
+    assert "_release-session-report" not in source
     assert 'function getSessionPrompt(' in source
     assert 'const session = client?.session;' in source
     assert 'return session.prompt.bind(session);' in source
@@ -346,13 +348,6 @@ def test_opencode_plugin_prompts_final_reports_through_the_owning_session() -> N
     assert 'body: { parts: [{ type: "text", text: envelope.report }] },' in source
     assert 'buildMarkSessionReportDeliveredCommand(ownerId, envelope.runIds)' in source
     assert 'markSessionReportDelivered(ownerId, envelope.runIds);' in source
-    assert 'buildReleaseSessionReportCommand(ownerId, envelope.runIds)' in source
-    release_result_call = (
-        'const releaseResult = await runOrchestra('
-        'buildReleaseSessionReportCommand(ownerId, envelope.runIds));'
-    )
-    assert release_result_call in source
-    assert 'if (releaseResult.returncode !== 0) {' in source
     assert 'releaseSessionReport(ownerId);' in source
     assert 'sessionID: ownerId,' not in source
     assert 'noReply: true' not in source
@@ -372,9 +367,8 @@ def test_opencode_plugin_prefers_prompt_and_cleans_up_report_delivery_claims() -
     assert 'return session.promptAsync.bind(session);' in source
     assert 'if (!sessionPrompt) {' in source
     assert 'await sessionPrompt({' in source
-    assert 'let preserveClaim = false;' in source
+    assert "let preserveClaim" not in source
     assert 'finally {' in source
-    assert 'if (!preserveClaim) {' in source
     assert 'releaseSessionReportDeliveryClaim(ownerId, envelope.runIds);' in source
     assert (
         'if (!(await promptSessionReport(client, rawSessionID, ownerId, envelope, runtimeState))) {'
@@ -568,14 +562,9 @@ def test_opencode_plugin_delivers_final_reports_only_after_retrieval_succeeds() 
         'buildMarkSessionReportDeliveredCommand(ownerId, envelope.runIds)'
     )
     mark_pos = source.index('markSessionReportDelivered(ownerId, envelope.runIds);')
-    release_command_pos = source.index(
-        'buildReleaseSessionReportCommand(ownerId, envelope.runIds)'
-    )
-    release_pos = source.index('releaseSessionReport(ownerId);', release_command_pos)
 
     assert watch_pos < prompt_call_pos
     assert prompt_pos < mark_command_pos < mark_pos
-    assert prompt_pos < release_command_pos < release_pos
 
 
 def test_opencode_plugin_exposes_dispose_cleanup_and_gates_late_watchers() -> None:

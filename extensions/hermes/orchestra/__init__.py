@@ -516,21 +516,6 @@ def _report_run_id_args(run_ids: list[str]) -> list[str]:
     return args
 
 
-def _release_session_report(runtime_session_id: str, run_ids: list[str]) -> None:
-    if not run_ids:
-        return
-    result = _run_orchestra(
-        [
-            "_release-session-report",
-            "--session-id",
-            runtime_session_id,
-            *_report_run_id_args(run_ids),
-        ]
-    )
-    if result.returncode != 0:
-        _log_watcher_error((result.stdout or result.stderr).strip() or "report release failed")
-
-
 def _mark_session_report_delivered(runtime_session_id: str, run_ids: list[str]) -> bool:
     if not run_ids:
         return True
@@ -708,25 +693,19 @@ def _handle_session_report_result(
             if parsed_run_ids:
                 run_ids = parsed_run_ids
         message = payload.get("report") if isinstance(payload, dict) else None
+        # Failed or unconfirmed delivery leaves runs unreported so the next
+        # watcher can deliver them; nothing is released here.
         if not isinstance(message, str) or not message.strip():
-            if _session_watcher_generation_is_current(runtime_session_id, session_generation):
-                _release_session_report(runtime_session_id, run_ids)
             return
         if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
             return
         if not _deliver_report(ctx, runtime_session_id, message.strip()):
-            if _session_watcher_generation_is_current(runtime_session_id, session_generation):
-                _release_session_report(runtime_session_id, run_ids)
             return
         if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
             return
-        if not _mark_session_report_delivered(runtime_session_id, run_ids):
-            if _session_watcher_generation_is_current(runtime_session_id, session_generation):
-                _release_session_report(runtime_session_id, run_ids)
+        _mark_session_report_delivered(runtime_session_id, run_ids)
     except Exception as exc:  # noqa: BLE001 - plugin must not crash watcher thread
-        if _session_watcher_generation_is_current(runtime_session_id, session_generation):
-            _release_session_report(runtime_session_id, run_ids)
-            _log_watcher_error(str(exc))
+        _log_watcher_error(str(exc))
 
 
 def _watch_session_report(

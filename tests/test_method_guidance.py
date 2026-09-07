@@ -149,7 +149,7 @@ def test_default_return_format_tracks_reused_evidence() -> None:
 
 
 def test_roadmap_tracks_command_deduplication_wishlist() -> None:
-    roadmap = Path("ROADMAP.md").read_text(encoding="utf-8")
+    roadmap = Path("docs/ROADMAP.md").read_text(encoding="utf-8")
 
     assert "Command de-duplication guard for subagent tool use" in roadmap
     assert "Pi, Hermes, OpenCode" in roadmap

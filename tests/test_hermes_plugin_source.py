@@ -2388,7 +2388,7 @@ def test_session_report_tui_busy_steers_live_session_without_cli_ref(
 
 
 
-def test_session_report_busy_queue_failure_releases_without_marking(
+def test_session_report_busy_queue_failure_leaves_run_unreported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -2396,8 +2396,6 @@ def test_session_report_busy_queue_failure_releases_without_marking(
 
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
-        if args[0] == "_release-session-report":
-            return completed(args)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2417,18 +2415,10 @@ def test_session_report_busy_queue_failure_releases_without_marking(
     assert ctx.steered == ["worker done"]
     assert ctx.injected == []
     assert list(ctx.pending_input.queue) == []
-    assert calls == [
-        [
-            "_release-session-report",
-            "--session-id",
-            "hermes:runtime",
-            "--run-id",
-            "abc123",
-        ]
-    ]
+    assert calls == []
 
 
-def test_session_report_idle_mark_failure_releases_for_retry(
+def test_session_report_idle_mark_failure_leaves_run_unreported(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -2438,8 +2428,6 @@ def test_session_report_idle_mark_failure_releases_for_retry(
         calls.append(args)
         if args[0] == "_mark-session-report-delivered":
             return completed(args, stderr="mark failed", code=1)
-        if args[0] == "_release-session-report":
-            return completed(args)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2464,17 +2452,10 @@ def test_session_report_idle_mark_failure_releases_for_retry(
             "--run-id",
             "abc123",
         ],
-        [
-            "_release-session-report",
-            "--session-id",
-            "hermes:runtime",
-            "--run-id",
-            "abc123",
-        ],
     ]
 
 
-def test_session_report_malformed_json_releases_fallback_run_id(
+def test_session_report_malformed_json_is_ignored(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
@@ -2482,8 +2463,6 @@ def test_session_report_malformed_json_releases_fallback_run_id(
 
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
-        if args[0] == "_release-session-report":
-            return completed(args)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2495,15 +2474,7 @@ def test_session_report_malformed_json_releases_fallback_run_id(
         ["abc123"],
     )
 
-    assert calls == [
-        [
-            "_release-session-report",
-            "--session-id",
-            "hermes:runtime",
-            "--run-id",
-            "abc123",
-        ]
-    ]
+    assert calls == []
 
 
 def test_run_orchestra_uses_bounded_subprocess_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

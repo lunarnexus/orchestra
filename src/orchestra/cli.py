@@ -52,7 +52,6 @@ from orchestra.reports import (
     consume_pending_session_report,
     format_run_report,
     mark_session_report_delivered,
-    release_session_report,
     session_report_payload,
 )
 from orchestra.roles import format_roles, role_metadata, set_role_setting
@@ -80,7 +79,6 @@ INTERNAL_COMMANDS = frozenset(
         "_await-session-report",
         "_await-run",
         "_mark-session-report-delivered",
-        "_release-session-report",
         "_dispatch-command",
         "_dispatch-ack",
         "_progress-message",
@@ -317,14 +315,6 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         mark_report_parser.add_argument("--session-id", required=True)
         mark_report_parser.add_argument("--run-id", action="append", required=True)
         mark_report_parser.set_defaults(handler=_handle_mark_session_report_delivered)
-
-        release_report_parser = subparsers.add_parser(
-            "_release-session-report",
-            help=argparse.SUPPRESS,
-        )
-        release_report_parser.add_argument("--session-id", required=True)
-        release_report_parser.add_argument("--run-id", action="append", required=True)
-        release_report_parser.set_defaults(handler=_handle_release_session_report)
 
         wait_run_parser = subparsers.add_parser("_await-run", help=argparse.SUPPRESS)
         wait_run_parser.add_argument("--session-id", required=True)
@@ -855,12 +845,6 @@ def _handle_await_session_report(args: argparse.Namespace) -> int:
 def _handle_mark_session_report_delivered(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=None)
     mark_session_report_delivered(context, args.session_id, list(args.run_id))
-    return 0
-
-
-def _handle_release_session_report(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    release_session_report(context, args.session_id, list(args.run_id))
     return 0
 
 

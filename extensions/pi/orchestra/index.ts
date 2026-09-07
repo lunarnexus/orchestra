@@ -1,5 +1,6 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
+import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -12,7 +13,6 @@ const ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV = "ORCHESTRA_BUDGET_EXCEEDED_PROMPT";
 const WATCHER_TIMEOUT_MARGIN_SECONDS = 30;
 const REPORT_WATCHER_MAX_ATTEMPTS = 3;
 const REPORT_WATCHER_RETRY_MS = 500;
-const REPORT_DELIVERY_CONFIRMATION_MS = 30_000;
 
 interface OrchestraFooterTheme {
   bold(text: string): string;
@@ -66,7 +66,6 @@ interface PendingSessionReport {
   anchorRunId: string;
   updateStatus?: (status: ActiveSessionStatus | null) => void;
   sessionGeneration: number;
-  confirmationTimer: ReturnType<typeof setTimeout>;
   confirmed: boolean;
 }
 
@@ -104,10 +103,31 @@ function formatCompactTokenCount(value: number | null | undefined): string {
   return String(numeric);
 }
 
+function orchestraCostForMainModel(
+  accounting: NonNullable<ActiveSessionStatus["accounting"]>,
+  mainModel: Model<Api> | undefined,
+): number {
+  if (!mainModel) return accounting.cost_usd ?? 0;
+  const input = accounting.input_tokens ?? 0;
+  const output = accounting.output_tokens ?? 0;
+  const cacheRead = accounting.cache_read_tokens ?? 0;
+  const cacheWrite = accounting.cache_write_tokens ?? 0;
+  const usage: Usage = {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    totalTokens: input + output + cacheRead + cacheWrite,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+  };
+  return calculateCost(mainModel, usage).total;
+}
+
 function renderOrchestraFooterStatus(
   theme: OrchestraFooterTheme,
   mode: string | null,
   status: ActiveSessionStatus | null,
+  mainModel?: Model<Api>,
 ): string | undefined {
   if (!mode || mode === "off") return undefined;
   const parts: string[] = [];
@@ -121,7 +141,7 @@ function renderOrchestraFooterStatus(
     parts.push(theme.fg("dim", `↓${formatCompactTokenCount(accounting.output_tokens)}`));
     parts.push(theme.fg("dim", `R${formatCompactTokenCount(accounting.reasoning_tokens)}`));
     parts.push(theme.fg("dim", `CH${cacheHit}%`));
-    parts.push(theme.fg("dim", `$${(accounting.cost_usd ?? 0).toFixed(3)}`));
+    parts.push(theme.fg("dim", `$${orchestraCostForMainModel(accounting, mainModel).toFixed(3)}`));
   }
   parts.push(theme.fg("dim", `(Orchestra:${mode})`));
   if (status && status.activeCount > 0) {
@@ -132,11 +152,17 @@ function renderOrchestraFooterStatus(
 }
 
 function setOrchestraWorkerStatus(
-  ctx: { ui: { setWidget: (key: string, widget: { text: string }, options?: { placement?: string }) => void; theme: OrchestraFooterTheme } },
+  ctx: {
+    model?: Model<Api>;
+    ui: {
+      setWidget: (key: string, widget: { text: string }, options?: { placement?: string }) => void;
+      theme: OrchestraFooterTheme;
+    };
+  },
   status: ActiveSessionStatus | null,
   mode?: string | null,
 ): void {
-  const text = renderOrchestraFooterStatus(ctx.ui.theme, mode ?? null, status);
+  const text = renderOrchestraFooterStatus(ctx.ui.theme, mode ?? null, status, ctx.model);
   if (!text) {
     ctx.ui.setWidget("orchestra", undefined, { placement: "belowEditor" });
     return;
@@ -675,12 +701,9 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     const retry = reportWatcherRetries.get(sessionId);
     if (retry) clearTimeout(retry);
     reportWatcherRetries.delete(sessionId);
-    const pending = pendingSessionReports.get(sessionId);
-    if (pending) {
-      clearTimeout(pending.confirmationTimer);
-      pendingSessionReports.delete(sessionId);
-      void releaseSessionReport(sessionId, pending.runIds);
-    }
+    // Unconfirmed reports are dropped locally; their runs stay unreported so
+    // the next watcher can deliver them.
+    pendingSessionReports.delete(sessionId);
     sessionRefreshRequests.delete(sessionId);
     sessionRuns.delete(sessionId);
     sessionCompletedRuns.delete(sessionId);
@@ -860,19 +883,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     return runIds.flatMap((id) => ["--run-id", id]);
   }
 
-  async function releaseSessionReport(sessionId: string, runIds: string[]): Promise<void> {
-    if (runIds.length === 0) return;
-    const result = await runOrchestra([
-      "_release-session-report",
-      "--session-id",
-      sessionId,
-      ...reportRunIdArgs(runIds),
-    ]);
-    if (result.code !== 0) {
-      process.stderr.write(`orchestra report release failed: ${result.stderr || result.stdout}\n`);
-    }
-  }
-
   function scheduleSessionReportRetry(
     sessionId: string,
     runId: string,
@@ -887,21 +897,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       watchSessionReport(sessionId, runId, updateStatus, failedAttempt + 1);
     }, REPORT_WATCHER_RETRY_MS * (failedAttempt + 1));
     reportWatcherRetries.set(sessionId, retry);
-  }
-
-  async function releasePendingSessionReport(sessionId: string, retry: boolean): Promise<void> {
-    const pending = pendingSessionReports.get(sessionId);
-    if (!pending) return;
-    pendingSessionReports.delete(sessionId);
-    clearTimeout(pending.confirmationTimer);
-    await releaseSessionReport(sessionId, pending.runIds);
-    await refreshOrchestraWorkerStatus(sessionId, pending.updateStatus, {
-      fresh: true,
-      expectedGeneration: pending.sessionGeneration,
-    });
-    if (retry && isCurrentSessionGeneration(sessionId, pending.sessionGeneration)) {
-      scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);
-    }
   }
 
   function watchSessionReport(
@@ -973,28 +968,20 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           : [];
         const message = typeof payload.report === "string" ? payload.report.trim() : "";
         if (!message || runIds.length === 0) {
-          void releaseSessionReport(sessionId, runIds).then(() => {
-            scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
-          });
+          scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
           return;
         }
-        const confirmationTimer = setTimeout(() => {
-          void releasePendingSessionReport(sessionId, true);
-        }, REPORT_DELIVERY_CONFIRMATION_MS);
         pendingSessionReports.set(sessionId, {
           runIds,
           message,
           anchorRunId: runId,
           updateStatus,
           sessionGeneration,
-          confirmationTimer,
           confirmed: false,
         });
         pi.sendUserMessage(message, { deliverAs: "followUp" });
       } catch (error) {
-        void releaseSessionReport(sessionId, runIds).then(() => {
-          scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
-        });
+        scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
         const err = error as { message?: string };
         process.stderr.write(`orchestra auto-return reinjection failed: ${err.message ?? String(error)}\n`);
       }
@@ -1022,7 +1009,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     const pending = pendingSessionReports.get(sessionId);
     if (!pending || pending.confirmed || userMessageText(event.message) !== pending.message) return;
     pending.confirmed = true;
-    clearTimeout(pending.confirmationTimer);
     setImmediate(() => {
       void (async () => {
         if (pendingSessionReports.get(sessionId) !== pending) return;
@@ -1034,7 +1020,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           ...reportRunIdArgs(pending.runIds),
         ]);
         if (markResult.code !== 0) {
-          await releaseSessionReport(sessionId, pending.runIds);
+          // Runs stay unreported; the session watcher can retry delivery.
           scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);
           process.stderr.write(`orchestra report delivery mark failed: ${markResult.stderr || markResult.stdout}\n`);
         }

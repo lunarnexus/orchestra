@@ -58,7 +58,6 @@ These features already live in Orchestra core or core CLI helpers. New plugins s
 - `_await-run` — wait for one run to reach a terminal state, with optional `--json`.
 - `_await-session-report` — wait for the owning session's consolidated report, with optional `--json`.
 - `_mark-session-report-delivered` — mark report run ids as delivered after successful host delivery.
-- `_release-session-report` — release report run ids after failed host delivery.
 - `_orchestrator-skill` — render the main-session Orchestra skill payload.
 
 ### Core configuration contract
@@ -137,8 +136,8 @@ Slash-command argument parsing should be predictable enough for manual use. Pi s
 - Prefer non-prompt notifications for per-subagent progress.
 - Start a session-report watcher with `_await-session-report` for consolidated auto-return.
 - Deliver the returned report to the owning runtime session only when the consolidated report is available.
-- Mark delivered report run ids with `_mark-session-report-delivered` after successful delivery.
-- Release report run ids with `_release-session-report` if delivery fails after acquiring a report.
+- Mark delivered report run ids with `_mark-session-report-delivered` after successful delivery. Do not mark before the host confirms delivery.
+- If delivery fails or is never confirmed, leave the runs unreported; the owning session's watcher retrieves them again on its next pass.
 - Derive watcher timeout from the effective subagent timeout plus host margin.
 - Do not inject repeated prompt/user messages merely because active subagents still exist; active-run visibility belongs in status UI or explicit diagnostics.
 
@@ -210,7 +209,7 @@ Hermes should follow best host-supported parity rather than copying Pi APIs dire
 - Register `orch_dispatch(goal, role?, taskLabel?)` and `orch_status(action, limit?, runId?, role?, setting?, value?)` through Hermes model-callable tools.
 - Register native `/orch help|on|off|do|roles|status|stop|doctor|history` through the Hermes command surface.
 - Keep model-callable dispatch timeout-disabled while allowing manual `/orch do --timeout` on the native command surface.
-- Use `_tool-info`, `_dispatch-ack`, `_await-session-report`, `_mark-session-report-delivered`, and `_release-session-report` from core rather than embedding host-local copies of shared wording or report handling.
+- Use `_tool-info`, `_dispatch-ack`, `_await-session-report`, and `_mark-session-report-delivered` from core rather than embedding host-local copies of shared wording or report handling.
 - Deliver consolidated idle-session auto-return with `ctx.inject_message(...)`.
 - Deliver consolidated busy-session auto-return by queueing the report into Hermes CLI `_pending_input` so the next user turn is created without interrupting the active turn.
 - Treat Hermes `/orch off` as behavioral session-scoped dispatch disabling. Hermes does not currently expose verified public APIs for Pi-style active-tool hiding/showing, so `/orch` and `orch_status` remain available while `orch_dispatch` returns a disabled error until `/orch on` re-enables it.

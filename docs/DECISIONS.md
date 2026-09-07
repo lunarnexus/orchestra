@@ -507,7 +507,9 @@ lifecycle that remains alive for returns.
 ### D-RETURN-009 — Report delivery bookkeeping
 
 **Decision:** Host adapters mark consolidated reports delivered only after
-successful host delivery and release acquired reports after failed delivery.
+successful host delivery. Until then, runs remain unreported and can be
+retrieved by the owning session's single watcher. Core does not claim reports,
+maintain claim leases, or perform time-based claim recovery.
 
 ### D-RETURN-010 — Compact success and failure formats
 

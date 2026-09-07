@@ -13,6 +13,7 @@ from orchestra.reports import (
     await_session_report_payload,
     consume_pending_session_report,
     mark_session_report_delivered,
+    pending_session_report,
 )
 from orchestra.state import (
     STATUS_DONE,
@@ -130,6 +131,45 @@ def test_auto_return_enabled_exposes_one_pending_report(
     assert consume_pending_session_report(context, "manual:auto") is None
 
 
+def test_pending_session_report_repeats_until_marked_delivered(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    config_path, catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "done"],
+        auto_return=True,
+    )
+
+    result = run_cli(
+        "--config",
+        str(config_path.parent),
+        "do",
+        "--session-id",
+        "manual:auto-repeat",
+        "--goal",
+        "auto-return repeat",
+    )
+    run_id = extract_run_id(result.stdout)
+
+    store = StateStore(db_path)
+    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
+
+    context = load_context(config_path=config_path, catalog_path=catalog_path)
+    first = pending_session_report(context, "manual:auto-repeat")
+    assert first is not None
+    assert run_id in first.run_ids
+
+    second = pending_session_report(context, "manual:auto-repeat")
+    assert second is not None
+    assert second.run_ids == first.run_ids
+
+    mark_session_report_delivered(context, "manual:auto-repeat", list(first.run_ids))
+    assert pending_session_report(context, "manual:auto-repeat") is None
+
+
 def test_await_session_report_returns_once_final_run_completes(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
@@ -166,7 +206,10 @@ def test_await_session_report_returns_once_final_run_completes(
 
     store = StateStore(db_path)
     assert store.get_run(run_id).status == STATUS_DONE
-    assert consume_pending_session_report(context, "manual:await") is None
+    # Awaiting lists unreported runs without claiming them; the run stays
+    # pending until delivery is marked.
+    retried = consume_pending_session_report(context, "manual:await")
+    assert retried is not None and run_id in retried
 
     mark_session_report_delivered(context, "manual:await", report.run_ids)
     assert consume_pending_session_report(context, "manual:await") is None

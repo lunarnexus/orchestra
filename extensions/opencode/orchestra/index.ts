@@ -355,14 +355,6 @@ function buildMarkSessionReportDeliveredCommand(ownerId: string, runIds: string[
   return command;
 }
 
-function buildReleaseSessionReportCommand(ownerId: string, runIds: string[]): string[] {
-  const command = ["orchestra", "_release-session-report", "--session-id", ownerId];
-  for (const runId of runIds) {
-    command.push("--run-id", runId);
-  }
-  return command;
-}
-
 function parseSessionReportEnvelope(stdout: string): SessionReportEnvelope | null {
   try {
     const payload = JSON.parse(stdout) as { runIds?: unknown; report?: unknown };
@@ -479,7 +471,6 @@ async function promptSessionReport(
     return false;
   }
 
-  let preserveClaim = false;
   try {
     await sessionPrompt({
       path: { id: rawSessionID },
@@ -498,23 +489,11 @@ async function promptSessionReport(
   } catch (error) {
     console.error("Orchestra report delivery failed:", error);
     await notifyFailureToast(client, ownerId, error);
-    const releaseResult = await runOrchestra(buildReleaseSessionReportCommand(ownerId, envelope.runIds));
-    if (releaseResult.returncode !== 0) {
-      console.error("Orchestra report release after failure failed:", releaseResult.stderr);
-      await notifyFailureToast(
-        client,
-        ownerId,
-        releaseResult.stderr || "failed to release Orchestra report delivery.",
-      );
-      preserveClaim = true;
-      return false;
-    }
+    // Runs stay unreported; the session watcher can retry delivery.
     releaseSessionReport(ownerId);
     return false;
   } finally {
-    if (!preserveClaim) {
-      releaseSessionReportDeliveryClaim(ownerId, envelope.runIds);
-    }
+    releaseSessionReportDeliveryClaim(ownerId, envelope.runIds);
   }
 }
 

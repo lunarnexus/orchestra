@@ -516,9 +516,11 @@ return marks the relationship and includes both run ids. A verifier failure,
 timeout, or crash is reported as part of the cycle and does not change a
 successful builder run into a failed builder run.
 
-Auto-return is enabled by default and configurable. Host adapters acquire a
-pending consolidated report, deliver it to the exact owning session, mark it
-delivered after success, and release it after failed delivery.
+Auto-return is enabled by default and configurable. Each owning session has one
+report watcher. Core returns its unreported consolidated runs without claiming
+them, and the host adapter marks them delivered after successful delivery. If
+delivery does not complete, the runs remain unreported for the session's next
+watcher.
 
 Per-subagent progress uses non-prompt host notifications where supported. The
 main session does not poll, and adapters do not inject repeated wait prompts

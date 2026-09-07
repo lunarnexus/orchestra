@@ -156,7 +156,15 @@ def test_pi_extension_footer_includes_session_mode() -> None:
         in footer_body
     )
     assert 'theme.fg("dim", `CH${cacheHit}%`)' in footer_body
-    assert 'theme.fg("dim", `$${(accounting.cost_usd ?? 0).toFixed(3)}`)' in footer_body
+    assert 'function orchestraCostForMainModel(' in extension_source
+    assert 'return calculateCost(mainModel, usage).total;' in extension_source
+    assert 'totalTokens: input + output + cacheRead + cacheWrite' in extension_source
+    assert (
+        'theme.fg("dim", '
+        '`$${orchestraCostForMainModel(accounting, mainModel).toFixed(3)}`)'
+        in footer_body
+    )
+    assert "status, ctx.model" in extension_source
     assert 'theme.fg("dim", `(Orchestra:${mode})`)' in footer_body
     assert 'renderOrchestraWorkerStatus(theme, status.roleCounts)' in footer_body
     assert 'ctx.ui.setWidget("orchestra", text ? [text] : undefined' not in extension_source
@@ -240,7 +248,11 @@ def test_pi_extension_refreshes_footer_and_confirms_report_delivery() -> None:
     assert "_mark-session-report-delivered" not in report_block[send_idx:message_handler_idx]
     assert 'pi.on("message_end"' in extension_source
     assert "pendingSessionReports.set(sessionId" in report_block
-    assert "releasePendingSessionReport(" in extension_source
+    assert "REPORT_DELIVERY_CONFIRMATION_MS" not in extension_source
+    assert "confirmationTimer" not in extension_source
+    # Failed or unconfirmed delivery must leave runs unreported, never release a claim.
+    assert "_release-session-report" not in extension_source
+    assert "releaseSessionReport" not in extension_source
 
     assert "updateStatus?.({ activeCount: 0" not in extension_source
     assert "if (result.code !== 0) throw new Error" in extension_source

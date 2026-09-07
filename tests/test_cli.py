@@ -58,13 +58,21 @@ def test_public_help_hides_internal_subcommands() -> None:
         "_await-session-report",
         "_await-run",
         "_mark-session-report-delivered",
-        "_release-session-report",
         "_dispatch-ack",
         "_progress-message",
         "_command-echo",
         "_tool-info",
     ):
         assert command not in help_text
+
+
+def test_release_session_report_command_is_removed() -> None:
+    parser = build_parser(include_internal=True)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["_release-session-report", "--session-id", "s1", "--run-id", "r1"]
+        )
 
 
 def test_internal_command_still_executes(capsys: pytest.CaptureFixture[str]) -> None:
