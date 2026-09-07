@@ -514,7 +514,7 @@ def await_run_payload(
     *,
     active_remaining: int,
     details: SessionStatusDetails,
-    prompts: PromptConfig | None = None,
+    prompts: PromptConfig,
 ) -> dict[str, object]:
     return {
         "contract_version": CONTRACT_VERSION,
@@ -539,25 +539,16 @@ def await_run_payload(
     }
 
 
-def _return_hint(run: RunRecord, *, prompts: PromptConfig | None = None) -> str | None:
-    from orchestra.config import (
-        DEFAULT_RETURN_HINT_DONE,
-        DEFAULT_RETURN_HINT_FAILED,
-        DEFAULT_RETURN_HINT_INCOMPLETE,
-    )
+def _return_hint(run: RunRecord, *, prompts: PromptConfig) -> str | None:
     from orchestra.state import STATUS_CANCELLED, STATUS_DONE
 
     if run.status == STATUS_DONE:
-        return prompts.return_hint_done if prompts is not None else DEFAULT_RETURN_HINT_DONE
+        return prompts.return_hint_done
     if run.status == STATUS_INCOMPLETE:
-        return (
-            prompts.return_hint_incomplete
-            if prompts is not None
-            else DEFAULT_RETURN_HINT_INCOMPLETE
-        )
+        return prompts.return_hint_incomplete
     if run.status == STATUS_CANCELLED:
         return None
-    return prompts.return_hint_failed if prompts is not None else DEFAULT_RETURN_HINT_FAILED
+    return prompts.return_hint_failed
 
 
 def _format_run_summary(run: RunRecord) -> str:

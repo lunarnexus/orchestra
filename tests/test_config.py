@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -15,6 +17,7 @@ from orchestra.config import (
     list_config_values,
     load_agent_catalog,
     load_app_config,
+    load_app_config_from_mapping,
     read_config_value,
     resolve_agent_catalog_path,
     resolve_config_path,
@@ -176,7 +179,14 @@ def test_root_tool_guidance_enforces_orchestrator_boundaries() -> None:
     assert "should normally" not in prompts.tool_description
     assert prompts.tool_prompt_snippet == ""
     assert prompts.tool_prompt_guidelines == ()
-    assert "main-session orchestrator handles run status" in prompts.main_session_ownership_guidance
+    assert (
+        "main-session orchestrator reads failed return artifacts"
+        in prompts.main_session_ownership_guidance
+    )
+    assert (
+        "read the failed return artifact and decide how to proceed"
+        in prompts.return_hint_failed
+    )
     assert "Artifacts updated:" in prompts.default_return_format
     assert "Material evidence:" in prompts.default_return_format
     assert "Use orch_status only when the user explicitly asks" in prompts.status_description
@@ -507,6 +517,12 @@ budget_exceeded_prompt: Custom budget handoff.
 return_hint_done: Custom done hint.
 return_hint_incomplete: Custom incomplete hint.
 return_hint_failed: Custom failed hint.
+return_hint_builder_failed: Custom builder failed hint.
+budget_trigger_label: Custom budget label.
+soft_timeout_block_reason: Custom soft timeout reason.
+session_mode_off_message: Custom off message.
+session_mode_on_message: Custom on message.
+session_mode_orchestrator_message: Custom orchestrator message.
 """.lstrip(),
         encoding="utf-8",
     )
@@ -531,6 +547,12 @@ return_hint_failed: Custom failed hint.
     assert config.prompts.status_role_description == "Custom role description."
     assert config.prompts.status_setting_description == "Custom setting description."
     assert config.prompts.status_value_description == "Custom value description."
+    assert config.prompts.return_hint_builder_failed == "Custom builder failed hint."
+    assert config.prompts.budget_trigger_label == "Custom budget label."
+    assert config.prompts.soft_timeout_block_reason == "Custom soft timeout reason."
+    assert config.prompts.session_mode_off_message == "Custom off message."
+    assert config.prompts.session_mode_on_message == "Custom on message."
+    assert config.prompts.session_mode_orchestrator_message == "Custom orchestrator message."
 
 
 def test_load_app_config_rejects_missing_prompt_values(tmp_path: Path) -> None:
@@ -557,6 +579,12 @@ budget_exceeded_prompt: ok
 return_hint_done: ok
 return_hint_incomplete: ok
 return_hint_failed: ok
+return_hint_builder_failed: ok
+budget_trigger_label: ok
+soft_timeout_block_reason: ok
+session_mode_off_message: ok
+session_mode_on_message: ok
+session_mode_orchestrator_message: ok
 """.lstrip(),
         encoding="utf-8",
     )
@@ -593,6 +621,12 @@ budget_exceeded_prompt: ok
 return_hint_done: ok
 return_hint_incomplete: ok
 return_hint_failed: ok
+return_hint_builder_failed: ok
+budget_trigger_label: ok
+soft_timeout_block_reason: ok
+session_mode_off_message: ok
+session_mode_on_message: ok
+session_mode_orchestrator_message: ok
 """.lstrip(),
         encoding="utf-8",
     )
@@ -1176,13 +1210,62 @@ def test_missing_prompts_file_raises_clear_error(tmp_path: Path) -> None:
         load_app_config(path)
 
 
-def test_return_hints_are_required_and_soft_timeout_reason_is_core_owned(tmp_path: Path) -> None:
+REQUIRED_PROMPT_KEYS = (
+    "return_hint_done",
+    "return_hint_incomplete",
+    "return_hint_failed",
+    "return_hint_builder_failed",
+    "budget_trigger_label",
+    "soft_timeout_block_reason",
+    "session_mode_off_message",
+    "session_mode_on_message",
+    "session_mode_orchestrator_message",
+)
+
+
+def _write_root_prompts_copy(
+    tmp_path: Path,
+    mutate: Callable[[dict[str, Any]], object],
+) -> tuple[Path, Path]:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     path.write_text("default_timeout: 30\n", encoding="utf-8")
     data = yaml.safe_load(ROOT_PROMPTS.read_text(encoding="utf-8"))
-    for key in ("return_hint_done", "return_hint_incomplete", "return_hint_failed"):
-        data.pop(key, None)
+    mutate(data)
     prompts_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    with pytest.raises(ConfigError, match="return_hint_done"):
+    return path, prompts_path
+
+
+@pytest.mark.parametrize("key", REQUIRED_PROMPT_KEYS)
+def test_load_app_config_rejects_missing_required_prompt_keys(
+    tmp_path: Path,
+    key: str,
+) -> None:
+    path, _ = _write_root_prompts_copy(tmp_path, lambda data: data.pop(key))
+
+    with pytest.raises(ConfigError, match=f"missing required prompt '{key}'"):
         load_app_config(path)
+
+
+@pytest.mark.parametrize("key", REQUIRED_PROMPT_KEYS)
+def test_load_app_config_rejects_empty_required_prompt_values(
+    tmp_path: Path,
+    key: str,
+) -> None:
+    path, _ = _write_root_prompts_copy(tmp_path, lambda data: data.update({key: None}))
+
+    with pytest.raises(ConfigError, match=f"requires '{key}' to be a string"):
+        load_app_config(path)
+
+
+@pytest.mark.parametrize("key", REQUIRED_PROMPT_KEYS)
+def test_load_app_config_from_mapping_requires_all_prompt_keys(
+    tmp_path: Path,
+    key: str,
+) -> None:
+    path, _ = _write_root_prompts_copy(tmp_path, lambda data: data.pop(key))
+
+    with pytest.raises(ConfigError, match=f"missing required prompt '{key}'"):
+        load_app_config_from_mapping(
+            yaml.safe_load(path.read_text(encoding="utf-8")), path
+        )

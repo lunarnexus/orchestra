@@ -78,6 +78,37 @@ def _find_pi_worker_transcript(worker_session_id: str) -> Path | None:
     return max(matches, key=lambda path: path.stat().st_mtime)
 
 
+def _pi_worker_last_assistant_text(transcript: Path) -> str | None:
+    try:
+        lines = transcript.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    result: str | None = None
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("type") != "message":
+            continue
+        message = event.get("message")
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        text = "\n".join(
+            str(part["text"])
+            for part in content
+            if isinstance(part, dict)
+            and part.get("type") == "text"
+            and isinstance(part.get("text"), str)
+        ).strip()
+        if text:
+            result = text
+    return result
+
+
 def _empty_accounting() -> WorkerAccounting:
     return {
         "input_tokens": None,
@@ -514,22 +545,7 @@ def run_supervisor(context: AppContext, *, run_id: str, request_file: str | Path
         stdout, stderr = worker.process.communicate(timeout=pending_request.timeout_seconds)
     except subprocess.TimeoutExpired:
         stdout, stderr = _terminate_subprocess(worker.process, pgid)
-        result = WorkerResult(
-            status=STATUS_FAILED,
-            command=worker.command,
-            prompt=worker.prompt,
-            exit_code=None,
-            stdout=stdout,
-            stderr=stderr,
-            result_summary=compact_summary(stdout),
-            error_text="Worker timed out",
-            blocker_text="Worker exceeded timeout",
-            result_summary_truncated=False,
-            timed_out=True,
-            worker_session_id=worker.worker_session_id,
-            transcript_path=worker.transcript_path,
-            approval_needed=worker.approval_needed,
-        )
+        result = _result_from_timed_out_worker(worker, stdout, stderr)
     else:
         result = _result_from_completed_worker(worker, stdout, stderr)
 
@@ -916,6 +932,57 @@ def _is_incomplete_worker_result(stdout: str) -> bool:
     return any(
         line.strip().lower() == "orchestra_status: incomplete"
         for line in stdout.splitlines()
+    )
+
+
+def _result_from_timed_out_worker(
+    worker: WorkerProcess,
+    stdout: str,
+    stderr: str,
+) -> WorkerResult:
+    transcript = worker.transcript_path
+    if transcript is None and worker.worker_session_id:
+        transcript = _find_pi_worker_transcript(worker.worker_session_id)
+    recovered = _meaningful_worker_output(stdout)
+    if not recovered and transcript is not None:
+        recovered = _pi_worker_last_assistant_text(transcript) or ""
+    accounting = _pi_worker_accounting(worker.worker_session_id, transcript)
+    if recovered and _is_incomplete_worker_result(recovered):
+        summary, verdict, blocker, truncated = parse_child_return(recovered)
+        return WorkerResult(
+            status=STATUS_INCOMPLETE,
+            command=worker.command,
+            prompt=worker.prompt,
+            exit_code=None,
+            stdout=recovered,
+            stderr=stderr,
+            result_summary=summary,
+            error_text=None,
+            blocker_text=blocker or WORKER_BUDGET_EXCEEDED_BLOCKER,
+            result_summary_truncated=truncated,
+            semantic_verdict=verdict,
+            timed_out=True,
+            worker_session_id=worker.worker_session_id,
+            transcript_path=transcript,
+            approval_needed=worker.approval_needed,
+            **accounting,
+        )
+    return WorkerResult(
+        status=STATUS_FAILED,
+        command=worker.command,
+        prompt=worker.prompt,
+        exit_code=None,
+        stdout=stdout,
+        stderr=stderr,
+        result_summary=compact_summary(stdout),
+        error_text="Worker timed out",
+        blocker_text="Worker exceeded timeout",
+        result_summary_truncated=False,
+        timed_out=True,
+        worker_session_id=worker.worker_session_id,
+        transcript_path=transcript,
+        approval_needed=worker.approval_needed,
+        **accounting,
     )
 
 

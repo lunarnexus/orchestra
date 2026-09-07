@@ -23,19 +23,6 @@ DEFAULT_AUTO_RETURN = True
 DEFAULT_AUTO_VERIFY = False
 DEFAULT_TOOLS_ENABLED_BY_DEFAULT = True
 DEFAULT_ROLE_NAME = "builder"
-DEFAULT_RETURN_HINT_DONE = (
-    "advance the plan using this subagent return; do not repeat its work"
-)
-DEFAULT_RETURN_HINT_INCOMPLETE = (
-    "redispatch from the continuation handoff; preserve completed work"
-)
-DEFAULT_RETURN_HINT_FAILED = (
-    "inspect the debug trace and dispatch one targeted recovery"
-)
-DEFAULT_BUDGET_TRIGGER_LABEL = "Budget trigger"
-DEFAULT_SOFT_TIMEOUT_BLOCK_REASON = (
-    "Orchestra soft timeout reached; return budget handoff"
-)
 SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RESERVED_ENV_PREFIXES = ("ORCHESTRA_",)
@@ -70,11 +57,15 @@ class PromptConfig:
     status_value_description: str
     host_help: str
     budget_exceeded_prompt: str
-    return_hint_done: str = DEFAULT_RETURN_HINT_DONE
-    return_hint_incomplete: str = DEFAULT_RETURN_HINT_INCOMPLETE
-    return_hint_failed: str = DEFAULT_RETURN_HINT_FAILED
-    budget_trigger_label: str = DEFAULT_BUDGET_TRIGGER_LABEL
-    soft_timeout_block_reason: str = DEFAULT_SOFT_TIMEOUT_BLOCK_REASON
+    return_hint_done: str
+    return_hint_incomplete: str
+    return_hint_failed: str
+    return_hint_builder_failed: str
+    budget_trigger_label: str
+    soft_timeout_block_reason: str
+    session_mode_off_message: str
+    session_mode_on_message: str
+    session_mode_orchestrator_message: str
 
 
 @dataclass(frozen=True)
@@ -278,11 +269,24 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
             prompts_raw, "return_hint_incomplete"
         ),
         return_hint_failed=_get_required_prompt_string(prompts_raw, "return_hint_failed"),
-        budget_trigger_label=(
-            _get_optional_string(prompts_raw, "budget_trigger_label")
-            or DEFAULT_BUDGET_TRIGGER_LABEL
+        return_hint_builder_failed=_get_required_prompt_string(
+            prompts_raw, "return_hint_builder_failed"
         ),
-        soft_timeout_block_reason=DEFAULT_SOFT_TIMEOUT_BLOCK_REASON,
+        budget_trigger_label=_get_required_prompt_string(
+            prompts_raw, "budget_trigger_label"
+        ),
+        soft_timeout_block_reason=_get_required_prompt_string(
+            prompts_raw, "soft_timeout_block_reason"
+        ),
+        session_mode_off_message=_get_required_prompt_string(
+            prompts_raw, "session_mode_off_message"
+        ),
+        session_mode_on_message=_get_required_prompt_string(
+            prompts_raw, "session_mode_on_message"
+        ),
+        session_mode_orchestrator_message=_get_required_prompt_string(
+            prompts_raw, "session_mode_orchestrator_message"
+        ),
     )
 
     return AppConfig(
@@ -454,21 +458,28 @@ def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> App
         ),
         host_help=_get_required_prompt_string(prompts_raw, "host_help"),
         budget_exceeded_prompt=_get_required_prompt_string(prompts_raw, "budget_exceeded_prompt"),
-        return_hint_done=_get_optional_string(prompts_raw, "return_hint_done")
-        or DEFAULT_RETURN_HINT_DONE,
-        return_hint_incomplete=(
-            _get_optional_string(prompts_raw, "return_hint_incomplete")
-            or DEFAULT_RETURN_HINT_INCOMPLETE
+        return_hint_done=_get_required_prompt_string(prompts_raw, "return_hint_done"),
+        return_hint_incomplete=_get_required_prompt_string(
+            prompts_raw, "return_hint_incomplete"
         ),
-        return_hint_failed=(_get_optional_string(prompts_raw, "return_hint_failed")
-        or DEFAULT_RETURN_HINT_FAILED),
-        budget_trigger_label=(
-            _get_optional_string(prompts_raw, "budget_trigger_label")
-            or DEFAULT_BUDGET_TRIGGER_LABEL
+        return_hint_failed=_get_required_prompt_string(prompts_raw, "return_hint_failed"),
+        return_hint_builder_failed=_get_required_prompt_string(
+            prompts_raw, "return_hint_builder_failed"
         ),
-        soft_timeout_block_reason=(
-            _get_optional_string(prompts_raw, "soft_timeout_block_reason")
-            or DEFAULT_SOFT_TIMEOUT_BLOCK_REASON
+        budget_trigger_label=_get_required_prompt_string(
+            prompts_raw, "budget_trigger_label"
+        ),
+        soft_timeout_block_reason=_get_required_prompt_string(
+            prompts_raw, "soft_timeout_block_reason"
+        ),
+        session_mode_off_message=_get_required_prompt_string(
+            prompts_raw, "session_mode_off_message"
+        ),
+        session_mode_on_message=_get_required_prompt_string(
+            prompts_raw, "session_mode_on_message"
+        ),
+        session_mode_orchestrator_message=_get_required_prompt_string(
+            prompts_raw, "session_mode_orchestrator_message"
         ),
     )
     return AppConfig(

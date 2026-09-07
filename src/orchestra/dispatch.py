@@ -95,7 +95,7 @@ def _format_concurrency_limit_error(
 def format_started_run(
     started: StartedRun,
     *,
-    prompts: PromptConfig | None = None,
+    prompts: PromptConfig,
 ) -> str:
     lines = [
         format_run_report(started.record, prompts=prompts),
@@ -109,7 +109,7 @@ def format_started_run(
 def started_run_payload(
     started: StartedRun,
     *,
-    prompts: PromptConfig | None = None,
+    prompts: PromptConfig,
 ) -> dict[str, object]:
     return {
         "contract_version": CONTRACT_VERSION,

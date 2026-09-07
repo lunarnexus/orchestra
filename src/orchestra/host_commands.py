@@ -122,13 +122,14 @@ def tool_info_payload(context: AppContext, session_id: str | None = None) -> Too
 
 
 def session_mode_payload(context: AppContext, session_id: str) -> HostActionPayload:
+    resolved_mode = resolve_main_session_mode(context, session_id)
     return HostActionPayload(
         kind="main_session_state",
         ok=True,
         session_id=session_id,
         effect=HostActionEffect(
-            mode=resolve_main_session_mode(context, session_id),
-            tools_enabled=context.config.tools_enabled_by_default,
+            mode=resolved_mode,
+            tools_enabled=resolved_mode != "off",
             trigger_turn=False,
         ),
     )
@@ -157,19 +158,17 @@ def session_mode_transition_payload(
     session_id: str,
     mode: str,
 ) -> HostActionPayload:
+    prompts = context.config.prompts
     if mode == "off":
-        display_text = "Orchestra tools hidden for this session. Run /orch on to enable them again."
+        display_text = prompts.session_mode_off_message
         inject_text = None
         trigger_turn = False
     elif mode == "on":
-        display_text = (
-            'Orchestra tools enabled for this session. '
-            'Run "/orch on" again to load the orchestrator skill.'
-        )
+        display_text = prompts.session_mode_on_message
         inject_text = None
         trigger_turn = False
     else:
-        display_text = "Orchestra orchestrator skill refreshed for this session."
+        display_text = prompts.session_mode_orchestrator_message
         inject_text = render_orchestrator_skill_message()
         trigger_turn = True
     return HostActionPayload(

@@ -60,8 +60,9 @@ def test_started_run_payload_formats_dispatch_message(tmp_path: Path) -> None:
         timeout_seconds=42,
     )
 
-    message = format_started_run(started)
-    payload = started_run_payload(started)
+    prompts = load_root_prompt_config()
+    message = format_started_run(started, prompts=prompts)
+    payload = started_run_payload(started, prompts=prompts)
 
     assert "dispatch: queued for supervision" in message
     assert f"request_file: {started.request_file}" in message

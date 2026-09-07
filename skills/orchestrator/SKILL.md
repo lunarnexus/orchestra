@@ -282,7 +282,7 @@ Worktree automation is not required here; use normal git status/diff/commit disc
 
 ## Return handling
 
-Treat subagent results and scoped artifact updates as authoritative for their assigned scope. If a result reports failure, blocker, timeout, cancellation, incomplete evidence, or artifact conflict, dispatch a targeted follow-up or ask for the blocking decision. Do not read source, rerun commands, or re-open artifacts just to confirm success.
+Treat subagent results and scoped artifact updates as authoritative for their assigned scope. The main-session orchestrator reads failed return artifacts and decides how to proceed, guided by the failed return hint. If a result reports failure, blocker, timeout, cancellation, incomplete evidence, or artifact conflict, dispatch a targeted follow-up or ask for the blocking decision. Do not read source, rerun commands, or re-open artifacts just to confirm success.
 
 Default user-facing update:
 - status

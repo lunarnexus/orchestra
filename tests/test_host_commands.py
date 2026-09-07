@@ -50,9 +50,10 @@ def test_tool_info_schema_uses_resolved_session_mode(tmp_path: Path) -> None:
     assert payload["prompt_guidelines"] == []
     assert payload["description"]
     assert payload["workflow_instruction"] == "Workflow"
-    assert "main-session orchestrator handles run status" in payload[
-        "main_session_ownership_guidance"
-    ]
+    assert (
+        "main-session orchestrator reads failed return artifacts"
+        in payload["main_session_ownership_guidance"]
+    )
 
 
 def test_session_mode_payload_matches_current_mode_resolution(tmp_path: Path) -> None:
@@ -66,6 +67,21 @@ def test_session_mode_payload_matches_current_mode_resolution(tmp_path: Path) ->
         "ok": True,
         "session_id": "pi:session-a",
         "effect": {"mode": "on", "tools_enabled": True, "trigger_turn": False},
+    }
+
+
+def test_session_mode_payload_uses_explicit_core_mode_for_tool_visibility(
+    tmp_path: Path,
+) -> None:
+    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    context.store.set_main_session_mode("pi:session-a", "off")
+
+    payload = session_mode_payload(context, "pi:session-a").to_payload()
+
+    assert payload["effect"] == {
+        "mode": "off",
+        "tools_enabled": False,
+        "trigger_turn": False,
     }
 
 

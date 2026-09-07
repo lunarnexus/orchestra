@@ -10,7 +10,6 @@ from orchestra.config import (
     AppConfig,
     ConcurrencyConfig,
     HarnessConfig,
-    PromptConfig,
     RoleConfig,
 )
 from orchestra.context import AppContext, AppError, OrchestraPaths
@@ -21,6 +20,7 @@ from orchestra.roles import (
     set_role_setting,
 )
 from orchestra.state import StateStore
+from tests.test_cli_commands import load_root_prompt_config
 
 
 def test_patch_role_setting_text_preserves_comments_and_unrelated_formatting() -> None:
@@ -205,25 +205,7 @@ def test_set_role_setting_rejects_unsupported_valid_yaml_shape(
     context = AppContext(
         config=AppConfig(
             default_timeout=600,
-            prompts=PromptConfig(
-                default_return_format="",
-                tool_description="",
-                tool_prompt_snippet="",
-                tool_prompt_guidelines=(),
-                tool_goal_description="",
-                tool_role_description="",
-                tool_task_label_description="",
-                main_session_ownership_guidance="",
-                status_description="",
-                status_action_description="",
-                status_limit_description="",
-                status_run_id_description="",
-                status_role_description="",
-                status_setting_description="",
-                status_value_description="",
-                host_help="",
-                budget_exceeded_prompt="",
-            ),
+            prompts=load_root_prompt_config(),
             concurrency=ConcurrencyConfig(),
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
@@ -272,25 +254,7 @@ def test_set_role_setting_rejects_invalid_value_without_changing_file(
     context = AppContext(
         config=AppConfig(
             default_timeout=600,
-            prompts=PromptConfig(
-                default_return_format="",
-                tool_description="",
-                tool_prompt_snippet="",
-                tool_prompt_guidelines=(),
-                tool_goal_description="",
-                tool_role_description="",
-                tool_task_label_description="",
-                main_session_ownership_guidance="",
-                status_description="",
-                status_action_description="",
-                status_limit_description="",
-                status_run_id_description="",
-                status_role_description="",
-                status_setting_description="",
-                status_value_description="",
-                host_help="",
-                budget_exceeded_prompt="",
-            ),
+            prompts=load_root_prompt_config(),
             concurrency=ConcurrencyConfig(),
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
@@ -367,25 +331,7 @@ def test_set_role_setting_uses_targeted_catalog_patch_and_preserves_comments(
     )
     config = AppConfig(
         default_timeout=600,
-        prompts=PromptConfig(
-            default_return_format="",
-            tool_description="",
-            tool_prompt_snippet="",
-            tool_prompt_guidelines=(),
-            tool_goal_description="",
-            tool_role_description="",
-            tool_task_label_description="",
-            main_session_ownership_guidance="",
-            status_description="",
-            status_action_description="",
-            status_limit_description="",
-            status_run_id_description="",
-            status_role_description="",
-            status_setting_description="",
-            status_value_description="",
-            host_help="",
-            budget_exceeded_prompt="",
-        ),
+        prompts=load_root_prompt_config(),
         concurrency=ConcurrencyConfig(),
         state_dir=tmp_path / "state",
         log_dir=tmp_path / "logs",

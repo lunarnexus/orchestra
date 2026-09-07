@@ -71,9 +71,9 @@ tool_role_description: >-
   default. {roles}
 tool_task_label_description: Optional short request label.
 main_session_ownership_guidance: >-
-  The main-session orchestrator handles run status, failure diagnosis, returns,
-  logs, artifacts, recovery decisions, and synthesis. Follow-up dispatch
-  continues unfinished operational work only after diagnosis.
+  The main-session orchestrator reads failed return artifacts, decides how to
+  proceed, and handles run status, recovery decisions, and synthesis. Follow-up
+  dispatch continues unfinished operational work after that decision.
 status_description: >-
   Use orch_status only when the user explicitly asks for an Orchestra
   status/control/help action in the current session. Use status for active
@@ -91,9 +91,13 @@ status_setting_description: Reserved for role updates; model-callable roles are 
 status_value_description: Reserved for role updates; model-callable roles are read-only for now.
 budget_trigger_label: Budget trigger
 soft_timeout_block_reason: Orchestra soft timeout reached; return budget handoff
+session_mode_off_message: Orchestra tools hidden for this session. Run /orch on to enable them again.
+session_mode_on_message: Orchestra tools enabled for this session. Run "/orch on" again to load the orchestrator skill.
+session_mode_orchestrator_message: Orchestra orchestrator skill refreshed for this session.
 return_hint_done: advance the plan using this subagent return; do not repeat its work
-return_hint_incomplete: redispatch from the continuation handoff; preserve completed work
-return_hint_failed: inspect the debug trace and dispatch one targeted recovery
+return_hint_incomplete: pass this return_path handoff artifact to the next dispatch and continue from it
+return_hint_failed: read the failed return artifact and decide how to proceed
+return_hint_builder_failed: pass this return_path handoff artifact to one bounded fix-only builder follow-up
 budget_exceeded_prompt: |-
   [Orchestra subagent budget exceeded]
   Stop everything you're doing immediately.
@@ -106,40 +110,29 @@ budget_exceeded_prompt: |-
   ORCHESTRA_STATUS: incomplete
   ORCHESTRA_STOP_REASON: budget_exceeded
 
-  Then include:
+  Then return the normal compact result schema as a continuation handoff:
 
-  ## Budget Handoff
+  Status: incomplete
+  Verdict: n/a
+  Artifacts updated:
+  - <file or none>
+  Files changed:
+  - <file or none>
+  Commands:
+  - <exact command or none> — <result>
+  Evidence reused:
+  - <artifact path and exact command evidence, or none>
+  Material evidence:
+  - <completed work, current state, and data locations>
+  Blockers:
+  - none|<blocker>
+  Risks:
+  - none|<risk>
+  Next:
+  - <small continuation dispatch, including remaining work and stop condition>
 
-  Completed:
-  - Specific work completed.
-  - Files changed, files inspected, commands run, or evidence gathered.
-
-  Current state and data locations:
-  - Relevant file paths, logs, artifacts, transcripts, notes, run ids, or database/state locations.
-  - Anything the next agent needs to avoid rediscovering or redoing work.
-
-  Remaining work:
-  - Specific incomplete items.
-  - Known decisions still needed.
-
-  Suggested smaller redispatch slices:
-  - 2-5 minute continuation tasks.
-  - Mark slices as sequential, parallel-safe, or blocked.
-  - Make the next slice small enough to avoid hitting the same budget.
-
-  Verification:
-  - Checks already run and results.
-  - Exact prior command evidence the next agent should reuse.
-  - Checks still needed; do not recommend rerunning passed checks unless state changed.
-
-  Blockers and risks:
-  - Anything that may prevent continuation or require caller approval.
-
-  Caller guidance:
-  - Tell the calling agent to redispatch from this handoff rather than restarting completed work.
-return_hint_done: advance the plan using this subagent return; do not repeat its work
-return_hint_incomplete: redispatch from the continuation handoff; preserve completed work
-return_hint_failed: inspect the debug trace and dispatch one targeted recovery
+  Preserve completed work and make the handoff sufficient for the caller to pass
+  this return artifact directly to the continuation dispatch.
 host_help: |-
   Orchestra commands:
     /orch help                         Show this help

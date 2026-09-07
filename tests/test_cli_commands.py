@@ -64,6 +64,15 @@ def load_root_prompt_config() -> PromptConfig:
         status_value_description=data["status_value_description"],
         host_help=data["host_help"],
         budget_exceeded_prompt=data["budget_exceeded_prompt"],
+        return_hint_done=data["return_hint_done"],
+        return_hint_incomplete=data["return_hint_incomplete"],
+        return_hint_failed=data["return_hint_failed"],
+        return_hint_builder_failed=data["return_hint_builder_failed"],
+        budget_trigger_label=data["budget_trigger_label"],
+        soft_timeout_block_reason=data["soft_timeout_block_reason"],
+        session_mode_off_message=data["session_mode_off_message"],
+        session_mode_on_message=data["session_mode_on_message"],
+        session_mode_orchestrator_message=data["session_mode_orchestrator_message"],
     )
 
 
@@ -209,7 +218,9 @@ def test_orchestrator_return_includes_worker_roles(tmp_path: Path) -> None:
         error_text="worker failed",
     )
 
-    report = format_orchestrator_return([first, second])
+    report = format_orchestrator_return(
+        [first, second], prompts=load_root_prompt_config()
+    )
 
     assert "[orchestra: 2 subagents returned]" in report
     assert "[orchestra: appsec 34f3a4324432 success]" in report

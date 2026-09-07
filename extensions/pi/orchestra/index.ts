@@ -960,7 +960,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
         return;
       }
-      if (!rawReport) return;
+      if (!rawReport) {
+        scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
+        return;
+      }
 
       let runIds: string[] = [];
       try {
@@ -1062,8 +1065,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }
       setOrchestraToolsActive(sessionToolInfo.mainSessionMode !== "off");
     } catch {
-      // Core unavailable: fall back to enabled tools.
-      setOrchestraToolsActive(true);
+      // Core unavailable: keep Orchestra tools and status UI inactive.
+      setOrchestraToolsActive(false);
     }
     await refreshOrchestraWorkerStatus(currentSessionId, (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode), { fresh: true });
   });
@@ -1186,26 +1189,18 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   async function handleOrchOn(sessionId: string): Promise<{ code: number; output: string }> {
     if (!orchestraToolsEnabled) {
       const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", "on", "--json"]);
-      let displayText = 'Orchestra tools enabled for this session. Run "/orch on" again to load the orchestrator skill.';
-      if (modeResult.code === 0 && modeResult.stdout.trim()) {
-        const payload = parseSessionModeTransitionPayload(modeResult.stdout);
-        const effect = payload.effect;
-        if (effect?.mode === "on") {
-          mainSessionMode = "on";
-        }
-        if (effect?.display_text) displayText = effect.display_text;
+      if (modeResult.code !== 0 || !modeResult.stdout.trim()) {
+        return { code: 1, output: modeResult.stderr || "Orchestra mode transition failed." };
       }
-      setOrchestraToolsActive(true);
+      const payload = parseSessionModeTransitionPayload(modeResult.stdout);
+      const effect = payload.effect;
+      if (payload.ok !== true || effect?.mode !== "on" || effect.tools_enabled !== true) {
+        return { code: 1, output: effect?.error || "Orchestra returned an invalid mode transition." };
+      }
+      mainSessionMode = effect.mode;
+      setOrchestraToolsActive(effect.tools_enabled);
       orchOnRequiresSecondStep = true;
-      if (modeResult.code !== 0) {
-        return {
-          code: 1,
-          output:
-            'Orchestra tools enabled for this session, but core mode persistence failed; the mode change is local only. '
-            + 'Run "/orch on" again to load the orchestrator skill.',
-        };
-      }
-      return { code: 0, output: displayText };
+      return { code: 0, output: effect.display_text || "" };
     }
     if (orchOnRequiresSecondStep) {
       orchOnRequiresSecondStep = false;
@@ -1216,25 +1211,18 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   async function handleOrchOff(sessionId: string): Promise<{ code: number; output: string }> {
     const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", "off", "--json"]);
-    let displayText = "Orchestra tools hidden for this session. Run /orch on to enable them again.";
-    if (modeResult.code === 0 && modeResult.stdout.trim()) {
-      const payload = parseSessionModeTransitionPayload(modeResult.stdout);
-      const effect = payload.effect;
-      if (effect?.mode === "off") {
-        mainSessionMode = "off";
-      }
-      if (effect?.display_text) displayText = effect.display_text;
+    if (modeResult.code !== 0 || !modeResult.stdout.trim()) {
+      return { code: 1, output: modeResult.stderr || "Orchestra mode transition failed." };
     }
-    setOrchestraToolsActive(false);
+    const payload = parseSessionModeTransitionPayload(modeResult.stdout);
+    const effect = payload.effect;
+    if (payload.ok !== true || effect?.mode !== "off" || effect.tools_enabled !== false) {
+      return { code: 1, output: effect?.error || "Orchestra returned an invalid mode transition." };
+    }
+    mainSessionMode = effect.mode;
+    setOrchestraToolsActive(effect.tools_enabled);
     orchOnRequiresSecondStep = true;
-    if (modeResult.code !== 0) {
-      return {
-        code: 1,
-        output:
-          "Orchestra tools hidden for this session, but core mode persistence failed; the mode change is local only. Run /orch on to enable them again.",
-      };
-    }
-    return { code: 0, output: displayText };
+    return { code: 0, output: effect.display_text || "" };
   }
 
   async function getOrchArgumentCompletions(argumentPrefix: string): Promise<Array<{ value: string; label: string; description?: string }> | null> {

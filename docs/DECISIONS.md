@@ -785,6 +785,17 @@ transparency.
 
 **Source:** Owner approval during role-mode planning.
 
+### D-CONFIG-017 — User-serviceable text has no built-in fallback
+
+**Decision:** Orchestra core and host adapters must not define fallback or
+default prose for user-serviceable prompts, hints, guidance, tool metadata, or
+messages. All such text belongs in `prompts.yaml`, is required, and produces a
+clear configuration error when missing or invalid. Hard-coded text is permitted
+only for non-user-serviceable internal protocol markers, invariant diagnostics,
+and implementation-level errors.
+
+**Source:** Owner approval during prompt configuration cleanup.
+
 ## Commands and host behavior
 
 ### D-HOST-001 — Host command namespace

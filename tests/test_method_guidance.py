@@ -31,6 +31,8 @@ def test_verifier_reuses_builder_command_evidence() -> None:
 def test_orchestrator_skill_scopes_verifier_failure_fixers() -> None:
     skill = Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8")
 
+    assert "reads failed return artifacts and decides how to proceed" in skill
+    assert "guided by the failed return hint" in skill
     assert "dispatch one narrow fixer" in skill
     assert "exact failing evidence" in skill
     assert "same focused check fails twice" in skill

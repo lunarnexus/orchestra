@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -21,7 +22,11 @@ from orchestra.state import (
     StateStore,
 )
 from orchestra.status import format_status
-from orchestra.supervision import _result_from_completed_worker, reconcile_stale_queued_runs
+from orchestra.supervision import (
+    _result_from_completed_worker,
+    _result_from_timed_out_worker,
+    reconcile_stale_queued_runs,
+)
 from tests.helpers import extract_run_id, run_cli, wait_for_condition
 from tests.types import RuntimeFilesFactory
 
@@ -59,6 +64,39 @@ def test_result_from_completed_worker_reads_pi_transcript_usage(
     assert result.cache_read_tokens == 2
     assert result.cache_write_tokens == 5
     assert result.cost_usd == 0.625
+
+
+def test_timed_out_worker_recovers_budget_handoff_from_pi_transcript(
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "worker.jsonl"
+    handoff = (
+        "ORCHESTRA_STATUS: incomplete\n"
+        "ORCHESTRA_STOP_REASON: budget_exceeded\n\n"
+        "Status: incomplete\nVerdict: n/a\nMaterial evidence:\n- partial work"
+    )
+    transcript_path.write_text(
+        '{"type":"message","message":{"role":"assistant","content":'
+        '[{"type":"thinking","thinking":"hidden"},'
+        f'{{"type":"text","text":{json.dumps(handoff)}}}]}}}}\n',
+        encoding="utf-8",
+    )
+    worker = SimpleNamespace(
+        process=SimpleNamespace(returncode=-15),
+        command=["pi"],
+        prompt="prompt",
+        worker_session_id="orchestra-worker-timeout",
+        transcript_path=transcript_path,
+        approval_needed=False,
+    )
+
+    result = _result_from_timed_out_worker(cast(WorkerProcess, worker), "", "")
+
+    assert result.status == STATUS_INCOMPLETE
+    assert result.stdout == handoff
+    assert result.semantic_verdict == "n/a"
+    assert result.transcript_path == transcript_path
+    assert result.timed_out is True
 
 
 def test_stop_terminates_owned_worker_process(
@@ -453,7 +491,7 @@ def test_budget_handoff_marker_marks_run_incomplete(
         run_id,
     )
     assert "status: incomplete" in await_run.stdout
-    assert "redispatch from the continuation handoff" in await_run.stdout
+    assert "pass this return_path handoff artifact to the next dispatch" in await_run.stdout
 
     debug = run_cli(
         "--config",

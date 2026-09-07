@@ -129,7 +129,7 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
 def test_pi_extension_footer_includes_session_mode() -> None:
     extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
 
-    # The extension tracks the last known main session mode locally.
+    # The extension caches only core-confirmed mode for synchronous rendering.
     assert 'type MainSessionMode = "off" | "on" | "orchestrator";' in extension_source
     assert "let mainSessionMode: MainSessionMode | null = null;" in extension_source
 
@@ -181,6 +181,7 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     init_block = extension_source[start_idx:shutdown_idx]
     assert "mainSessionMode = null;" in init_block
     assert 'mainSessionMode === "orchestrator"' in init_block
+    assert "setOrchestraToolsActive(false);" in init_block
 
     # Session shutdown clears the tracked mode.
     register_idx = extension_source.index("const registerDispatchTool")
@@ -195,11 +196,14 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     inject_body = extension_source[inject_start:on_idx]
     assert 'mainSessionMode = "orchestrator";' in inject_body
 
-    # /orch off and first /orch on track the mode when core confirms it.
+    # /orch off and first /orch on apply only complete, core-confirmed effects.
     handler_end = extension_source.index("async function getOrchArgumentCompletions(", on_idx)
     handlers_block = extension_source[on_idx:handler_end]
-    assert 'mainSessionMode = "on";' in handlers_block
-    assert 'mainSessionMode = "off";' in handlers_block
+    assert 'effect?.mode !== "on" || effect.tools_enabled !== true' in handlers_block
+    assert 'effect?.mode !== "off" || effect.tools_enabled !== false' in handlers_block
+    assert "mainSessionMode = effect.mode;" in handlers_block
+    assert "setOrchestraToolsActive(effect.tools_enabled);" in handlers_block
+    assert "mode change is local only" not in handlers_block
 
     # The /orch command paths render the tracked mode through setStatus("orchestra", ...).
     assert "setOrchestraWorkerStatus(ctx, null, mainSessionMode);" in extension_source
@@ -221,6 +225,14 @@ def test_pi_extension_refreshes_footer_and_confirms_report_delivery() -> None:
     assert '"--timeout"' not in report_block
     assert 'child.on("error"' in report_block
     assert "scheduleSessionReportRetry(" in report_block
+    # A successful watcher exit with empty output re-enters the bounded retry path.
+    assert (
+        "if (!rawReport) {\n"
+        "        scheduleSessionReportRetry("
+        "sessionId, runId, updateStatus, sessionGeneration, attempt);\n"
+        "        return;\n"
+        "      }" in report_block
+    )
     assert "REPORT_WATCHER_MAX_ATTEMPTS" in extension_source
 
     send_idx = report_block.index("pi.sendUserMessage(message")
@@ -261,6 +273,10 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
     core_reports_source = Path("src/orchestra/reports.py").read_text(encoding="utf-8")
     core_host_text_source = Path("src/orchestra/host_text.py").read_text(encoding="utf-8")
+    core_host_commands_source = Path("src/orchestra/host_commands.py").read_text(
+        encoding="utf-8"
+    )
+    prompts_source = Path("prompts.yaml").read_text(encoding="utf-8")
 
     assert "_dispatch-ack" in extension_source
     assert "_progress-message" in extension_source
@@ -291,11 +307,18 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
         'pi.setActiveTools(enabled ? [...withoutOrchestra, ...orchestraTools] : withoutOrchestra);'
         in extension_source
     )
-    assert 'Run "/orch on" again to load the orchestrator skill.' in extension_source
+    assert 'Run "/orch on" again to load the orchestrator skill.' not in extension_source
+    assert 'Run "/orch on" again to load the orchestrator skill.' in prompts_source
     assert (
         'Orchestra tools hidden for this session. Run /orch on to enable them again.'
-        in extension_source
+        not in extension_source
     )
+    assert (
+        'Orchestra tools hidden for this session. Run /orch on to enable them again.'
+        in prompts_source
+    )
+    assert "session_mode_off_message" in core_host_commands_source
+    assert "session_mode_on_message" in core_host_commands_source
     assert "compactReturnMessage" not in extension_source
     assert "format_orchestrator_return" in core_reports_source
     assert "clean_result_summary" in core_reports_source

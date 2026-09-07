@@ -6,19 +6,17 @@ import pytest
 import yaml
 
 from orchestra.artifacts import canonical_events_path, canonical_return_path
-from orchestra.config import (
-    DEFAULT_RETURN_HINT_INCOMPLETE,
-    DEFAULT_SOFT_TIMEOUT_BLOCK_REASON,
-    load_app_config,
-)
+from orchestra.config import PromptConfig, load_app_config
 from orchestra.context import load_context
 from orchestra.reports import (
     SessionStatusDetails,
     aggregate_completed_run_accounting,
     build_session_report,
     consume_pending_session_report,
-    format_orchestrator_return,
     format_run_report,
+)
+from orchestra.reports import (
+    format_orchestrator_return as _format_orchestrator_return,
 )
 from orchestra.state import (
     STATUS_CANCELLED,
@@ -30,7 +28,19 @@ from orchestra.state import (
 )
 from orchestra.status import await_run_payload
 from tests.helpers import ROOT_PROMPTS, extract_run_id, run_cli, wait_for_condition
+from tests.test_cli_commands import load_root_prompt_config
 from tests.types import RuntimeFilesFactory
+
+PROMPTS = load_root_prompt_config()
+
+
+def format_orchestrator_return(
+    runs: list[RunRecord],
+    *,
+    prompts: PromptConfig = PROMPTS,
+    state_dir: str | Path | None = None,
+) -> str:
+    return _format_orchestrator_return(runs, prompts=prompts, state_dir=state_dir)
 
 
 @pytest.mark.parametrize(
@@ -42,9 +52,9 @@ from tests.types import RuntimeFilesFactory
         ),
         (
             STATUS_INCOMPLETE,
-            "redispatch from the continuation handoff; preserve completed work",
+            "pass this return_path handoff artifact to the next dispatch and continue from it",
         ),
-        (STATUS_FAILED, "inspect the debug trace and dispatch one targeted recovery"),
+        (STATUS_FAILED, "read the failed return artifact and decide how to proceed"),
         (STATUS_CANCELLED, None),
     ],
 )
@@ -146,10 +156,10 @@ def test_auto_verify_builder_non_success_uses_fix_only_follow_up_prompt(
             ]
         )
         assert (
-            "examine durable builder references and redispatch one bounded "
+            "pass this return_path handoff artifact to one bounded "
             "fix-only builder follow-up"
         ) in report
-        assert DEFAULT_RETURN_HINT_INCOMPLETE not in report
+        assert PROMPTS.return_hint_incomplete not in report
 
 
 def test_aggregate_completed_run_accounting_handles_empty_missing_partial_and_populated(
@@ -306,6 +316,7 @@ def test_return_hints_come_from_prompts_yaml(
     data["return_hint_done"] = "custom done hint from prompts"
     data["return_hint_incomplete"] = "custom incomplete hint from prompts"
     data["return_hint_failed"] = "custom failed hint from prompts"
+    data["soft_timeout_block_reason"] = "custom soft timeout reason"
     prompts_path.write_text(
         yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
     )
@@ -318,7 +329,7 @@ def test_return_hints_come_from_prompts_yaml(
         == "custom incomplete hint from prompts"
     )
     assert config.prompts.return_hint_failed == "custom failed hint from prompts"
-    assert config.prompts.soft_timeout_block_reason == DEFAULT_SOFT_TIMEOUT_BLOCK_REASON
+    assert config.prompts.soft_timeout_block_reason == "custom soft timeout reason"
 
     def record(status: str) -> RunRecord:
         return RunRecord(
@@ -728,7 +739,7 @@ def test_failed_worker_with_long_stdout_and_short_stderr_does_not_mark_summary_t
     assert "summary: short stderr" in report
     assert "[truncated]" not in report
     assert "artifact:" not in report
-    assert "next: inspect the debug trace and dispatch one targeted recovery" in report
+    assert "next: read the failed return artifact and decide how to proceed" in report
     assert "Full result:" not in report
 
 
@@ -759,7 +770,7 @@ def test_semantic_failure_verdict_in_result_summary_adds_debug_guidance(
 
     assert "[orchestra: verifier verifier-run fail]" in report
     assert "summary: Verdict: fail; checked the patch" in report
-    assert "next: inspect the debug trace and dispatch one targeted recovery" in report
+    assert "next: read the failed return artifact and decide how to proceed" in report
     assert "status: done" in report
     assert "debug: orchestra debug --run-id verifier-run" in report
     assert "return_path: " in report
@@ -795,7 +806,7 @@ def test_semantic_blocked_verdict_in_result_output_adds_guidance(
 
     assert "[orchestra: builder builder-run fail]" in report
     assert "summary: looks okay" in report
-    assert "next: inspect the debug trace and dispatch one targeted recovery" in report
+    assert "next: read the failed return artifact and decide how to proceed" in report
     assert "debug: orchestra debug --run-id builder-run" in report
     assert "return_path: " in report
     assert "events_path: " in report
@@ -867,7 +878,7 @@ def test_auto_verify_semantic_failure_keeps_debug_guidance_with_builder_return(
     assert "debug: orchestra debug --run-id auto-verifier-run" in report
     assert "return_path: " in report
     assert "events_path: " in report
-    assert "next: inspect the debug trace and dispatch one targeted recovery" in report
+    assert "next: read the failed return artifact and decide how to proceed" in report
 
 
 def test_long_stderr_marks_failed_summary_truncated(

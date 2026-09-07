@@ -2,36 +2,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from orchestra.config import AgentCatalog, AppConfig, ConcurrencyConfig, PromptConfig, RoleConfig
+from orchestra.config import AgentCatalog, AppConfig, ConcurrencyConfig, RoleConfig
 from orchestra.context import AppContext, OrchestraPaths
 from orchestra.harnesses import HarnessRegistry
 from orchestra.roles import format_roles, format_tool_roles
 from orchestra.state import StateStore
+from tests.test_cli_commands import load_root_prompt_config
 
 
 def _make_context(tmp_path: Path) -> AppContext:
     return AppContext(
         config=AppConfig(
             default_timeout=600,
-            prompts=PromptConfig(
-                default_return_format="",
-                tool_description="",
-                tool_prompt_snippet="",
-                tool_prompt_guidelines=(),
-                tool_goal_description="",
-                tool_role_description="",
-                tool_task_label_description="",
-                main_session_ownership_guidance="",
-                status_description="",
-                status_action_description="",
-                status_limit_description="",
-                status_run_id_description="",
-                status_role_description="",
-                status_setting_description="",
-                status_value_description="",
-                host_help="",
-                budget_exceeded_prompt="",
-            ),
+            prompts=load_root_prompt_config(),
             concurrency=ConcurrencyConfig(),
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",

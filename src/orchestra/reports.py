@@ -11,12 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from orchestra.artifacts import canonical_events_path, canonical_return_path
-from orchestra.config import (
-    DEFAULT_RETURN_HINT_DONE,
-    DEFAULT_RETURN_HINT_FAILED,
-    DEFAULT_RETURN_HINT_INCOMPLETE,
-    PromptConfig,
-)
+from orchestra.config import PromptConfig
 from orchestra.context import CONTRACT_VERSION, AppContext, AppError
 from orchestra.state import (
     ACTIVE_STATUSES,
@@ -242,7 +237,7 @@ def _format_accounting_totals(accounting: dict[str, int | bool | float | None]) 
 def format_run_report(
     record: RunRecord,
     *,
-    prompts: PromptConfig | None = None,
+    prompts: PromptConfig,
 ) -> str:
     lines = [
         f"run_id: {record.run_id}",
@@ -280,13 +275,8 @@ def format_run_report(
     token_accounting = _format_token_accounting(record)
     if token_accounting:
         lines.append(token_accounting)
-    hint = (
-        prompts.return_hint_incomplete
-        if prompts is not None
-        else DEFAULT_RETURN_HINT_INCOMPLETE
-    )
     if record.status == STATUS_INCOMPLETE:
-        lines.append(f"next: {hint}")
+        lines.append(f"next: {prompts.return_hint_incomplete}")
     if record.worker_session_id:
         lines.append(f"worker_session_id: {record.worker_session_id}")
     if record.transcript_path:
@@ -304,31 +294,18 @@ def clean_result_summary(summary: str | None) -> str:
     return cleaned or "-"
 
 
-def _return_hint(run: RunRecord, *, prompts: PromptConfig | None = None) -> str | None:
+def _return_hint(run: RunRecord, *, prompts: PromptConfig) -> str | None:
     if run.role == "builder" and run.status == STATUS_DONE:
-        return (
-            prompts.return_hint_done if prompts is not None else DEFAULT_RETURN_HINT_DONE
-        )
+        return prompts.return_hint_done
     if run.role == "builder" and run.status in {STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}:
-        if prompts is not None and prompts.return_hint_failed != DEFAULT_RETURN_HINT_FAILED:
-            return prompts.return_hint_failed
-        return (
-            "examine durable builder references and redispatch one bounded "
-            "fix-only builder follow-up"
-        )
+        return prompts.return_hint_builder_failed
     if run.status == STATUS_INCOMPLETE:
-        return (
-            prompts.return_hint_incomplete
-            if prompts is not None
-            else DEFAULT_RETURN_HINT_INCOMPLETE
-        )
+        return prompts.return_hint_incomplete
     if run.status == STATUS_CANCELLED:
         return None
     if run.status == STATUS_DONE:
-        return (
-            prompts.return_hint_done if prompts is not None else DEFAULT_RETURN_HINT_DONE
-        )
-    return prompts.return_hint_failed if prompts is not None else DEFAULT_RETURN_HINT_FAILED
+        return prompts.return_hint_done
+    return prompts.return_hint_failed
 
 
 def _format_run_summary(run: RunRecord) -> str:
@@ -389,8 +366,8 @@ def _semantic_failure_verdict(run: RunRecord) -> str | None:
 def format_orchestrator_return(
     runs: list[RunRecord],
     *,
+    prompts: PromptConfig,
     state_dir: str | Path | None = None,
-    prompts: PromptConfig | None = None,
 ) -> str:
     if not runs:
         return "[orchestra: all background processes returned]"
@@ -413,7 +390,7 @@ def format_orchestrator_return(
         if dispatch_failure:
             lines.append(f"auto_verify: {dispatch_failure}")
         if semantic_failure:
-            hint = prompts.return_hint_failed if prompts is not None else DEFAULT_RETURN_HINT_FAILED
+            hint = prompts.return_hint_failed
         elif report_has_issue and run.status == STATUS_DONE:
             hint = None
         else:
