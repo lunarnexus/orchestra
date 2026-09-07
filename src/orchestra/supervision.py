@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
@@ -41,6 +41,7 @@ from orchestra.state import (
     STATUS_INCOMPLETE,
     STATUS_QUEUED,
     STATUS_RUNNING,
+    ConcurrencyLimitError,
     RunRecord,
     RunUpdate,
 )
@@ -352,30 +353,67 @@ def _auto_dispatch_chain_for_run(builder_run: RunRecord) -> AutomaticDispatchCha
     return None
 
 
-def _dispatch_auto_verifier(
+def _finalize_builder_with_auto_verifier(
     context: AppContext,
+    run_id: str,
     builder_run: RunRecord,
-) -> RunRecord | None:
-    chain = _auto_dispatch_chain_for_run(builder_run)
-    if chain is None:
-        return None
-    if _auto_verifier_run_exists(context, builder_run, chain):
-        return None
+    builder_update: RunUpdate,
+) -> RunRecord:
+    """Finalize a successful builder and reserve its verifier atomically.
 
-    request_file = canonical_request_path(context.config.state_dir, builder_run.run_id)
+    The parent's terminal state and the child's queued reservation commit in
+    one transaction, so report lookup can never observe a zero-active gap
+    between them. Any failure before that commit leaves the caller to fall
+    back to an ordinary finalize plus dispatch-failure evidence.
+    """
+    from orchestra.dispatch import (
+        PendingRunRequest,
+        _expanded_model_limits,
+        _format_concurrency_limit_error,
+        _launch_reserved_child,
+        _prepare_auto_child_record,
+        _write_pending_request,
+    )
+
+    terminal_view = replace(builder_run, status=builder_update.status)
+    chain = _auto_dispatch_chain_for_run(terminal_view)
+    if chain is None or _auto_verifier_run_exists(context, terminal_view, chain):
+        return context.store.update_run(run_id, builder_update)
+
+    request_file = canonical_request_path(context.config.state_dir, run_id)
     if not request_file.exists():
-        request_file = legacy_request_path(context.config.state_dir, builder_run.run_id)
+        request_file = legacy_request_path(context.config.state_dir, run_id)
     if not request_file.exists():
-        return None
+        return context.store.update_run(run_id, builder_update)
 
-    builder_request = _load_pending_request(builder_run.run_id, request_file)
-    verifier_assignment = chain.build_handoff(builder_run, builder_request)
+    builder_request = _load_pending_request(run_id, request_file)
+    reconcile_stale_queued_runs(context)
 
-    from orchestra.dispatch import start_run
-
-    started = start_run(
+    child_record = _prepare_auto_child_record(
         context,
         session_id=builder_run.orchestrator_session_id,
+        role_name=chain.next_role,
+        task_label=chain.task_label_for(builder_run),
+        batch_id=builder_run.batch_id,
+        cycle_id=builder_update.cycle_id,
+        triggered_by_run_id=run_id,
+        trigger_reason=chain.trigger_reason,
+        sequence_index=chain.sequence_index,
+    )
+
+    verifier_assignment = chain.build_handoff(
+        replace(
+            builder_run,
+            status=builder_update.status,
+            result_summary=builder_update.result_summary,
+            semantic_verdict=builder_update.semantic_verdict,
+            cycle_id=builder_update.cycle_id,
+            sequence_index=builder_update.sequence_index,
+        ),
+        builder_request,
+    )
+    pending_child_request = PendingRunRequest(
+        run_id=child_record.run_id,
         role_name=chain.next_role,
         goal=verifier_assignment.goal,
         approved_context=verifier_assignment.approved_context,
@@ -383,15 +421,36 @@ def _dispatch_auto_verifier(
         acceptance_target=verifier_assignment.acceptance_target,
         return_format=chain.return_format_for(),
         timeout_seconds=builder_request.timeout_seconds,
-        task_label=chain.task_label_for(builder_run),
-        batch_id=builder_run.batch_id,
-        cycle_id=builder_run.cycle_id or builder_run.run_id,
-        triggered_by_run_id=builder_run.run_id,
-        trigger_reason=chain.trigger_reason,
-        sequence_index=chain.sequence_index,
-        allow_auto_only=True,
+        task_label=child_record.task_label,
+        request_file=canonical_request_path(context.config.state_dir, child_record.run_id),
+        cycle_id=child_record.cycle_id,
+        triggered_by_run_id=child_record.triggered_by_run_id,
+        trigger_reason=child_record.trigger_reason,
+        sequence_index=child_record.sequence_index,
     )
-    return started.record
+    _write_pending_request(pending_child_request)
+
+    try:
+        updated_builder, reserved_child = context.store.finalize_and_reserve_child(
+            run_id,
+            builder_update,
+            child_record=child_record,
+            global_limit=context.config.concurrency.global_limit,
+            per_session_limit=context.config.concurrency.per_session_limit,
+            per_model_limits=_expanded_model_limits(context.catalog.model_limits),
+        )
+    except ConcurrencyLimitError as exc:
+        raise _app_error(
+            _format_concurrency_limit_error(
+                str(exc), context=context, session_id=builder_run.orchestrator_session_id
+            )
+        ) from exc
+
+    if reserved_child is None:
+        return updated_builder
+
+    _launch_reserved_child(context, pending_child_request)
+    return updated_builder
 
 
 def _auto_verifier_run_exists(
@@ -1103,33 +1162,33 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
             current.sequence_index if current.sequence_index is not None else 0
         )
 
-    updated = context.store.update_run(
-        run_id,
-        RunUpdate(
-            status=terminal_status,
-            result_summary=result.result_summary,
-            result_output=None,
-            result_summary_truncated=result_summary_truncated,
-            semantic_verdict=result.semantic_verdict,
-            error_text=result.error_text,
-            blocker_text=blocker_text,
-            worker_session_id=result.worker_session_id,
-            transcript_path=result.transcript_path,
-            approval_needed=result.approval_needed,
-            input_tokens=result.input_tokens,
-            output_tokens=result.output_tokens,
-            reasoning_tokens=result.reasoning_tokens,
-            cache_read_tokens=result.cache_read_tokens,
-            cache_write_tokens=result.cache_write_tokens,
-            cost_usd=result.cost_usd,
-            cycle_id=auto_verify_cycle_id,
-            sequence_index=auto_verify_sequence_index,
-        ),
+    builder_update = RunUpdate(
+        status=terminal_status,
+        result_summary=result.result_summary,
+        result_output=None,
+        result_summary_truncated=result_summary_truncated,
+        semantic_verdict=result.semantic_verdict,
+        error_text=result.error_text,
+        blocker_text=blocker_text,
+        worker_session_id=result.worker_session_id,
+        transcript_path=result.transcript_path,
+        approval_needed=result.approval_needed,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        reasoning_tokens=result.reasoning_tokens,
+        cache_read_tokens=result.cache_read_tokens,
+        cache_write_tokens=result.cache_write_tokens,
+        cost_usd=result.cost_usd,
+        cycle_id=auto_verify_cycle_id,
+        sequence_index=auto_verify_sequence_index,
     )
     if auto_verify_cycle_id is not None:
         try:
-            _dispatch_auto_verifier(context, updated)
+            return _finalize_builder_with_auto_verifier(
+                context, run_id, current, builder_update
+            )
         except Exception as exc:
+            updated = context.store.update_run(run_id, builder_update)
             try:
                 _append_run_event(
                     context,
@@ -1139,7 +1198,8 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
                 )
             except Exception:
                 pass
-    return updated
+            return updated
+    return context.store.update_run(run_id, builder_update)
 
 
 def _format_return_output(run_id: str, result: WorkerResult) -> str:

@@ -355,67 +355,10 @@ class StateStore:
                         f"active={model_active} limit={model_limit}"
                     )
 
-            connection.execute(
-                """
-                INSERT INTO runs (
-                    run_id,
-                    orchestrator_session_id,
-                    batch_id,
-                    harness,
-                    role,
-                    model,
-                    status,
-                    created_at,
-                    started_at,
-                    ended_at,
-                    supervisor_pid,
-                    supervisor_started_at,
-                    supervisor_output_path,
-                    process_id,
-                    process_group_id,
-                    task_label,
-                    result_summary,
-                    result_output,
-                    result_summary_truncated,
-                    semantic_verdict,
-                    error_text,
-                    blocker_text,
-                    log_path,
-                    worker_session_id,
-                    transcript_path,
-                    approval_needed,
-                    input_tokens,
-                    output_tokens,
-                    reasoning_tokens,
-                    cache_read_tokens,
-                    cache_write_tokens,
-                    cost_usd,
-                    report_claimed_at,
-                    reported_at,
-                    cycle_id,
-                    triggered_by_run_id,
-                    trigger_reason,
-                    sequence_index
-                ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
-                """,
-                self._serialize_record(record),
-            )
+            self._insert_record(connection, record)
             connection.commit()
 
-        self._log_event(
-            record,
-            event="run.created",
-            details={
-                "task_label": record.task_label,
-                "harness": record.harness,
-                "role": record.role,
-                "model": record.model,
-            },
-        )
+        self._log_run_created(record)
         return record
 
     def create_run(self, record: RunRecord) -> RunRecord:
@@ -424,6 +367,114 @@ class StateStore:
             global_limit=10_000_000,
             per_session_limit=10_000_000,
         )
+
+    def finalize_and_reserve_child(
+        self,
+        run_id: str,
+        update: RunUpdate,
+        *,
+        child_record: RunRecord,
+        global_limit: int,
+        per_session_limit: int,
+        per_model_limits: dict[str, int] | None = None,
+    ) -> tuple[RunRecord, RunRecord | None]:
+        """Terminalize a run and reserve its queued child in one transaction.
+
+        Concurrency limits are evaluated after the parent leaves the active
+        count inside the same transaction. Returns the updated parent and the
+        reserved child; the child is ``None`` when the parent was already
+        terminal and no reservation happened.
+        """
+        _validate_status(update.status)
+        if update.status not in TERMINAL_STATUSES:
+            raise StateError("finalize_and_reserve_child requires a terminal status")
+        if child_record.status != STATUS_QUEUED:
+            raise StateError("child runs must start in 'queued' status")
+        if not child_record.run_id.strip():
+            raise StateError("run_id must be a non-empty string")
+        if not child_record.orchestrator_session_id.strip():
+            raise StateError("orchestrator_session_id must be a non-empty string")
+
+        with self._connect() as connection:
+            self._begin_immediate(
+                connection, operation="finalize_and_reserve_child"
+            )
+            row = connection.execute(
+                "SELECT * FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise StateError(f"run not found: {run_id}")
+
+            current = self._row_to_record(row)
+            if current.status in TERMINAL_STATUSES:
+                connection.rollback()
+                return (current, None)
+            _validate_transition(current.status, update.status)
+            next_record = self._merge_record(current, update)
+            changed = self._write_record(
+                connection, next_record, expected_status=current.status
+            )
+            if not changed:
+                connection.rollback()
+                return (self.get_run(run_id), None)
+
+            global_active = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM runs WHERE status IN (?, ?)",
+                    (STATUS_QUEUED, STATUS_RUNNING),
+                ).fetchone()[0]
+            )
+            if global_active >= global_limit:
+                connection.rollback()
+                raise ConcurrencyLimitError("global concurrency limit exceeded")
+
+            session_active = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM runs
+                    WHERE orchestrator_session_id = ?
+                      AND status IN (?, ?)
+                    """,
+                    (
+                        child_record.orchestrator_session_id,
+                        STATUS_QUEUED,
+                        STATUS_RUNNING,
+                    ),
+                ).fetchone()[0]
+            )
+            if session_active >= per_session_limit:
+                connection.rollback()
+                raise ConcurrencyLimitError("per-session concurrency limit exceeded")
+
+            model = child_record.model
+            model_limit = (per_model_limits or {}).get(model or "")
+            if model and model_limit is not None:
+                model_active = int(
+                    connection.execute(
+                        """
+                        SELECT COUNT(*)
+                        FROM runs
+                        WHERE model = ?
+                          AND status IN (?, ?)
+                        """,
+                        (model, STATUS_QUEUED, STATUS_RUNNING),
+                    ).fetchone()[0]
+                )
+                if model_active >= model_limit:
+                    connection.rollback()
+                    raise ConcurrencyLimitError(
+                        f"model concurrency limit exceeded: {model} "
+                        f"active={model_active} limit={model_limit}"
+                    )
+
+            self._insert_record(connection, child_record)
+            connection.commit()
+
+        self._log_run_updated(current.status, next_record)
+        self._log_run_created(child_record)
+        return (next_record, child_record)
 
     def set_main_session_mode(self, session_id: str, mode: str) -> MainSessionState:
         if not session_id.strip():
@@ -490,26 +541,7 @@ class StateStore:
                 return self.get_run(run_id)
             connection.commit()
 
-        self._log_event(
-            next_record,
-            event="run.updated",
-            details={
-                "previous_status": current.status,
-                "harness": next_record.harness,
-                "role": next_record.role,
-                "supervisor_pid": next_record.supervisor_pid,
-                "supervisor_output_path": str(next_record.supervisor_output_path)
-                if next_record.supervisor_output_path
-                else None,
-                "process_id": next_record.process_id,
-                "process_group_id": next_record.process_group_id,
-                "result_summary": next_record.result_summary,
-                "result_summary_truncated": next_record.result_summary_truncated,
-                "error_text": next_record.error_text,
-                "blocker_text": next_record.blocker_text,
-                "worker_session_id": next_record.worker_session_id,
-            },
-        )
+        self._log_run_updated(current.status, next_record)
         return next_record
 
     def list_active_runs(self, orchestrator_session_id: str | None = None) -> list[RunRecord]:
@@ -1105,6 +1137,91 @@ class StateStore:
             ),
         )
         return cursor.rowcount == 1
+
+    def _insert_record(self, connection: sqlite3.Connection, record: RunRecord) -> None:
+        connection.execute(
+            """
+            INSERT INTO runs (
+                run_id,
+                orchestrator_session_id,
+                batch_id,
+                harness,
+                role,
+                model,
+                status,
+                created_at,
+                started_at,
+                ended_at,
+                supervisor_pid,
+                supervisor_started_at,
+                supervisor_output_path,
+                process_id,
+                process_group_id,
+                task_label,
+                result_summary,
+                result_output,
+                result_summary_truncated,
+                semantic_verdict,
+                error_text,
+                blocker_text,
+                log_path,
+                worker_session_id,
+                transcript_path,
+                approval_needed,
+                input_tokens,
+                output_tokens,
+                reasoning_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                cost_usd,
+                report_claimed_at,
+                reported_at,
+                cycle_id,
+                triggered_by_run_id,
+                trigger_reason,
+                sequence_index
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+            """,
+            self._serialize_record(record),
+        )
+
+    def _log_run_created(self, record: RunRecord) -> None:
+        self._log_event(
+            record,
+            event="run.created",
+            details={
+                "task_label": record.task_label,
+                "harness": record.harness,
+                "role": record.role,
+                "model": record.model,
+            },
+        )
+
+    def _log_run_updated(self, previous_status: str, next_record: RunRecord) -> None:
+        self._log_event(
+            next_record,
+            event="run.updated",
+            details={
+                "previous_status": previous_status,
+                "harness": next_record.harness,
+                "role": next_record.role,
+                "supervisor_pid": next_record.supervisor_pid,
+                "supervisor_output_path": str(next_record.supervisor_output_path)
+                if next_record.supervisor_output_path
+                else None,
+                "process_id": next_record.process_id,
+                "process_group_id": next_record.process_group_id,
+                "result_summary": next_record.result_summary,
+                "result_summary_truncated": next_record.result_summary_truncated,
+                "error_text": next_record.error_text,
+                "blocker_text": next_record.blocker_text,
+                "worker_session_id": next_record.worker_session_id,
+            },
+        )
 
     def _serialize_record(self, record: RunRecord) -> tuple[object, ...]:
         return (

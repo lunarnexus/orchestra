@@ -79,6 +79,84 @@ def _expanded_model_limits(
     return expanded
 
 
+def _request_payload(pending_request: PendingRunRequest) -> dict[str, object]:
+    return {
+        "run_id": pending_request.run_id,
+        "role_name": pending_request.role_name,
+        "goal": pending_request.goal,
+        "approved_context": pending_request.approved_context,
+        "boundaries": pending_request.boundaries,
+        "acceptance_target": pending_request.acceptance_target,
+        "return_format": pending_request.return_format,
+        "timeout_seconds": pending_request.timeout_seconds,
+        "task_label": pending_request.task_label,
+        "cycle_id": pending_request.cycle_id,
+        "triggered_by_run_id": pending_request.triggered_by_run_id,
+        "trigger_reason": pending_request.trigger_reason,
+        "sequence_index": pending_request.sequence_index,
+    }
+
+
+def _prepare_auto_child_record(
+    context: AppContext,
+    *,
+    session_id: str,
+    role_name: str | None,
+    task_label: str,
+    batch_id: str | None,
+    cycle_id: str | None = None,
+    triggered_by_run_id: str | None = None,
+    trigger_reason: str | None = None,
+    sequence_index: int | None = None,
+) -> RunRecord:
+    """Prepare a queued automatic child run record without reserving it.
+
+    Reservation happens atomically with the triggering run's terminal state
+    through ``StateStore.finalize_and_reserve_child``.
+    """
+    _require_session_id(session_id)
+    if not orchestra_can_dispatch():
+        raise _app_error("ORCHESTRA_DISPATCH_BUDGET dispatch budget exhausted")
+    selected_role = _select_role(
+        context.catalog,
+        role_name,
+        allow_auto_only=True,
+    )
+    effective_task_label = task_label.strip()
+    if not effective_task_label:
+        raise _app_error("automatic child dispatch requires a non-empty task label")
+
+    run_id = uuid.uuid4().hex[:12]
+    run_dir = run_state_dir(context.config.state_dir, run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return RunRecord(
+        run_id=run_id,
+        orchestrator_session_id=session_id,
+        batch_id=batch_id,
+        harness=selected_role.config.harness,
+        role=selected_role.name,
+        model=selected_role.config.model,
+        task_label=effective_task_label,
+        log_path=run_dir / "events.jsonl",
+        created_at=utc_now(),
+        cycle_id=cycle_id,
+        triggered_by_run_id=triggered_by_run_id,
+        trigger_reason=trigger_reason,
+        sequence_index=sequence_index,
+    )
+
+
+def _write_pending_request(pending_request: PendingRunRequest) -> None:
+    write_json_atomically(pending_request.request_file, _request_payload(pending_request))
+
+
+def _launch_reserved_child(context: AppContext, pending_request: PendingRunRequest) -> None:
+    """Spawn the supervisor for a reserved child with a durable request file."""
+    from orchestra.supervision import _spawn_supervisor
+
+    _spawn_supervisor(context, pending_request.request_file, pending_request.run_id)
+
+
 def _format_concurrency_limit_error(
     message: str,
     *,
@@ -214,24 +292,7 @@ def start_run(
             _format_concurrency_limit_error(str(exc), context=context, session_id=session_id)
         ) from exc
 
-    write_json_atomically(
-        request_file,
-        {
-            "run_id": pending_request.run_id,
-            "role_name": pending_request.role_name,
-            "goal": pending_request.goal,
-            "approved_context": pending_request.approved_context,
-            "boundaries": pending_request.boundaries,
-            "acceptance_target": pending_request.acceptance_target,
-            "return_format": pending_request.return_format,
-            "timeout_seconds": pending_request.timeout_seconds,
-            "task_label": pending_request.task_label,
-            "cycle_id": pending_request.cycle_id,
-            "triggered_by_run_id": pending_request.triggered_by_run_id,
-            "trigger_reason": pending_request.trigger_reason,
-            "sequence_index": pending_request.sequence_index,
-        },
-    )
+    _write_pending_request(pending_request)
     _spawn_supervisor(context, request_file, run_id)
     return StartedRun(
         record=record,

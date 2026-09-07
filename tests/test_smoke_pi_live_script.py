@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-
 SCRIPT = runpy.run_path("scripts/smoke-pi-live", run_name="smoke_pi_live")
 
 

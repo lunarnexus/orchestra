@@ -155,6 +155,8 @@ Checkpoint 1 — Planning map:
 - For each phase, list the essential concerns: user-visible behavior, acceptance fit, files/modules, interfaces, data flow, tests, artifacts, risks, verification, and likely dependencies.
 - Classify unknowns as known evidence, local evidence to inspect, researcher-owned evidence, user decision, spike, or safe assumption.
 - End with the recommended next action and ask: `Continue to phase fill-in?`
+- Do NOT overcomplicate, plan the smallest most efficient solution that will
+  solve the problem or fit the user's criteria.
 
 Checkpoint 2 — Phase fill-in and parallelization check:
 - After user confirmation, expand each phase into executable vertical slices that preserve the intended user-visible outcome.

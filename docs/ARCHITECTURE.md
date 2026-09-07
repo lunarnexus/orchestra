@@ -201,8 +201,9 @@ fail-fast rather than queueing.
 11. Core stores compact result metadata on the run and writes the full final
     return to `state/runs/<run-id>/return.md`.
 12. If `auto_verify` is enabled and the completed run is a successful exact
-    `builder` role run, core dispatches a linked normal `verifier` run for the
-    same scope. Builder failures skip automatic verification.
+    `builder` role run, core records the builder terminal state and reserves a
+    linked normal `verifier` run for the same scope in one SQLite transaction.
+    Builder failures skip automatic verification.
 13. Core checks whether the owning main session has any active subagents left.
 14. When none remain, core creates one consolidated session report. Successful
     reports stay compact and do not load or inject full return artifact content.

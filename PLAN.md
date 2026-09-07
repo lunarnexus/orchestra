@@ -2,179 +2,107 @@
 
 ## Planning Status
 
-Third pass: coherence validated. The three slices are scoped, ordered, and ready for implementation approval.
+Third pass complete. Coherence validated; one focused implementation slice remains pending owner approval.
 
 ## Goal
 
-Fix three reliability problems in the Pi extension with the smallest practical change:
+Remove the race where a report watcher can observe a completed builder before its automatic verifier exists.
 
-1. Refresh the footer from complete current status.
-2. Keep one reliable session report watcher.
-3. Mark reports delivered only after Pi accepts the return.
+## Intended Behavior
+
+When a successful builder requires automatic verification, core commits two state changes together:
+
+1. the builder becomes terminal;
+2. its verifier becomes queued.
+
+The existing session watcher therefore continues waiting and returns the builder and verifier together. The existing report-completion refresh clears the footer without `/orch status`.
+
+## Acceptance Criteria
+
+- No observable zero-active gap exists between builder completion and verifier reservation.
+- Exactly one automatic verifier is created.
+- Existing concurrency limits still apply after the builder leaves the active count.
+- Preparation or reservation failure leaves the builder reportable with the existing dispatch-failure evidence.
+- Supervisor launch failure leaves a normal failed verifier run.
+- Builders without automatic verification behave unchanged.
+- No host-adapter, report-delivery, configuration, or schema change is required.
 
 ## Scope
 
-Change only:
+Change only the core state/dispatch/supervision path and directly affected tests:
 
-- `extensions/pi/orchestra/index.ts`
-- `tests/test_pi_extension_source.py`
-- `tests/test_auto_return.py` only if report claim coverage needs adjustment
+- `src/orchestra/state.py`
+- `src/orchestra/dispatch.py`
+- `src/orchestra/supervision.py`
+- focused tests in `tests/`
+- `docs/ARCHITECTURE.md` and `docs/DECISIONS.md` only as required to record the approved final behavior
 
-Do not add new modules, frameworks, persistence, configuration, schemas, or timeout systems.
+Out of scope:
 
-Out of scope: reload/resume recovery and Hermes/OpenCode changes.
+- new queue or outbox tables;
+- external queue frameworks;
+- report claims, leases, or timeouts;
+- host watcher or footer redesign;
+- unrelated dispatch refactoring.
 
-## Slice 1 — Simplify footer refresh
+## Evidence
 
-**Change**
+- `_finalize_run()` currently commits the builder terminal state before `_dispatch_auto_verifier()` creates the verifier.
+- The report watcher returns when its anchor is terminal and the session has zero active runs.
+- Automatic-child suppression works only after the verifier row exists.
+- The existing watcher already waits while the verifier is queued or running.
+- `_spawn_supervisor()` already converts launch failure into a failed child run.
 
-Create one `refreshOrchestraFooter(sessionId, ctx)` path that:
+The current code order is sufficient to establish the race. Remote timestamps would corroborate it but are not required.
 
-1. bypasses or clears the status cache;
-2. runs `orchestra status --session-id ... --json`;
-3. renders the complete returned snapshot.
+## Implementation Slice — sequential, P1
 
-Dispatch, run completion, stop, and report completion call this function. They do not directly add, remove, or zero individual runs in the footer.
+1. Add a regression test that exposes pending-report lookup at the builder-to-verifier transition.
+2. Add the smallest state operation that finalizes the builder and reserves its prepared verifier in one SQLite transaction.
+3. Use that operation only for successful builders requiring automatic verification.
+4. Launch the committed verifier through the existing supervisor path.
+5. Keep the ordinary `start_run()` interface and all host adapters unchanged.
+6. Add focused coverage for successful chaining, duplicate prevention, concurrency accounting, dispatch failure, and launch failure.
 
-Keep the existing request/session-generation guard so an older response cannot overwrite a newer response. Keep local completion tracking only if progress notification wording still needs it; it must not affect footer state.
+Stop when the regression is green and the existing consolidated return contains both builder and verifier without manual status intervention.
 
-**Tests**
-
-Update `tests/test_pi_extension_source.py` to confirm:
-
-- footer updates use the single refresh path;
-- the report handler no longer writes a synthetic zero-active status;
-- dispatch, completion, stop, and report completion trigger refresh;
-- existing footer rendering and mode behavior remain present.
-
-**Stop when**
-
-Every active footer update comes from a complete status response.
-
-**Verify**
-
-```bash
-python3 -m pytest tests/test_pi_extension_source.py -q
-```
-
-## Slice 2 — Fix the session report watcher
-
-**Change**
-
-Keep the existing one-watcher-per-session design, with these corrections:
-
-- remove the first run’s timeout from `_await-session-report`;
-- add a child-process `error` handler;
-- clean up the watcher entry on every exit path;
-- retry unexpected process errors or nonzero exits a small bounded number of times;
-- preserve the existing session-generation and shutdown guards;
-- do not create another watcher abstraction or timeout layer.
-
-A successful empty response remains a normal stop because auto-return may be disabled.
-
-**Tests**
-
-Update `tests/test_pi_extension_source.py` to confirm:
-
-- the report watcher command has no run-derived timeout;
-- error and nonzero-exit paths retry;
-- retries are bounded;
-- cleanup prevents duplicate session watchers.
-
-Keep existing core waiting/report tests green.
-
-**Stop when**
-
-A later run can outlive the first run without losing the session report watcher, and watcher failures cannot leave a permanent stale watcher entry.
-
-**Verify**
+## Verification
 
 ```bash
-python3 -m pytest tests/test_pi_extension_source.py tests/test_auto_return.py -q
-```
-
-## Slice 3 — Fix report delivery ordering
-
-**Change**
-
-Keep the existing report claim, Pi injection, mark, and release commands. Change only their coordination:
-
-1. Parse the report and retain its run IDs as pending delivery.
-2. Call `pi.sendUserMessage(..., { deliverAs: "followUp" })`.
-3. Match the injected text in Pi’s user `message_end` event.
-4. After that handler returns, mark the report delivered so Pi can finish recording the message first.
-5. If marking fails, release the report claim.
-6. Start one confirmation timer when delivery is requested. If no matching event arrives, release the claim and allow the report watcher to retry.
-7. If the session shuts down before confirmation, cancel the timer and release the claim.
-8. After mark or release, call the normal footer refresh.
-
-Only one pending report and one confirmation timer are needed because there is only one session report watcher. Do not introduce persisted delivery state or a general delivery state machine.
-
-**Tests**
-
-Update `tests/test_pi_extension_source.py` to confirm:
-
-- the watcher no longer marks immediately after `sendUserMessage`;
-- a matching user `message_end` causes marking;
-- shutdown or confirmation timeout causes release;
-- mark failure causes release;
-- delivery completion uses the normal footer refresh.
-
-Use `tests/test_auto_return.py` only for any missing claim/mark/release behavior at the core boundary.
-
-**Stop when**
-
-Calling `sendUserMessage` alone cannot mark the report delivered, and every confirmed or abandoned pending report reaches mark or release.
-
-**Verify**
-
-```bash
-python3 -m pytest tests/test_pi_extension_source.py tests/test_auto_return.py -q
-```
-
-## Ordering and Parallelization
-
-Run the slices sequentially because all three modify the same watcher and callback area in `extensions/pi/orchestra/index.ts`.
-
-Order:
-
-1. Footer refresh provides the shared refresh path.
-2. Report watcher produces the report safely.
-3. Delivery consumes the report and uses the refresh path.
-
-Parallel work would add merge and lifecycle conflicts without saving meaningful time.
-
-## Final Verification
-
-```bash
-python3 -m pytest tests/test_pi_extension_source.py tests/test_auto_return.py -q
-python3 -m pytest
+python3 -m pytest tests/test_state.py tests/test_dispatch.py tests/test_supervision.py tests/test_auto_return.py -q
 python3 -m ruff check .
 python3 -m mypy src tests
+python3 -m pytest -q
 python3 -m build
+./scripts/smoke-pi-live
 ```
 
-After code review, refresh the installed extension and run the existing Pi host smoke checks. The live dispatch check requires approval because it creates real run state.
+After implementation: one coherent code review, then one final appsec review. Do not repeat successful command evidence between roles.
+
+## Parallelization Check
+
+No parallel implementation. The state transaction and its supervision integration form one change across shared interfaces.
 
 ## Risks
 
-- Pi’s `message_end` event occurs before Pi appends the message to its session, so marking must be deferred until after the event handler returns.
-- A crash between Pi recording the message and Orchestra marking it can cause a later duplicate return. This is preferable to silently losing the return.
-- Retry callbacks must check session generation so they cannot restart after shutdown.
+- Counting the builder and verifier simultaneously could reject valid limit-one chains; evaluate limits after terminalizing the builder inside the transaction.
+- A broader `start_run()` refactor could introduce unrelated regressions; keep changes private and minimal.
+- A failed child reservation must not strand the builder or hide the dispatch failure.
 
 ## Coherence Validation
 
-- The plan contains only the three agreed fixes.
-- Each slice changes the same Pi extension in dependency order, so sequential execution is correct.
-- Footer state has one authoritative source: the current status snapshot.
-- The report watcher has one owner: the Pi session.
-- Report delivery has two outcomes: confirmed delivery is marked; unconfirmed delivery is released for retry.
-- Existing core interfaces are sufficient; no schema, CLI, configuration, or cross-host changes are needed.
-- The confirmation timer is the only added lifecycle mechanism and is necessary because `sendUserMessage` provides no completion result.
-- Focused tests plus the live Pi check cover the stated acceptance behavior.
+- The atomic transaction directly removes the observed invalid state; no secondary queue or host redesign is needed.
+- Before commit the builder remains active; after commit its verifier is queued. Report lookup cannot observe zero active runs between them.
+- The existing watcher, consolidated report, supervisor failure handling, footer refresh, and host interfaces remain sufficient.
+- The implementation scope is limited to the three core modules and focused tests; documentation records only the resulting durable behavior.
+- The builder can derive private helper structure from existing `start_run()`, `reserve_run()`, `_finalize_run()`, and `_spawn_supervisor()` interfaces without inventing product behavior.
+- Concurrency replacement, duplicate finalization, preparation/reservation failure, and launch failure have explicit acceptance coverage.
+- The work is correctly sequential because state, dispatch, and supervision share the transaction boundary.
+- Focused tests, full checks, live Pi smoke, one coherent review, and one final appsec review cover the P1 risk.
+- No schema, configuration, host-adapter, or external dependency change is required.
 
-No unresolved design decision blocks implementation.
+No technical blocker remains. Stable decision and implementation approval are required before dispatch.
 
 ## Next Step
 
-Approve implementation of the three sequential slices?
+Approve the D-RETURN-013 clarification and the implementation slice.

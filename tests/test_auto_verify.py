@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -10,7 +12,14 @@ from orchestra.context import AppContext, OrchestraPaths
 from orchestra.dispatch import PendingRunRequest, StartedRun, start_run
 from orchestra.harnesses.base import HarnessRegistry, WorkerResult
 from orchestra.reports import consume_pending_session_report
-from orchestra.state import STATUS_DONE, STATUS_FAILED, STATUS_RUNNING, RunUpdate, StateStore
+from orchestra.state import (
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_QUEUED,
+    STATUS_RUNNING,
+    RunUpdate,
+    StateStore,
+)
 from orchestra.supervision import (
     AUTO_VERIFY_CHAIN,
     _auto_dispatch_chain_for_run,
@@ -20,7 +29,12 @@ from orchestra.supervision import (
 from tests.test_cli_commands import load_root_prompt_config
 
 
-def _make_context(tmp_path: Path, *, auto_verify: bool) -> AppContext:
+def _make_context(
+    tmp_path: Path,
+    *,
+    auto_verify: bool,
+    concurrency: ConcurrencyConfig | None = None,
+) -> AppContext:
     store = StateStore(tmp_path / "state" / "orchestra.db")
     store.initialize()
     return AppContext(
@@ -29,7 +43,11 @@ def _make_context(tmp_path: Path, *, auto_verify: bool) -> AppContext:
             prompts=load_root_prompt_config(),
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
-            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=3),
+            concurrency=(
+                concurrency
+                if concurrency is not None
+                else ConcurrencyConfig(global_limit=4, per_session_limit=3)
+            ),
             auto_verify=auto_verify,
         ),
         catalog=AgentCatalog(
@@ -152,6 +170,157 @@ def test_auto_verify_chain_helper_matches_builder_success_trigger(
     assert chain.child_hints_suppressed() is True
 
 
+class _GapCheckingConnection:
+    """Delegates to a sqlite3 connection and checks the gap invariant per commit."""
+
+    def __init__(
+        self, inner: sqlite3.Connection, session_id: str, builder_run_id: str,
+        violations: list[str], store: StateStore,
+    ) -> None:
+        self._inner = inner
+        self._session_id = session_id
+        self._builder_run_id = builder_run_id
+        self._violations = violations
+        self._store = store
+
+    def commit(self) -> None:
+        self._inner.commit()
+        pending_ids = [
+            run.run_id for run in self._store.list_pending_report_runs(self._session_id)
+        ]
+        if self._builder_run_id not in pending_ids:
+            return
+        active_children = [
+            run
+            for run in self._store.list_runs(self._session_id, limit=50)
+            if run.triggered_by_run_id == self._builder_run_id
+            and run.trigger_reason == "auto_verify"
+            and run.status in (STATUS_QUEUED, STATUS_RUNNING)
+        ]
+        if not active_children:
+            self._violations.append(",".join(pending_ids))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def __enter__(self) -> _GapCheckingConnection:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        return bool(self._inner.__exit__(exc_type, exc, tb))  # type: ignore[arg-type]
+
+
+class _GapCheckingStateStore(StateStore):
+    """Records zero-active gap observations after every committed state change.
+
+    A gap exists when the report watcher would see the builder as pending
+    (terminal and unreported while no run is active) without an active linked
+    auto-verify child reserved in the same committed state.
+    """
+
+    def __init__(
+        self, database_path: Path | str, *, session_id: str, builder_run_id: str
+    ) -> None:
+        super().__init__(database_path)
+        self.gap_session_id = session_id
+        self.gap_builder_run_id = builder_run_id
+        self.gap_violations: list[str] = []
+
+    def _connect(self) -> Any:
+        return _GapCheckingConnection(
+            super()._connect(),
+            self.gap_session_id,
+            self.gap_builder_run_id,
+            self.gap_violations,
+            self,
+        )
+
+
+def test_builder_finalization_replaces_active_slot_under_session_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(
+        tmp_path,
+        auto_verify=True,
+        concurrency=ConcurrencyConfig(global_limit=2, per_session_limit=1),
+    )
+    builder_started = _start_linked_run(context, monkeypatch)
+
+    finalized = _finalize_run(context, builder_started.record.run_id, _done_result())
+
+    assert finalized.status == STATUS_DONE
+    verifier_runs = [
+        run
+        for run in context.store.list_runs("manual:test", limit=20)
+        if run.trigger_reason == "auto_verify"
+    ]
+    assert len(verifier_runs) == 1
+    assert verifier_runs[0].status == STATUS_QUEUED
+
+
+def test_auto_verify_launch_failure_leaves_failed_verifier_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import orchestra.supervision as supervision_module
+
+    real_spawn_supervisor = supervision_module._spawn_supervisor
+    context = _make_context(tmp_path, auto_verify=True)
+    builder_started = _start_linked_run(context, monkeypatch)
+
+    def raise_oserror(*args: object, **kwargs: object) -> Any:
+        raise OSError("spawn denied")
+
+    monkeypatch.setattr("orchestra.supervision._spawn_supervisor", real_spawn_supervisor)
+    monkeypatch.setattr("orchestra.supervision.subprocess.Popen", raise_oserror)
+
+    finalized = _finalize_run(context, builder_started.record.run_id, _done_result())
+
+    assert finalized.status == STATUS_DONE
+    verifier_runs = [
+        run
+        for run in context.store.list_runs("manual:test", limit=20)
+        if run.trigger_reason == "auto_verify"
+    ]
+    assert len(verifier_runs) == 1
+    verifier = verifier_runs[0]
+    assert verifier.status == STATUS_FAILED
+    assert verifier.error_text == "Worker supervisor could not be launched"
+
+    report = consume_pending_session_report(context, "manual:test")
+    assert report is not None
+    assert f"[orchestra: builder {builder_started.record.run_id} success]" in report
+    assert f"[orchestra: verifier {verifier.run_id} fail]" in report
+
+
+def test_builder_finalization_reserves_verifier_without_zero_active_gap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from dataclasses import replace
+    from typing import cast
+
+    context = _make_context(tmp_path, auto_verify=True)
+    builder_started = _start_linked_run(context, monkeypatch)
+    watching_store = _GapCheckingStateStore(
+        context.store.database_path,
+        session_id="manual:test",
+        builder_run_id=builder_started.record.run_id,
+    )
+    context = replace(context, store=cast(StateStore, watching_store))
+
+    finalized = _finalize_run(context, builder_started.record.run_id, _done_result())
+
+    assert finalized.status == STATUS_DONE
+    verifier_runs = [
+        run for run in watching_store.list_runs("manual:test", limit=20)
+        if run.trigger_reason == "auto_verify"
+    ]
+    assert len(verifier_runs) == 1
+    assert watching_store.gap_violations == []
+
+
 def test_auto_verify_dispatches_linked_verifier_after_builder_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -246,10 +415,9 @@ def test_auto_verify_dispatch_start_failure_is_reported(
 ) -> None:
     context = _make_context(tmp_path, auto_verify=True)
     builder_started = _start_linked_run(context, monkeypatch)
-    monkeypatch.setattr(
-        "orchestra.dispatch.start_run",
-        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("dispatch start failed")),
-    )
+    # Exhaust the dispatch budget before finalization so automatic child
+    # preparation fails before any state commit.
+    monkeypatch.setattr("orchestra.dispatch.orchestra_can_dispatch", lambda: False)
 
     finalized = _finalize_run(context, builder_started.record.run_id, _done_result())
     report = consume_pending_session_report(context, "manual:test")
@@ -262,7 +430,10 @@ def test_auto_verify_dispatch_start_failure_is_reported(
     assert verifier_runs == []
     assert report is not None
     assert f"[orchestra: builder {builder_started.record.run_id} success]" in report
-    assert "auto_verify: auto-verify dispatch failed: RuntimeError: dispatch start failed" in report
+    assert (
+        "auto_verify: auto-verify dispatch failed: AppError: "
+        "ORCHESTRA_DISPATCH_BUDGET dispatch budget exhausted"
+    ) in report
     assert "builder completed" in report
 
 

@@ -539,6 +539,11 @@ remain separate for the initial implementation. The returned report should
 include both run ids and artifact references, and should avoid presenting the
 automatic verifier as unrelated duplicate advice.
 
+A successful builder's terminal transition and reservation of its automatic
+verifier are committed atomically in the existing SQLite runs queue. Supervisor
+launch follows that commit; launch failure is represented by the verifier's
+normal failed state.
+
 **Source:** Owner approval during lunar-cycle planning.
 
 ### D-RETURN-014 — Auto-verifier failure is visible and non-fatal
