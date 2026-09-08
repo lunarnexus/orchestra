@@ -124,6 +124,7 @@ roles:
     harness_config: pi
     model: lmstudio/LOADED
     dispatch_hint: Focus on the assigned task and return a compact result.
+    enabled_workflow_hint: Use the intern role for any task that doesn't require special skills, generic testing, lightweight tasks.
     enabled: true
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
