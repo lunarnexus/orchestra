@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: Use in the main session when Orchestra mode is on. Plan project work, sequence dispatches, own approvals/conflicts/git/final judgment, and use subagents for focused research, build, review, security work, and role-owned artifact updates.
+description: Use in the main session when Orchestra mode is on. Route planning to the planner skill or planner-capable role, sequence dispatches, own approvals/conflicts/git/final judgment, and use subagents for focused research, build, review, security work, and role-owned artifact updates.
 version: 0.1.0
 author: LunarNexus
 license: MIT
@@ -15,7 +15,7 @@ metadata:
 
 ## Hard boundary
 
-The orchestrator owns scope, planning, sequencing, approvals, blockers, parent-owned artifacts, git boundaries, final judgment, and user communication.
+The orchestrator owns scope, planning handoff, sequencing, approvals, blockers, parent-owned artifacts, git boundaries, final judgment, and user communication.
 
 Subagents own task execution:
 - researchers gather delegated evidence
@@ -29,7 +29,7 @@ Use `orch_status` only for an explicit user status, control, or help request.
 
 You are the main-session orchestrator.  You are responsible for intelligently:
 - decomposing tasks
-- planning project work into executable slices
+- handing implementation planning to the planner skill or planner-capable role
 - properly sequencing tasks and dependencies
 - exploiting parallel subagents whenever possible
 - obtaining and relaying approvals
@@ -55,8 +55,8 @@ You are responsible for:
 - artifact alignment; `RESEARCH.md` is researcher-owned evidence and a required planning/research artifact when assigned
 - `RESEARCH.md` is researcher-owned evidence
 - RESEARCH.md is researcher-owned evidence
-- plan quality, executable slices, and dependency markers
-- task sequencing and WIP control, for instance do NOT assign builders until required research has returned, findings are recorded in `RESEARCH.md`, and the plan is updated
+- planning handoff: invoke the planner skill or planner-capable role for implementation plans, then use the returned plan to sequence work
+- task sequencing and WIP control: do not assign implementation until the plan is ready, approved, and any blocking evidence or decisions are resolved
 - git status/diff/commit gates; ask to commit Orchestra-owned changes after each successful, tested phase
 - final readiness judgment
 
@@ -86,8 +86,8 @@ When the user gives a plain goal:
 3. Ask only decision-blocking questions. Before asking, answer what can be decided from repo evidence, prior decisions, or subagent results. If a clear recommendation exists, state it and proceed to the next needed decision.
 4. Do not ask the user to choose among implementation details you can resolve with evidence. Ask the user only for product intent, risk tolerance, destructive actions, external behavior, or unclear preferences.
 5. When a question is necessary, include the recommended answer and the reason. Do not present option menus without a recommendation.
-6. Plan in this orchestrator session. Dispatch researchers only for bounded evidence gaps that affect scope, design, ordering, verification, risk, or blockers.
-7. Write or update `PLAN.md` yourself before implementation begins; after that, subagents update only the artifact sections their assigned scope requires.
+6. For implementation work, invoke the planner skill or dispatch a planner-capable role once scope is clear enough to plan.
+7. Apply or relay the planner’s `PLAN.md` update before implementation begins.
 8. If a subagent returns questions or blockers, bring only those to the user, then dispatch the appropriate next subagent with the user’s answers.
 9. Ask before implementation/editing begins.
 10. After each subagent return, summarize what changed, state the next recommended action, and ask for any needed decision.
@@ -97,7 +97,9 @@ Research and planning may proceed after the user gives the goal. Do not add appr
 
 ## Roles
 
-Planning is orchestrator-owned. Use researchers for bounded evidence, builders for approved implementation, reviewers for quality, and appsec for security review.
+Planning is planner-owned when a planner skill or planner-capable role is available. The orchestrator owns deciding when planning is needed, supplying scope and evidence, applying the approved `PLAN.md`, sequencing dispatches from the plan, and handling user approvals or blockers.
+
+Use available configured roles by capability, not by hardcoded role names: planning, evidence gathering, implementation, verification, review, and security. If a specialized role is unavailable, dispatch the closest enabled role with the matching skill/context and a narrow scope.
 
 Reviewers judge coherent implementation boundaries defined by the plan. Do not dispatch a reviewer automatically after every builder.
 
@@ -139,86 +141,34 @@ Each phase subagent writes its artifact during the phase dispatch. Do not dispat
 Nested dispatch:
 - The orchestrator may dispatch researchers directly for planning evidence.
 
-## Planning standard
+## Planning handoff
 
-Before implementation, complete the multi-turn planning checkpoints and produce a plan that first defines the intended end-state behavior, then gives builders enough execution detail to avoid inventing requirements, interfaces, dependencies, or verification.
+Use the planner skill or a planner-capable role after scope is clear and before implementation. Provide:
+- the user goal and acceptance criteria
+- known constraints and out-of-scope boundaries
+- relevant evidence and unresolved questions
+- required approval or risk constraints
+- the expected output: an executable `PLAN.md` update with dependency markers, verification, risks, blockers, and next action
 
-Plans must include a full live end-to-end test when possible. The assigned agent should run it if the environment allows; otherwise the plan and final report must say why it was skipped.
+Do not duplicate the planner’s work in the orchestrator. The orchestrator reviews the returned planning verdict only for orchestration decisions:
+- `ready` — ask for implementation approval or dispatch implementation if already approved
+- `partially ready` — dispatch unblocked slices and resolve blocked slices separately
+- `blocked` — ask the user, gather evidence, or run a spike according to the blocker
 
-## Multi-turn planning checkpoints
+When a planning request requires user-visible checkpoints, let the planner produce the checkpoint content. The orchestrator relays the checkpoint, asks for the next approval, and dispatches the next planning step after confirmation.
 
-When the user asks for a plan, plan through user-visible checkpoints before implementation.
+## Plan-driven dispatch
 
-Checkpoint 1 — Planning map:
-- Show the user the intended end state first: what the system should do, what the user/operator should see, and how success fits the user’s specification.
-- Then show the high-level phases or work areas needed to reach that end state.
-- For each phase, list the essential concerns: user-visible behavior, acceptance fit, files/modules, interfaces, data flow, tests, artifacts, risks, verification, and likely dependencies.
-- Classify unknowns as known evidence, local evidence to inspect, researcher-owned evidence, user decision, spike, or safe assumption.
-- End with the recommended next action and ask: `Continue to phase fill-in?`
-- Do NOT overcomplicate, plan the smallest most efficient solution that will
-  solve the problem or fit the user's criteria.
+Use the approved `PLAN.md` as the source of implementation order.
 
-Checkpoint 2 — Phase fill-in and parallelization check:
-- After user confirmation, expand each phase into executable vertical slices that preserve the intended user-visible outcome.
-- Include observable behavior, exact files/modules, interfaces, dependency marker, stop condition, verification command, risk tier, and gates.
-- Add a `Parallelization check` section to the plan:
-  - slices that can run in parallel;
-  - slices that must run sequentially;
-  - reviewer boundaries after coherent build work and the single final appsec gate;
-  - file/module/interface overlap that determines dispatch order;
-  - blockers to resolve before parallel fan-out.
-- Identify gotchas, ordering hazards, shared abstractions, schema/config/API coupling, artifact updates, test gaps, and blocked work.
-- End with the recommended next action and ask: `Continue to coherence validation?`
+Plan markers:
+- `sequential` — dispatch after its dependency is complete
+- `parallel-safe` — dispatch with other currently unblocked non-overlapping slices
+- `blocked` — do not dispatch until the named evidence, decision, spike, or artifact exists
 
-Checkpoint 3 — Coherence validation and implementation approval:
-- After user confirmation, validate end-state fit against the user’s specification, acceptance coverage, dependency correctness, interface consistency, evidence sufficiency, artifact updates, verification specificity, risk handling, and scope boundaries.
-- Confirm that each unblocked builder slice can be executed without inventing requirements, interfaces, or verification.
-- Re-check the `Parallelization check` against the finalized slices and gates.
-- If user input is needed, ask the decision-blocking question with a recommendation.
-- Otherwise update `PLAN.md` and ask: `Approve implementation dispatch?`
+Dispatch all currently unblocked `parallel-safe` slices in the same turn before waiting. Keep `sequential` slices in order. If returned evidence changes dependencies, update or request an updated plan before dispatching affected work.
 
-A plan must state:
-- intended end-state behavior and user-visible result
-- goal and acceptance criteria
-- in scope, out of scope, constraints, assumptions, and user-owned decisions
-- evidence used and evidence still missing
-- files or modules to change and interfaces each slice consumes or produces
-- design notes that constrain implementation
-- slices marked `sequential`, `parallel-safe`, or `blocked`
-- stop conditions and verification commands
-- automatic verification, reviewer, and single final appsec gates using risk tiers P0 through P3
-- risks and deferred follow-up
-
-Classify uncertainty before planning around it: known evidence, local evidence you inspected, researcher-owned evidence, user decision, spike question, or safe assumption. Ask the user only for product behavior, compatibility promises, risk appetite, approval, budget, or irreversible tradeoffs. If an ambiguity affects only a later slice, mark that slice `blocked` and continue planning independent slices.
-
-Dispatch one researcher per bounded evidence unit when the answer can change scope, interfaces, ordering, tests, risks, or blockers. Each researcher brief must include the exact source scope, evidence acceptance, enough-evidence condition, and return fields. If one research answer can change another question, run the research sequentially. If the missing evidence blocks planning, stop after dispatch until results return.
-
-Prefer vertical, independently verifiable slices. Mark build slices `parallel-safe` only when files/modules are separate, no output dependency exists, and no shared schema, config, public API, migration, or global behavior changes. Mark shared abstractions, schemas, migrations, public APIs, and broad refactors as `sequential`. Dispatch reviewers only at coherent boundaries defined by the plan. Dispatch appsec once after all implementation, automatic verification, review, and fixes are complete.
-
-For behavior changes and bug fixes, plan TDD-first when practical: failing test or exact repro, minimal green implementation, safe refactor, and focused verification. Account for core automatic verification after acceptance-relevant builder runs, add reviewer gates at coherent plan boundaries, and add exactly one appsec gate at the end of the plan.
-
-Before treating a production plan as ready, validate requirement coverage, interface consistency, dependency markers, research citations, scope boundaries, stop conditions, verification paths, risks, and blockers. Remove placeholders such as TBD, TODO, “handle edge cases,” or “write tests” unless they name exact files, behavior, and commands.
-
-## Planning and dependency markers
-
-Plans may mark work as:
-- `sequential` — run after prior dependency
-- `parallel-safe` — can run with other non-overlapping work
-- `blocked` — needs answer, decision, evidence, or artifact first
-
-Dispatch rules:
-- run `sequential` work in order
-- dispatch all currently unblocked `parallel-safe` slices in the same turn before waiting
-- keep each research dispatch to one bounded question even when several researchers run in parallel
-- run checkers after the relevant work exists
-- resolve `blocked` work before dispatching it
-- keep WIP small; concurrency is useful only when scopes are truly independent
-
-Marker updates:
-- update `PLAN.md` markers as subagent results, user answers, or artifact changes remove blockers; builders may update assigned progress markers when explicitly scoped
-- change `blocked` to `sequential` or `parallel-safe` when the missing decision/evidence/artifact is available
-- change `parallel-safe` to `sequential` if new dependency or file overlap appears
-- ask the user when a blocker needs a decision
+Do not convert blocked work into implementation work in the orchestrator session. Resolve the blocker first.
 
 ## Research, spike, and build decisions
 

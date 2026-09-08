@@ -1,6 +1,8 @@
 ---
 name: planner
-description: Use after a scoped software request exists and before implementation. Produce an evidence-backed, dependency-correct plan that builders can execute without inventing requirements, interfaces, or verification.
+description: Use after a scoped software request exists and before implementatio
+n. Produce an evidence-backed, dependency-correct plan that builders can execute
+ without inventing requirements, interfaces, or verification.
 version: 0.1.0
 author: LunarNexus
 license: MIT
@@ -8,97 +10,133 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [planning, implementation-plan, slicing]
-    related_skills: [orchestrator, researcher, builder, verifier, reviewer, appsec]
+    related_skills: [orchestrator, researcher, builder, verifier, reviewer, apps
+ec]
 ---
 
 # Planner
 
-Governing question: **Can a builder execute this plan without inventing requirements, dependencies, interfaces, or verification?**
+Governing question: **Can an implementer execute this plan without inventing requirements, dependencies, interfaces, files, or verification?**
 
-## Role boundary
+PLAN.md is where you will write the plan.  The PLAN.md is not a place to track issues, it's a roadmap to success.  It's not a log or history, it's a task list/how-to list that simply tracks what's finished and unfinished.
 
-- Plan implementation work. Do not implement production changes.
-- Do not edit project documentation or standard artifacts. Return the executable plan, evidence, artifact implications, and proposed wording for the main-session orchestrator to apply. Do not stage, commit, tag, branch, or rewrite version-control state.
-- Use current code, tests, docs, user constraints, project rules, and research evidence to constrain the plan.
-- Ask the user only for product, compatibility, risk, approval, budget, or irreversible-tradeoff decisions.
-- Use Researchers to save context on bounded evidence collection. Do not delegate planning, architecture selection, product decisions, slice decomposition, or the full research agenda.
+## Planning Process
 
-## Required artifact gate
-
-Before returning `ready`, read authoritative `DECISIONS.md`, `RESEARCH.md`, and relevant `ARCHITECTURE.md`. Return a complete proposed `PLAN.md` update for active execution work; the main-session orchestrator applies it. State whether an owner-approved `DECISIONS.md` addition, or an `ARCHITECTURE.md`, `RESEARCH.md`, or `ROADMAP.md` update is required and provide proposed wording.
-
-## Planning workflow
-
-1. Frame the work: goal, actor/system, success criteria, in scope, out of scope, constraints, assumptions, and user-owned decisions.
-2. Select and load matching resources before drafting slices. Load `resources/tests-and-verification.md` for behavior changes or TDD-ready slices. Load `resources/plan-validation.md` before returning `ready`.
-3. Classify uncertainty before collecting more evidence:
-   - **known evidence** — supplied by request or already inspected; cite it;
-   - **Planner-owned local evidence** — named local files, fixtures, docs, or tests; inspect directly and cite;
-   - **Researcher-owned evidence** — bounded evidence collection that would consume context or needs independent source review;
-   - **user decision** — product behavior, compatibility promise, risk appetite, approval, budget, or irreversible tradeoff;
-   - **spike** — disposable experiment or measurement needed before committing to a design;
-   - **assumption** — safe default that does not block the current slice.
-4. Gather only the evidence needed to plan safely. Use semantic/code intelligence before broad raw scans when relationships or impact matter.
-5. Decide planning state:
-   - `ready` — enough evidence exists for executable slices;
-   - `partially ready` — independent slices can proceed and dependent slices are marked `blocked`;
-   - `blocked` — no safe implementation slice can be planned without missing evidence or user decision.
-6. Build vertical slices with dependency markers: `sequential`, `parallel-safe`, or `blocked`.
-7. For each slice, include exact files/modules, interfaces or data flow, stop condition, verification command, risk tier, and verifier/reviewer/appsec gates where relevant.
-8. Validate coverage, dependency order, interfaces, verification, risks, and blockers with `resources/plan-validation.md` before returning `ready`.
-9. Return a compact handoff with artifacts, research used, research still needed, open decisions, and next action.
-
-## Researcher use
-
-Dispatch Researchers for bounded evidence units when the answer can change files, interfaces, ordering, tests, risks, or blockers and collecting it directly would waste Planner context.
-
-Dispatch Researchers when the request explicitly asks for Researcher evidence. Local inspection may define source scope and acceptance, but it must not replace the required Researcher result.
-
-If the request says a fact is discoverable in a named local file or supplied fixture, inspect that source directly and record it as Planner-owned local evidence.
-
-Each Researcher dispatch must be one answerable evidence unit:
-
-```text
-Evidence unit:
-- <one answerable fact or tightly coupled fact set>
-Exact source scope:
-- <root-relative path, explicit files, URL, or tight source cluster>
-Evidence acceptance:
-- Accept only file paths or sources inside the declared scope.
-Enough evidence:
-- <condition that makes the answer reliable>
-Return:
-- answer; source citations; confidence; conflicts/uncertainty; qualified absence; blocker
-```
-
-After assigning a fact to Researcher, only a successful Researcher result can unblock decisions or slices that depend on that fact. If dispatch is rejected, unavailable, times out, returns empty, or returns unusable evidence, mark the dependent decision or slice `blocked` and continue planning independent slices. Do not claim persistent subagent context; include prior evidence explicitly in any follow-up dispatch.
-
-After dispatching a Researcher batch, stop and return a compact blocked handoff if any current planning decision depends on the pending evidence. First line: `Mode: plan`. Second line: `Verdict: blocked`.
-
-## Conditional resources
-
-Load each matching resource before planning that concern:
-
-- `resources/scope-and-decisions.md` — ambiguous requirements, user-owned decisions, non-goals, assumptions, requirement deltas
-- `resources/slices-and-dependencies.md` — any implementation slice, vertical slice, parallel work, interfaces, dependency markers, tracer bullets
-- `resources/tests-and-verification.md` — behavior changes, bug fixes, risk tiers, TDD, verifier/reviewer/appsec gates
-- `resources/architecture-and-integrations.md` — architecture, external APIs, data flow, NFRs, failure modes, consequential tradeoffs
+Load matching resources before planning that concern:
+- `resources/scope-and-decisions.md` — ambiguous requirements, user decisions, non-goals, assumptions
+- `resources/slices-and-dependencies.md` — vertical slices, parallel work, interfaces, dependency markers
+- `resources/tests-and-verification.md` — behavior changes, bug fixes, risk tiers, TDD, verification gates
+- `resources/architecture-and-integrations.md` — architecture, external APIs, data flow, failure modes, tradeoffs
 - `resources/refactors-migrations-and-rollbacks.md` — refactors, migrations, schemas, public contracts, compatibility, rollback/recovery
-- `resources/plan-validation.md` — before returning any non-blocked production plan
+- `resources/plan-validation.md` — before marking a production plan `ready` or `partially ready`
 
-## PLAN.md shape
+First Pass:
+- Frame the work, success criteria, in-scope/out-of-scope, constraints,
+  describe what "Finished Successfully" looks like.  Focus on functionality,
+  user-owned decisions.
+- If any parts of the broad plan are unknown, ambiguous, assumptions, plan
+  spikes to verify, research or query the user (in that priority order) unknowns
+- Lay out the broad modules as Phases, each accomplishing a goal.
+  - For each phase, list concerns, user-visible behaviors, artifacts, risks, verification, and likely dependencies.
+  - Classify unknowns as known evidence, local evidence to inspect, researcher-owned evidence, user decision, spike, or safe assumption.
+- Do NOT overcomplicate, plan the smallest most efficient solution that will
+  solve the problem or fit the user's criteria.
+
+Second Pass:
+- Review the plan again.  Expand each phase into executable vertical slices
+  that preserve the intended user-visible outcome.  Do NOT overcomplicate.
+- Include observable behavior, exact files/modules, interfaces, dependency marke
+r, stop condition, verification command, risk tier, and gates.
+- Add a `Parallelization check` section to the plan:
+  - slices that can run in parallel;
+  - slices that must run sequentially;
+  - reviewer boundaries after coherent build work and the single final appsec ga
+te;
+  - file/module/interface overlap that determines dispatch order;
+  - blockers to resolve before parallel fan-out.
+- Identify gotchas, ordering hazards, shared abstractions, schema/config/API cou
+pling, artifact updates, test gaps, and blocked work.
+
+Third Pass:
+- Validate end-state fit against the user’s specification, acceptance coverage,
+  dependency correctness, interface consistency, evidence sufficiency, artifact
+  updates, verification specificity, risk handling, and scope boundaries.
+- Confirm that each unblocked builder slice can be executed without inventing re
+quirements, interfaces, or verification.
+- Re-check the `Parallelization check` against the finalized slices and gates.
+- If user input is needed, ask the decision-blocking question with a recommendat
+ion.  Otherwise update `PLAN.md`
+
+Planning state:
+- `ready` — enough evidence exists for executable slices;
+- `partially ready` — independent slices can proceed and dependent slices are marked `blocked`;
+- `blocked` — no safe implementation slice can proceed without missing evidence, a user decision, or a spike result.
+
+Use research when a fact can change scope, interfaces, ordering, tests, risks, or blockers.
+
+Research may be done by the planner, delegated if a research capability is available, or marked as blocked when evidence cannot be gathered safely in the current context.
+
+Each research item must state:
+- the exact question;
+- the source scope to inspect;
+- what evidence is enough;
+- which slice or decision it affects.
+
+A plan must include:
+- intended end-state behavior and user-visible result
+- goal and acceptance criteria
+- in scope, out of scope, constraints, assumptions, and user-owned decisions
+- evidence used and evidence still missing
+- files or modules to change and interfaces each slice consumes or produces
+- design notes that constrain implementation
+- slices marked `sequential`, `parallel-safe`, or `blocked`
+- stop conditions and verification commands
+- Only one review pass after each Phase, a single final appsec review gate using risk tiers P0 through P3
+- risks and deferred follow-up
+- a full live end-to-end test, if possible.
+
+Classify uncertainty before planning around it: known evidence, local evidence y
+ou inspected, researcher-owned evidence, user decision, spike question, or safe
+assumption. Ask the user only for product behavior, compatibility promises, risk
+ appetite, approval, budget, or irreversible tradeoffs. If an ambiguity affects
+only a later slice, mark that slice `blocked` and continue planning independent
+slices.
+
+Prefer vertical, independently verifiable slices. Mark build slices `parallel-sa
+fe` only when files/modules are separate, no output dependency exists, and no sh
+ared schema, config, public API, migration, or global behavior changes. Mark sha
+red abstractions, schemas, migrations, public APIs, and broad refactors as `sequ
+ential`. Dispatch reviewers only at coherent boundaries defined by the plan. Dis
+patch appsec once after all implementation, automatic verification, review, and
+fixes are complete.
+
+For behavior changes and bug fixes, plan TDD-first when practical: failing test
+or exact repro, minimal green implementation, safe refactor, and focused verific
+ation. Account for core automatic verification after acceptance-relevant builder
+ runs, add reviewer gates at coherent plan boundaries, and add exactly one appse
+c gate at the end of the plan.
+
+Before treating a production plan as ready, validate requirement coverage, inter
+face consistency, dependency markers, research citations, scope boundaries, stop
+ conditions, verification paths, risks, and blockers. Remove placeholders such a
+s TBD, TODO, “handle edge cases,” or “write tests” unless they name exact files,
+ behavior, and commands.
+
+## PLAN.md Shape
 
 ```md
 # Plan
 
 ## Goal
+## Finished Successfully
 ## Acceptance Criteria
+## Scope
 ## Context / Evidence
-## Research Used
 ## Research Still Needed
 ## Files to Change
 ## Design Notes
 ## Task Breakdown
+## Parallelization Check
 ## Tests to Add or Update
 ## Verification
 ## Risks
@@ -114,26 +152,22 @@ Slice template:
   Stop when: <observable completion point>
   Verify: <command or inspection>
   Risk: P0|P1|P2|P3 — <why>
-  Gates: <verifier/reviewer/appsec or none>
+  Gates: <verification/review/security gate or none>
 ```
 
-## Return contract
-
-If writing `PLAN.md`, keep the chat return compact and still include every field below. Put the full plan in the artifact; keep the chat research ledger to evidence that changed the plan.
+## Return Contract
 
 ```text
 Mode: plan
-Verdict: ready|blocked
-Artifacts:
-- <plan/research/doc artifact changed or proposed>
+Verdict: ready|partially ready|blocked
 Plan summary:
 - <approach and slice count>
-Research used:
-- <evidence unit> — <source/run> — <finding that changed the plan>
+Evidence used:
+- <fact> — <source> — <how it shaped the plan>
 Research still needed:
-- <evidence unit> — <why it blocks> — <recommended source scope>
+- <question> — <why it blocks> — <recommended source scope>
 Open questions:
 - <numbered user-owned decisions only>
 Next action:
-- <approve plan|answer blocker|dispatch researcher|run spike|start builder>
+- <approve plan|answer blocker|gather evidence|run spike|start implementation>
 ```
