@@ -1,4 +1,8 @@
-# Orchestra — Beta
+# Orchestra — Alpha
+
+* Orchestra is going back to Alpha version status.  Testing has shown major
+improvements in functionality, but that requires overhaul and workflow breaking
+changes.  Until the general workflow stabilizes, we're back in alpha.
 
 Orchestra is an agent-agnostic orchestration layer for dispatching focused
 subagents from the coding-agent harness you already use. I originally designed
