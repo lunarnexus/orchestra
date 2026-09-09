@@ -49,7 +49,7 @@ roles:
       researchers for facts, docs, web, and code evidence. Return concise plan findings
       and open questions.
     enabled_workflow_hint: Use planner for planning and sequencing.
-    disabled_workflow_hint: Main session handles planning and sequencing.
+    disabled_workflow_hint: Main session handles planning and sequencing, if PLAN.md is not current or doesn't exist, create it and follow the 3 pass planning process.
     enabled: false
     env:
       HINDSIGHT4PI_AUTO_RETAIN: '0'
