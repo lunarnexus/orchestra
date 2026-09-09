@@ -7,6 +7,13 @@ Orchestra roadmap items are split into:
 
 ## TODO
 
+1. [ ] Rework "/orch on" ochestrator skill injection.  Previously we used this
+   because of the limitations of Hermes, Opencode, Codex, etc., but there are
+   other ways to inject the skill.  Also needs a rework of what the skill
+   actually does.  We should confine to only workflow and dispatch rules.
+   This may require a rework of artifacts and PLAN.md.  May be better done
+   with a memory layer integration rathern than artifacts.  Testing needed.
+
 2. [ ] Setup an actual approval system for non-sandboxed harnesses.
        Passthrough approval probably requires RPC or and env var.  Research it.
 
