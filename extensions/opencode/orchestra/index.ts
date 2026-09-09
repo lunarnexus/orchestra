@@ -221,7 +221,7 @@ function buildOrchStatusCommand(ownerId: string | null, args: OrchStatusArgs): s
   validateOrchStatusArgs(args.action, args);
 
   if (args.action === "on" || args.action === "off") {
-    return ["orchestra", "_session-mode", "set", "--session-id", ownerId, "--mode", args.action === "on" ? "orchestrator" : "off", "--json"];
+    return ["orchestra", "_session-mode", "set", "--session-id", ownerId, "--mode", args.action === "on" ? "on" : "off", "--json"];
   }
 
   if (args.action === "status") {
@@ -777,14 +777,6 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
       }
       if (!output) {
         throw new Error(`orch_status ${statusArgs.action} returned no output.`);
-      }
-      if (statusArgs.action === "on" && rawSessionID) {
-        const payload = parseSessionModeTransitionPayload(result.stdout);
-        const effect = payload.effect;
-        if (effect?.inject_text) {
-          const sessionPrompt = getSessionPrompt(client);
-          await sessionPrompt({ path: { id: rawSessionID }, body: { parts: [{ type: "text", text: effect.inject_text }] } });
-        }
       }
       return output;
     },

@@ -145,7 +145,7 @@ def test_root_host_help_uses_generic_session_wording() -> None:
     config = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml")
 
     assert (
-        "/orch on                           Enable Orchestra tools or load the orchestrator skill"
+        "/orch on                           Enable Orchestra tools and SPSI guidance"
         in config.prompts.host_help
     )
     assert (
@@ -522,7 +522,6 @@ budget_trigger_label: Custom budget label.
 soft_timeout_block_reason: Custom soft timeout reason.
 session_mode_off_message: Custom off message.
 session_mode_on_message: Custom on message.
-session_mode_orchestrator_message: Custom orchestrator message.
 """.lstrip(),
         encoding="utf-8",
     )
@@ -552,7 +551,6 @@ session_mode_orchestrator_message: Custom orchestrator message.
     assert config.prompts.soft_timeout_block_reason == "Custom soft timeout reason."
     assert config.prompts.session_mode_off_message == "Custom off message."
     assert config.prompts.session_mode_on_message == "Custom on message."
-    assert config.prompts.session_mode_orchestrator_message == "Custom orchestrator message."
 
 
 def test_load_app_config_rejects_missing_prompt_values(tmp_path: Path) -> None:
@@ -584,7 +582,6 @@ budget_trigger_label: ok
 soft_timeout_block_reason: ok
 session_mode_off_message: ok
 session_mode_on_message: ok
-session_mode_orchestrator_message: ok
 """.lstrip(),
         encoding="utf-8",
     )
@@ -626,7 +623,6 @@ budget_trigger_label: ok
 soft_timeout_block_reason: ok
 session_mode_off_message: ok
 session_mode_on_message: ok
-session_mode_orchestrator_message: ok
 """.lstrip(),
         encoding="utf-8",
     )
@@ -789,6 +785,56 @@ def test_load_agent_catalog_accepts_explicit_empty_skills(tmp_path: Path) -> Non
     catalog = load_agent_catalog(path)
 
     assert catalog.roles["builder"].skills == ()
+
+
+def test_load_agent_catalog_accepts_skills_only_orchestrator_role(tmp_path: Path) -> None:
+    path = tmp_path / "agent-catalog.yaml"
+    path.write_text(
+        "harness_configs:\n"
+        "  pi:\n"
+        "    harness: pi\n"
+        "    command: [pi, -p, '{prompt}']\n"
+        "roles:\n"
+        "  orchestrator:\n"
+        "    skills: [orchestrator, planner]\n"
+        "  builder:\n"
+        "    harness_config: pi\n",
+        encoding="utf-8",
+    )
+
+    catalog = load_agent_catalog(path)
+
+    orchestrator = catalog.roles["orchestrator"]
+    assert orchestrator.skills == ("orchestrator", "planner")
+    assert orchestrator.enabled is False
+    assert orchestrator.harness == ""
+    assert orchestrator.command is None
+
+
+def test_load_agent_catalog_rejects_operational_orchestrator_role_keys(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "agent-catalog.yaml"
+    path.write_text(
+        "harness_configs:\n"
+        "  pi:\n"
+        "    harness: pi\n"
+        "    command: [pi, -p, '{prompt}']\n"
+        "roles:\n"
+        "  orchestrator:\n"
+        "    harness_config: pi\n"
+        "    skills: [orchestrator]\n"
+        "  builder:\n"
+        "    harness_config: pi\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ConfigError,
+        match="role 'orchestrator' uses unsupported keys: harness_config; "
+        "orchestrator role supports only skills",
+    ):
+        load_agent_catalog(path)
 
 
 def test_load_agent_catalog_rejects_legacy_worker_budget_key(tmp_path: Path) -> None:
@@ -1219,7 +1265,6 @@ REQUIRED_PROMPT_KEYS = (
     "soft_timeout_block_reason",
     "session_mode_off_message",
     "session_mode_on_message",
-    "session_mode_orchestrator_message",
 )
 
 

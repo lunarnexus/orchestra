@@ -6,12 +6,13 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from orchestra.context import CONTRACT_VERSION, AppContext
-from orchestra.host_text import DISPATCH_TIMEOUT_ERROR, render_orchestrator_skill_message
+from orchestra.host_text import DISPATCH_TIMEOUT_ERROR
 from orchestra.roles import format_tool_roles, format_tool_workflow
 from orchestra.session_mode import (
     default_main_session_mode,
     resolve_main_session_mode,
 )
+from orchestra.state import validate_main_session_mode
 
 
 @dataclass(frozen=True)
@@ -19,8 +20,6 @@ class HostActionEffect:
     display_text: str | None = None
     mode: str | None = None
     tools_enabled: bool | None = None
-    inject_text: str | None = None
-    trigger_turn: bool | None = None
     error: str | None = None
 
     def to_payload(self) -> dict[str, Any]:
@@ -130,7 +129,6 @@ def session_mode_payload(context: AppContext, session_id: str) -> HostActionPayl
         effect=HostActionEffect(
             mode=resolved_mode,
             tools_enabled=resolved_mode != "off",
-            trigger_turn=False,
         ),
     )
 
@@ -159,27 +157,19 @@ def session_mode_transition_payload(
     mode: str,
 ) -> HostActionPayload:
     prompts = context.config.prompts
-    if mode == "off":
-        display_text = prompts.session_mode_off_message
-        inject_text = None
-        trigger_turn = False
-    elif mode == "on":
-        display_text = prompts.session_mode_on_message
-        inject_text = None
-        trigger_turn = False
-    else:
-        display_text = prompts.session_mode_orchestrator_message
-        inject_text = render_orchestrator_skill_message()
-        trigger_turn = True
+    resolved_mode = validate_main_session_mode(mode)
+    display_text = (
+        prompts.session_mode_off_message
+        if resolved_mode == "off"
+        else prompts.session_mode_on_message
+    )
     return HostActionPayload(
         kind="main_session_state",
         ok=True,
         session_id=session_id,
         effect=HostActionEffect(
             display_text=display_text,
-            mode=mode,
-            tools_enabled=mode != "off",
-            inject_text=inject_text,
-            trigger_turn=trigger_turn,
+            mode=resolved_mode,
+            tools_enabled=resolved_mode != "off",
         ),
     )

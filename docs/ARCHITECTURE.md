@@ -56,8 +56,8 @@ installed. Structured orchestration mode is optional.
 
 ### Manual dispatch
 
-A user or main agent can dispatch a focused subagent directly without loading
-the main orchestrator skill. Manual dispatch is useful for individual research,
+A user or main agent can dispatch a focused subagent directly from hosts where
+Orchestra tools are active. Manual dispatch is useful for individual research,
 implementation, review, verification, or other bounded tasks.
 
 The CLI also supports manual and diagnostic operation through commands such as:
@@ -78,16 +78,22 @@ runtime identity from the host and do not ask the user or model to provide it.
 
 ### Skill-guided orchestration
 
-`/orch on` loads Orchestra's main-session orchestrator skill into the current
-session. The skill guides decomposition, dispatch, sequencing, approvals,
-artifact alignment, synthesis, and project-document ownership. It does not
-create the underlying dispatch capability.
+`/orch on` enables Orchestra tools and system-prompt-skill-injection (SPSI)
+for the current session. SPSI applies configured role skills as ephemeral
+request-time instruction material, not as persisted user or follow-up messages.
+For the main session, core uses the `orchestrator` role's configured `skills`
+from `agent-catalog.yaml`. For worker sessions, core resolves the
+`orchestra-worker-<run-id>` session id back to the run role and injects that
+role's configured skills. The orchestrator skill guides decomposition, dispatch,
+sequencing, approvals, artifact alignment, synthesis, and project-document
+ownership. SPSI does not create the underlying dispatch capability.
 
 A harness can load skills through its own native skill mechanism, including an
 orchestration skill. `/orch on|off` provides direct Orchestra session control:
 `/orch off` keeps orchestration guidance and dispatch behavior out of sessions
 where it would add unnecessary context or where work is too small to benefit.
-Exact tool-visibility behavior follows the stable APIs available in each host.
+Exact tool-visibility and SPSI placement behavior follows the stable
+non-persistent APIs available in each host.
 
 In the structured workflow, dispatch transfers the assigned scope to a
 subagent. The main session coordinates and synthesizes; it does not duplicate
@@ -241,10 +247,10 @@ model output, working directory, user identity, process ancestry, recency, or ho
 window.
 
 Core also stores main-session orchestration mode per session id. Runtime mode is
-`off`, `on`, or `orchestrator`; absent session-mode state resolves from
-`config.yaml` `tools_enabled_by_default`. Host adapters update this state through
-the internal `_session-mode` command when `/orch off`, `/orch on`, or
-orchestrator activation changes the session mode.
+`off` or `on`; absent session-mode state resolves from `config.yaml`
+`tools_enabled_by_default`. Other mode values fail validation with a clear core
+error. Host adapters update this state through the internal `_session-mode`
+command when `/orch off` or `/orch on` changes the session mode.
 
 Hermes context compression can create parent/child continuation sessions.
 Stored ownership remains exact. Read-only status and history may resolve known
@@ -539,7 +545,8 @@ ${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/orchestra/index.ts
 
 It provides native `/orch` commands, `orch_dispatch`, `orch_status`, rendered
 entries, notifications, footer/status UI, completions, session lifecycle hooks,
-and session-targeted auto-return. Runtime identity comes from
+SPSI through `before_agent_start` system-prompt modification, and
+session-targeted auto-return. Runtime identity comes from
 `ctx.sessionManager.getSessionId()`.
 
 Pi can enforce configured turn and soft-timeout budgets through host events. Its
@@ -554,8 +561,8 @@ plugin. Runtime identity comes from the plugin's runtime `session_id`.
 Hermes stores Orchestra runtime config with the selected or default Hermes
 profile. Consolidated reports use host-supported busy/idle delivery behavior.
 Hermes lacks stable public APIs for Pi-equivalent footer UI, rendered entries,
-dynamic completions, and non-prompt progress notifications, so those features
-are not emulated with model prompts.
+dynamic completions, non-prompt progress notifications, and verified
+non-persistent SPSI, so those features are not emulated with model prompts.
 
 ### OpenCode
 

@@ -27,10 +27,7 @@ STATUS_INCOMPLETE = "incomplete"
 
 MAIN_SESSION_MODE_OFF = "off"
 MAIN_SESSION_MODE_ON = "on"
-MAIN_SESSION_MODE_ORCHESTRATOR = "orchestrator"
-ALLOWED_MAIN_SESSION_MODES = frozenset(
-    {MAIN_SESSION_MODE_OFF, MAIN_SESSION_MODE_ON, MAIN_SESSION_MODE_ORCHESTRATOR}
-)
+ALLOWED_MAIN_SESSION_MODES = frozenset({MAIN_SESSION_MODE_OFF, MAIN_SESSION_MODE_ON})
 
 ACTIVE_STATUSES = frozenset({STATUS_QUEUED, STATUS_RUNNING})
 TERMINAL_STATUSES = frozenset({STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE})
@@ -479,7 +476,7 @@ class StateStore:
     def set_main_session_mode(self, session_id: str, mode: str) -> MainSessionState:
         if not session_id.strip():
             raise StateError("session_id must be a non-empty string")
-        _validate_main_session_mode(mode)
+        mode = validate_main_session_mode(mode)
         updated_at = utc_now()
         with self._connect() as connection:
             self._begin_immediate(connection, operation="set_main_session_mode")
@@ -1378,6 +1375,11 @@ def _optional_int(value: object) -> int | None:
 def _is_transient_sqlite_error(exc: sqlite3.OperationalError) -> bool:
     message = str(exc).lower()
     return "database is locked" in message or "database is busy" in message
+
+
+def validate_main_session_mode(mode: str) -> str:
+    _validate_main_session_mode(mode)
+    return mode
 
 
 def _validate_main_session_mode(mode: str) -> None:

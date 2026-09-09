@@ -9,6 +9,7 @@ from orchestra.state import (
     MAIN_SESSION_MODE_OFF,
     MAIN_SESSION_MODE_ON,
     MainSessionState,
+    validate_main_session_mode,
 )
 
 if TYPE_CHECKING:
@@ -40,7 +41,11 @@ def get_main_session_state(
     context: AppContext,
     session_id: str,
 ) -> MainSessionState | None:
-    return context.store.get_main_session_state(session_id)
+    state = context.store.get_main_session_state(session_id)
+    if state is None:
+        return None
+    validate_main_session_mode(state.main_session_mode)
+    return state
 
 
 def default_main_session_mode(context: AppContext) -> str:

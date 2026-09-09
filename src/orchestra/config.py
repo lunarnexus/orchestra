@@ -23,6 +23,7 @@ DEFAULT_AUTO_RETURN = True
 DEFAULT_AUTO_VERIFY = False
 DEFAULT_TOOLS_ENABLED_BY_DEFAULT = True
 DEFAULT_ROLE_NAME = "builder"
+ORCHESTRATOR_ROLE_NAME = "orchestrator"
 SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 RESERVED_ENV_PREFIXES = ("ORCHESTRA_",)
@@ -65,7 +66,6 @@ class PromptConfig:
     soft_timeout_block_reason: str
     session_mode_off_message: str
     session_mode_on_message: str
-    session_mode_orchestrator_message: str
 
 
 @dataclass(frozen=True)
@@ -284,9 +284,6 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
         session_mode_on_message=_get_required_prompt_string(
             prompts_raw, "session_mode_on_message"
         ),
-        session_mode_orchestrator_message=_get_required_prompt_string(
-            prompts_raw, "session_mode_orchestrator_message"
-        ),
     )
 
     return AppConfig(
@@ -478,9 +475,6 @@ def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> App
         session_mode_on_message=_get_required_prompt_string(
             prompts_raw, "session_mode_on_message"
         ),
-        session_mode_orchestrator_message=_get_required_prompt_string(
-            prompts_raw, "session_mode_orchestrator_message"
-        ),
     )
     return AppConfig(
         state_dir=state_dir,
@@ -555,6 +549,21 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
             raise ConfigError("role names must be non-empty strings")
         if not isinstance(role_raw, dict):
             raise ConfigError(f"role '{role_name}' must be a mapping")
+
+        if role_name == ORCHESTRATOR_ROLE_NAME:
+            _validate_orchestrator_role_keys(role_raw, role_name)
+            roles[role_name] = RoleConfig(
+                enabled=False,
+                skills=tuple(
+                    _get_optional_skill_names(
+                        role_raw,
+                        "skills",
+                        context=f"role '{role_name}'",
+                    )
+                    or []
+                ),
+            )
+            continue
 
         _validate_role_keys(role_raw, role_name, uses_harness_configs=bool(harness_configs))
 
@@ -845,6 +854,17 @@ def _get_optional_positive_int_or_none(data: dict[str, Any], key: str) -> int | 
 
 def _get_optional_nested_dispatch_depth(data: dict[str, Any]) -> int | None:
     return _get_optional_positive_int_or_none(data, "nested_dispatch_depth")
+
+
+def _validate_orchestrator_role_keys(data: dict[str, Any], role_name: str) -> None:
+    allowed_keys = {"skills"}
+    unknown_keys = sorted(set(data) - allowed_keys)
+    if unknown_keys:
+        joined = ", ".join(unknown_keys)
+        raise ConfigError(
+            f"role '{role_name}' uses unsupported keys: {joined}; "
+            "orchestrator role supports only skills"
+        )
 
 
 def _validate_role_keys(

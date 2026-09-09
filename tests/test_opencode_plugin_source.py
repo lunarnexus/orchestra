@@ -46,7 +46,7 @@ def test_opencode_plugin_routes_orch_status_actions_and_role_settings() -> None:
     assert 'if (args.action === "on" || args.action === "off") {' in source
     assert (
         '["orchestra", "_session-mode", "set", "--session-id", ownerId, "--mode", '
-        'args.action === "on" ? "orchestrator" : "off", "--json"]'
+        'args.action === "on" ? "on" : "off", "--json"]'
         in source
     )
     assert '["orchestra", "status", "--session-id", ownerId]' in source
@@ -69,9 +69,8 @@ def test_opencode_plugin_routes_orch_status_actions_and_role_settings() -> None:
     assert 'runId is required for orch_status stop.' in source
     assert 'limit is only accepted for orch_status history.' not in source
     assert 'role, setting, and value are only accepted for orch_status roles.' not in source
-    assert 'if (statusArgs.action === "on" && rawSessionID) {' in source
-    assert 'const sessionPrompt = getSessionPrompt(client);' in source
-    assert 'effect?.inject_text' in source
+    assert 'if (statusArgs.action === "on" && rawSessionID) {' not in source
+    assert 'effect?.inject_text' not in source
 
 
 def test_opencode_plugin_ignores_irrelevant_orch_status_optional_fields() -> None:

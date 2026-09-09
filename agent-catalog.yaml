@@ -36,6 +36,10 @@ harness_configs:
     - '{model}'
     - '{prompt}'
 roles:
+  orchestrator:
+    skills:
+    - orchestrator
+    - planner
   planner:
     harness_config: pi
     model: openai-codex/gpt-5.5
