@@ -46,6 +46,7 @@ class PromptConfig:
     tool_prompt_snippet: str
     tool_prompt_guidelines: tuple[str, ...]
     tool_goal_description: str
+    tool_additional_context_description: str
     tool_role_description: str
     tool_task_label_description: str
     main_session_ownership_guidance: str
@@ -234,6 +235,9 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
             prompts_raw, "tool_prompt_guidelines"
         ),
         tool_goal_description=_get_required_prompt_string(prompts_raw, "tool_goal_description"),
+        tool_additional_context_description=_get_required_prompt_string(
+            prompts_raw, "tool_additional_context_description"
+        ),
         tool_role_description=_get_required_prompt_string(prompts_raw, "tool_role_description"),
         tool_task_label_description=_get_required_prompt_string(
             prompts_raw, "tool_task_label_description"
@@ -427,6 +431,9 @@ def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> App
             prompts_raw, "tool_prompt_guidelines"
         ),
         tool_goal_description=_get_required_prompt_string(prompts_raw, "tool_goal_description"),
+        tool_additional_context_description=_get_required_prompt_string(
+            prompts_raw, "tool_additional_context_description"
+        ),
         tool_role_description=_get_required_prompt_string(prompts_raw, "tool_role_description"),
         tool_task_label_description=_get_required_prompt_string(
             prompts_raw, "tool_task_label_description"

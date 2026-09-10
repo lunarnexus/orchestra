@@ -30,7 +30,7 @@ Load matching resources before planning that concern:
 - `resources/refactors-migrations-and-rollbacks.md` — refactors, migrations, schemas, public contracts, compatibility, rollback/recovery
 - `resources/plan-validation.md` — before marking a production plan `ready` or `partially ready`
 
-First Pass:
+First Pass — frame the plan:
 - Frame the work, success criteria, in-scope/out-of-scope, constraints,
   describe what "Finished Successfully" looks like.  Focus on functionality,
   user-owned decisions.
@@ -43,11 +43,10 @@ First Pass:
   solve the problem or fit the user's criteria.
 - Before planning for, or leaving legacy compatability, obtain approval from the user.
 
-Second Pass:
-- Review the plan again.  Expand each phase into executable vertical slices
-  that preserve the intended user-visible outcome.  Do NOT overcomplicate.
-- Include observable behavior, exact files/modules, interfaces, dependency marke
-r, stop condition, verification command, risk tier, and gates.
+Second Pass — fill in executable slices:
+- Review the plan again. Expand each phase into executable vertical slices
+  that preserve the intended user-visible outcome. Do NOT overcomplicate.
+- Each slice must include a stable reference such as `PLAN.md Slice N`, exact scope, boundaries/out-of-scope, acceptance or stop condition, verification command, risk tier, and gates.
 - Add a `Parallelization check` section to the plan:
   - slices that can run in parallel;
   - slices that must run sequentially;
@@ -59,7 +58,7 @@ te;
 pling, artifact updates, test gaps, and blocked work.
 - Do NOT overcomplicate, plan the smallest most efficient solution that will fit user criteria, do NOT invent complexity.
 
-Third Pass:
+Third Pass — refine and simplify:
 - Validate end-state fit against the user’s specification, acceptance coverage,
   dependency correctness, interface consistency, evidence sufficiency, artifact
   updates, verification specificity, risk handling, and scope boundaries.
@@ -69,6 +68,8 @@ quirements, interfaces, or verification.
 - If user input is needed, ask the decision-blocking question with a recommendat
 ion.  Otherwise update `PLAN.md`
 - Do NOT overcomplicate, plan the smallest most efficient solution that will fit user criteria, do NOT invent complexity.
+
+The three passes create one unified plan: frame it, fill in executable slice details, then refine and simplify it. Do not dump three duplicate plans into `PLAN.md`.
 
 Planning state:
 - `ready` — enough evidence exists for executable slices;
@@ -150,9 +151,11 @@ Slice template:
 
 ```md
 - [ ] Slice N — sequential|parallel-safe|blocked — <narrow goal>
+  Reference: PLAN.md Slice N
   Scope: <exact files/modules/behavior>
+  Boundaries: <out-of-scope limits for this slice>
   Interfaces: <inputs/outputs/functions/contracts, when relevant>
-  Stop when: <observable completion point>
+  Stop when: <observable acceptance point>
   Verify: <command or inspection>
   Risk: P0|P1|P2|P3 — <why>
   Gates: <verification/review/security gate or none>

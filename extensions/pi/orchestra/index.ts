@@ -366,6 +366,7 @@ interface OrchestraOutputEntry {
 
 interface DispatchParams {
   goal?: string;
+  additionalContext?: string;
   role?: string;
   timeout?: number;
   taskLabel?: string;
@@ -396,6 +397,7 @@ function toolTextResult(text: string, isError = false): PiTextToolResult {
 interface ToolInfoPayload {
   description: string;
   goalDescription: string;
+  additionalContextDescription: string;
   roleDescription: string;
   taskLabelDescription: string;
   statusDescription: string;
@@ -852,6 +854,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       goal,
       "--json",
     ];
+    const additionalContext = params.additionalContext?.trim();
+    if (additionalContext) {
+      command.push("--additional-context", additionalContext);
+    }
     const requestedRole = params.role?.trim();
     if (requestedRole) {
       command.push("--role", requestedRole);
@@ -1464,6 +1470,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       description: toolInfo.description,
       parameters: Type.Object({
         goal: Type.String({ description: toolInfo.goalDescription }),
+        additionalContext: Type.Optional(Type.String({ description: toolInfo.additionalContextDescription })),
         role: Type.Optional(Type.String({ description: toolInfo.roleDescription })),
         taskLabel: Type.Optional(Type.String({ description: toolInfo.taskLabelDescription })),
       }),

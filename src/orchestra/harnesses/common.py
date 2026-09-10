@@ -69,17 +69,11 @@ def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:
     sections = [
         f"Role: {request.role_name}",
     ]
-    if role.skills:
-        sections.append(
-            "Role skills: "
-            + ", ".join(role.skills)
-            + "\nSkill instructions are delivered through SPSI."
-        )
     sections.append(f"Goal: {request.goal.strip()}")
     if role.dispatch_hint:
         sections.append(f"Role instructions: {role.dispatch_hint.strip()}")
-    if request.approved_context.strip():
-        sections.append(f"Approved context: {request.approved_context.strip()}")
+    if request.additional_context.strip():
+        sections.append(f"Additional context: {request.additional_context.strip()}")
     if request.boundaries.strip():
         sections.append(f"Out of scope: {request.boundaries.strip()}")
     if request.acceptance_target.strip():

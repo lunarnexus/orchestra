@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 
 type OrchDispatchArgs = {
   goal: string;
+  additionalContext?: string;
   role?: string;
   taskLabel?: string;
 };
@@ -31,6 +32,7 @@ type ToolInfoPayload = {
   promptSnippet: string;
   promptGuidelines: string[];
   goalDescription: string;
+  additionalContextDescription: string;
   roleDescription: string;
   taskLabelDescription: string;
   statusDescription: string;
@@ -166,6 +168,10 @@ function rejectOrchDispatchOverrides(args: Record<string, unknown>, toolInfo: To
 
 function buildOrchestraDoCommand(ownerId: string, args: OrchDispatchArgs): string[] {
   const command = ["orchestra", "do", "--session-id", ownerId, "--goal", args.goal.trim()];
+  const additionalContext = args.additionalContext?.trim();
+  if (additionalContext) {
+    command.push("--additional-context", additionalContext);
+  }
   const role = args.role?.trim();
   if (role) {
     command.push("--role", role);
@@ -798,6 +804,7 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
         description: toolInfo.description,
         args: {
           goal: tool.schema.string().describe(toolInfo.goalDescription),
+          additionalContext: tool.schema.string().optional().describe(toolInfo.additionalContextDescription),
           role: tool.schema.string().optional().describe(toolInfo.roleDescription),
           taskLabel: tool.schema.string().optional().describe(toolInfo.taskLabelDescription),
         },

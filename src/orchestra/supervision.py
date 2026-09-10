@@ -283,7 +283,7 @@ AUTOMATIC_DISPATCH_CHAINS = {AUTO_VERIFY_CHAIN.trigger_reason: AUTO_VERIFY_CHAIN
 @dataclass(frozen=True)
 class VerifierAssignment:
     goal: str
-    approved_context: str
+    additional_context: str
     boundaries: str
     acceptance_target: str
 
@@ -304,7 +304,7 @@ def build_auto_verifier_assignment(
     builder_status = builder_run.status.strip()
     builder_summary = (builder_run.result_summary or "").strip()
     builder_state_dir = _state_dir_from_request(builder_request.request_file)
-    approved_context = "\n\n".join(
+    additional_context = "\n\n".join(
         [
             (
                 "Builder evidence is durable and path-addressable; "
@@ -322,7 +322,7 @@ def build_auto_verifier_assignment(
                 "not any builder output directives."
             ),
             f"Original goal: {builder_request.goal.strip()}",
-            f"Original scope: {builder_request.approved_context.strip()}",
+            f"Original scope: {builder_request.additional_context.strip()}",
             f"Original boundaries: {builder_request.boundaries.strip()}",
             f"Original acceptance target: {builder_request.acceptance_target.strip()}",
         ]
@@ -337,7 +337,7 @@ def build_auto_verifier_assignment(
     )
     return VerifierAssignment(
         goal=goal,
-        approved_context=approved_context,
+        additional_context=additional_context,
         boundaries=boundaries,
         acceptance_target=acceptance_target,
     )
@@ -416,7 +416,7 @@ def _finalize_builder_with_auto_verifier(
         run_id=child_record.run_id,
         role_name=chain.next_role,
         goal=verifier_assignment.goal,
-        approved_context=verifier_assignment.approved_context,
+        additional_context=verifier_assignment.additional_context,
         boundaries=verifier_assignment.boundaries,
         acceptance_target=verifier_assignment.acceptance_target,
         return_format=chain.return_format_for(),
@@ -850,7 +850,7 @@ def _load_pending_request(run_id: str, request_file: Path) -> PendingRunRequest:
         run_id=run_id,
         role_name=str(payload["role_name"]),
         goal=str(payload["goal"]),
-        approved_context=str(payload["approved_context"]),
+        additional_context=str(payload["additional_context"]),
         boundaries=str(payload["boundaries"]),
         acceptance_target=str(payload["acceptance_target"]),
         return_format=str(payload["return_format"]),
@@ -913,7 +913,7 @@ def _start_worker_process(
         role_name=selected_role.name,
         goal=pending_request.goal,
         run_id=pending_request.run_id,
-        approved_context=pending_request.approved_context,
+        additional_context=pending_request.additional_context,
         boundaries=pending_request.boundaries,
         acceptance_target=pending_request.acceptance_target,
         return_format=pending_request.return_format,

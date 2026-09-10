@@ -220,7 +220,7 @@ OpenCode should follow best host-supported parity rather than copying Pi APIs di
 Hermes should follow best host-supported parity rather than copying Pi APIs directly:
 
 - Use the Hermes runtime session id from host context and normalize it as `hermes:<session-id>`.
-- Register `orch_dispatch(goal, role?, taskLabel?)` and `orch_status(action, limit?, runId?, role?, setting?, value?)` through Hermes model-callable tools.
+- Register `orch_dispatch(goal, additionalContext?, role?, taskLabel?)` and `orch_status(action, limit?, runId?, role?, setting?, value?)` through Hermes model-callable tools.
 - Register native `/orch help|on|off|do|roles|status|stop|doctor|history` through the Hermes command surface.
 - Keep model-callable dispatch timeout-disabled while allowing manual `/orch do --timeout` on the native command surface.
 - Use `_tool-info`, `_dispatch-ack`, `_await-session-report`, and `_mark-session-report-delivered` from core rather than embedding host-local copies of shared wording or report handling.

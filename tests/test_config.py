@@ -502,6 +502,7 @@ tool_prompt_snippet: Custom prompt snippet.
 tool_prompt_guidelines:
   - Custom guideline.
 tool_goal_description: Custom goal.
+tool_additional_context_description: Custom additional context.
 tool_role_description: Custom role.
 tool_task_label_description: Custom label.
 main_session_ownership_guidance: Custom main-session guidance.
@@ -535,6 +536,7 @@ session_mode_on_message: Custom on message.
     assert config.prompts.tool_prompt_snippet == "Custom prompt snippet."
     assert config.prompts.tool_prompt_guidelines == ("Custom guideline.",)
     assert config.prompts.tool_goal_description == "Custom goal."
+    assert config.prompts.tool_additional_context_description == "Custom additional context."
     assert config.prompts.tool_role_description == "Custom role."
     assert config.prompts.tool_task_label_description == "Custom label."
     assert config.prompts.host_help == "Custom help {roles}"
@@ -562,6 +564,7 @@ def test_load_app_config_rejects_missing_prompt_values(tmp_path: Path) -> None:
 default_return_format: ok
 tool_description: ok
 tool_goal_description: ok
+tool_additional_context_description: ok
 tool_role_description: ok
 tool_task_label_description: ok
 main_session_ownership_guidance: ok
@@ -603,6 +606,7 @@ tool_description: ok
 tool_prompt_snippet: ''
 tool_prompt_guidelines: []
 tool_goal_description: ok
+tool_additional_context_description: ok
 tool_role_description: ok
 tool_task_label_description: ok
 main_session_ownership_guidance: ok
@@ -644,6 +648,7 @@ tool_description: ok
 tool_prompt_snippet: 1
 tool_prompt_guidelines: ok
 tool_goal_description: ok
+tool_additional_context_description: ok
 tool_role_description: ok
 tool_task_label_description: ok
 main_session_ownership_guidance: ok
@@ -672,6 +677,7 @@ tool_description: ok
 tool_prompt_snippet: ok
 tool_prompt_guidelines: ok
 tool_goal_description: ok
+tool_additional_context_description: ok
 tool_role_description: ok
 tool_task_label_description: ok
 main_session_ownership_guidance: ok

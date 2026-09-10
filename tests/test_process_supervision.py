@@ -375,7 +375,7 @@ def test_start_run_reconciles_stale_running_model_slot_before_reserve(
         session_id="manual:stale-model",
         role_name=None,
         goal="new work",
-        approved_context="",
+        additional_context="",
         boundaries="",
         acceptance_target="",
         return_format="summary",

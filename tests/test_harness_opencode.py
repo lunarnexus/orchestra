@@ -20,7 +20,7 @@ def worker_request(tmp_path: Path) -> WorkerRequest:
     return WorkerRequest(
         role_name="worker",
         goal="Investigate the current implementation.",
-        approved_context="Read the repo and summarize what matters.",
+        additional_context="Read the repo and summarize what matters.",
         boundaries="Do not edit files.",
         acceptance_target="Return a short status report.",
         timeout_seconds=30,
@@ -107,7 +107,7 @@ def test_opencode_harness_builds_scoped_prompt(worker_request: WorkerRequest) ->
     assert "Role: worker" in prompt
     assert "Goal: Investigate the current implementation." in prompt
     assert "Role instructions: Focus on the assigned task." in prompt
-    assert "Approved context: Read the repo and summarize what matters." in prompt
+    assert "Additional context: Read the repo and summarize what matters." in prompt
     assert "Out of scope: Do not edit files." in prompt
     assert "Acceptance target: Return a short status report." in prompt
 
@@ -127,7 +127,7 @@ def test_opencode_harness_keeps_hostile_goal_text_inside_one_argv_argument(
     request = WorkerRequest(
         role_name=worker_request.role_name,
         goal=goal,
-        approved_context=worker_request.approved_context,
+        additional_context=worker_request.additional_context,
         boundaries=worker_request.boundaries,
         acceptance_target=worker_request.acceptance_target,
         timeout_seconds=worker_request.timeout_seconds,
@@ -209,7 +209,7 @@ def test_opencode_harness_start_passes_process_group_flag(
     worker_request = WorkerRequest(
         role_name="worker",
         goal="smoke",
-        approved_context="",
+        additional_context="",
         boundaries="",
         acceptance_target="",
         timeout_seconds=30,

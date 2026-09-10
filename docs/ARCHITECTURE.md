@@ -283,6 +283,7 @@ APIs:
 The model-callable `orch_dispatch` contract accepts:
 
 - `goal`
+- optional `additionalContext`
 - optional `role`
 - optional `taskLabel`
 
@@ -300,17 +301,14 @@ not a copy or compaction of the parent conversation. The shared prompt renderer
 includes:
 
 - selected role
-- configured role skills
 - task goal
 - role-specific prompt addition
-- approved context
+- additional context
 - scope boundaries
 - acceptance target
 - expected compact return format
 
-Artifact-first handoff is preferred when task context is substantial. Read-only
-or file-disjoint independent slices can run in parallel; dependent or
-resource-overlapping work remains sequential.
+Artifact-first handoff is preferred: `additionalContext` should usually be a compact reference such as `PLAN.md Slice N`, where scope, boundaries, acceptance or stop condition, and verification live. Read-only or file-disjoint independent slices can run in parallel; dependent or resource-overlapping work remains sequential.
 
 ## Configuration
 

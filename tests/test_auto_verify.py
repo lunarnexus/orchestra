@@ -90,7 +90,7 @@ def _start_linked_run(
         session_id="manual:test",
         role_name=role_name,
         goal="Implement the parser fix",
-        approved_context="Work only in src/orchestra/parser.py",
+        additional_context="Work only in src/orchestra/parser.py",
         boundaries="Do not touch CLI or config files",
         acceptance_target="Parser handles empty input and preserves current behavior",
         return_format="Return a concise implementation report.",
@@ -389,7 +389,7 @@ def test_auto_verify_assignment_uses_trusted_metadata_only(
         run_id=builder_started.record.run_id,
         role_name="builder",
         goal="Implement the parser fix",
-        approved_context="Work only in src/orchestra/parser.py",
+        additional_context="Work only in src/orchestra/parser.py",
         boundaries="Do not touch CLI or config files",
         acceptance_target="Parser handles empty input and preserves current behavior",
         return_format="Return a concise implementation report.",
@@ -399,14 +399,14 @@ def test_auto_verify_assignment_uses_trusted_metadata_only(
     )
     assignment = build_auto_verifier_assignment(finalized, request)
 
-    assert "Builder run output from SQLite" not in assignment.approved_context
-    assert "Builder status: done" in assignment.approved_context
-    assert "Builder result summary: builder completed" in assignment.approved_context
-    assert "Builder run id: " + builder_started.record.run_id in assignment.approved_context
-    assert "builder artifact" not in assignment.approved_context
-    assert "Builder return path:" in assignment.approved_context
-    assert "Builder events path:" in assignment.approved_context
-    assert "Original goal: Implement the parser fix" in assignment.approved_context
+    assert "Builder run output from SQLite" not in assignment.additional_context
+    assert "Builder status: done" in assignment.additional_context
+    assert "Builder result summary: builder completed" in assignment.additional_context
+    assert "Builder run id: " + builder_started.record.run_id in assignment.additional_context
+    assert "builder artifact" not in assignment.additional_context
+    assert "Builder return path:" in assignment.additional_context
+    assert "Builder events path:" in assignment.additional_context
+    assert "Original goal: Implement the parser fix" in assignment.additional_context
 
 
 def test_auto_verify_dispatch_start_failure_is_reported(

@@ -30,7 +30,7 @@ def worker_request(tmp_path: Path) -> WorkerRequest:
     return WorkerRequest(
         role_name="worker",
         goal="Investigate the current implementation.",
-        approved_context="Read the repo and summarize what matters.",
+        additional_context="Read the repo and summarize what matters.",
         boundaries="Do not edit files.",
         acceptance_target="Return a short status report.",
         timeout_seconds=30,
@@ -95,7 +95,7 @@ def test_pi_harness_builds_scoped_prompt(worker_request: WorkerRequest) -> None:
     assert "Role: worker" in prompt
     assert "Goal: Investigate the current implementation." in prompt
     assert "Role instructions: Focus on the assigned task." in prompt
-    assert "Approved context: Read the repo and summarize what matters." in prompt
+    assert "Additional context: Read the repo and summarize what matters." in prompt
     assert "Out of scope: Do not edit files." in prompt
     assert "Acceptance target: Return a short status report." in prompt
     assert "Return format:" in prompt
@@ -117,7 +117,7 @@ def test_pi_harness_keeps_hostile_goal_text_inside_one_argv_argument(
     request = WorkerRequest(
         role_name=worker_request.role_name,
         goal=goal,
-        approved_context=worker_request.approved_context,
+        additional_context=worker_request.additional_context,
         boundaries=worker_request.boundaries,
         acceptance_target=worker_request.acceptance_target,
         timeout_seconds=worker_request.timeout_seconds,
@@ -134,7 +134,7 @@ def test_pi_harness_keeps_hostile_goal_text_inside_one_argv_argument(
     assert command[2] == command[-1]
 
 
-def test_pi_harness_references_role_skills_without_inlining_skill_body(
+def test_pi_harness_omits_role_skills_without_inlining_skill_body(
     worker_request: WorkerRequest,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -151,12 +151,11 @@ def test_pi_harness_references_role_skills_without_inlining_skill_body(
 
     prompt = PiHarness().build_prompt(worker_request, role)
 
-    assert "Role skills: code-reviewer" in prompt
-    assert "Skill instructions are delivered through SPSI." in prompt
+    assert "Role skills:" not in prompt
+    assert "Skill instructions are delivered through SPSI." not in prompt
     assert "# Code Reviewer" not in prompt
     assert f"Skill directory: {skill_dir}" not in prompt
     assert "Resolve relative resource paths against this directory." not in prompt
-    assert prompt.index("Role skills: code-reviewer") < prompt.index("Goal:")
 
 
 def test_pi_harness_does_not_inline_catalog_relative_role_skill(
@@ -188,8 +187,8 @@ def test_pi_harness_does_not_inline_catalog_relative_role_skill(
 
     prompt = PiHarness().build_prompt(request, role)
 
-    assert "Role skills: builder" in prompt
-    assert "Skill instructions are delivered through SPSI." in prompt
+    assert "Role skills:" not in prompt
+    assert "Skill instructions are delivered through SPSI." not in prompt
     assert "# Builder" not in prompt
     assert f"Skill directory: {skill_dir}" not in prompt
     assert "Resolve relative resource paths against this directory." not in prompt
@@ -214,8 +213,8 @@ def test_pi_harness_does_not_inline_native_skill_instruction(
 
     prompt = PiHarness().build_prompt(worker_request, role)
 
-    assert "Role skills: security-reviewer" in prompt
-    assert "Skill instructions are delivered through SPSI." in prompt
+    assert "Role skills:" not in prompt
+    assert "Skill instructions are delivered through SPSI." not in prompt
     assert "# Security Reviewer" not in prompt
     assert "Load the native skill named 'security-reviewer' before doing the task." not in prompt
 
@@ -408,7 +407,7 @@ def test_pi_harness_start_sets_orchestra_dispatch_budget_env_budget(
     worker_request = WorkerRequest(
         role_name=worker_request.role_name,
         goal=worker_request.goal,
-        approved_context=worker_request.approved_context,
+        additional_context=worker_request.additional_context,
         boundaries=worker_request.boundaries,
         acceptance_target=worker_request.acceptance_target,
         timeout_seconds=worker_request.timeout_seconds,

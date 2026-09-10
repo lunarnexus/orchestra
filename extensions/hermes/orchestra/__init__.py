@@ -294,6 +294,10 @@ def _schema(tool_info: dict[str, Any]) -> dict[str, Any]:
                     "type": "string",
                     "description": str(tool_info["goalDescription"]),
                 },
+                "additionalContext": {
+                    "type": "string",
+                    "description": str(tool_info["additionalContextDescription"]),
+                },
                 "role": {
                     "type": "string",
                     "description": str(tool_info["roleDescription"]),
@@ -818,6 +822,7 @@ def _dispatch_orchestra_run(
         if type(timeout) is not int or timeout <= 0:
             return _error("timeout must be a positive integer")
 
+    additional_context = str(payload.get("additionalContext") or "").strip()
     requested_role = str(payload.get("role") or "").strip()
     command = [
         "do",
@@ -826,6 +831,8 @@ def _dispatch_orchestra_run(
         "--goal",
         goal,
     ]
+    if additional_context:
+        command.extend(["--additional-context", additional_context])
     if requested_role:
         command.extend(["--role", requested_role])
     if timeout is not None:

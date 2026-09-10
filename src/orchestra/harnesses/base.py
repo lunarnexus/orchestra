@@ -17,7 +17,7 @@ class WorkerRequest:
     goal: str
     timeout_seconds: int
     run_id: str = ""
-    approved_context: str = ""
+    additional_context: str = ""
     boundaries: str = ""
     acceptance_target: str = ""
     return_format: str = ""

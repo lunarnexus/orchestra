@@ -58,7 +58,7 @@ DO_JSON="$(run_cli do \
   --session-id "$SESSION_ID" \
   --role builder \
   --goal "$GOAL" \
-  --approved-context "This is a live Orchestra end-to-end smoke test. Work only on the target file path in the goal." \
+  --additional-context "This is a live Orchestra end-to-end smoke test. Work only on the target file path in the goal." \
   --boundaries "Do not edit repository source, docs, config, tests, or git state." \
   --acceptance-target "The target file exists and contains exactly orchestra-live-e2e-ok." \
   --return-format "Return only a compact report with summary, verdict, files changed, tests/checks run, and blockers." \

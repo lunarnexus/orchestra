@@ -130,7 +130,11 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
     )
     do_parser.add_argument("--role", default=None, help="worker role name")
     do_parser.add_argument("--goal", required=True, help="goal for the worker")
-    do_parser.add_argument("--approved-context", default="", help="approved context for the worker")
+    do_parser.add_argument(
+        "--additional-context",
+        default="",
+        help="additional context for the worker",
+    )
     do_parser.add_argument("--boundaries", default="", help="out-of-scope boundaries")
     do_parser.add_argument("--acceptance-target", default="", help="acceptance target")
     do_parser.add_argument("--return-format", default="", help="explicit return format")
@@ -328,6 +332,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         dispatch_command_parser = subparsers.add_parser("_dispatch-command", help=argparse.SUPPRESS)
         dispatch_command_parser.add_argument("--session-id", required=True)
         dispatch_command_parser.add_argument("--goal", required=True)
+        dispatch_command_parser.add_argument("--additional-context", default=None)
         dispatch_command_parser.add_argument("--role", default=None)
         dispatch_command_parser.add_argument("--timeout", type=_positive_int, default=None)
         dispatch_command_parser.add_argument("--task-label", default=None)
@@ -442,7 +447,7 @@ def _handle_do(args: argparse.Namespace) -> int:
         session_id=args.session_id,
         role_name=args.role,
         goal=args.goal,
-        approved_context=args.approved_context,
+        additional_context=args.additional_context,
         boundaries=args.boundaries,
         acceptance_target=args.acceptance_target,
         return_format=args.return_format,
@@ -721,6 +726,7 @@ def _handle_dispatch_command(args: argparse.Namespace) -> int:
     payload = dispatch_command_payload(
         args.session_id,
         args.goal,
+        additional_context=args.additional_context,
         role=args.role,
         timeout_seconds=args.timeout,
         task_label=args.task_label,
@@ -753,6 +759,7 @@ def _handle_tool_info(args: argparse.Namespace) -> int:
                 "promptSnippet": info["prompt_snippet"],
                 "promptGuidelines": info["prompt_guidelines"],
                 "goalDescription": info["goal_description"],
+                "additionalContextDescription": info["additional_context_description"],
                 "roleDescription": info["role_description"],
                 "taskLabelDescription": info["task_label_description"],
                 "statusDescription": info["status_description"],

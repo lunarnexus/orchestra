@@ -203,7 +203,7 @@ def test_run_supervisor_marks_broken_loader_failed_and_clears_request(tmp_path: 
         session_id="manual:broken-loader",
         role_name="worker",
         goal="exercise broken loader",
-        approved_context="",
+        additional_context="",
         boundaries="",
         acceptance_target="",
         return_format="",

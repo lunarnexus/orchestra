@@ -79,6 +79,13 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert 'return orchestraDispatchBudget() !== 1;' in extension_source
     assert 'const registerDispatchTool = canDispatchOrchestraWorker();' in extension_source
     assert 'function registerOrchDispatchTool(toolInfo: ToolInfoPayload): void' in extension_source
+    assert 'additionalContext?: string;' in extension_source
+    assert (
+        'additionalContext: Type.Optional(Type.String({ description: '
+        'toolInfo.additionalContextDescription }))'
+        in extension_source
+    )
+    assert 'command.push("--additional-context", additionalContext);' in extension_source
     assert (
         'async function refreshOrchestraToolRegistrations('
         'toolInfo?: ToolInfoPayload): Promise<void>'

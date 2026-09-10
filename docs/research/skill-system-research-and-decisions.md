@@ -49,13 +49,12 @@ What Orchestra does today:
 - If local skill does not exist, Orchestra adds fallback text telling the worker to load the native skill.
 - Current prompt order:
   1. `Role`
-  2. `Role skill(s)`
-  3. `Goal`
-  4. `Role instructions`
-  5. `Approved context`
-  6. `Out of scope`
-  7. `Acceptance target`
-  8. `Return format`
+  2. `Goal`
+  3. `Role instructions`
+  4. `Additional context`
+  5. `Out of scope`
+  6. `Acceptance target`
+  7. `Return format`
 
 Current gaps relative to the new plan:
 

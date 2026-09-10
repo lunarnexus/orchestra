@@ -65,6 +65,9 @@ tool_prompt_guidelines: []
 tool_goal_description: >-
   One small subagent slice: goal, exact scope, prior evidence to reuse, stop
   condition, and return shape.
+tool_additional_context_description: >-
+  Compact artifact reference for the slice, such as `PLAN.md Slice 2`. Keep
+  detailed scope, boundaries, acceptance, and verification in the referenced artifact.
 tool_role_description: >-
   Optional subagent capability. Choose the enabled role that best matches the
   slice. Omit role when no specialized enabled role is a better match than the

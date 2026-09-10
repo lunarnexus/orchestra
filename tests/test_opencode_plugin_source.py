@@ -21,7 +21,13 @@ def test_opencode_plugin_registers_orch_dispatch_tool() -> None:
     assert 'const toolInfo = await loadToolInfo();' in source
     assert 'description: toolInfo.description,' in source
     assert 'goal: tool.schema.string().describe(toolInfo.goalDescription),' in source
+    assert (
+        'additionalContext: tool.schema.string().optional().describe('
+        'toolInfo.additionalContextDescription),'
+        in source
+    )
     assert 'role: tool.schema.string().optional().describe(toolInfo.roleDescription),' in source
+    assert 'command.push("--additional-context", additionalContext);' in source
     assert (
         'taskLabel: tool.schema.string().optional().describe(toolInfo.taskLabelDescription),'
         in source
@@ -130,7 +136,13 @@ def test_opencode_plugin_reuses_core_tool_info_and_dispatch_budget_guard() -> No
     assert 'const toolInfo = await loadToolInfo();' in source
     assert 'description: toolInfo.description,' in source
     assert 'goal: tool.schema.string().describe(toolInfo.goalDescription),' in source
+    assert (
+        'additionalContext: tool.schema.string().optional().describe('
+        'toolInfo.additionalContextDescription),'
+        in source
+    )
     assert 'role: tool.schema.string().optional().describe(toolInfo.roleDescription),' in source
+    assert 'command.push("--additional-context", additionalContext);' in source
     assert (
         'taskLabel: tool.schema.string().optional().describe(toolInfo.taskLabelDescription),'
         in source

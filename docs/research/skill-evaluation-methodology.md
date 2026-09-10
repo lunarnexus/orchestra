@@ -153,7 +153,7 @@ Each case should provide:
 
 - a fresh isolated git repository;
 - one well-specified task;
-- exact approved context and boundaries;
+- exact additional context and boundaries;
 - visible project instructions and tests appropriate to the task;
 - verifier definitions retained by the trusted evaluator and materialized only after the worker finishes;
 - a deterministic baseline;

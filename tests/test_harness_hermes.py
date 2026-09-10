@@ -16,7 +16,7 @@ def _worker_request(tmp_path: Path) -> WorkerRequest:
     return WorkerRequest(
         role_name="worker",
         goal="Inspect the Hermes harness.",
-        approved_context="Use fake command tests only.",
+        additional_context="Use fake command tests only.",
         boundaries="Do not call live Hermes.",
         acceptance_target="Return concise result.",
         timeout_seconds=30,

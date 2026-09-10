@@ -60,6 +60,7 @@ class ToolInfoSchema:
     prompt_snippet: str
     prompt_guidelines: list[str]
     goal_description: str
+    additional_context_description: str
     role_description: str
     workflow_instruction: str
     main_session_ownership_guidance: str
@@ -101,6 +102,7 @@ def tool_info_payload(context: AppContext, session_id: str | None = None) -> Too
         prompt_snippet="",
         prompt_guidelines=[],
         goal_description=prompts.tool_goal_description,
+        additional_context_description=prompts.tool_additional_context_description,
         role_description=prompts.tool_role_description.format(roles=roles),
         workflow_instruction=workflow,
         main_session_ownership_guidance=prompts.main_session_ownership_guidance,
@@ -137,11 +139,14 @@ def dispatch_command_payload(
     session_id: str,
     goal: str,
     *,
+    additional_context: str | None = None,
     role: str | None = None,
     timeout_seconds: int | None = None,
     task_label: str | None = None,
 ) -> DispatchCommandSchema:
     command = ["do", "--session-id", session_id, "--goal", goal, "--json"]
+    if additional_context:
+        command.extend(["--additional-context", additional_context])
     if role:
         command.extend(["--role", role])
     if timeout_seconds is not None:

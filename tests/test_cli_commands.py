@@ -52,6 +52,7 @@ def load_root_prompt_config() -> PromptConfig:
         tool_prompt_snippet=data["tool_prompt_snippet"],
         tool_prompt_guidelines=tuple(data["tool_prompt_guidelines"]),
         tool_goal_description=data["tool_goal_description"],
+        tool_additional_context_description=data["tool_additional_context_description"],
         tool_role_description=data["tool_role_description"],
         tool_task_label_description=data["tool_task_label_description"],
         main_session_ownership_guidance=data["main_session_ownership_guidance"],
@@ -156,7 +157,7 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
             session_id="manual:test-session",
             role_name=None,
             goal="Do work.",
-            approved_context="",
+            additional_context="",
             boundaries="",
             acceptance_target="",
             return_format="",
@@ -2396,8 +2397,8 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
     assert payload["nested_dispatch_depth"] == "2"
     assert payload["role_env"] == "configured"
     assert "Role: reviewer" in payload["prompt"]
-    assert "Role skills: reviewer" in payload["prompt"]
-    assert "Skill instructions are delivered through SPSI." in payload["prompt"]
+    assert "Role skills:" not in payload["prompt"]
+    assert "Skill instructions are delivered through SPSI." not in payload["prompt"]
     assert f"Skill directory: {skill_dir}" not in payload["prompt"]
     assert "Resolve relative resource paths against this directory." not in payload["prompt"]
     assert "# Reviewer Skill" not in payload["prompt"]

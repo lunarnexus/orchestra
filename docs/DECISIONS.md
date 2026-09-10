@@ -824,10 +824,10 @@ model-callable natural-language dispatch path.
 
 ### D-HOST-003 — Dispatch tool contract
 
-**Decision:** The common model-callable dispatch contract accepts `goal`, an
-optional `role`, and an optional `taskLabel`. It does not accept a timeout;
-configured timeout applies. A native manual `/orch do` surface may accept a
-supported timeout option.
+**Decision:** The common model-callable dispatch contract accepts `goal`, optional
+`additionalContext`, optional `role`, and optional `taskLabel`. It does not accept
+a timeout; configured timeout applies. A native manual `/orch do` surface may
+accept a supported timeout option.
 
 ### D-HOST-004 — `/orch off` is part of session control
 

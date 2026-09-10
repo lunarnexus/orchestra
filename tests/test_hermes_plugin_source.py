@@ -129,6 +129,7 @@ def make_tool_info_payload() -> dict[str, Any]:
         "promptSnippet": "dynamic prompt snippet",
         "promptGuidelines": ["guideline one", "guideline two"],
         "goalDescription": "dynamic goal",
+        "additionalContextDescription": "dynamic additional context",
         "roleDescription": "dynamic role",
         "taskLabelDescription": "dynamic label",
         "statusDescription": "dynamic status",
@@ -148,7 +149,12 @@ def make_tool_info_payload() -> dict[str, Any]:
 
 def test_hermes_tool_info_loads_only_from_dynamic_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     plugin = load_plugin()
-    payload = {"description": "dynamic", "goalDescription": "goal", "statusDescription": "status"}
+    payload = {
+        "description": "dynamic",
+        "goalDescription": "goal",
+        "additionalContextDescription": "additional context",
+        "statusDescription": "status",
+    }
     monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, json.dumps(payload)))
 
     assert plugin._load_tool_info() == payload
@@ -225,7 +231,12 @@ def test_hermes_plugin_registers_dispatch_tool_without_session_id_schema(
 
     assert [tool["name"] for tool in ctx.tools] == ["orch_dispatch", "orch_status"]
     schema = ctx.tools[0]["schema"]
-    assert set(schema["parameters"]["properties"]) == {"goal", "role", "taskLabel"}
+    assert set(schema["parameters"]["properties"]) == {
+        "goal",
+        "additionalContext",
+        "role",
+        "taskLabel",
+    }
     assert "timeout" not in schema["parameters"]["properties"]
     assert "session_id" not in json.dumps(schema)
     assert ctx.commands[0]["name"] == "orch"
@@ -264,6 +275,7 @@ def test_hermes_plugin_registers_orch_status_tool_with_tool_info_metadata(
         "promptSnippet": "dynamic prompt snippet",
         "promptGuidelines": ["guideline one", "guideline two"],
         "goalDescription": "dynamic goal",
+        "additionalContextDescription": "dynamic additional context",
         "roleDescription": "dynamic role",
         "taskLabelDescription": "dynamic label",
         "statusDescription": "dynamic status",
@@ -881,6 +893,7 @@ def test_hermes_plugin_uses_dynamic_tool_metadata(monkeypatch: pytest.MonkeyPatc
         "promptSnippet": "dynamic prompt snippet",
         "promptGuidelines": ["guideline one"],
         "goalDescription": "dynamic goal",
+        "additionalContextDescription": "dynamic additional context",
         "roleDescription": "dynamic role",
         "taskLabelDescription": "dynamic label",
         "statusDescription": "dynamic status",

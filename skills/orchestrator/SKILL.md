@@ -109,13 +109,11 @@ Appsec runs exactly once, at the end of the plan, after implementation, automati
 
 Give each subagent:
 - one narrow goal
-- exact scope or file cluster
-- out-of-scope boundaries
-- relevant artifact refs and assigned artifact write target
-- stop point
+- a compact `additional_context` artifact reference, usually `PLAN.md Slice N`
+- exact assigned artifact target
 - compact expected return shape
 
-Use artifact-first handoff for implementation, review, and security slices. Write the known task context into an artifact, then dispatch with the artifact path, exact scope, boundaries, assigned artifact section/file, stop condition, and compact expected return. Do not put a long history narrative in the dispatch prompt. Subagents update only their assigned artifact target; if the target is unclear or conflicting, they return a blocker instead of broad edits.
+Use artifact-first handoff for implementation, review, and security slices. `PLAN.md` should hold the slice scope, boundaries/out-of-scope, acceptance or stop condition, verification, and dependencies. Pass `additional_context` as a compact reference to the relevant `PLAN.md` slice; do not paste large plan text into the dispatch prompt. Subagents update only their assigned artifact target; if the target is unclear or conflicting, they return a blocker instead of broad edits.
 
 Research dispatch:
 - source read-only by default; write only the assigned `RESEARCH.md` target when requested

@@ -38,7 +38,7 @@ class PendingRunRequest:
     run_id: str
     role_name: str
     goal: str
-    approved_context: str
+    additional_context: str
     boundaries: str
     acceptance_target: str
     return_format: str
@@ -84,7 +84,7 @@ def _request_payload(pending_request: PendingRunRequest) -> dict[str, object]:
         "run_id": pending_request.run_id,
         "role_name": pending_request.role_name,
         "goal": pending_request.goal,
-        "approved_context": pending_request.approved_context,
+        "additional_context": pending_request.additional_context,
         "boundaries": pending_request.boundaries,
         "acceptance_target": pending_request.acceptance_target,
         "return_format": pending_request.return_format,
@@ -208,7 +208,7 @@ def start_run(
     session_id: str,
     role_name: str | None,
     goal: str,
-    approved_context: str,
+    additional_context: str,
     boundaries: str,
     acceptance_target: str,
     return_format: str,
@@ -247,7 +247,7 @@ def start_run(
         run_id=run_id,
         role_name=selected_role.name,
         goal=goal,
-        approved_context=approved_context,
+        additional_context=additional_context,
         boundaries=boundaries,
         acceptance_target=acceptance_target,
         return_format=return_format,
