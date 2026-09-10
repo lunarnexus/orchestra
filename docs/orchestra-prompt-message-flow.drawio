@@ -1,0 +1,558 @@
+<?xml version="1.0" ?>
+<mxfile host="app.diagrams.net" modified="2026-09-10T20:00:00.000Z" agent="pi" version="24.7.17" type="device">
+  <diagram name="1 Prompt Text Inventory">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Actual prompt/message text inventory and builders&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="pyaml" value="&lt;b&gt;prompts.yaml owns plain text&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;default_return_format&#10;tool_description&#10;tool_goal_description&#10;tool_additional_context_description&#10;tool_role_description&#10;tool_task_label_description&#10;main_session_ownership_guidance&#10;status_*_description&#10;return_hint_done / incomplete / failed / builder_failed&#10;budget_exceeded_prompt&#10;host_help&#10;session_mode_off_message / on_message&lt;/pre&gt;" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="40" y="100" width="380" height="330" as="geometry"/>
+        </mxCell>
+        <mxCell id="config" value="&lt;b&gt;PromptConfig&lt;/b&gt;&lt;br/&gt;src/orchestra/config.py&lt;br/&gt;Required prompt strings are loaded into AppConfig. Missing/non-string prompt keys are ConfigError." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="500" y="130" width="300" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="toolinfo" value="&lt;b&gt;tool_info_payload()&lt;/b&gt;&lt;br/&gt;src/orchestra/host_commands.py&lt;br/&gt;description = tool_description.format(roles) + workflow + main_session_ownership_guidance.&lt;br/&gt;Also ships argument descriptions and status/help text to host adapters." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="890" y="110" width="390" height="220" as="geometry"/>
+        </mxCell>
+        <mxCell id="child" value="&lt;b&gt;render_worker_prompt()&lt;/b&gt;&lt;br/&gt;src/orchestra/harnesses/common.py&lt;br/&gt;Builds child plain-text prompt from WorkerRequest + RoleConfig dispatch_hint." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="890" y="430" width="390" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="return" value="&lt;b&gt;format_orchestrator_return()&lt;/b&gt;&lt;br/&gt;src/orchestra/reports.py&lt;br/&gt;Builds parent re-entry report with summary, next hint, return_path, and failure debug fields." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="290" width="360" height="190" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="load" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="pyaml" target="config">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="host prompt metadata" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="config" target="toolinfo">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="default return format" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="config" target="child">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="return hints" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="config" target="return">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="2 Actual Parent Tool Prompt">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Parent-visible orch_dispatch prompt data from prompts.yaml / _tool-info&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="desc" value="&lt;b&gt;orch_dispatch description contains:&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;For non-orchestration work, dispatch a subagent.&#10;The orchestrator session decomposes requests, plans slices,&#10;sequences dispatches, handles user decisions and approvals,&#10;resolves artifact conflicts, manages git boundaries, and&#10;synthesizes compact returned results.&#10;&#10;Inspect the whole request only to identify dispatch slices,&#10;dependencies, blockers, and approval needs. Dispatch one&#10;subagent per slice. Dispatch every currently unblocked&#10;independent slice in parallel before doing anything else.&#10;&#10;Dispatch transfers ownership of the assigned scope to the&#10;subagent. While a subagent owns a scope, the orchestrator&#10;must not read, grep, inspect, edit, debug, test, verify,&#10;review, security-assess, install packages, update dependencies,&#10;create virtualenvs, modify lockfiles, or mutate the tool&#10;environment for that scope.&#10;&#10;Give each subagent a self-contained brief with one goal,&#10;exact scope, boundaries, prior evidence to reuse, artifact&#10;write target, stop condition, and compact return format.&#10;&#10;Completed subagent reports return automatically. Do not poll.&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="50" y="100" width="760" height="600" as="geometry"/>
+        </mxCell>
+        <mxCell id="args" value="&lt;b&gt;Argument descriptions&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;goal:&#10;One small subagent slice: goal, exact scope, prior evidence&#10;to reuse, stop condition, and return shape.&#10;&#10;additionalContext:&#10;Compact artifact reference for the slice, such as `PLAN.md Slice 2`.&#10;&#10;role:&#10;Optional subagent capability. Choose the enabled role that&#10;best matches the slice.&#10;&#10;taskLabel:&#10;Optional short request label.&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="890" y="100" width="610" height="350" as="geometry"/>
+        </mxCell>
+        <mxCell id="status" value="&lt;b&gt;orch_status description&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;Use orch_status only when the user explicitly asks for an&#10;Orchestra status/control/help action in the current session.&#10;Do not poll for completion. Completed subagent reports&#10;return automatically.&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="890" y="520" width="610" height="160" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="3 Dispatch Decision Tree">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Workflow decision tree: parent/user request to tool return&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="start" value="User asks to delegate or parent calls orch_dispatch / /orch do" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="60" y="80" width="270" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="enabled" value="Tools/session mode enabled?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="410" y="80" width="190" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="off" value="Return session-mode/help text, e.g.&#10;&quot;Orchestra tools hidden for this session. Run /orch on to enable them again.&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="700" y="40" width="350" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="sid" value="Runtime session id available from host context?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="410" y="250" width="190" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="siderr" value="Error text examples:&#10;Pi/OpenCode: context.sessionID is required for orch_dispatch.&#10;Hermes: Hermes session_id is required" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="700" y="220" width="350" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="identity" value="Identity or timeout override supplied?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="410" y="420" width="190" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="overerr" value="Errors:&#10;&quot;identity arguments are not accepted; Hermes runtime session_id is used instead&quot;&#10;&quot;session_id is not accepted...&quot;&#10;&quot;timeout is not accepted by orch_dispatch; configured default_timeout applies.&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="700" y="390" width="440" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="goal" value="goal.trim() non-empty?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="410" y="610" width="190" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="goalerr" value="Tool return/error:&#10;&quot;Usage: provide a worker goal.&quot;&#10;Hermes JSON: {&quot;error&quot;:&quot;goal is required&quot;}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="700" y="600" width="330" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="cmd" value="Build command:&#10;orchestra do --session-id &lt;owner&gt; --goal &lt;goal&gt; [--additional-context ...] [--role ...] [--task-label ...] --json" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="60" y="790" width="470" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="run" value="start_run(): reserve concurrency, write request, spawn supervisor" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="620" y="790" width="330" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="ok" value="run_id returned?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="780" width="170" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="fallback" value="Return dispatch.message / stdout / stderr. Errors include:&#10;&quot;orchestra dispatch failed&quot;&#10;concurrency limit exceeded&#10;&quot;ORCHESTRA_DISPATCH_BUDGET dispatch budget exhausted&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="730" width="420" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="ack" value="Run _dispatch-ack --run-id --role" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="960" width="230" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="ackok" value="Ack stdout non-empty?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="960" width="180" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="ackerr" value="Return/error:&#10;&quot;orchestra dispatch ack failed&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1550" y="930" width="210" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="acktxt" value="Tool return to parent:&#10;&quot;orchestra dispatched: &lt;role&gt; &lt;run_id&gt;&#10;subagent will auto-return when finished. Do not poll while waiting.&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="1080" width="430" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="start" target="enabled">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="enabled" target="off">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="enabled" target="sid">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="sid" target="siderr">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="sid" target="identity">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="identity" target="overerr">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="identity" target="goal">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="goal" target="goalerr">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e9" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="goal" target="cmd">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e10" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="cmd" target="run">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e11" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="run" target="ok">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e12" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="ok" target="fallback">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e13" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="ok" target="ack">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e14" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="ack" target="ackok">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e15" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="ackok" target="ackerr">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e16" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="ackok" target="acktxt">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="4 Actual Child Prompt Template">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Exact child/subagent prompt template&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="worker" value="&lt;b&gt;WorkerRequest fields&lt;/b&gt;&lt;br/&gt;role_name, goal, run_id, additional_context, boundaries, acceptance_target, return_format, timeout_seconds, task_label, nested_dispatch_depth, turn_limit, soft_timeout, budget_exceeded_prompt, log_path, skill_roots, prompts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="60" y="120" width="420" height="220" as="geometry"/>
+        </mxCell>
+        <mxCell id="template" value="&lt;b&gt;render_worker_prompt() exact section labels&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;Role: {request.role_name}&#10;&#10;Goal: {request.goal.strip()}&#10;&#10;Role instructions: {role.dispatch_hint.strip()}&#10;&#10;Additional context: {request.additional_context.strip()}&#10;&#10;Out of scope: {request.boundaries.strip()}&#10;&#10;Acceptance target: {request.acceptance_target.strip()}&#10;&#10;Return format: {request.return_format.strip() or prompts.default_return_format}&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="560" y="90" width="560" height="420" as="geometry"/>
+        </mxCell>
+        <mxCell id="example" value="&lt;b&gt;Example concrete child prompt shape&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;Role: reviewer&#10;&#10;Goal: Review the staged change for correctness and scope.&#10;&#10;Role instructions: You are an independent code reviewer...&#10;&#10;Additional context: PLAN.md Slice 4, tests already run: pytest -q&#10;&#10;Out of scope: Do not edit files.&#10;&#10;Acceptance target: Identify blocking defects only.&#10;&#10;Return format: Return only this compact schema unless a blocker needs more detail:&#10;Status: complete|blocked|failed&#10;Verdict: pass|fail|n/a&#10;Artifacts updated:&#10;- &lt;file or none&gt;&#10;...&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1200" y="90" width="520" height="520" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="fields" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="worker" target="template">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="rendered text" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="template" target="example">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="5 Actual Return Format Prompt">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Verbatim default_return_format sent to child when caller does not override&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="default" value="&lt;b&gt;prompts.yaml default_return_format&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;Return only this compact schema unless a blocker needs more detail:&#10;Status: complete|blocked|failed&#10;Verdict: pass|fail|n/a&#10;Artifacts updated:&#10;- &lt;file or none&gt;&#10;Files changed:&#10;- &lt;file or none&gt;&#10;Commands:&#10;- &lt;exact command or none&gt; — &lt;result&gt;&#10;Evidence reused:&#10;- &lt;artifact path and exact command evidence, or none&gt;&#10;Material evidence:&#10;- &lt;one-line decisive evidence&gt;&#10;Blockers:&#10;- none|&lt;blocker&gt;&#10;Risks:&#10;- none|&lt;risk&gt;&#10;Next:&#10;- &lt;next dispatch/action&gt;&#10;&#10;Keep returns short. Put durable detail in the assigned artifact, not in the&#10;chat return. Omit empty fields. Do not include broad tables, history narratives,&#10;or lists of every file read unless material to a blocker or finding.&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="70" y="90" width="760" height="620" as="geometry"/>
+        </mxCell>
+        <mxCell id="parse" value="&lt;b&gt;parse_child_return() reads these labels&lt;/b&gt;&lt;br/&gt;Status, Verdict, Blocker, Blockers, Material evidence.&lt;br/&gt;&lt;br/&gt;It creates summary via compact_summary(limit=280), verdict from Verdict or Status, blocker from Blocker(s) or Material evidence." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="930" y="160" width="500" height="230" as="geometry"/>
+        </mxCell>
+        <mxCell id="effect" value="&lt;b&gt;Classification impact&lt;/b&gt;&lt;br/&gt;A well-formed compact return makes result_summary non-empty. Missing meaningful output after exit 0 becomes failed with protocol error." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="930" y="480" width="500" height="160" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="stdout text" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="default" target="parse">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="summary/verdict/blocker" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="parse" target="effect">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="6 Child Result Decision Tree">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Workflow decision tree: child stdout/stderr/exit → status and report data&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="io" value="Child process closes: stdout, stderr, returncode, transcript/accounting" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="50" y="80" width="330" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="timeout" value="Timed out?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="460" y="80" width="170" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="marker_t" value="Recovered output contains line exactly&#10;ORCHESTRA_STATUS: incomplete ?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="720" y="40" width="260" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="incomp_t" value="WorkerResult.status = incomplete&#10;blocker = parsed blocker or&#10;&quot;Worker budget exceeded; redispatch from continuation handoff&quot;&#10;timed_out = true" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="30" width="420" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="fail_t" value="WorkerResult.status = failed&#10;error_text = &quot;Worker timed out&quot;&#10;blocker_text = &quot;Worker exceeded timeout&quot;&#10;timed_out = true" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="190" width="370" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="rc" value="process.returncode == 0?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="460" y="300" width="190" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="marker" value="stdout has line exactly&#10;ORCHESTRA_STATUS: incomplete ?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="720" y="250" width="260" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="incomp" value="status = incomplete&#10;error_text = None&#10;blocker = parsed blocker or budget exceeded handoff" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="250" width="370" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="summary" value="meaningful summary exists?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="720" y="430" width="220" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="empty" value="status = failed&#10;error_text = &quot;Worker exited successfully without a meaningful result&quot;&#10;blocker = &quot;Worker protocol error: empty result&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="400" width="430" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="done" value="status = done&#10;result_summary = parsed compact summary&#10;semantic_verdict = parsed Verdict/Status&#10;blocker_text = parsed blocker if any" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="1070" y="570" width="410" height="130" as="geometry"/>
+        </mxCell>
+        <mxCell id="nonzero" value="Nonzero exit: parse stdout; if no summary parse stderr.&#10;status = failed&#10;error_text = compact_summary(stderr) or &quot;Worker failed&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="720" y="760" width="520" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="final" value="_finalize_run(): write return.md and update RunRecord fields" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1320" y="820" width="360" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="io" target="timeout">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="timeout" target="marker_t">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="marker_t" target="incomp_t">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="marker_t" target="fail_t">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="timeout" target="rc">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="rc" target="marker">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="marker" target="incomp">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="marker" target="summary">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e9" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="summary" target="empty">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e10" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="summary" target="done">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e11" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="rc" target="nonzero">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e12" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="incomp_t" target="final">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e13" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="fail_t" target="final">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e14" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="incomp" target="final">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e15" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="empty" target="final">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e16" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="done" target="final">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e17" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="nonzero" target="final">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="7 Actual Budget Handoff Prompt">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Budget/turn/soft-timeout prompt injected into child session&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="env" value="&lt;b&gt;worker_subprocess_env()&lt;/b&gt;&lt;br/&gt;Sets ORCHESTRA_TURN_BUDGET, ORCHESTRA_SOFT_TIMEOUT_SECONDS, and ORCHESTRA_BUDGET_EXCEEDED_PROMPT when limits apply." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="60" y="120" width="420" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="prompt" value="&lt;b&gt;budget_exceeded_prompt verbatim&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;[Orchestra subagent budget exceeded]&#10;Stop everything you're doing immediately.&#10;&#10;Your only task now, is to create a handoff for the next agent,&#10;do not continue any previous work.&#10;&#10;Start with:&#10;&#10;ORCHESTRA_STATUS: incomplete&#10;ORCHESTRA_STOP_REASON: budget_exceeded&#10;&#10;Then return the normal compact result schema as a continuation handoff:&#10;&#10;Status: incomplete&#10;Verdict: n/a&#10;Artifacts updated:&#10;- &lt;file or none&gt;&#10;Files changed:&#10;- &lt;file or none&gt;&#10;Commands:&#10;- &lt;exact command or none&gt; — &lt;result&gt;&#10;Evidence reused:&#10;- &lt;artifact path and exact command evidence, or none&gt;&#10;Material evidence:&#10;- &lt;completed work, current state, and data locations&gt;&#10;Blockers:&#10;- none|&lt;blocker&gt;&#10;Risks:&#10;- none|&lt;risk&gt;&#10;Next:&#10;- &lt;small continuation dispatch, including remaining work and stop condition&gt;&#10;&#10;Preserve completed work and make the handoff sufficient for the caller to pass&#10;this return artifact directly to the continuation dispatch.&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="560" y="80" width="720" height="720" as="geometry"/>
+        </mxCell>
+        <mxCell id="inject" value="&lt;b&gt;Host injection behavior&lt;/b&gt;&lt;br/&gt;Pi: pi.sendUserMessage(prompt + &quot;Budget trigger: reason&quot;, deliverAs=&quot;steer&quot;) on turn_end/tool_call.&lt;br/&gt;Hermes: ctx.inject_message(message, role=&quot;user&quot;) or pre_llm context fallback.&lt;br/&gt;Soft timeout tool calls can be blocked with: &quot;Orchestra soft timeout reached; return budget handoff&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="160" width="390" height="270" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="env var" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="env" target="prompt">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="reason appended" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="prompt" target="inject">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="8 Actual Parent Return Reports">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Plain-text report that re-enters parent session&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="single" value="&lt;b&gt;Single run success report template&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;[orchestra: {role} {run_id} success]&#10;summary: {_format_run_summary(run)}&#10;tokens: input=... output=... reasoning=... cache_read=... cache_write=... cost_usd=...&#10;next: advance the plan using this subagent return; do not repeat its work&#10;return_path: {state_dir}/runs/{run_id}/return.md&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="760" height="250" as="geometry"/>
+        </mxCell>
+        <mxCell id="fail" value="&lt;b&gt;Failure / semantic failure report adds details&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;[orchestra: {role} {run_id} fail]&#10;summary: ...&#10;auto_verify: Verifier dispatch failed: ...&#10;next: read the failed return artifact and decide how to proceed&#10;return_path: .../return.md&#10;verdict: {semantic_failure}&#10;status: failed|incomplete|cancelled&#10;run_id: {run_id}&#10;debug: orchestra debug --run-id {run_id}&#10;events_path: .../events.jsonl&#10;worker_session: orchestra-worker-{run_id}&#10;transcript: &lt;path&gt;&#10;log: &lt;log_path&gt;&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="60" y="430" width="760" height="430" as="geometry"/>
+        </mxCell>
+        <mxCell id="multi" value="&lt;b&gt;Multi-run wrapper&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;[orchestra: {len(runs)} subagents returned]&#10;&#10;&lt;block for run 1&gt;&#10;&#10;&lt;block for run 2&gt;&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="940" y="110" width="520" height="140" as="geometry"/>
+        </mxCell>
+        <mxCell id="hints" value="&lt;b&gt;Configured next: hints&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;done: advance the plan using this subagent return; do not repeat its work&#10;incomplete: pass this return_path handoff artifact to the next dispatch and continue from it&#10;failed: read the failed return artifact and decide how to proceed&#10;builder_failed: pass this return_path handoff artifact to one bounded fix-only builder follow-up&lt;/pre&gt;" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="940" y="350" width="650" height="260" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="9 Auto Return Delivery Tree">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Workflow decision tree: return report delivery, retry, and errors&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="wait" value="Host watcher calls core:&#10;orchestra _await-session-report --session-id &lt;id&gt; --run-id &lt;run&gt; --json" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="50" y="100" width="420" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="term" value="Run terminal and no active siblings?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="560" y="100" width="240" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="poll" value="Keep waiting until timeout; if timeout: error &quot;timed out waiting for session report&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="880" y="80" width="360" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="payload" value="Core returns JSON:&#10;{contract_version, kind:&quot;session_report&quot;, ok:true, runIds, report}" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="560" y="280" width="360" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="valid" value="Host parses JSON, report non-empty, runIds non-empty?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="1000" y="280" width="260" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="retry" value="Retry path / pending retained. Errors logged include:&#10;&quot;orchestra auto-return watcher failed: ...&quot;&#10;&quot;orchestra auto-return reinjection failed: ...&quot;&#10;&quot;Orchestra report delivery failed: ...&quot;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="1340" y="240" width="400" height="170" as="geometry"/>
+        </mxCell>
+        <mxCell id="deliver" value="Deliver as parent/user message:&#10;Pi: pi.sendUserMessage(message, deliverAs=&quot;followUp&quot;)&#10;OpenCode: session.prompt({body:{parts:[{type:&quot;text&quot;, text: report}]}})&#10;Hermes: report watcher / ctx injection path" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="560" y="520" width="600" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="mark" value="Mark delivered / remember run ids to avoid duplicate report." style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="1230" y="560" width="300" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="wait" target="term">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="no" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="term" target="poll">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="term" target="payload">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="payload" target="valid">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="no/error" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="valid" target="retry">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="yes" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="valid" target="deliver">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" value="success" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="deliver" target="mark">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8" value="delivery fails" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="deliver" target="retry">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="10 Error Text Inventory">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;Actual error/status message strings and where they cross scopes&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="dispatch" value="&lt;b&gt;Dispatch/tool-call errors&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;Usage: provide a worker goal.&#10;context.sessionID is required for orch_dispatch.&#10;Hermes session_id is required&#10;identity arguments are not accepted; Hermes runtime session_id is used instead&#10;timeout is not accepted by orch_dispatch; configured default_timeout applies.&#10;orchestra dispatch failed&#10;orchestra dispatch did not return a run_id&#10;orchestra dispatch ack failed&#10;ORCHESTRA_DISPATCH_BUDGET dispatch budget exhausted&#10;model concurrency limit exceeded: ...&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="700" height="310" as="geometry"/>
+        </mxCell>
+        <mxCell id="watch" value="&lt;b&gt;Watcher/delivery/progress errors&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;orchestra auto-return watcher failed: {message}&#10;orchestra auto-return reinjection failed: {message}&#10;Orchestra report delivery failed: {message}&#10;orchestra await-run failed.&#10;failed to format Orchestra progress message.&#10;orchestra progress notification failed: {message}&#10;timed out waiting for session report&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="60" y="500" width="700" height="260" as="geometry"/>
+        </mxCell>
+        <mxCell id="worker" value="&lt;b&gt;Worker result errors&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;Worker timed out&#10;Worker exceeded timeout&#10;Worker exited successfully without a meaningful result&#10;Worker protocol error: empty result&#10;Worker budget exceeded; redispatch from continuation handoff&#10;Worker failed&#10;Worker supervisor could not be launched&#10;Worker harness could not start&#10;Worker harness could not be loaded&#10;Worker harness is not configured&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="880" y="100" width="700" height="310" as="geometry"/>
+        </mxCell>
+        <mxCell id="status" value="&lt;b&gt;Progress/ack/status strings&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;orchestra dispatched: {role} {run_id}&#10;subagent will auto-return when finished. Do not poll while waiting.&#10;orchestra:{role} {run_id} returned {status} ({completed}/{total})&#10;[orchestra: {role} {run_id} success|fail]&#10;[orchestra: {n} subagents returned]&lt;/pre&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="880" y="500" width="700" height="220" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="11 Durable Return Artifact">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;return.md content vs parent-facing session report&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="artifact" value="&lt;b&gt;_format_return_output()&lt;/b&gt;&lt;br/&gt;&lt;pre style=&quot;font-size:11px&quot;&gt;# Orchestra worker return&#10;&#10;Run: {run_id}&#10;&#10;## stdout&#10;&#10;{result.stdout or &quot;(empty)&quot;}&#10;&#10;## stderr&#10;&#10;{result.stderr if present}&lt;/pre&gt;" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="80" y="130" width="560" height="330" as="geometry"/>
+        </mxCell>
+        <mxCell id="report" value="&lt;b&gt;Parent report points to artifact&lt;/b&gt;&lt;br/&gt;format_orchestrator_return includes:&lt;br/&gt;return_path: state/runs/{run_id}/return.md&lt;br/&gt;For failures/truncation, also includes debug/events/log/transcript paths." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="770" y="160" width="480" height="180" as="geometry"/>
+        </mxCell>
+        <mxCell id="decision" value="&lt;b&gt;Parent workflow decision&lt;/b&gt;&lt;br/&gt;done hint: do not repeat work.&lt;br/&gt;incomplete hint: pass return_path into continuation dispatch.&lt;br/&gt;failed hint: read failed return artifact and decide recovery." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="770" y="450" width="480" height="190" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="return_path" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="artifact" target="report">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="next hint" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="report" target="decision">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+  <diagram name="12 End-to-End With Branches">
+    <mxGraphModel dx="1422" dy="794" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="&lt;b&gt;End-to-end sequence with success and error branches&lt;/b&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="30" y="20" width="1000" height="40" as="geometry"/>
+        </mxCell>
+        <mxCell id="u" value="User plain text request" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="60" y="120" width="220" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="p" value="Parent sees orch_dispatch description + args; decides slice" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="330" y="120" width="300" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="h" value="Host validates session/goal/overrides" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="700" y="120" width="280" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="d" value="Core start_run queues supervisor or returns dispatch error" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="120" width="330" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="a" value="Ack returned immediately to parent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="1450" y="120" width="260" height="80" as="geometry"/>
+        </mxCell>
+        <mxCell id="cp" value="Rendered child prompt includes Role/Goal/context/scope/return format" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="350" width="420" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="cr" value="Child returns compact schema or errors/timeouts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="1050" y="560" width="330" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="rr" value="Classifier writes RunRecord + return.md" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="700" y="560" width="300" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="ar" value="Auto-return report injected as parent follow-up/user message" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="330" y="560" width="300" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="next" value="Parent advances, continues from handoff, or reads failed artifact" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="60" y="560" width="220" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="err" value="Any validation/dispatch/watcher failure returns/logs exact error strings from Error Text Inventory" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="700" y="350" width="300" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="u" target="p">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="tool args" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="p" target="h">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="CLI args" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="h" target="d">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="run_id ok" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="d" target="a">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="error" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="d" target="err">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="request_file" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="d" target="cp">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" value="stdout/stderr" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="cp" target="cr">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8" value="WorkerResult" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="cr" target="rr">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e9" value="session_report" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="rr" target="ar">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e10" value="plain text" style="endArrow=block;html=1;rounded=0;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="ar" target="next">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e11" value="tool return/log" style="endArrow=block;html=1;rounded=0;dashed=1;orthogonalLoop=1;jettySize=auto;orthogonal=1;" edge="1" parent="1" source="err" target="p">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

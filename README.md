@@ -1,8 +1,9 @@
-# Orchestra — Alpha
+# Orchestra 
 
-* Orchestra is going back to Alpha version status.  Testing has shown major
-improvements in functionality, but that requires overhaul and workflow breaking
-changes.  Until the general workflow stabilizes, we're back in alpha.
+* Orchestra is in Beta status.  Large changes are incoming, especially for context management, skill injection (SPSI), and workflow, so the config and tool interface will likely change.
+
+For now, the Hermes and Opencode plugins are unsupported until Orchestra core stabilizes.
+
 
 Orchestra is an agent-agnostic orchestration layer for dispatching focused
 subagents from the coding-agent harness you already use. I originally designed
