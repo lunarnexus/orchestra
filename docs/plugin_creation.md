@@ -58,7 +58,8 @@ These features already live in Orchestra core or core CLI helpers. New plugins s
 - `_await-run` — wait for one run to reach a terminal state, with optional `--json`.
 - `_await-session-report` — wait for the owning session's consolidated report, with optional `--json`.
 - `_mark-session-report-delivered` — mark report run ids as delivered after successful host delivery.
-- `_orchestrator-skill` — render the main-session Orchestra skill payload.
+- `_spsi-payload` — render the session-scoped SPSI payload for host request-time instruction injection.
+- `_orchestrator-skill` — deprecated compatibility helper for the old main-session skill user-message payload; shipped adapters must not use it for `/orch on`.
 
 ### Core configuration contract
 
@@ -125,7 +126,19 @@ A Pi-equivalent command surface includes:
 
 `/orch off` should remove Orchestra model-callable tools from the host's active tool set for the current session while keeping the native `/orch` command available.
 
-For Pi parity, `/orch on` is two-step after tools have been turned off: the first `/orch on` restores Orchestra tool visibility to the harness, and a second `/orch on` delivers the core `_orchestrator-skill` payload into the current main session. Hosts with runtime tool activation should prefer toggling active tools over unregistering plugin tools. The Pi model-callable `orch_status` action `on` is not the same two-step UI flow; it directly injects the core orchestrator-skill payload into the current session.
+For Pi parity, `/orch on` enables Orchestra tools and SPSI guidance in one step. `/orch off` disables both for the current session. Hosts with runtime tool activation should prefer toggling active tools over unregistering plugin tools. Host adapters must not implement SPSI by sending skills as user/follow-up messages or other persisted conversation content.
+
+### SPSI
+
+System-prompt-skill-injection (SPSI) is Orchestra's session-scoped, request-time instruction path for configured role skills. Core owns the `_spsi-payload` content and enabled/disabled state. For main sessions, core uses the `orchestrator` role's `skills` from `agent-catalog.yaml`. For subagent sessions, core resolves `orchestra-worker-<run-id>` to the run role and uses that role's configured `skills`. Host adapters own placement into the strongest verified non-persistent instruction layer their host exposes.
+
+An adapter implementing SPSI should:
+
+- fetch `_spsi-payload --session-id <host:id> --json` at request assembly time;
+- inject `content` only when `enabled` is true;
+- inject the payload exactly once into the current request;
+- avoid persistent user messages, transcript entries, conversation-history items, and compaction-carried context;
+- fail closed or report unsupported SPSI when the host has no verified non-persistent instruction hook.
 
 Slash-command argument parsing should be predictable enough for manual use. Pi supports basic quoted strings for `/orch do` arguments and reports malformed quotes instead of silently changing the goal.
 
@@ -176,7 +189,8 @@ The Pi plugin is the reference implementation for host-side behavior. Its Pi-spe
 - `pi.registerEntryRenderer` and `pi.appendEntry` for rendered command/output entries.
 - `ctx.ui.notify` for notifications.
 - `ctx.ui.setStatus` for footer subagent status.
-- `pi.sendUserMessage(..., { deliverAs: "followUp", triggerTurn: true })` for final auto-return and second-step `/orch on` delivery.
+- `pi.on("before_agent_start", ...)` plus `_spsi-payload` for SPSI system-prompt injection.
+- `pi.sendUserMessage(..., { deliverAs: "followUp" })` for final auto-return delivery.
 - `pi.sendUserMessage(..., { deliverAs: "steer" })` for budget handoff steering.
 - `session_start`, `session_shutdown`, `turn_end`, and `tool_call` event hooks.
 - `ORCHESTRA_TURN_BUDGET`, `ORCHESTRA_SOFT_TIMEOUT_SECONDS`, and `ORCHESTRA_BUDGET_EXCEEDED_PROMPT` for host-side budget handoff behavior. Pi decrements the turn budget on `turn_end`, injects the configured budget prompt as a steer message when the turn limit or soft timeout is reached, and can block subsequent tool calls after soft timeout.
@@ -213,8 +227,8 @@ Hermes should follow best host-supported parity rather than copying Pi APIs dire
 - Deliver consolidated idle-session auto-return with `ctx.inject_message(...)`.
 - Deliver consolidated busy-session auto-return by queueing the report into Hermes CLI `_pending_input` so the next user turn is created without interrupting the active turn.
 - Treat Hermes `/orch off` as behavioral session-scoped dispatch disabling. Hermes does not currently expose verified public APIs for Pi-style active-tool hiding/showing, so `/orch` and `orch_status` remain available while `orch_dispatch` returns a disabled error until `/orch on` re-enables it.
-- Hermes `/orch on` is two-step after `/orch off`: first re-enable dispatch for the session, then inject `_orchestrator-skill` on the next `/orch on`.
-- Use session cleanup hooks to clear watcher state, `/orch on` state, and disabled-dispatch state.
+- Hermes `/orch on` re-enables dispatch and records core mode `on`. Hermes SPSI remains unsupported until a non-persistent request-time instruction hook is verified; do not emulate SPSI with `ctx.inject_message(..., role="user")`.
+- Use session cleanup hooks to clear watcher state, budget state, and disabled-dispatch state.
 - Hermes budget handoff parity uses host-supported `pre_llm_call` and `pre_tool_call` hooks rather than Pi `turn_end` / `tool_call` events.
 - Footer/status UI, rendered transcript entries, non-prompt progress notifications, and dynamic completions remain host-API-limited until Hermes exposes stable public plugin APIs for them.
 
@@ -225,7 +239,7 @@ Before implementing a new host plugin, answer these questions.
 1. **Identity** — What host API provides the reliable runtime session id?
 2. **Tool support** — Can the host expose `orch_dispatch(goal, role?, taskLabel?)`?
 3. **Command support** — Can the host expose the `/orch` command surface?
-4. **Main-session skill** — Can the host restore tool visibility and deliver `_orchestrator-skill` into the current main session?
+4. **SPSI** — Can the host inject `_spsi-payload` into a non-persistent request-time instruction layer? What hook proves it is not persisted as conversation context?
 5. **Auto-return** — How can the plugin deliver the consolidated session report to the owning session?
 6. **Progress** — Does the host have non-prompt notifications for per-subagent progress?
 7. **Lifecycle** — What session end/shutdown hook can clean up watchers?

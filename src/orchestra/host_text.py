@@ -24,6 +24,7 @@ __all__ = [
     "format_progress_notification",
     "progress_notification_payload",
     "render_orchestrator_skill_message",
+    "render_orchestrator_skill_text",
 ]
 
 CONTRACT_VERSION = 1
@@ -143,16 +144,24 @@ def format_command_echo(raw_command: str) -> str:
 
 
 
-def render_orchestrator_skill_message(
+def render_orchestrator_skill_text(
     *,
     cwd: str | Path | None = None,
     source_root: str | Path | None = None,
 ) -> str:
     skill_path = _resolve_orchestrator_skill_path(cwd=cwd, source_root=source_root)
     try:
-        skill_text = skill_path.read_text(encoding="utf-8").strip()
+        return skill_path.read_text(encoding="utf-8").strip()
     except FileNotFoundError as exc:
         raise _app_error(f"orchestrator skill file not found: {skill_path}") from exc
+
+
+def render_orchestrator_skill_message(
+    *,
+    cwd: str | Path | None = None,
+    source_root: str | Path | None = None,
+) -> str:
+    skill_text = render_orchestrator_skill_text(cwd=cwd, source_root=source_root)
     return f"Load this Orchestra main-session skill:\n\n{skill_text}"
 
 

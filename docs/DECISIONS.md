@@ -71,13 +71,16 @@ subagent only when useful.
 
 **Source:** Owner clarification during the documentation review.
 
-### D-WORKFLOW-003 — `/orch on` loads the orchestrator skill
+### D-WORKFLOW-003 — `/orch on` enables Orchestra tools and SPSI guidance
 
-**Decision:** `/orch on` loads Orchestra's main-session orchestrator skill into
-the current session. It activates a skill-guided workflow; it does not create
-Orchestra's underlying dispatch capability.
+**Decision:** `/orch on` enables Orchestra tools and system-prompt-skill-injection
+(SPSI) guidance for the current session. SPSI must be delivered as ephemeral
+request-time instruction content through a verified non-persistent host hook. It
+must not be delivered through user messages, follow-up messages, transcript
+entries, conversation history, compaction-carried context, or other persistent
+model-visible context.
 
-**Source:** Owner clarification during the documentation review.
+**Source:** Owner clarification during SPSI implementation planning.
 
 ### D-WORKFLOW-004 — Native skill loading remains possible
 
@@ -91,11 +94,13 @@ orchestrator skill.
 
 ### D-WORKFLOW-005 — `/orch off` keeps unnecessary orchestration out of the session
 
-**Decision:** `/orch off` exists so the user can keep the main-session context
-lean when orchestration is not wanted and reduce dispatches for work that is too
-small or unlikely to benefit from subagent execution.
+**Decision:** `/orch off` disables Orchestra tools and SPSI guidance for the
+current session so the user can keep the main-session context lean when
+orchestration is not wanted and reduce dispatches for work that is too small or
+unlikely to benefit from subagent execution.
 
-**Source:** Owner clarification during the documentation review.
+**Source:** Owner clarification during the documentation review and SPSI
+implementation planning.
 
 ### D-WORKFLOW-006 — Structured main-session responsibilities
 
@@ -120,23 +125,24 @@ explicitly assigned to their role.
 ### D-WORKFLOW-009 — Core-owned main-session orchestration mode
 
 **Decision:** Orchestra core tracks main-session orchestration mode per session
-id. Initial modes are `off`, `on`, and `orchestrator`: `off` means Orchestra
-tools are disabled for the main session, `on` means Orchestra tools are enabled
-without the main-session orchestrator skill active, and `orchestrator` means the
-orchestrator skill is active. `config.yaml` defines the default tools state with
+id. The only valid modes are `off` and `on`: `off` means Orchestra tools and
+SPSI guidance are disabled for the main session, and `on` means Orchestra tools
+and SPSI guidance are enabled for hosts with verified non-persistent SPSI
+support. Any other mode value is invalid and must fail with a clear error.
+`config.yaml` defines the default tools/SPSI state with
 `tools_enabled_by_default`, defaulting to `true`; missing per-session mode state
 resolves from that configured default. Host adapters must initialize tool
 availability from core-owned configuration/state and update core mode when
-`/orch off`, `/orch on`, or orchestrator activation changes the session mode.
+`/orch off` or `/orch on` changes the session mode. Hosts without verified
+non-persistent SPSI hooks must not emulate SPSI through user messages,
+transcript entries, conversation history, or persistent context.
 
-**Reconciliation:** This decision refines D-WORKFLOW-003 for state tracking and
-status display by distinguishing tools-enabled `on` from skill-active
-`orchestrator`. D-WORKFLOW-003 remains the user workflow for activating the
-orchestrator skill; it no longer implies that every `on` state has the skill
-loaded.
+**Reconciliation:** This decision replaces the prior three-mode design that
+distinguished tools-enabled `on` from skill-active `orchestrator`. Orchestra now
+uses one-step session mode: tools-active implies SPSI-active where the host can
+safely support SPSI, and tools-inactive implies SPSI-inactive.
 
-**Source:** Owner clarification during roadmap planning for mode display and
-workflow-state tracking.
+**Source:** Owner clarification during SPSI implementation planning.
 
 ## Terminology and domain model
 

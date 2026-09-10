@@ -134,7 +134,7 @@ def test_pi_harness_keeps_hostile_goal_text_inside_one_argv_argument(
     assert command[2] == command[-1]
 
 
-def test_pi_harness_injects_local_role_skill_before_goal(
+def test_pi_harness_references_role_skills_without_inlining_skill_body(
     worker_request: WorkerRequest,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -151,14 +151,15 @@ def test_pi_harness_injects_local_role_skill_before_goal(
 
     prompt = PiHarness().build_prompt(worker_request, role)
 
-    assert "Role skill: code-reviewer" in prompt
-    assert "# Code Reviewer" in prompt
-    assert f"Skill directory: {skill_dir}" in prompt
-    assert "Resolve relative resource paths against this directory." in prompt
-    assert prompt.index("Role skill: code-reviewer") < prompt.index("Goal:")
+    assert "Role skills: code-reviewer" in prompt
+    assert "Skill instructions are delivered through SPSI." in prompt
+    assert "# Code Reviewer" not in prompt
+    assert f"Skill directory: {skill_dir}" not in prompt
+    assert "Resolve relative resource paths against this directory." not in prompt
+    assert prompt.index("Role skills: code-reviewer") < prompt.index("Goal:")
 
 
-def test_pi_harness_resolves_role_skill_from_catalog_relative_root(
+def test_pi_harness_does_not_inline_catalog_relative_role_skill(
     worker_request: WorkerRequest,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -187,12 +188,14 @@ def test_pi_harness_resolves_role_skill_from_catalog_relative_root(
 
     prompt = PiHarness().build_prompt(request, role)
 
-    assert "# Builder" in prompt
-    assert f"Skill directory: {skill_dir}" in prompt
-    assert "Resolve relative resource paths against this directory." in prompt
+    assert "Role skills: builder" in prompt
+    assert "Skill instructions are delivered through SPSI." in prompt
+    assert "# Builder" not in prompt
+    assert f"Skill directory: {skill_dir}" not in prompt
+    assert "Resolve relative resource paths against this directory." not in prompt
 
 
-def test_pi_harness_falls_back_to_native_skill_instruction(
+def test_pi_harness_does_not_inline_native_skill_instruction(
     worker_request: WorkerRequest,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -211,9 +214,10 @@ def test_pi_harness_falls_back_to_native_skill_instruction(
 
     prompt = PiHarness().build_prompt(worker_request, role)
 
-    assert "Role skill: security-reviewer" in prompt
+    assert "Role skills: security-reviewer" in prompt
+    assert "Skill instructions are delivered through SPSI." in prompt
     assert "# Security Reviewer" not in prompt
-    assert "Load the native skill named 'security-reviewer' before doing the task." in prompt
+    assert "Load the native skill named 'security-reviewer' before doing the task." not in prompt
 
 
 def test_pi_harness_uses_configured_default_return_format(worker_request: WorkerRequest) -> None:

@@ -53,8 +53,8 @@ def test_explicit_mode_overrides_configured_default(tmp_path: Path) -> None:
     assert resolve_main_session_mode(off_default, "pi:session-a") == "on"
 
     on_default = make_context(tmp_path / "rt-on", tools_enabled_by_default=True)
-    set_main_session_mode(on_default, "pi:session-b", "orchestrator")
-    assert resolve_main_session_mode(on_default, "pi:session-b") == "orchestrator"
+    with pytest.raises(StateError, match="invalid main session mode: orchestrator"):
+        set_main_session_mode(on_default, "pi:session-b", "orchestrator")
 
 
 def test_app_set_returns_state_and_invalid_mode_rejected(tmp_path: Path) -> None:

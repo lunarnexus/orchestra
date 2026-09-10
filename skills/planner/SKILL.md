@@ -41,6 +41,7 @@ First Pass:
   - Classify unknowns as known evidence, local evidence to inspect, researcher-owned evidence, user decision, spike, or safe assumption.
 - Do NOT overcomplicate, plan the smallest most efficient solution that will
   solve the problem or fit the user's criteria.
+- Before planning for, or leaving legacy compatability, obtain approval from the user.
 
 Second Pass:
 - Review the plan again.  Expand each phase into executable vertical slices
@@ -56,6 +57,7 @@ te;
   - blockers to resolve before parallel fan-out.
 - Identify gotchas, ordering hazards, shared abstractions, schema/config/API cou
 pling, artifact updates, test gaps, and blocked work.
+- Do NOT overcomplicate, plan the smallest most efficient solution that will fit user criteria, do NOT invent complexity.
 
 Third Pass:
 - Validate end-state fit against the user’s specification, acceptance coverage,
@@ -66,6 +68,7 @@ quirements, interfaces, or verification.
 - Re-check the `Parallelization check` against the finalized slices and gates.
 - If user input is needed, ask the decision-blocking question with a recommendat
 ion.  Otherwise update `PLAN.md`
+- Do NOT overcomplicate, plan the smallest most efficient solution that will fit user criteria, do NOT invent complexity.
 
 Planning state:
 - `ready` — enough evidence exists for executable slices;

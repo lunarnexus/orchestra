@@ -105,17 +105,13 @@ def test_pi_extension_host_on_refreshes_skill_each_time(
     assert (pi_dir / "extensions" / "orchestra" / "index.ts").exists()
 
     session_id = f"orch-host-on-{uuid.uuid4().hex}"
-    result = _run_pi(env, session_id, "/orch off", "/orch on", "/orch on", mode="json")
+    result = _run_pi(env, session_id, "/orch off", "/orch on", mode="json")
 
     assert result.returncode == 0
     output = result.stdout + result.stderr
     assert "Orchestra tools hidden for this session. Run /orch on to enable them again." in output
-    enabled_message = (
-        'Orchestra tools enabled for this session. '
-        'Run "/orch on" again to load the orchestrator skill.'
-    )
-    assert enabled_message in output
-    assert output.count("Orchestra orchestrator skill refreshed for this session.") == 1
+    assert "Orchestra tools and SPSI guidance enabled for this session." in output
+    assert "Orchestra orchestrator skill refreshed for this session." not in output
     assert "already loaded" not in output
 
     events = _json_events(output)
@@ -127,7 +123,7 @@ def test_pi_extension_host_on_refreshes_skill_each_time(
         and isinstance((data := entry.get("data")), dict)
         and data.get("text") in {"/orch off", "/orch on"}
     ]
-    assert len(command_events) == 3
+    assert len(command_events) == 2
 
 
 def test_pi_extension_host_command_path(
@@ -154,7 +150,7 @@ def test_pi_extension_host_command_path(
     help_output = help_result.stdout + help_result.stderr
     assert "Orchestra commands:" in help_output
     assert (
-        "/orch on                           Enable Orchestra tools or load the orchestrator skill"
+        "/orch on                           Enable Orchestra tools and SPSI guidance"
         in help_output
     )
     assert "/orch off                          Hide Orchestra tools for this session" in help_output

@@ -51,7 +51,10 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert '["help-host"]' in extension_source
     assert '["doctor"]' in extension_source
     assert '["roles", "--all"]' in extension_source
-    assert '["_orchestrator-skill"]' in extension_source
+    assert '["_orchestrator-skill"]' not in extension_source
+    assert '["_spsi-payload", "--session-id", sessionId, "--json"]' in extension_source
+    assert 'pi.on("before_agent_start"' in extension_source
+    assert 'return { systemPrompt:' in extension_source
     assert 'runId is required for orch_status stop.' in extension_source
     assert (
         'orch_status roles is read-only; use the host /orch roles command to change role settings.'
@@ -130,7 +133,7 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
 
     # The extension caches only core-confirmed mode for synchronous rendering.
-    assert 'type MainSessionMode = "off" | "on" | "orchestrator";' in extension_source
+    assert 'type MainSessionMode = "off" | "on";' in extension_source
     assert "let mainSessionMode: MainSessionMode | null = null;" in extension_source
 
     # Footer composes a labeled dimmed mode with the existing role/active-run text.
@@ -188,7 +191,7 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     shutdown_idx = extension_source.index('pi.on("session_shutdown"', start_idx)
     init_block = extension_source[start_idx:shutdown_idx]
     assert "mainSessionMode = null;" in init_block
-    assert 'mainSessionMode === "orchestrator"' in init_block
+    assert 'mainSessionMode === "orchestrator"' not in init_block
     assert "setOrchestraToolsActive(false);" in init_block
 
     # Session shutdown clears the tracked mode.
@@ -196,15 +199,10 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     shutdown_block = extension_source[shutdown_idx:register_idx]
     assert "mainSessionMode = null;" in shutdown_block
 
-    # Orchestrator activation tracks the mode when core confirms it.
-    inject_start = extension_source.index(
-        "async function injectOrchestratorSkill(sessionId: string)"
-    )
-    on_idx = extension_source.index("async function handleOrchOn(", inject_start)
-    inject_body = extension_source[inject_start:on_idx]
-    assert 'mainSessionMode = "orchestrator";' in inject_body
+    assert "async function injectOrchestratorSkill(sessionId: string)" not in extension_source
+    on_idx = extension_source.index("async function handleOrchOn(")
 
-    # /orch off and first /orch on apply only complete, core-confirmed effects.
+    # /orch off and /orch on apply only complete, core-confirmed effects.
     handler_end = extension_source.index("async function getOrchArgumentCompletions(", on_idx)
     handlers_block = extension_source[on_idx:handler_end]
     assert 'effect?.mode !== "on" || effect.tools_enabled !== true' in handlers_block
@@ -320,7 +318,8 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
         in extension_source
     )
     assert 'Run "/orch on" again to load the orchestrator skill.' not in extension_source
-    assert 'Run "/orch on" again to load the orchestrator skill.' in prompts_source
+    assert 'Run "/orch on" again to load the orchestrator skill.' not in prompts_source
+    assert "Orchestra tools and SPSI guidance enabled for this session." in prompts_source
     assert (
         'Orchestra tools hidden for this session. Run /orch on to enable them again.'
         not in extension_source

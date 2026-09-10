@@ -19,7 +19,7 @@ interface OrchestraFooterTheme {
   fg(color: string, text: string): string;
 }
 
-type MainSessionMode = "off" | "on" | "orchestrator";
+type MainSessionMode = "off" | "on";
 
 interface ActiveRoleCount {
   role: string;
@@ -416,13 +416,19 @@ interface SessionModeTransitionEffect {
   display_text?: string;
   mode?: MainSessionMode;
   tools_enabled?: boolean;
-  inject_text?: string;
-  trigger_turn?: boolean;
   error?: string;
 }
 
 interface SessionModeTransitionPayload {
   effect?: SessionModeTransitionEffect;
+  ok?: boolean;
+}
+
+interface SpsiPayload {
+  enabled?: boolean;
+  name?: string;
+  revision?: string;
+  content?: string;
   ok?: boolean;
 }
 
@@ -565,7 +571,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   let budgetPromptInjected = false;
   let orchestraToolsEnabled = true;
   let mainSessionMode: MainSessionMode | null = null;
-  let orchOnRequiresSecondStep = false;
 
   function injectBudgetExceededPrompt(reason: "turn_limit" | "soft_timeout"): void {
     if (budgetPromptInjected) return;
@@ -1044,8 +1049,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       const sessionToolInfo = await loadToolInfo(currentSessionId);
       if (
         sessionToolInfo.mainSessionMode === "off" ||
-        sessionToolInfo.mainSessionMode === "on" ||
-        sessionToolInfo.mainSessionMode === "orchestrator"
+        sessionToolInfo.mainSessionMode === "on"
       ) {
         mainSessionMode = sessionToolInfo.mainSessionMode;
       }
@@ -1118,6 +1122,29 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     return (await getActiveSessionStatus(sessionId)).runIds;
   }
 
+  async function fetchSpsiPayload(sessionId: string): Promise<SpsiPayload | null> {
+    const result = await runOrchestra(["_spsi-payload", "--session-id", sessionId, "--json"]);
+    if (result.code !== 0 || !result.stdout.trim()) return null;
+    try {
+      return JSON.parse(result.stdout) as SpsiPayload;
+    } catch {
+      return null;
+    }
+  }
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    let sessionId: string | null = currentSessionId;
+    try {
+      sessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
+    } catch {
+      // Fall back to the last session_start id when host context cannot provide one.
+    }
+    if (!sessionId) return;
+    const payload = await fetchSpsiPayload(sessionId);
+    if (payload?.ok !== true || payload.enabled !== true || !payload.content?.trim()) return;
+    return { systemPrompt: `${event.systemPrompt}\n\n${payload.content.trim()}` };
+  });
+
   async function refreshOrchestraWorkerStatus(
     sessionId: string,
     updateStatus?: (status: ActiveSessionStatus | null) => void,
@@ -1140,59 +1167,19 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
   }
 
-  async function injectOrchestratorSkill(sessionId: string): Promise<{ code: number; output: string }> {
-    const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", "orchestrator", "--json"]);
-    let transition: SessionModeTransitionPayload | null = null;
-    let output = "Orchestra orchestrator skill refreshed for this session.";
-    if (modeResult.code === 0 && modeResult.stdout.trim()) {
-      transition = parseSessionModeTransitionPayload(modeResult.stdout);
-      const effect = transition.effect;
-      if (effect?.mode === "orchestrator") {
-        mainSessionMode = "orchestrator";
-      }
-      if (effect?.display_text) output = effect.display_text;
-      if (effect?.inject_text) {
-        pi.sendUserMessage(effect.inject_text, { deliverAs: "followUp", triggerTurn: true });
-      }
-    }
-    if (!transition?.effect?.inject_text) {
-      const result = await runOrchestra(["_orchestrator-skill"]);
-      const message = result.stdout.trim();
-      if (result.code !== 0 || !message) {
-        return {
-          code: result.code || 1,
-          output: result.stderr || message || "Failed to load Orchestra main-session skill.",
-        };
-      }
-      pi.sendUserMessage(message, { deliverAs: "followUp", triggerTurn: true });
-    }
-    if (modeResult.code !== 0) {
-      output += " Core orchestrator-mode persistence failed; the mode change is local only.";
-    }
-    return { code: 0, output };
-  }
-
   async function handleOrchOn(sessionId: string): Promise<{ code: number; output: string }> {
-    if (!orchestraToolsEnabled) {
-      const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", "on", "--json"]);
-      if (modeResult.code !== 0 || !modeResult.stdout.trim()) {
-        return { code: 1, output: modeResult.stderr || "Orchestra mode transition failed." };
-      }
-      const payload = parseSessionModeTransitionPayload(modeResult.stdout);
-      const effect = payload.effect;
-      if (payload.ok !== true || effect?.mode !== "on" || effect.tools_enabled !== true) {
-        return { code: 1, output: effect?.error || "Orchestra returned an invalid mode transition." };
-      }
-      mainSessionMode = effect.mode;
-      setOrchestraToolsActive(effect.tools_enabled);
-      orchOnRequiresSecondStep = true;
-      return { code: 0, output: effect.display_text || "" };
+    const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", "on", "--json"]);
+    if (modeResult.code !== 0 || !modeResult.stdout.trim()) {
+      return { code: 1, output: modeResult.stderr || "Orchestra mode transition failed." };
     }
-    if (orchOnRequiresSecondStep) {
-      orchOnRequiresSecondStep = false;
-      return injectOrchestratorSkill(sessionId);
+    const payload = parseSessionModeTransitionPayload(modeResult.stdout);
+    const effect = payload.effect;
+    if (payload.ok !== true || effect?.mode !== "on" || effect.tools_enabled !== true) {
+      return { code: 1, output: effect?.error || "Orchestra returned an invalid mode transition." };
     }
-    return injectOrchestratorSkill(sessionId);
+    mainSessionMode = effect.mode;
+    setOrchestraToolsActive(effect.tools_enabled);
+    return { code: 0, output: effect.display_text || "" };
   }
 
   async function handleOrchOff(sessionId: string): Promise<{ code: number; output: string }> {
@@ -1207,7 +1194,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
     mainSessionMode = effect.mode;
     setOrchestraToolsActive(effect.tools_enabled);
-    orchOnRequiresSecondStep = true;
     return { code: 0, output: effect.display_text || "" };
   }
 
@@ -1217,7 +1203,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
     const subcommands = [
       { token: "help", description: "Show Orchestra help" },
-      { token: "on", description: "Enable Orchestra tools or load the orchestrator skill" },
+      { token: "on", description: "Enable Orchestra tools and SPSI guidance" },
       { token: "off", description: "Hide Orchestra tools for this session" },
       { token: "doctor", description: "Check Orchestra setup" },
       { token: "do ", description: "Dispatch a subagent" },
@@ -1413,20 +1399,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           if (!sessionId) {
             return failure("Pi session_id is required for orch_status on.");
           }
-          const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", "orchestrator", "--json"]);
-          if (modeResult.code !== 0 || !modeResult.stdout.trim()) {
-            const result = await injectOrchestratorSkill(sessionId);
-            return result.code === 0 ? success(result.output) : failure(result.output);
-          }
-          const payload = parseSessionModeTransitionPayload(modeResult.stdout);
-          const effect = payload.effect;
-          if (effect?.mode === "orchestrator") {
-            mainSessionMode = "orchestrator";
-          }
-          if (effect?.inject_text) {
-            pi.sendUserMessage(effect.inject_text, { deliverAs: "followUp", triggerTurn: true });
-          }
-          return success(effect?.display_text || "Orchestra orchestrator skill refreshed for this session.");
+          const result = await handleOrchOn(sessionId);
+          return result.code === 0 ? success(result.output) : failure(result.output);
         }
 
         if (params.action === "status") {

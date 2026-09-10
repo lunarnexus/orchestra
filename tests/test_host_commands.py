@@ -4,6 +4,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 import yaml
 
 from orchestra.config import RoleConfig
@@ -15,7 +16,9 @@ from orchestra.host_commands import (
     session_mode_transition_payload,
     tool_info_payload,
 )
-from orchestra.host_text import render_orchestrator_skill_message
+from orchestra.host_text import render_orchestrator_skill_text
+from orchestra.spsi import SPSI_NAME, spsi_payload
+from orchestra.state import RunRecord, StateError
 from tests.helpers import write_runtime_files
 
 
@@ -30,13 +33,16 @@ def make_context(base_dir: Path, *, tools_enabled_by_default: bool | None) -> Ap
     if tools_enabled_by_default is not None:
         data["tools_enabled_by_default"] = tools_enabled_by_default
     config_path.write_text(yaml.safe_dump(data), encoding="utf-8")
+    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    catalog["roles"]["orchestrator"] = {"skills": ["orchestrator", "planner"]}
+    catalog_path.write_text(yaml.safe_dump(catalog), encoding="utf-8")
     return load_context(config_path=config_path, catalog_path=catalog_path)
 
 
 def test_effect_payload_omits_empty_fields() -> None:
-    effect = HostActionEffect(mode="on", trigger_turn=False)
+    effect = HostActionEffect(mode="on")
 
-    assert effect.to_payload() == {"mode": "on", "trigger_turn": False}
+    assert effect.to_payload() == {"mode": "on"}
 
 
 def test_tool_info_schema_uses_resolved_session_mode(tmp_path: Path) -> None:
@@ -66,7 +72,7 @@ def test_session_mode_payload_matches_current_mode_resolution(tmp_path: Path) ->
         "kind": "main_session_state",
         "ok": True,
         "session_id": "pi:session-a",
-        "effect": {"mode": "on", "tools_enabled": True, "trigger_turn": False},
+        "effect": {"mode": "on", "tools_enabled": True},
     }
 
 
@@ -81,7 +87,6 @@ def test_session_mode_payload_uses_explicit_core_mode_for_tool_visibility(
     assert payload["effect"] == {
         "mode": "off",
         "tools_enabled": False,
-        "trigger_turn": False,
     }
 
 
@@ -234,40 +239,106 @@ def test_dispatch_command_payload_builds_core_dispatch_argv() -> None:
     }
 
 
-def test_session_mode_transition_payloads_cover_on_off_and_orchestrator(
+def test_session_mode_transition_payloads_cover_on_off(
     tmp_path: Path,
 ) -> None:
     context = make_context(tmp_path / "rt", tools_enabled_by_default=False)
 
     off_payload = session_mode_transition_payload(context, "pi:session-a", "off").to_payload()
     on_payload = session_mode_transition_payload(context, "pi:session-a", "on").to_payload()
-    orchestrator_payload = session_mode_transition_payload(
-        context,
-        "pi:session-a",
-        "orchestrator",
-    ).to_payload()
-
     assert off_payload["effect"] == {
         "display_text": (
             "Orchestra tools hidden for this session. Run /orch on to enable them again."
         ),
         "mode": "off",
         "tools_enabled": False,
-        "trigger_turn": False,
     }
     assert on_payload["effect"] == {
-        "display_text": (
-            'Orchestra tools enabled for this session. '
-            'Run "/orch on" again to load the orchestrator skill.'
-        ),
+        "display_text": "Orchestra tools and SPSI guidance enabled for this session.",
         "mode": "on",
         "tools_enabled": True,
-        "trigger_turn": False,
     }
-    assert orchestrator_payload["effect"] == {
-        "display_text": "Orchestra orchestrator skill refreshed for this session.",
-        "mode": "orchestrator",
-        "tools_enabled": True,
-        "inject_text": render_orchestrator_skill_message(),
-        "trigger_turn": True,
+
+    with pytest.raises(StateError, match="invalid main session mode: orchestrator"):
+        session_mode_transition_payload(context, "pi:session-a", "orchestrator")
+
+
+def test_spsi_payload_enabled_uses_stable_content_and_revision(tmp_path: Path) -> None:
+    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+
+    payload = spsi_payload(context, "pi:session-a").to_payload()
+
+    assert payload["kind"] == "spsi_payload"
+    assert payload["session_id"] == "pi:session-a"
+    assert payload["enabled"] is True
+    assert payload["name"] == SPSI_NAME
+    assert isinstance(payload["revision"], str)
+    assert payload["revision"].startswith("sha256:")
+    content = payload["content"]
+    assert isinstance(content, str)
+    assert f'<orchestra_spsi name="{SPSI_NAME}" revision="{payload["revision"]}"' in content
+    assert 'role="orchestrator"' in content
+    assert 'skills="orchestrator,planner"' in content
+    assert render_orchestrator_skill_text() in content
+    assert '<orchestra_spsi_skill name="planner">' in content
+    assert "Role: intern" not in content
+
+
+def test_spsi_payload_uses_worker_role_skills_for_worker_sessions(tmp_path: Path) -> None:
+    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    skill_dir = context.paths.catalog_path.parent / "skills" / "worker"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "# Worker Skill\n\nReturn WORKER_SKILL_OK when asked.",
+        encoding="utf-8",
+    )
+    context = replace(
+        context,
+        catalog=replace(
+            context.catalog,
+            roles={
+                **context.catalog.roles,
+                "worker": replace(context.catalog.roles["worker"], skills=("worker",)),
+            },
+        ),
+    )
+    context.store.create_run(
+        RunRecord(
+            run_id="abc123",
+            orchestrator_session_id="pi:parent-session",
+            harness="pi",
+            role="worker",
+            task_label="worker skill",
+            log_path=tmp_path / "worker.log",
+            created_at="2026-01-01T00:00:00Z",
+        )
+    )
+
+    payload = spsi_payload(context, "pi:orchestra-worker-abc123").to_payload()
+
+    assert payload["enabled"] is True
+    assert payload["role"] == "worker"
+    assert payload["skills"] == ["worker"]
+    content = payload["content"]
+    assert isinstance(content, str)
+    assert 'role="worker"' in content
+    assert 'skills="worker"' in content
+    assert "# Worker Skill" in content
+    assert "Return WORKER_SKILL_OK when asked." in content
+    assert render_orchestrator_skill_text() not in content
+
+
+def test_spsi_payload_disabled_omits_content_and_revision(tmp_path: Path) -> None:
+    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    context.store.set_main_session_mode("pi:session-a", "off")
+
+    payload = spsi_payload(context, "pi:session-a").to_payload()
+
+    assert payload == {
+        "contract_version": 1,
+        "kind": "spsi_payload",
+        "ok": True,
+        "session_id": "pi:session-a",
+        "enabled": False,
+        "name": SPSI_NAME,
     }

@@ -72,7 +72,6 @@ def load_root_prompt_config() -> PromptConfig:
         soft_timeout_block_reason=data["soft_timeout_block_reason"],
         session_mode_off_message=data["session_mode_off_message"],
         session_mode_on_message=data["session_mode_on_message"],
-        session_mode_orchestrator_message=data["session_mode_orchestrator_message"],
     )
 
 
@@ -1090,7 +1089,7 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
 
     from orchestra.cli import main
 
-    set_exit = main(
+    invalid_set_exit = main(
         [
             "--config",
             str(config_path.parent),
@@ -1102,8 +1101,9 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
             "orchestrator",
         ]
     )
-    assert set_exit == 0
-    capsys.readouterr()
+    invalid_set_output = capsys.readouterr().out
+    assert invalid_set_exit == 1
+    assert "error: invalid main session mode: orchestrator" in invalid_set_output
 
     set_json_exit = main(
         [
@@ -1127,7 +1127,7 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
     )
     assert set_payload["effect"]["mode"] == "off"
     assert set_payload["effect"]["tools_enabled"] is False
-    assert set_payload["effect"]["trigger_turn"] is False
+    assert "trigger_turn" not in set_payload["effect"]
 
     get_exit = main(
         [
@@ -2047,7 +2047,7 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert help_exit == 0
     assert tool_exit == 0
     assert (
-        "/orch on                           Enable Orchestra tools or load the orchestrator skill"
+        "/orch on                           Enable Orchestra tools and SPSI guidance"
         in help_output
     )
     assert "/orch off                          Hide Orchestra tools for this session" in help_output
@@ -2131,6 +2131,7 @@ def _write_tool_info_fixture(
                     "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
                 },
                 "roles": {
+                    "orchestrator": {"skills": ["orchestrator", "planner"]},
                     "worker": {"harness_config": "pi"},
                 },
             },
@@ -2165,8 +2166,15 @@ def test_tool_info_exposes_tools_default_and_resolved_session_mode(
     ):
         assert key in payload
 
-    set_exit = main(
+    invalid_set_exit = main(
         [*base_args, "_session-mode", "set", "--session-id", "pi:s1", "--mode", "orchestrator"]
+    )
+    invalid_output = capsys.readouterr().out
+    assert invalid_set_exit == 1
+    assert "error: invalid main session mode: orchestrator" in invalid_output
+
+    set_exit = main(
+        [*base_args, "_session-mode", "set", "--session-id", "pi:s1", "--mode", "on"]
     )
     capsys.readouterr()
     assert set_exit == 0
@@ -2174,8 +2182,17 @@ def test_tool_info_exposes_tools_default_and_resolved_session_mode(
     exit_code = main([*base_args, "_tool-info", "--session-id", "pi:s1"])
     resolved = json.loads(capsys.readouterr().out)
     assert exit_code == 0
-    assert resolved["mainSessionMode"] == "orchestrator"
+    assert resolved["mainSessionMode"] == "on"
     assert resolved["toolsEnabledByDefault"] is True
+
+    spsi_exit = main([*base_args, "_spsi-payload", "--session-id", "pi:s1", "--json"])
+    spsi = json.loads(capsys.readouterr().out)
+    assert spsi_exit == 0
+    assert spsi["kind"] == "spsi_payload"
+    assert spsi["enabled"] is True
+    assert spsi["name"] == "orchestra.spsi.role-skills"
+    assert spsi["revision"].startswith("sha256:")
+    assert "<orchestra_spsi" in spsi["content"]
 
     # Without a session id the config-resolved default still applies.
     exit_code = main([*base_args, "_tool-info"])
@@ -2379,10 +2396,11 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
     assert payload["nested_dispatch_depth"] == "2"
     assert payload["role_env"] == "configured"
     assert "Role: reviewer" in payload["prompt"]
-    assert "Role skill: reviewer" in payload["prompt"]
-    assert f"Skill directory: {skill_dir}" in payload["prompt"]
-    assert "Resolve relative resource paths against this directory." in payload["prompt"]
-    assert "# Reviewer Skill" in payload["prompt"]
+    assert "Role skills: reviewer" in payload["prompt"]
+    assert "Skill instructions are delivered through SPSI." in payload["prompt"]
+    assert f"Skill directory: {skill_dir}" not in payload["prompt"]
+    assert "Resolve relative resource paths against this directory." not in payload["prompt"]
+    assert "# Reviewer Skill" not in payload["prompt"]
     assert "Role instructions: Review only." in payload["prompt"]
 
     history_exit = main(

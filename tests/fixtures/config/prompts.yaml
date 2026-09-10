@@ -72,8 +72,7 @@ return_hint_builder_failed: pass this return_path handoff artifact to one bounde
 budget_trigger_label: Budget trigger
 soft_timeout_block_reason: Orchestra soft timeout reached; return budget handoff
 session_mode_off_message: Orchestra tools hidden for this session. Run /orch on to enable them again.
-session_mode_on_message: Orchestra tools enabled for this session. Run "/orch on" again to load the orchestrator skill.
-session_mode_orchestrator_message: Orchestra orchestrator skill refreshed for this session.
+session_mode_on_message: Orchestra tools and SPSI guidance enabled for this session.
 budget_exceeded_prompt: |-
   [Orchestra subagent budget exceeded]
   Stop everything you're doing immediately.
@@ -119,7 +118,7 @@ budget_exceeded_prompt: |-
 host_help: |-
   Orchestra commands:
     /orch help                         Show this help
-    /orch on                           Enable Orchestra tools or load the orchestrator skill
+    /orch on                           Enable Orchestra tools and SPSI guidance
     /orch off                          Hide Orchestra tools for this session
     /orch doctor                       Check Orchestra setup
     /orch do <request>                 Dispatch a subagent

@@ -59,6 +59,7 @@ from orchestra.session_mode import (
     main_session_state_payload,
     set_main_session_mode,
 )
+from orchestra.spsi import spsi_payload
 from orchestra.state import StateError
 from orchestra.status import (
     await_run_payload,
@@ -87,6 +88,7 @@ INTERNAL_COMMANDS = frozenset(
         "_tool-info",
         "_role-metadata",
         "_orchestrator-skill",
+        "_spsi-payload",
     }
 )
 
@@ -387,6 +389,11 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
             help=argparse.SUPPRESS,
         )
         orchestrator_skill_parser.set_defaults(handler=_handle_orchestrator_skill)
+
+        spsi_payload_parser = subparsers.add_parser("_spsi-payload", help=argparse.SUPPRESS)
+        spsi_payload_parser.add_argument("--session-id", required=True)
+        spsi_payload_parser.add_argument("--json", action="store_true")
+        spsi_payload_parser.set_defaults(handler=_handle_spsi_payload)
 
     return parser
 
@@ -775,6 +782,12 @@ def _handle_role_metadata(args: argparse.Namespace) -> int:
 def _handle_orchestrator_skill(args: argparse.Namespace) -> int:
     del args
     print(render_orchestrator_skill_message())
+    return 0
+
+
+def _handle_spsi_payload(args: argparse.Namespace) -> int:
+    context = load_context(config_path=args.config, catalog_path=None)
+    print(json.dumps(spsi_payload(context, args.session_id).to_payload()))
     return 0
 
 

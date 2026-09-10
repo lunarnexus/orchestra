@@ -78,8 +78,8 @@ status_description: >-
   Use orch_status only when the user explicitly asks for an Orchestra
   status/control/help action in the current session. Use status for active
   subagents, history for completed subagent results, roles for read-only role
-  information, doctor for setup checks, help for usage, on to activate Orchestra
-  orchestration guidance, and stop with a runId to cancel an owned active run.
+  information, doctor for setup checks, help for usage, on to enable Orchestra
+  tools and SPSI guidance, and stop with a runId to cancel an owned active run.
   Do not poll for completion. Completed subagent reports return automatically.
 status_action_description: >-
   Action to perform: help, doctor, roles, status, history, on, or stop. Use stop
@@ -92,8 +92,7 @@ status_value_description: Reserved for role updates; model-callable roles are re
 budget_trigger_label: Budget trigger
 soft_timeout_block_reason: Orchestra soft timeout reached; return budget handoff
 session_mode_off_message: Orchestra tools hidden for this session. Run /orch on to enable them again.
-session_mode_on_message: Orchestra tools enabled for this session. Run "/orch on" again to load the orchestrator skill.
-session_mode_orchestrator_message: Orchestra orchestrator skill refreshed for this session.
+session_mode_on_message: Orchestra tools and SPSI guidance enabled for this session.
 return_hint_done: advance the plan using this subagent return; do not repeat its work
 return_hint_incomplete: pass this return_path handoff artifact to the next dispatch and continue from it
 return_hint_failed: read the failed return artifact and decide how to proceed
@@ -136,7 +135,7 @@ budget_exceeded_prompt: |-
 host_help: |-
   Orchestra commands:
     /orch help                         Show this help
-    /orch on                           Enable Orchestra tools or load the orchestrator skill
+    /orch on                           Enable Orchestra tools and SPSI guidance
     /orch off                          Hide Orchestra tools for this session
     /orch doctor                       Check Orchestra setup
     /orch do <request>                 Dispatch a subagent

@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Mapping
-from pathlib import Path
 
 from orchestra.config import RoleConfig
 from orchestra.harnesses.base import WorkerRequest
@@ -70,7 +69,12 @@ def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:
     sections = [
         f"Role: {request.role_name}",
     ]
-    sections.extend(_role_skill_sections(role.skills, request.skill_roots))
+    if role.skills:
+        sections.append(
+            "Role skills: "
+            + ", ".join(role.skills)
+            + "\nSkill instructions are delivered through SPSI."
+        )
     sections.append(f"Goal: {request.goal.strip()}")
     if role.dispatch_hint:
         sections.append(f"Role instructions: {role.dispatch_hint.strip()}")
@@ -84,41 +88,6 @@ def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:
     return_format = request.return_format.strip() or prompts.default_return_format
     sections.append(f"Return format: {return_format}")
     return "\n\n".join(sections)
-
-
-def _role_skill_sections(
-    skill_names: tuple[str, ...], skill_roots: tuple[Path, ...]
-) -> list[str]:
-    sections: list[str] = []
-    roots = skill_roots or (Path.cwd() / SKILL_LIBRARY_DIR,)
-    for skill_name in skill_names:
-        skill_path = _find_project_skill(skill_name, roots)
-        if skill_path is not None:
-            sections.append(
-                f"Role skill: {skill_name}\n"
-                f"Skill directory: {skill_path.parent.resolve()}\n"
-                "Resolve relative resource paths against this directory.\n\n"
-                f"{skill_path.read_text(encoding='utf-8').strip()}"
-            )
-        else:
-            sections.append(
-                f"Role skill: {skill_name}\n"
-                f"Load the native skill named '{skill_name}' before doing the task."
-            )
-    return sections
-
-
-def _find_project_skill(skill_name: str, skill_roots: tuple[Path, ...]) -> Path | None:
-    for skills_root in skill_roots:
-        candidate = skills_root / skill_name / SKILL_FILENAME
-        if candidate.is_file():
-            return candidate
-        if not skills_root.is_dir():
-            continue
-        for nested_candidate in skills_root.rglob(SKILL_FILENAME):
-            if nested_candidate.parent.name == skill_name:
-                return nested_candidate
-    return None
 
 
 def expand_command_template(role: RoleConfig, prompt: str) -> list[str]:

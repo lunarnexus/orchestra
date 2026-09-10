@@ -47,8 +47,6 @@ class _BudgetState:
 
 _BUDGET_STATES: dict[str, _BudgetState] = {}
 _BUDGET_STATES_LOCK = threading.Lock()
-_ORCH_ON_ACTIVE_SESSIONS: set[str] = set()
-_ORCH_ON_ACTIVE_SESSIONS_LOCK = threading.Lock()
 _ORCH_DISABLED_SESSIONS: set[str] = set()
 _ORCH_DISABLED_SESSIONS_LOCK = threading.Lock()
 
@@ -121,19 +119,6 @@ def _clear_budget_state(runtime_session_id: str) -> None:
         _BUDGET_STATES.pop(runtime_session_id, None)
 
 
-def _orch_on_mark_active(runtime_session_id: str) -> bool:
-    with _ORCH_ON_ACTIVE_SESSIONS_LOCK:
-        if runtime_session_id in _ORCH_ON_ACTIVE_SESSIONS:
-            return False
-        _ORCH_ON_ACTIVE_SESSIONS.add(runtime_session_id)
-        return True
-
-
-def _orch_on_clear(runtime_session_id: str) -> None:
-    with _ORCH_ON_ACTIVE_SESSIONS_LOCK:
-        _ORCH_ON_ACTIVE_SESSIONS.discard(runtime_session_id)
-
-
 def _orch_dispatch_disable(runtime_session_id: str) -> None:
     with _ORCH_DISABLED_SESSIONS_LOCK:
         _ORCH_DISABLED_SESSIONS.add(runtime_session_id)
@@ -157,7 +142,7 @@ def _core_dispatch_disabled(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
     mode = payload.get("mainSessionMode")
-    if isinstance(mode, str) and mode in {"off", "on", "orchestrator"}:
+    if isinstance(mode, str) and mode in {"off", "on"}:
         return mode == "off"
     return payload.get("toolsEnabledByDefault") is False
 
@@ -805,7 +790,6 @@ def _on_session_cleanup(**kwargs: Any) -> None:
         return
     _invalidate_session_watcher_generation(runtime_session_id)
     _clear_budget_state(runtime_session_id)
-    _orch_on_clear(runtime_session_id)
     _orch_dispatch_enable(runtime_session_id)
     with _REPORT_WATCHERS_LOCK:
         _REPORT_WATCHERS.discard(runtime_session_id)
@@ -904,58 +888,14 @@ def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
     return _dispatch_orchestra_run(args, runtime_session_id, ctx=kwargs.get("_ctx"))
 
 
-def _orch_on_error(reason: str) -> str:
-    return f"Hermes /orch on failed: {reason}"
-
-
 def _orch_on(ctx: Any | None, runtime_session_id: str) -> str:
-    if _orch_dispatch_is_disabled(runtime_session_id):
-        warning = _record_core_session_mode(runtime_session_id, "on")
-        _orch_dispatch_enable(runtime_session_id)
-        _orch_on_clear(runtime_session_id)
-        message = (
-            'Hermes /orch on succeeded: Orchestra dispatch enabled for this session. '
-            'Run "/orch on" again to inject the orchestrator skill'
-        )
-        if warning is not None:
-            message += f"\nWarning: {warning}"
-        return message
-
-    if not _orch_on_mark_active(runtime_session_id):
-        return "Hermes /orch on already active for this session"
-
-    success = False
-    try:
-        try:
-            result = _run_orchestra(["_orchestrator-skill"])
-        except Exception as exc:  # noqa: BLE001 - plugin must not crash on helper failure
-            return _orch_on_error(f"orchestrator skill helper raised: {exc}")
-        if result.returncode != 0:
-            return _orch_on_error("orchestrator skill helper failed")
-        try:
-            payload = result.stdout.strip()
-        except Exception as exc:
-            return _orch_on_error(f"orchestrator skill payload processing raised: {exc}")
-        if not payload:
-            return _orch_on_error("orchestrator skill payload was empty")
-        try:
-            inject_message = getattr(ctx, "inject_message", None)
-            if not callable(inject_message):
-                return _orch_on_error("ctx.inject_message is unavailable")
-            injected = inject_message(payload, role="user")
-        except Exception as exc:  # noqa: BLE001 - plugin must not crash on inject failure
-            return _orch_on_error(f"ctx.inject_message raised: {exc}")
-        if not injected:
-            return _orch_on_error("ctx.inject_message returned False")
-        success = True
-        warning = _record_core_session_mode(runtime_session_id, "orchestrator")
-        message = "Hermes /orch on succeeded: orchestrator skill injected"
-        if warning is not None:
-            message += f"\nWarning: {warning}"
-        return message
-    finally:
-        if not success:
-            _orch_on_clear(runtime_session_id)
+    del ctx
+    warning = _record_core_session_mode(runtime_session_id, "on")
+    _orch_dispatch_enable(runtime_session_id)
+    message = "Hermes /orch on succeeded: Orchestra dispatch enabled for this session"
+    if warning is not None:
+        message += f"\nWarning: {warning}"
+    return message
 
 
 def orch_status(args: dict[str, Any], **kwargs: Any) -> str:
@@ -1063,7 +1003,6 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
 
     if subcommand == "off":
         _orch_dispatch_disable(runtime_session_id)
-        _orch_on_clear(runtime_session_id)
         message = (
             "Hermes /orch off succeeded: Orchestra dispatch disabled for this session"
         )
@@ -1208,7 +1147,7 @@ def register(ctx: Any) -> None:
         handler=command_handler,
         description=(
             "Orchestra host adapter: /orch help|on|off|do|roles|config|status|stop|doctor|history "
-            "(use /orch on to inject the orchestrator skill)"
+            "(use /orch on to enable Orchestra dispatch)"
         ),
         args_hint=_ORCH_COMMAND_ARGS_HINT,
     )

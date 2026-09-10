@@ -27,7 +27,6 @@ from orchestra.logs import append_jsonl_event
 from orchestra.state import (
     MAIN_SESSION_MODE_OFF,
     MAIN_SESSION_MODE_ON,
-    MAIN_SESSION_MODE_ORCHESTRATOR,
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_FAILED,
@@ -131,18 +130,19 @@ def test_set_and_get_main_session_mode_round_trip(state_store: StateStore) -> No
 
     loaded = state_store.get_main_session_state("pi:session-a")
     assert loaded == off
-    for mode in (MAIN_SESSION_MODE_ON, MAIN_SESSION_MODE_ORCHESTRATOR):
-        updated = state_store.set_main_session_mode("pi:session-a", mode)
-        assert updated.main_session_mode == mode
+    updated = state_store.set_main_session_mode("pi:session-a", MAIN_SESSION_MODE_ON)
+    assert updated.main_session_mode == MAIN_SESSION_MODE_ON
     assert (
         state_store.get_main_session_state("pi:session-a").main_session_mode  # type: ignore[union-attr]
-        == MAIN_SESSION_MODE_ORCHESTRATOR
+        == MAIN_SESSION_MODE_ON
     )
+    with pytest.raises(StateError, match="invalid main session mode: orchestrator"):
+        state_store.set_main_session_mode("pi:session-a", "orchestrator")
 
 
 def test_main_session_modes_are_session_isolated(state_store: StateStore) -> None:
     state_store.set_main_session_mode("pi:session-a", MAIN_SESSION_MODE_OFF)
-    state_store.set_main_session_mode("pi:session-b", MAIN_SESSION_MODE_ORCHESTRATOR)
+    state_store.set_main_session_mode("pi:session-b", MAIN_SESSION_MODE_ON)
 
     assert (
         state_store.get_main_session_state("pi:session-a").main_session_mode  # type: ignore[union-attr]
@@ -150,7 +150,7 @@ def test_main_session_modes_are_session_isolated(state_store: StateStore) -> Non
     )
     assert (
         state_store.get_main_session_state("pi:session-b").main_session_mode  # type: ignore[union-attr]
-        == MAIN_SESSION_MODE_ORCHESTRATOR
+        == MAIN_SESSION_MODE_ON
     )
 
 
