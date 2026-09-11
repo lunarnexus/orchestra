@@ -284,6 +284,22 @@ def test_spsi_payload_enabled_uses_stable_content_and_revision(tmp_path: Path) -
     assert "Role: intern" not in content
 
 
+def test_spsi_payload_omits_missing_skill_sections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    empty_cwd = tmp_path / "empty-cwd"
+    empty_cwd.mkdir()
+    monkeypatch.chdir(empty_cwd)
+
+    payload = spsi_payload(context, "pi:session-a").to_payload()
+
+    assert payload["enabled"] is False
+    assert "content" not in payload
+    assert "revision" not in payload
+
+
 def test_spsi_payload_uses_worker_role_skills_for_worker_sessions(tmp_path: Path) -> None:
     context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
     skill_dir = context.paths.catalog_path.parent / "skills" / "worker"

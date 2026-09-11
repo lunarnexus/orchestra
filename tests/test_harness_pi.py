@@ -216,7 +216,7 @@ def test_pi_harness_does_not_inline_native_skill_instruction(
     assert "Role skills:" not in prompt
     assert "Skill instructions are delivered through SPSI." not in prompt
     assert "# Security Reviewer" not in prompt
-    assert "Load the native skill named 'security-reviewer' before doing the task." not in prompt
+    assert "Load the native skill" not in prompt
 
 
 def test_pi_harness_uses_configured_default_return_format(worker_request: WorkerRequest) -> None:

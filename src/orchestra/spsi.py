@@ -127,12 +127,6 @@ def _skill_sections(skill_names: tuple[str, ...], skill_roots: tuple[Path, ...])
                 f"{skill_path.read_text(encoding='utf-8').strip()}\n"
                 "</orchestra_spsi_skill>"
             )
-        else:
-            sections.append(
-                f'<orchestra_spsi_skill name="{escape(skill_name, quote=True)}">\n'
-                f"Load the native skill named '{skill_name}' before doing the task.\n"
-                "</orchestra_spsi_skill>"
-            )
     return sections
 
 
