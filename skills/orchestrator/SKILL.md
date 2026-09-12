@@ -105,7 +105,7 @@ Reviewers judge coherent implementation boundaries defined by the plan. Do not d
 
 Appsec runs exactly once, at the end of the plan, after implementation, automatic verification, review, and fixes are complete. Do not dispatch appsec earlier or rerun it within the same plan.
 
-Verifier never replaces reviewer or appsec. Verification proves acceptance; reviewer judges implementation quality; appsec judges security. If reviewer or appsec are enabled and required by the plan, do not finalize until those gates return or the user explicitly waives them.
+Verifier never replaces reviewer or appsec. Verification proves acceptance; reviewer judges implementation quality; appsec judges security.
 
 ## Dispatch rules
 
@@ -226,7 +226,7 @@ Worktree automation is not required here; use normal git status/diff/commit disc
 
 - builders run assigned implementation checks and return command evidence
 - core automatic verification returns acceptance evidence through the linked verifier run
-- verifier never replaces reviewer or appsec; these are distinct required gates when enabled and present in the plan
+- Verifier, Reviewer, and Appsec have distinct responsibilities that are not interchangable
 - reviewers judge coherent implementation boundaries defined by the plan, not every builder return
 - appsec runs exactly once at the end of the plan and is not rerun within that plan
 - Before dispatching a follow-up role for the same assigned files, commands, or acceptance target, use existing active/returned subagent information. Do not dispatch an equivalent follow-up when an active subagent already owns that target or a returned subagent already completed it. Redispatch only for failed, blocked, timed out, cancelled, or explicitly incomplete results.
