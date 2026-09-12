@@ -401,8 +401,8 @@ may exist as an optional or disabled catalog role.
 When a role lists skills, Orchestra searches recursively under `skills/` for
 `<skill-name>/SKILL.md`:
 
-- local skill found: inject its content into the initial subagent prompt
-- local skill absent: tell the subagent to load the named native skill
+- local skill found: inject its content through supported SPSI paths
+- local skill absent: do not inject a role skill
 - skills omitted or empty: do not inject a role skill
 
 Role `enabled: auto` entries remain visible in role listings but are rejected by

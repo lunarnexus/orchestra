@@ -182,7 +182,7 @@ return semantics. A step is one child-agent execution inside a run.
 
 ### D-DOMAIN-007 — Status vocabulary
 
-**Decision:** Lightweight runtime status uses queued, running, waiting, done,
+**Decision:** Lightweight runtime status uses queued, running, incomplete, done,
 failed, and cancelled states.
 
 ### D-DOMAIN-008 — Auto-verification cycles group normal runs
