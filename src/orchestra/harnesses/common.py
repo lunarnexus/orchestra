@@ -110,9 +110,7 @@ def expand_command_template(role: RoleConfig, prompt: str) -> list[str]:
     return command
 
 
-def parse_child_return(
-    text: str, *, limit: int = 280
-) -> tuple[str | None, str | None, str | None, bool]:
+def parse_child_return(text: str) -> tuple[str | None, str | None, str | None, bool]:
     lines = [line.strip() for line in text.splitlines()]
     verdict: str | None = None
     blocker: str | None = None
@@ -143,25 +141,19 @@ def parse_child_return(
         elif label == "material evidence" and evidence is None:
             evidence = value
     summary_source = "\n".join(lines)
-    summary = compact_summary(summary_source, limit=limit)
+    summary = compact_summary(summary_source)
     if summary is None and not explicit:
         return None, None, None, False
-    truncated = summary is not None and len(_normalized_summary_text(summary_source)) > limit
-    return summary, verdict, blocker or evidence, truncated
+    return summary, verdict, blocker or evidence, False
 
 
-def compact_summary(text: str, *, limit: int = 280) -> str | None:
-    normalized = _normalized_summary_text(text)
-    if not normalized:
-        return None
-    if len(normalized) <= limit:
-        return normalized
-    return normalized[: limit - 3] + "..."
+def compact_summary(text: str) -> str | None:
+    return _normalized_summary_text(text) or None
 
 
-def summary_was_truncated(text: str, *, limit: int = 280) -> bool:
-    normalized = _normalized_summary_text(text)
-    return len(normalized) > limit
+def summary_was_truncated(text: str) -> bool:
+    _ = text
+    return False
 
 
 def _normalized_summary_text(text: str) -> str:
