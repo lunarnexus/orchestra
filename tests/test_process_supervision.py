@@ -94,9 +94,98 @@ def test_timed_out_worker_recovers_budget_handoff_from_pi_transcript(
 
     assert result.status == STATUS_INCOMPLETE
     assert result.stdout == handoff
-    assert result.semantic_verdict == "n/a"
+    # Neutral Verdict values do not erase the Status fallback.
+    assert result.semantic_verdict == "incomplete"
     assert result.transcript_path == transcript_path
     assert result.timed_out is True
+
+
+def test_status_na_worker_output_reports_failure_end_to_end(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    config_path, _catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [
+            python_executable,
+            str(fake_worker_script),
+            "success",
+            "--output",
+            "Status: n/a",
+        ],
+    )
+
+    result = run_cli(
+        "--config",
+        str(config_path.parent),
+        "do",
+        "--session-id",
+        "manual:semantic",
+        "--goal",
+        "Return suspicious status.",
+    )
+    assert result.returncode == 0
+    run_id = extract_run_id(result.stdout)
+    store = StateStore(db_path)
+    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
+
+    report = run_cli(
+        "--config",
+        str(config_path.parent),
+        "_pending-report",
+        "--session-id",
+        "manual:semantic",
+    )
+
+    assert report.returncode == 0
+    assert f"[orchestra: worker {run_id} fail]" in report.stdout
+    assert "verdict: n/a" in report.stdout
+
+
+def test_neutral_verdict_worker_output_reports_success_end_to_end(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    config_path, _catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        [
+            python_executable,
+            str(fake_worker_script),
+            "success",
+            "--output",
+            "Status: complete\nVerdict: n/a",
+        ],
+    )
+
+    result = run_cli(
+        "--config",
+        str(config_path.parent),
+        "do",
+        "--session-id",
+        "manual:semantic",
+        "--goal",
+        "Return neutral verdict.",
+    )
+    assert result.returncode == 0
+    run_id = extract_run_id(result.stdout)
+    store = StateStore(db_path)
+    assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
+
+    report = run_cli(
+        "--config",
+        str(config_path.parent),
+        "_pending-report",
+        "--session-id",
+        "manual:semantic",
+    )
+
+    assert report.returncode == 0
+    assert f"[orchestra: worker {run_id} success]" in report.stdout
+    assert "verdict: n/a" not in report.stdout
 
 
 def test_stop_terminates_owned_worker_process(

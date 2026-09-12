@@ -110,6 +110,9 @@ def expand_command_template(role: RoleConfig, prompt: str) -> list[str]:
     return command
 
 
+NEUTRAL_SEMANTIC_VERDICTS = frozenset({"none", "n/a", "na", "not applicable"})
+
+
 def parse_child_return(text: str) -> tuple[str | None, str | None, str | None, bool]:
     lines = [line.strip() for line in text.splitlines()]
     verdict: str | None = None
@@ -128,6 +131,9 @@ def parse_child_return(text: str) -> tuple[str | None, str | None, str | None, b
             continue
         label = match.group(1).lower()
         value = match.group(2).strip()
+        if label == "verdict" and value.lower() in NEUTRAL_SEMANTIC_VERDICTS:
+            explicit = True
+            continue
         if value.lower() == "none":
             explicit = True
             continue

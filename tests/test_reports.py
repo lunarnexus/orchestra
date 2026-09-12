@@ -136,6 +136,89 @@ def test_done_run_with_problem_semantic_verdict_formats_as_fail(
     assert f"verdict: {semantic_verdict}" in report
 
 
+@pytest.mark.parametrize("semantic_verdict", ["none", "n/a", "na", "not applicable"])
+def test_done_run_with_neutral_semantic_verdict_formats_as_success(
+    tmp_path: Path,
+    semantic_verdict: str,
+) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="neutral-run",
+                orchestrator_session_id="manual:semantic",
+                harness="pi",
+                role="builder",
+                task_label="semantic test",
+                log_path=tmp_path / "neutral-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_DONE,
+                result_summary="Status: complete Verdict: n/a",
+                semantic_verdict=semantic_verdict,
+            )
+        ],
+        state_dir=tmp_path,
+    )
+
+    assert "[orchestra: builder neutral-run success]" in report
+    assert f"verdict: {semantic_verdict}" not in report
+
+
+@pytest.mark.parametrize("semantic_verdict", ["none", "n/a", "na", "not applicable"])
+def test_done_run_with_neutral_semantic_verdict_recovers_status_failure(
+    tmp_path: Path,
+    semantic_verdict: str,
+) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="neutral-status-run",
+                orchestrator_session_id="manual:semantic",
+                harness="pi",
+                role="builder",
+                task_label="semantic test",
+                log_path=tmp_path / "neutral-status-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_DONE,
+                result_summary="Status: n/a Verdict: n/a",
+                semantic_verdict=semantic_verdict,
+            )
+        ],
+        state_dir=tmp_path,
+    )
+
+    assert "[orchestra: builder neutral-status-run fail]" in report
+    assert "verdict: n/a" in report
+
+
+@pytest.mark.parametrize("na_value", ["n/a", "na"])
+def test_done_run_with_na_status_only_output_formats_as_fail(
+    tmp_path: Path,
+    na_value: str,
+) -> None:
+    # A neutral value parsed from a Status line is not absent; only Verdict-line
+    # or stored legacy neutral values are treated as no semantic verdict.
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="neutral-status-run",
+                orchestrator_session_id="manual:semantic",
+                harness="pi",
+                role="builder",
+                task_label="semantic test",
+                log_path=tmp_path / "neutral-status-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_DONE,
+                result_summary=f"Status: {na_value}",
+                result_output=f"Status: {na_value}\nMaterial evidence: none",
+            )
+        ],
+        state_dir=tmp_path,
+    )
+
+    assert "[orchestra: builder neutral-status-run fail]" in report
+    assert f"verdict: {na_value}" in report
+
+
 def test_auto_verify_builder_non_success_uses_fix_only_follow_up_prompt(
     tmp_path: Path,
 ) -> None:

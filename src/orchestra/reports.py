@@ -349,10 +349,28 @@ def _auto_verify_dispatch_failure_note(run: RunRecord) -> str | None:
 
 
 def _semantic_failure_verdict(run: RunRecord) -> str | None:
-    verdict_source = run.semantic_verdict
-    if verdict_source is None and run.result_output:
-        from orchestra.harnesses.common import parse_child_return
+    from orchestra.harnesses.common import NEUTRAL_SEMANTIC_VERDICTS, parse_child_return
 
+    def _reparse_persisted_text(text: str) -> str | None:
+        normalized = re.sub(
+            r"\s+(?=(?:Status|Verdict|Blocker|Blockers|Material evidence):)",
+            "\n",
+            text,
+            flags=re.IGNORECASE,
+        )
+        _, reparsed_verdict, _, _ = parse_child_return(normalized)
+        return reparsed_verdict
+
+    verdict_source = run.semantic_verdict
+    if verdict_source is not None and verdict_source.lower().strip() in NEUTRAL_SEMANTIC_VERDICTS:
+        verdict_source = None
+        for text in (run.result_summary, run.result_output):
+            if not text:
+                continue
+            verdict_source = _reparse_persisted_text(text)
+            if verdict_source is not None:
+                break
+    if verdict_source is None and run.result_output:
         _, verdict_source, _, _ = parse_child_return(run.result_output)
     if verdict_source is None:
         return None
