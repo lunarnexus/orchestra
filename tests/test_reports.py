@@ -579,7 +579,7 @@ def test_consolidated_report_surfaces_auto_verify_dispatch_failure_without_full_
     assert "result_output" not in report
 
 
-def test_truncated_report_points_to_full_return_artifact(
+def test_long_report_keeps_full_summary_and_return_artifact(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
@@ -606,16 +606,16 @@ def test_truncated_report_points_to_full_return_artifact(
     assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
     record = store.get_run(run_id)
 
-    assert record.result_summary_truncated is True
+    assert record.result_summary_truncated is False
     assert record.result_output is None
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     report = consume_pending_session_report(context, "manual:truncated-report")
 
     assert report is not None
-    assert "[truncated]" in report
+    assert "[truncated]" not in report
+    assert long_output.strip() in report
     assert "return_path: " in report
-    assert f"log: {record.log_path}" in report
 
 
 def test_short_report_includes_artifact_pointer(
@@ -881,7 +881,7 @@ def test_auto_verify_semantic_failure_keeps_debug_guidance_with_builder_return(
     assert "next: read the failed return artifact and decide how to proceed" in report
 
 
-def test_long_stderr_marks_failed_summary_truncated(
+def test_long_stderr_keeps_full_failed_summary(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
@@ -917,14 +917,14 @@ def test_long_stderr_marks_failed_summary_truncated(
     record = store.get_run(run_id)
 
     assert record.result_output is None
-    assert record.result_summary_truncated is True
+    assert record.result_summary_truncated is False
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     report = consume_pending_session_report(context, "manual:failed-long-stderr")
 
     assert report is not None
-    assert "summary: stderr diagnostic" in report
-    assert "[truncated]" in report
+    assert f"summary: {long_stderr.strip()}" in report
+    assert "[truncated]" not in report
     assert "artifact:" not in report
 
 

@@ -356,11 +356,11 @@ def test_worker_subprocess_env_decrements_orchestra_dispatch_budget(
         assert os.environ[ORCHESTRA_DISPATCH_BUDGET_ENV] == current
 
 
-def test_compact_summary_normalizes_and_truncates_output() -> None:
+def test_compact_summary_normalizes_without_truncating_output() -> None:
     assert compact_summary("line one\nline two") == "line one line two"
-    assert compact_summary("x" * 12, limit=10) == "xxxxxxx..."
-    assert summary_was_truncated("x" * 12, limit=10) is True
-    assert summary_was_truncated("line one", limit=10) is False
+    assert compact_summary("x" * 12) == "x" * 12
+    assert summary_was_truncated("x" * 12) is False
+    assert summary_was_truncated("line one") is False
 
 
 def test_worker_subprocess_env_sets_budget_handoff_env() -> None:

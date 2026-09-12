@@ -19,9 +19,10 @@ default_return_format: |-
   Next:
   - <next dispatch/action>
 
-  Keep returns short. Put durable detail in the assigned artifact, not in the
-  chat return. Omit empty fields. Do not include broad tables, history narratives,
-  or lists of every file read unless material to a blocker or finding.
+  Keep the chat return under 1000 characters when possible. Put durable detail
+  in the assigned artifact, not in the chat return. Omit empty fields. Do not
+  include broad tables, history narratives, or lists of every file read unless
+  material to a blocker or finding.
 tool_description: >-
   For non-orchestration work, dispatch a subagent. The orchestrator session
   decomposes requests, plans slices, sequences dispatches, handles user
