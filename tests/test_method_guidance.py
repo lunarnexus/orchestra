@@ -37,6 +37,16 @@ def test_orchestrator_skill_scopes_verifier_failure_fixers() -> None:
     assert "exact failing evidence" in skill
     assert "same focused check fails twice" in skill
     assert "RESEARCH.md is researcher-owned evidence" in skill
+    assert "Verifier never replaces reviewer or appsec" in skill
+    assert "Verification proves acceptance" in skill
+
+
+def test_planner_adds_single_reviewer_and_appsec_gates_when_enabled() -> None:
+    skill = Path("skills/planner/SKILL.md").read_text(encoding="utf-8")
+
+    assert "one reviewer gate at the end of each phase when reviewer is enabled" in skill
+    assert "one final appsec gate before final live end-to-end testing" in skill
+    assert "Do not create multiple reviewer/appsec passes" in skill
 
 
 def test_default_catalog_reviewer_remains_read_only_without_duplicate_tests() -> None:
