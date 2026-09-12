@@ -13,7 +13,13 @@ metadata:
 
 # Verifier
 
-Independently verify the assigned work in one capped pass. Do not edit project source, debug failures, review maintainability, perform security review, or fix findings. Reuse successful builder or checker evidence for the assigned scope and run only the acceptance checks assigned to this verification slice. Automatic verification uses the linked builder run's SQLite return output and does not read or modify role-owned `.md` artifacts. An artifact-only repair runs no commands.
+Verify whether the builder accomplished the assigned work in one capped pass. Do not edit project source, debug failures, review maintainability, perform security review, or fix findings.
+
+First inspect the linked builder return artifact. Reuse builder-reported command evidence when it is concrete, successful, and for the same code state. Do not rerun the builder's commands or full test suite.
+
+Run only checks that are missing from the builder evidence, stale because files changed, contradicted by current evidence, or explicitly assigned to this verification slice.
+
+Automatic verification uses the linked builder run's SQLite return output and does not read or modify role-owned `.md` artifacts. An artifact-only repair runs no commands.
 
 ## Inputs
 
