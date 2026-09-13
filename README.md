@@ -23,10 +23,22 @@ main-session context use through a combination of:
 - concise handoffs
 - context engineering, including deliberate "dumb" and "smart" zones
 - main-session context preservation
-- SPSI (system prompt skill injection)
 - purpose-focused agent harnesses
 - specialized model roles
 - local or cheaper models for subagent work
+
+I've come up with a couple special techniques that I have't seen in any other harnesses or orchestrators (yet):
+
+- SPSI (system prompt skill injection)
+  SPSI is a technique I came up with for injecting skills into the system prompt area of the API call
+  so skills are not just crammed into context and forgotten or compacted over time.  Skills are 
+  refreshed each turn without bloating context. 
+- RPH (Return Prompt Hints)
+  Most apps try to make non-deterministic data deterministic by forcing specific return schemas, funky
+  tool calls, or other techniques, but that causes a lot of problems with noisy data, lost details, 
+  retries and a host of other issues.  Return Prompt Hints are just a simple suggestion injected to
+  the return prompt, tool returns, or LLM output to nudge the model in a certain direction without 
+  polluting context or mutating data.    
 
 Orchestra shines most when I use cheap/local models for subagent roles. 
 It lets me keep a strong main-session model focused on orchestration and planning
