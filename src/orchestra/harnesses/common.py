@@ -113,6 +113,21 @@ def expand_command_template(role: RoleConfig, prompt: str) -> list[str]:
 NEUTRAL_SEMANTIC_VERDICTS = frozenset({"none", "n/a", "na", "not applicable"})
 
 
+def is_neutral_semantic_verdict(value: str) -> bool:
+    """Return True when verdict text is neutral, ignoring trailing annotations.
+
+    Matches the exact token or a leading neutral token followed by an
+    annotation (e.g. ``n/a (planning only, no code changes)``).
+    """
+    normalized = value.lower().strip()
+    if not normalized:
+        return False
+    for token in NEUTRAL_SEMANTIC_VERDICTS:
+        if normalized == token or normalized.startswith(f"{token} "):
+            return True
+    return False
+
+
 def parse_child_return(text: str) -> tuple[str | None, str | None, str | None, bool]:
     lines = [line.strip() for line in text.splitlines()]
     verdict: str | None = None
@@ -131,7 +146,7 @@ def parse_child_return(text: str) -> tuple[str | None, str | None, str | None, b
             continue
         label = match.group(1).lower()
         value = match.group(2).strip()
-        if label == "verdict" and value.lower() in NEUTRAL_SEMANTIC_VERDICTS:
+        if label == "verdict" and is_neutral_semantic_verdict(value):
             explicit = True
             continue
         if value.lower() == "none":

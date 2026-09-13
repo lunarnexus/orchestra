@@ -53,6 +53,35 @@ def test_earlier_neutral_verdict_does_not_wipe_later_real_verdict(value: str) ->
     assert verdict == "blocked"
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "none (no work)",
+        "n/a (planning only, no code changes)",
+        "na (docs review)",
+        "not applicable (no code paths touched)",
+    ],
+)
+def test_annotated_neutral_verdict_does_not_override_status_fallback(value: str) -> None:
+    summary, verdict, _, _ = parse_child_return(f"Status: complete\nVerdict: {value}")
+
+    assert summary is not None
+    assert verdict == "complete"
+
+
+def test_annotated_neutral_verdict_without_status_is_absent() -> None:
+    summary, verdict, _, _ = parse_child_return("Verdict: n/a (planning only)")
+
+    assert summary == "Verdict: n/a (planning only)"
+    assert verdict is None
+
+
+def test_non_neutral_annotation_is_not_swallowed() -> None:
+    _, verdict, _, _ = parse_child_return("Status: complete\nVerdict: blocked (missing plan)")
+
+    assert verdict == "blocked (missing plan)"
+
+
 def test_real_verdict_still_captured() -> None:
     summary, verdict, blocker, _ = parse_child_return(
         "Status: complete\nVerdict: blocked\nBlockers: missing plan"

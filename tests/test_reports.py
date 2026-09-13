@@ -163,6 +163,40 @@ def test_done_run_with_neutral_semantic_verdict_formats_as_success(
     assert f"verdict: {semantic_verdict}" not in report
 
 
+@pytest.mark.parametrize(
+    "semantic_verdict",
+    [
+        "none (no work)",
+        "n/a (planning only, no code changes)",
+        "na (docs review)",
+        "not applicable (no code paths touched)",
+    ],
+)
+def test_done_run_with_annotated_neutral_semantic_verdict_formats_as_success(
+    tmp_path: Path,
+    semantic_verdict: str,
+) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="neutral-annotated-run",
+                orchestrator_session_id="manual:semantic",
+                harness="pi",
+                role="builder",
+                task_label="semantic test",
+                log_path=tmp_path / "neutral-annotated-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_DONE,
+                semantic_verdict=semantic_verdict,
+            )
+        ],
+        state_dir=tmp_path,
+    )
+
+    assert "[orchestra: builder neutral-annotated-run success]" in report
+    assert f"verdict: {semantic_verdict}" not in report
+
+
 @pytest.mark.parametrize("semantic_verdict", ["none", "n/a", "na", "not applicable"])
 def test_done_run_with_neutral_semantic_verdict_recovers_status_failure(
     tmp_path: Path,

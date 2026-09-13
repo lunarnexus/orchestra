@@ -349,7 +349,7 @@ def _auto_verify_dispatch_failure_note(run: RunRecord) -> str | None:
 
 
 def _semantic_failure_verdict(run: RunRecord) -> str | None:
-    from orchestra.harnesses.common import NEUTRAL_SEMANTIC_VERDICTS, parse_child_return
+    from orchestra.harnesses.common import is_neutral_semantic_verdict, parse_child_return
 
     def _reparse_persisted_text(text: str) -> str | None:
         normalized = re.sub(
@@ -362,7 +362,7 @@ def _semantic_failure_verdict(run: RunRecord) -> str | None:
         return reparsed_verdict
 
     verdict_source = run.semantic_verdict
-    if verdict_source is not None and verdict_source.lower().strip() in NEUTRAL_SEMANTIC_VERDICTS:
+    if verdict_source is not None and is_neutral_semantic_verdict(verdict_source):
         verdict_source = None
         for text in (run.result_summary, run.result_output):
             if not text:
