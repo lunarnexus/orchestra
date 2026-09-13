@@ -313,7 +313,7 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert 'rest.length > 0 ? ["roles", ...rest] : ["roles", "--all"]' in extension_source
     adapter_description = (
         'description: "Orchestra host adapter: '
-        '/orch help|on|off|do|roles|status|stop|doctor|history"'
+        '/orch help|on|off|do|roles|config|status|stop|doctor|history"'
     )
     assert adapter_description in extension_source
     assert (

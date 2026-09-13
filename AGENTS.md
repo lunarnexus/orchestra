@@ -57,6 +57,15 @@ pi --no-approve --session-id orch-demo -p "/orch do smoke test from host"
 pi --no-approve --session-id orch-demo -p "/orch history 10"
 ```
 
+Hermes host-plugin verification targets (live checks; unit/source tests never depend on them):
+
+```bash
+python3 scripts/smoke-hermes-live        # isolated HERMES_HOME plugin check; no credentials needed
+python3 scripts/smoke-hermes-live --llm  # one-shot /orch help; prints exact manual command and skips (exit 0) when no inference provider is configured locally
+```
+
+The `--llm` path requires a locally configured Hermes inference provider. If it is unavailable, record the printed skip reason rather than forcing the check.
+
 Source copy for the global Pi host extension lives at `extensions/pi/orchestra/index.ts`.
 
 ## Secret Safety

@@ -147,6 +147,55 @@ def make_tool_info_payload() -> dict[str, Any]:
     }
 
 
+def make_spsi_payload(
+    enabled: bool = True,
+    content: str | None = "SPSI guidance",
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "contract_version": 1,
+        "kind": "spsi_payload",
+        "ok": True,
+        "session_id": "hermes:runtime-a",
+        "enabled": enabled,
+        "name": "orchestra.spsi.role-skills",
+    }
+    if content is not None:
+        payload["role"] = "builder"
+        payload["skills"] = ["builder"]
+        payload["revision"] = "sha256:abc123"
+        payload["content"] = (
+            '<orchestra_spsi name="orchestra.spsi.role-skills" role="builder">\n'
+            f"{content}\n"
+            "</orchestra_spsi>"
+        )
+    return payload
+
+
+def make_hermes_fake_run(
+    spsi_payload: dict[str, Any] | None = None,
+    *,
+    tool_info: dict[str, Any] | None = None,
+    spsi_code: int = 0,
+    raise_on_spsi: bool = False,
+) -> tuple[Any, list[list[str]]]:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        if args[0] == "_tool-info":
+            return completed(
+                args, json.dumps(tool_info or make_tool_info_payload())
+            )
+        if args[0] == "_spsi-payload":
+            if raise_on_spsi:
+                raise RuntimeError("core call exploded")
+            stdout = "" if spsi_payload is None else json.dumps(spsi_payload)
+            return completed(args, stdout, code=spsi_code)
+        raise AssertionError(f"unexpected command: {args}")
+
+    return fake_run, calls
+
+
 def test_hermes_tool_info_loads_only_from_dynamic_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     plugin = load_plugin()
     payload = {
@@ -241,6 +290,7 @@ def test_hermes_plugin_registers_dispatch_tool_without_session_id_schema(
     assert "session_id" not in json.dumps(schema)
     assert ctx.commands[0]["name"] == "orch"
     assert "/orch on" in ctx.commands[0]["description"]
+    assert "config" in ctx.commands[0]["description"]
     assert "on" in ctx.commands[0]["args_hint"]
     assert "do" in ctx.commands[0]["args_hint"]
     assert "--role" in ctx.commands[0]["args_hint"]
@@ -251,6 +301,7 @@ def test_hermes_plugin_registers_dispatch_tool_without_session_id_schema(
     assert "stop" in ctx.commands[0]["args_hint"]
     assert "doctor" in ctx.commands[0]["args_hint"]
     assert "roles" in ctx.commands[0]["args_hint"]
+    assert "config [KEY] [VALUE]" in ctx.commands[0]["args_hint"]
     assert ctx.commands[0]["handler"]("") == ""
     assert [name for name, _ in ctx.hooks] == [
         "on_session_finalize",
@@ -651,6 +702,12 @@ def test_hermes_plugin_pre_llm_call_decrements_turn_budget_and_injects_prompt_on
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
+    tool_info = make_tool_info_payload()
+    tool_info["budgetTriggerLabel"] = "Budget trigger"
+    fake_run, _ = make_hermes_fake_run(
+        {"ok": True, "enabled": False}, tool_info=tool_info
+    )
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
     monkeypatch.setenv("ORCHESTRA_TURN_BUDGET", "2")
     monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
     ctx = FakeHermesPluginContext(session_id="runtime-a")
@@ -669,6 +726,12 @@ def test_hermes_plugin_pre_llm_call_falls_back_to_context_when_injection_unavail
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
+    tool_info = make_tool_info_payload()
+    tool_info["budgetTriggerLabel"] = "Budget trigger"
+    fake_run, _ = make_hermes_fake_run(
+        {"ok": True, "enabled": False}, tool_info=tool_info
+    )
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
     monkeypatch.setenv("ORCHESTRA_TURN_BUDGET", "1")
     monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
     ctx = NoInjectHermesPluginContext(session_id="runtime-a")
@@ -682,10 +745,107 @@ def test_hermes_plugin_pre_llm_call_falls_back_to_context_when_injection_unavail
     assert ctx.injected == []
 
 
+def test_hermes_plugin_pre_llm_call_returns_spsi_context_without_persisting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    spsi_content = make_spsi_payload()["content"]
+    fake_run, calls = make_hermes_fake_run(make_spsi_payload())
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
+
+    assert pre_llm_call() == {"context": spsi_content}
+    # SPSI guidance goes through the ephemeral pre-LLM context return, never a
+    # persistent injected user message.
+    assert ctx.injected == []
+    assert calls.count(["_spsi-payload", "--session-id", "hermes:runtime-a", "--json"]) == 1
+
+
+def test_hermes_plugin_pre_llm_call_combines_spsi_context_with_injected_budget_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    spsi_content = make_spsi_payload()["content"]
+    tool_info = make_tool_info_payload()
+    tool_info["budgetTriggerLabel"] = "Budget trigger"
+    fake_run, _ = make_hermes_fake_run(
+        make_spsi_payload(), tool_info=tool_info
+    )
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setenv("ORCHESTRA_TURN_BUDGET", "1")
+    monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
+
+    assert pre_llm_call() == {"context": spsi_content}
+    # Budget prompt keeps its existing persistent injection path.
+    assert ctx.injected == [("Budget handoff\n\nBudget trigger: turn_limit", "user")]
+    assert pre_llm_call() == {"context": spsi_content}
+
+
+def test_hermes_pre_llm_combines_spsi_and_budget_in_context_without_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    spsi_content = make_spsi_payload()["content"]
+    tool_info = make_tool_info_payload()
+    tool_info["budgetTriggerLabel"] = "Budget trigger"
+    fake_run, _ = make_hermes_fake_run(
+        make_spsi_payload(), tool_info=tool_info
+    )
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setenv("ORCHESTRA_TURN_BUDGET", "1")
+    monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
+    ctx = NoInjectHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
+
+    assert pre_llm_call() == {
+        "context": f"Budget handoff\n\nBudget trigger: turn_limit\n\n{spsi_content}"
+    }
+    assert ctx.injected == []
+
+
+@pytest.mark.parametrize(
+    "spsi_kwargs",
+    [
+        {"spsi_payload": {"ok": True, "enabled": False}},
+        {"spsi_payload": {"ok": True, "enabled": True}},
+        {"spsi_payload": make_spsi_payload(), "spsi_code": 1},
+        {"raise_on_spsi": True},
+    ],
+)
+def test_hermes_plugin_pre_llm_call_falls_closed_when_spsi_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    spsi_kwargs: dict[str, Any],
+) -> None:
+    plugin = load_plugin()
+    fake_run, _ = make_hermes_fake_run(**spsi_kwargs)
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
+
+    assert pre_llm_call() is None
+
+
 def test_hermes_plugin_session_start_resets_only_requested_budget_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
+    tool_info = make_tool_info_payload()
+    tool_info["budgetTriggerLabel"] = "Budget trigger"
+    fake_run, _ = make_hermes_fake_run(
+        {"ok": True, "enabled": False}, tool_info=tool_info
+    )
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
     monkeypatch.setenv("ORCHESTRA_TURN_BUDGET", "1")
     monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
     ctx = FakeHermesPluginContext()
@@ -835,6 +995,12 @@ def test_hermes_plugin_session_cleanup_clears_only_requested_budget_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugin = load_plugin()
+    tool_info = make_tool_info_payload()
+    tool_info["budgetTriggerLabel"] = "Budget trigger"
+    fake_run, _ = make_hermes_fake_run(
+        {"ok": True, "enabled": False}, tool_info=tool_info
+    )
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
     monkeypatch.setenv("ORCHESTRA_TURN_BUDGET", "1")
     monkeypatch.setenv("ORCHESTRA_BUDGET_EXCEEDED_PROMPT", "Budget handoff")
     ctx = FakeHermesPluginContext()

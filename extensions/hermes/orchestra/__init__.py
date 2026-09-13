@@ -52,7 +52,7 @@ _ORCH_DISABLED_SESSIONS_LOCK = threading.Lock()
 
 _ORCH_COMMAND_ARGS_HINT = (
     "help | on | off | do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal> | "
-    "roles ... | status | stop <run-id> | doctor | history [LIMIT]"
+    "roles ... | status | stop <run-id> | doctor | config [KEY] [VALUE] | history [LIMIT]"
 )
 
 _ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET"
@@ -70,6 +70,34 @@ def _parse_budget_env(name: str) -> int:
     except ValueError:
         return 1
     return budget if budget >= 0 else 1
+
+
+def _spsi_context(runtime_session_id: str) -> str | None:
+    """Fetch non-persistent Orchestra SPSI context for a session.
+
+    Uses the core `_spsi-payload` helper so prompt text is generated once in
+    core and never duplicated here. Any failure falls closed to no injection.
+    """
+    try:
+        result = _run_orchestra(
+            ["_spsi-payload", "--session-id", runtime_session_id, "--json"]
+        )
+    except Exception:  # noqa: BLE001 - plugin must not crash the pre-LLM hook
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("ok") is not True or payload.get("enabled") is not True:
+        return None
+    content = payload.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return None
+    return content.strip()
 
 
 def _budget_exceeded_prompt_message(reason: str, budget_trigger_label: str) -> str | None:
@@ -1104,27 +1132,39 @@ def register(ctx: Any) -> None:
         runtime_session_id = _hook_session_id(ctx, _kwargs)
         if runtime_session_id is None:
             return None
-        message: str | None = None
+        spsi_context = _spsi_context(runtime_session_id)
+        budget_message: str | None = None
         with _BUDGET_STATES_LOCK:
             state = _budget_state(runtime_session_id)
-            if state.budget_prompt_delivered:
-                return None
-            if state.turn_budget > 1:
-                state.turn_budget -= 1
-                return None
-            message = _budget_exceeded_prompt_message("turn_limit", budget_trigger_label)
-            if message is None:
-                return None
-            state.budget_prompt_delivered = True
-        inject_message = getattr(ctx, "inject_message", None)
-        if callable(inject_message):
-            try:
-                injected = inject_message(message, role="user")
-            except Exception:
-                injected = False
-            if injected:
-                return None
-        return {"context": message}
+            if not state.budget_prompt_delivered:
+                if state.turn_budget > 1:
+                    state.turn_budget -= 1
+                else:
+                    budget_message = _budget_exceeded_prompt_message(
+                        "turn_limit", budget_trigger_label
+                    )
+                    if budget_message is None and spsi_context is None:
+                        return None
+                    if budget_message is not None:
+                        state.budget_prompt_delivered = True
+        context_parts: list[str] = []
+        if budget_message is not None:
+            inject_message = getattr(ctx, "inject_message", None)
+            injected = False
+            if callable(inject_message):
+                try:
+                    injected = bool(inject_message(budget_message, role="user"))
+                except Exception:
+                    injected = False
+            if not injected:
+                context_parts.append(budget_message)
+        # SPSI guidance is returned as ephemeral pre-LLM context and never via
+        # inject_message, so it does not persist in conversation history.
+        if spsi_context is not None:
+            context_parts.append(spsi_context)
+        if not context_parts:
+            return None
+        return {"context": "\n\n".join(context_parts)}
 
     def on_session_start_handler(**_kwargs: Any) -> None:
         runtime_session_id = _hook_session_id(ctx, _kwargs)

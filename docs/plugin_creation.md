@@ -119,6 +119,7 @@ A Pi-equivalent command surface includes:
 /orch do --task-label LABEL <request>
 /orch roles
 /orch roles ROLE SETTING VALUE
+/orch config [KEY] [VALUE]
 /orch status
 /orch stop <run-id>
 /orch history [limit]
@@ -188,7 +189,7 @@ The Pi plugin is the reference implementation for host-side behavior. Its Pi-spe
 - `pi.registerTool` for `orch_dispatch` and `orch_status`.
 - `pi.registerEntryRenderer` and `pi.appendEntry` for rendered command/output entries.
 - `ctx.ui.notify` for notifications.
-- `ctx.ui.setStatus` for footer subagent status.
+- `ctx.ui.setWidget("orchestra", ...)` with `{ placement: "belowEditor" }` for the footer subagent status widget.
 - `pi.on("before_agent_start", ...)` plus `_spsi-payload` for SPSI system-prompt injection.
 - `pi.sendUserMessage(..., { deliverAs: "followUp" })` for final auto-return delivery.
 - `pi.sendUserMessage(..., { deliverAs: "steer" })` for budget handoff steering.
@@ -221,16 +222,16 @@ Hermes should follow best host-supported parity rather than copying Pi APIs dire
 
 - Use the Hermes runtime session id from host context and normalize it as `hermes:<session-id>`.
 - Register `orch_dispatch(goal, additionalContext?, role?, taskLabel?)` and `orch_status(action, limit?, runId?, role?, setting?, value?)` through Hermes model-callable tools.
-- Register native `/orch help|on|off|do|roles|status|stop|doctor|history` through the Hermes command surface.
+- Register native `/orch help|on|off|do|roles|config|status|stop|doctor|history` through the Hermes command surface, with a registered command description and static `args_hint` for CLI/gateway completion UX.
 - Keep model-callable dispatch timeout-disabled while allowing manual `/orch do --timeout` on the native command surface.
 - Use `_tool-info`, `_dispatch-ack`, `_await-session-report`, and `_mark-session-report-delivered` from core rather than embedding host-local copies of shared wording or report handling.
 - Deliver consolidated idle-session auto-return with `ctx.inject_message(...)`.
 - Deliver consolidated busy-session auto-return by queueing the report into Hermes CLI `_pending_input` so the next user turn is created without interrupting the active turn.
 - Treat Hermes `/orch off` as behavioral session-scoped dispatch disabling. Hermes does not currently expose verified public APIs for Pi-style active-tool hiding/showing, so `/orch` and `orch_status` remain available while `orch_dispatch` returns a disabled error until `/orch on` re-enables it.
-- Hermes `/orch on` re-enables dispatch and records core mode `on`. Hermes SPSI remains unsupported until a non-persistent request-time instruction hook is verified; do not emulate SPSI with `ctx.inject_message(..., role="user")`.
+- Hermes `/orch on` re-enables dispatch and records core mode `on`. SPSI is implemented as non-persistent pre-LLM injection: the `pre_llm_call` hook fetches `_spsi-payload` at request time and returns its content as ephemeral context for that LLM call only, so it never enters conversation history. Never send SPSI content through `ctx.inject_message(...)` or any other persistent path.
 - Use session cleanup hooks to clear watcher state, budget state, and disabled-dispatch state.
-- Hermes budget handoff parity uses host-supported `pre_llm_call` and `pre_tool_call` hooks rather than Pi `turn_end` / `tool_call` events.
-- Footer/status UI, rendered transcript entries, non-prompt progress notifications, and dynamic completions remain host-API-limited until Hermes exposes stable public plugin APIs for them.
+- Hermes budget handoff parity uses host-supported `pre_llm_call` (context return) and `pre_tool_call` (soft-timeout block) hooks rather than Pi `turn_end` / `tool_call` events.
+- Footer/status widgets, rendered transcript entries, non-prompt progress notifications (including Pi-style turn progress display), and dynamic completions remain host-API-limited until Hermes exposes stable public plugin APIs for them.
 
 ## New plugin delta checklist
 

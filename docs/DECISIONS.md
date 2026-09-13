@@ -886,6 +886,17 @@ unavailable.
 starts a new injected turn only when the session is idle. Per-subagent prompt
 progress remains disabled without a supported non-prompt notification API.
 
+### D-HOST-013 — Hermes plugin parity is practical, not literal Pi UI
+
+**Decision:** Hermes plugin parity targets practical orchestration parity with the
+Pi plugin using supported Hermes plugin APIs. Hermes SPSI parity means
+non-persistent pre-LLM injection via `pre_llm_call`. Pi-style footer/status
+widgets, rich rendered entries, progress display, and non-prompt notifications
+are documented as Hermes host API limits rather than implementation gaps.
+
+**Source:** Owner approval during the Hermes plugin feature-parity plan before
+Slice 9 review.
+
 ## Installation and packaging
 
 ### D-INSTALL-001 — Installable Python package

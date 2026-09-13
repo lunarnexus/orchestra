@@ -153,6 +153,10 @@ def test_root_host_help_uses_generic_session_wording() -> None:
         in config.prompts.host_help
     )
     assert "/orch do <request>                 Dispatch a subagent" in config.prompts.host_help
+    assert (
+        "/orch config [KEY] [VALUE]         Show or update supported config values"
+        in config.prompts.host_help
+    )
     assert "Pi session" not in config.prompts.host_help
     assert "Configured roles" not in config.prompts.host_help
     assert "Default:" not in config.prompts.host_help

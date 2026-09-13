@@ -2,7 +2,9 @@
 
 * Orchestra is in Beta status.  Large changes are incoming, especially for context management, skill injection (SPSI), and workflow, so the config and tool interface will likely change.
 
-For now, the Hermes and Opencode plugins are unsupported until Orchestra core stabilizes.
+Pi is the reference host integration. The Hermes plugin is also supported with a
+slightly smaller feature set where its host APIs differ (see the plugin feature
+matrix below).
 
 
 Orchestra is an agent-agnostic orchestration layer for dispatching focused
@@ -107,8 +109,8 @@ Dispatch a subagent directly ("Disptch a <role> to tell me a haiku") or start wi
 a PLAN.md ("I'd like to do .... create a PLAN.md")
 
 The main-session host and subagent harness do not have to be the same. A Pi main
-session can dispatch a Hermes or OpenCode subagent when the selected role is
-configured that way.
+session can dispatch a Hermes subagent when the selected role is configured that
+way.
 
 ## Requirements
 
@@ -153,22 +155,16 @@ Install Orchestra into the host you want to use:
 orchestra init pi
 # or
 orchestra init hermes
-# or
-orchestra init opencode
-# or
-orchestra init codex
 ```
 
-Codex is scaffold-only today: `orchestra init codex` installs a placeholder
-manifest with no working Orchestra tools or `/orch` commands yet.
-
-On Pi, Hermes, or OpenCode, start a normal session and use `/orch`:
+On Pi or Hermes, start a normal session and use `/orch`:
 
 ```text
 /orch help
 /orch do tell me a haiku
 /orch do --role reviewer review the current diff
 /orch roles
+/orch config [KEY] [VALUE]
 /orch status
 /orch history
 ```
@@ -201,6 +197,15 @@ python3 scripts/smoke-pi-live
 It requires both `orchestra` and `pi` on `PATH`, runs `orchestra init pi --force`,
 and checks the Pi `/orch` command flow end to end.
 
+For Hermes, run the live host-plugin smoke check (isolated `HERMES_HOME`; no credentials needed):
+
+```bash
+python3 scripts/smoke-hermes-live            # plugin detected + enabled by real Hermes CLI
+python3 scripts/smoke-hermes-live --llm      # plus one-shot /orch help; skips with the exact manual command if no inference provider is configured locally
+```
+
+Live host checks are separate from unit/source tests: `python3 -m pytest` never requires a live Hermes install.
+
 For broader live regression coverage from the repo root:
 
 ```bash
@@ -209,41 +214,29 @@ scripts/test-live-e2e
 
 ## Plugin feature matrix
 
-* NOT CURRENT, Only pi is supported until v0.7.0
-
 All integrations call the same Python core where their host APIs allow it. The
 matrix shows current host/plugin capabilities rather than separate Orchestra
 implementations.
 
-| Capability | Pi | Hermes | OpenCode | Codex |
-| --- | --- | --- | --- | --- |
-| Install target | `orchestra init pi` | `orchestra init hermes` | `orchestra init opencode` | `orchestra init codex` |
-| Main-session/orchestrator support | Yes | Yes | Yes | Scaffold only (no capabilities) |
-| Can run as a subagent harness | Yes | Yes | Yes | No |
-| `orch_dispatch` tool | Yes | Yes | Yes | No |
-| `orch_status` tool | Yes | Yes | Yes | No |
-| `/orch` interface | Native command | Native command | Prompt template over tools | No |
-| `/orch on` | Yes | Yes | Through `orch_status` | Native skill loading only |
-| `/orch off` | Yes | Yes | No | No |
-| Manual `/orch do` | Yes | Yes | Prompt template | No (scaffold) |
-| Role listing | Yes | Yes | Read-only tool view | No (scaffold) |
-| Native role updates | Yes | Yes | CLI only | No (scaffold) |
-| Runtime-derived owner identity | Yes | Yes | Yes | Not proven |
-| Session-scoped consolidated auto-return | Yes | Yes | Yes | No |
-| Per-subagent progress notification | Native notification | No supported host API | Toast | No |
-| Footer/status UI | Yes | No supported host API | No stable equivalent | No |
-| Dynamic command completions | Yes | Static argument hints | No stable equivalent | No |
-| Main-session turn budget hooks | Yes | Yes | No stable equivalent | No |
-| Main-session soft-timeout hooks | Yes | Yes | No stable equivalent | No |
-| Core hard subagent timeout | Yes | Yes | Yes | CLI only |
-| Role skill injection | Yes | Yes | Yes | CLI only |
-| Role environment injection | Yes | Yes | Yes | CLI only |
-| Role-preserving harness fallback | Yes | Yes | Yes | CLI only |
-| Core debug traces and artifacts | Yes | Yes | Yes | CLI only |
-
-"No supported host API" means the host does not expose a stable public API for
-that feature. Orchestra does not fake missing UI features by injecting extra
-model prompts.
+| Feature | Pi | Hermes |
+| --- | ---: | ---: |
+| Install | `orchestra init pi` | `orchestra init hermes` |
+| Orchestrator | ✅ | ✅ |
+| Subagent | ✅ | ✅ |
+| Orchestra tool support | ✅ | ✅ |
+| MCP | ⚠️ | ⚠️ |
+| `/slash` commands (`/orch on\|off\|status`) | ✅ | ✅ |
+| Status notifications | ✅ | ❌ |
+| Status/footer UI | ✅ | ❌ |
+| Rich rendered UI entries | ✅ | ❌ |
+| Auto-return prompt | ✅ | ✅ |
+| Subagent turn budget | ✅ | ✅ |
+| Subagent soft timeout | ✅ | ✅ |
+| Subagent hard timeout | ✅ | ✅ |
+| SPSI (System Prompt Skill Injection) | ✅ | ✅ |
+| Role env vars | ✅ | ✅ |
+| Harness fallback | ✅ | ✅ |
+| Debug/history artifacts | ✅ | ✅ |
 
 ## Configuration
 
@@ -317,7 +310,7 @@ global host location.
 
 ## Documentation
 
-- `ARCHITECTURE.md` — current technical architecture and behavior
+- `docs/ARCHITECTURE.md` — current technical architecture and behavior
 - `docs/plugin_creation.md` — host-plugin implementation contract
 - `docs/research/` — durable research notes and evaluations
 - `config.yaml` — runtime configuration

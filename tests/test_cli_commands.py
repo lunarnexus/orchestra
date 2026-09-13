@@ -2053,6 +2053,7 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     )
     assert "/orch off                          Hide Orchestra tools for this session" in help_output
     assert "/orch roles" in help_output
+    assert "/orch config [KEY] [VALUE]         Show or update supported config values" in help_output
     assert "/orch roles ROLE SETTING VALUE" in help_output
     assert "Settings: harness, enabled, model, profile, agent" in help_output
     assert "VALUE for enabled: true, yes, y, 1, on | false, no, n, 0, off" in help_output

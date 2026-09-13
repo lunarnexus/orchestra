@@ -274,6 +274,7 @@ APIs:
 /orch off
 /orch do
 /orch roles
+/orch config [KEY] [VALUE]
 /orch status
 /orch stop
 /orch doctor
@@ -557,10 +558,21 @@ Hermes provides model-callable tools and native `/orch` commands through its
 plugin. Runtime identity comes from the plugin's runtime `session_id`.
 
 Hermes stores Orchestra runtime config with the selected or default Hermes
-profile. Consolidated reports use host-supported busy/idle delivery behavior.
-Hermes lacks stable public APIs for Pi-equivalent footer UI, rendered entries,
-dynamic completions, non-prompt progress notifications, and verified
-non-persistent SPSI, so those features are not emulated with model prompts.
+profile. Consolidated reports use host-supported busy/idle delivery behavior,
+including live-session lookup through the TUI gateway for CLI/gateway sessions.
+
+Hermes implements SPSI-style guidance as non-persistent pre-LLM injection: its
+`pre_llm_call` hook fetches `_spsi-payload` at request time and returns the
+content as ephemeral context for that LLM call only, so it never enters
+conversation history or persistent messages. The budget handoff path reuses the
+same `pre_llm_call` surface with a separate `pre_tool_call` soft-timeout block.
+Hermes command UX uses the supported plugin surfaces: a native `/orch`
+command registered with a description and static `args_hint`, plain text/ANSI
+command output, and core-formatted reports delivered to live CLI/gateway sessions.
+
+Hermes lacks stable public APIs for Pi-equivalent footer/status widgets,
+rendered entries, dynamic completions, non-prompt progress notifications, including Pi-style
+turn progress display, so those features are not emulated with model prompts.
 
 ### OpenCode
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import filecmp
 import json
 import os
 import shutil
@@ -286,6 +287,20 @@ def _link_tree(source: Path, target: Path, *, force: bool) -> InitFileResult:
     )
 
 
+def _tree_is_stale(source: Path, target: Path) -> bool:
+    """Return True when an installed tree no longer matches its source."""
+    if not (target.is_dir() and not target.is_symlink()):
+        return False
+    for path in sorted(p for p in source.rglob("*") if p.is_file()):
+        relative = path.relative_to(source)
+        installed = target / relative
+        if not installed.is_file():
+            return True
+        if not filecmp.cmp(path, installed, shallow=False):
+            return True
+    return False
+
+
 def _remove_existing_tree_target(target: Path) -> None:
     if target.is_symlink():
         target.unlink()
@@ -463,7 +478,13 @@ def init_hermes(
         raise _app_error("hermes init source root not found; rerun from a source checkout")
     plugin_source = source_root_path / "extensions" / "hermes" / "orchestra"
     plugin_target = default_hermes_plugins_dir(hermes_profile) / "orchestra"
-    plugin_file = _copy_tree(plugin_source, plugin_target, force=force)
+    # Refresh installed copies that drifted from the source so a plain re-init
+    # repairs stale plugins without requiring --force.
+    plugin_file = _copy_tree(
+        plugin_source,
+        plugin_target,
+        force=force or _tree_is_stale(plugin_source, plugin_target),
+    )
     command = ["hermes"]
     if hermes_profile is not None:
         command.extend(["-p", hermes_profile])

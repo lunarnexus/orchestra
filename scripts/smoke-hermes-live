@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Live Hermes host-plugin smoke check for Orchestra.
+
+Default mode (no credentials required):
+  Creates an isolated HERMES_HOME, symlinks the local plugin into it, and
+  asserts `hermes plugins list --json` reports orchestra as enabled. This is a
+  live host check: it exercises the real Hermes CLI but never calls an LLM and
+  never touches your normal ~/.hermes state.
+
+Optional --llm mode (requires a configured inference provider):
+  Also runs a one-shot `hermes -z "/orch help"` in the isolated HERMES_HOME.
+  If no inference provider is configured, this prints the exact manual command
+  and skips with exit code 0 instead of forcing it.
+
+Keep live host checks separate from unit/source tests: run this manually or in
+CI where Hermes exists; `python3 -m pytest` never depends on it.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="smoke-hermes-live",
+        description="Run the live Hermes smoke check for Orchestra.",
+    )
+    parser.add_argument(
+        "--repo-root",
+        default=Path(__file__).resolve().parents[1],
+        type=Path,
+        help="Path to the Orchestra repository root.",
+    )
+    parser.add_argument(
+        "--llm",
+        action="store_true",
+        help="Also run a one-shot /orch help (requires an inference provider).",
+    )
+    return parser
+
+
+def isolated_env(repo_root: Path) -> tuple[Path, dict[str, str]]:
+    hermes_home = Path(tempfile.mkdtemp(prefix="orch-hermes-smoke-"))
+    plugins_dir = hermes_home / "plugins"
+    plugins_dir.mkdir(parents=True)
+    plugin_src = (repo_root / "extensions/hermes/orchestra").resolve()
+    os.symlink(plugin_src, plugins_dir / "orchestra")
+    (hermes_home / "config.yaml").write_text(
+        "plugins:\n  enabled:\n    - orchestra\n", encoding="utf-8"
+    )
+    env = {**os.environ, "HERMES_HOME": str(hermes_home), "HOME": str(hermes_home)}
+    return hermes_home, env
+
+
+def check_plugins_enabled(env: dict[str, str]) -> None:
+    result = subprocess.run(
+        ["hermes", "plugins", "list", "--json"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    if result.returncode != 0:
+        raise SystemExit(f"FAIL: hermes plugins list failed:\n{result.stderr}")
+    plugins = json.loads(result.stdout)
+    matches = [
+        item for item in plugins
+        if isinstance(item, dict) and item.get("name") == "orchestra"
+    ]
+    if not any(m.get("status") == "enabled" for m in matches):
+        raise SystemExit(f"FAIL: orchestra plugin not enabled:\n{matches}")
+    print("PASS: orchestra plugin detected and enabled by live Hermes CLI.")
+
+
+def check_oneshot_help(env: dict[str, str]) -> None:
+    result = subprocess.run(
+        ["hermes", "--ignore-user-config", "--ignore-rules", "-z", "/orch help"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    if "No inference provider configured" in (result.stderr or ""):
+        print(
+            "SKIP: one-shot /orch help requires a configured Hermes inference "
+            "provider. Manual command:\n"
+            '  hermes --ignore-user-config --ignore-rules -z "/orch help"\n'
+            "(after enabling the plugin in a Hermes profile, e.g. via "
+            "`hermes plugins install source` with this repo's extensions/hermes/orchestra.)"
+        )
+        return
+    if result.returncode != 0:
+        raise SystemExit(f"FAIL: one-shot /orch help failed:\n{result.stderr}")
+    output = f"{result.stdout}\n{result.stderr}"
+    for expected in ("config [KEY] [VALUE]", "do", "status"):
+        if expected not in output:
+            raise SystemExit(f"FAIL: one-shot /orch help missing {expected!r}:\n{output}")
+    print("PASS: live Hermes one-shot /orch help includes shared command surface.")
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    repo_root = args.repo_root.resolve()
+    if shutil.which("hermes") is None:
+        print(
+            "SKIP: hermes command not found on PATH. Install Hermes or run this "
+            "check in an environment with it; unit/source tests do not depend on "
+            "this script."
+        )
+        return 0
+    plugin_src = repo_root / "extensions/hermes/orchestra"
+    if not (plugin_src / "__init__.py").is_file():
+        raise SystemExit(f"FAIL: missing plugin source at {plugin_src}")
+    hermes_home, env = isolated_env(repo_root)
+    try:
+        check_plugins_enabled(env)
+        if args.llm:
+            check_oneshot_help(env)
+    finally:
+        shutil.rmtree(hermes_home, ignore_errors=True)
+    print("Hermes live smoke complete.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

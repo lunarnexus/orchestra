@@ -1,171 +1,185 @@
-# Plan: Neutral Verdict Semantics
+# Plan — Hermes Plugin Feature Parity
+
+## Planning State
+Active plan complete; ready for commit/PR handoff if requested.
+
+Completed implementation:
+- Slice 4 — `/orch config` discoverability.
+- Slice 5 — supported Hermes CLI/gateway UX metadata.
+- Slice 6 — Hermes SPSI-style non-persistent pre-LLM injection.
+- Slice 7 — plugin docs cleanup.
+- Slice 8 — Hermes verification expansion.
+- Slice 9 — review and appsec.
+
+Research complete:
+- Pi already supports `/orch config`; the gap is help/docs/test discoverability.
+- Hermes supports non-persistent pre-LLM injection through `pre_llm_call`; the remaining difference from Pi is placement, not persistence.
+- Hermes supported plugin APIs cover command metadata, static plugin command completion, gateway command menus, gateway `args_hint`, plain text/ANSI command output, and text-level output transforms.
+- Hermes supported plugin APIs do not cover non-prompt notifications, status/footer widgets, Pi-style progress display, or rich structured rendered entries.
+
+Blocked:
+- None for the active plan. Commit/push still requires owner approval.
 
 ## Goal
-
-Fix semantic verdict handling so neutral `Verdict:` values do not cause false failed returns, while `Status:`-derived failures remain visible.
+Bring the Hermes plugin to the same practical feature/functionality level as the Pi plugin, using source evidence to separate implementation gaps from host API limits.
 
 ## Finished Successfully
-
-- `Status: complete` with neutral `Verdict:` reports success.
-- Suspicious or failing `Status:` values report failure when no real `Verdict:` overrides them.
-- Real finalize/report flow matches parser and report unit behavior.
-- No schema changes, no raw stdout persistence, no host plugin changes.
-- Focused tests, lint, type check, and full pytest pass before commit.
+- Hermes matches Pi for core Orchestra commands, tools, report delivery, config/install behavior, and non-persistent pre-LLM orchestration guidance.
+- Hermes CLI/gateway UX uses every supported host plugin surface.
+- Host-limited UI differences are documented precisely.
+- Docs and verification targets reflect current behavior.
 
 ## Acceptance Criteria
-
-- `Verdict: n/a`, `Verdict: na`, `Verdict: none`, and `Verdict: not applicable` are treated as omitted explicit verdicts.
-- Neutral `Verdict:` lines do not erase `Status:` fallback before or after them.
-- `Status: n/a`, `Status: na`, `Status: failed`, and `Status: blocked` remain semantic verdicts and can make a DONE run report as failure.
-- A later real `Verdict:` still overrides `Status:` fallback.
-- Stored legacy neutral `semantic_verdict` values are re-evaluated from available persisted text before being treated as absent.
-- End-to-end fake-worker finalize plus pending-report tests cover both neutral-success and suspicious-status cases.
+- Pi and Hermes command/tool surfaces are source-audited.
+- `/orch config` is discoverable in shared help/docs/tests.
+- Hermes SPSI-style guidance is injected before the LLM call and does not persist in conversation history.
+- Hermes supported CLI/gateway UX metadata is covered by tests/docs.
+- Unsupported UI features are documented as host API limits, not vague gaps.
 
 ## Scope
-
 In scope:
-- `src/orchestra/harnesses/common.py`
-- `src/orchestra/reports.py`
-- `tests/test_harness_common.py`
-- `tests/test_reports.py`
-- `tests/test_process_supervision.py`
+- `/orch config` help/docs/test discoverability cleanup.
+- Hermes SPSI-style non-persistent pre-LLM injection via `pre_llm_call`.
+- Hermes supported CLI/gateway UX parity: descriptions, static command completion, `args_hint`, gateway menus, plain text/ANSI output, text transforms if useful.
+- Documentation of unsupported Hermes UI surfaces.
+- Focused tests and practical live smoke checks.
 
 Out of scope:
-- Pi, Hermes, and OpenCode host plugins.
-- SQLite schema or migration changes.
-- Persisting full raw worker stdout.
-- Broad history/status/debug redesign.
-- Unrelated cleanup.
+- Dashboard extensions.
+- Core orchestration redesign.
+- Building on private Hermes internals such as `_cli_ref` monkeypatching.
+- Claiming literal Pi UI parity where Hermes exposes no supported plugin API.
+- New compatibility commitments not approved by the owner.
 
 ## Context / Evidence
+Pi inventory:
+- `/orch`: help, on, off, doctor, do, roles, status, stop, history, config.
+- Tools: `orch_dispatch`, `orch_status`.
+- Supports SPSI injection, notifications, footer widget, rendered command/output entries, auto-return, budget steering, lifecycle cleanup.
+- Pi `/orch config` already branches to shared core `orchestra config`; completions include `config`.
 
-- `prompts.yaml` allows `Verdict: pass|fail|n/a`; `n/a` is expected neutral output.
-- `parse_child_return` derives `semantic_verdict` from `Verdict:` or, if no real verdict exists, from `Status:`.
-- `_result_from_completed_worker` stores the parsed verdict on `WorkerResult.semantic_verdict`.
-- `_finalize_run` stores concise result fields and writes full details to `return.md`; it does not persist full raw stdout.
-- `_semantic_failure_verdict` controls whether a DONE run renders as `[... success]` or `[... fail]`.
-- Local repro: fake worker output `Status: n/a` finalized with `semantic_verdict="n/a"` but was reported as success when stored neutrals were blindly ignored.
+Hermes inventory:
+- `/orch`: help, on, off, do, roles, config, status, stop, doctor, history.
+- Tools: `orch_dispatch`, `orch_status`.
+- Supports normalized Hermes session ids, lifecycle hooks, budget blocking/injection, report watcher, idle/busy report delivery.
+- `pre_llm_call` can append context to an ephemeral copy of the current user message before the LLM call. The original message list is not mutated, so injected content does not persist.
+- Hermes plugin now wires SPSI content through `pre_llm_call` for non-persistent pre-LLM injection.
 
-## Research Still Needed
+Hermes UI feasibility:
+- Feasible now: command descriptions, static plugin command completion, gateway command menus, gateway `args_hint`, plain text/ANSI slash command output, text-level output transforms.
+- Feasible with caveats: custom output formatting only as text rewriting, not structured entries; argument hints are surfaced in gateway adapters but not dynamic per-argument TUI completion.
+- Not feasible through supported plugin API: non-prompt notifications, status/footer widgets, Pi-style progress display, rich structured rendered entries.
+- Do not use private `_cli_ref` internals for UI parity.
 
-None. The parser/finalize/report path is known enough for implementation.
+Docs drift:
+- Resolved for active scope: docs now describe `/orch config`, Hermes SPSI-style injection, supported Hermes CLI/gateway UX surfaces, and unsupported Hermes UI host API limits.
 
-Deferred only if scope expands:
-- Cosmetic normalization for old neutral values in history/debug/status displays.
+## Files to Change
+Likely docs/config:
+- `prompts.yaml` — shared `/orch help` text.
+- `README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/plugin_creation.md`
+- `AGENTS.md` if verification targets change.
+- `DECISIONS.md` only with explicit owner approval.
+
+Potential Pi files/tests:
+- `extensions/pi/orchestra/index.ts` — command description metadata only if needed.
+- Pi-focused source/help tests.
+
+Potential Hermes files/tests:
+- `extensions/hermes/orchestra/__init__.py`
+- `tests/test_hermes_plugin_source.py`
+- `tests/test_init_hermes.py`
+- `tests/test_harness_hermes.py`
+- focused Hermes live smoke script if reliable.
 
 ## Design Notes
-
-- Treat neutral `Verdict:` as an omitted explicit verdict, not as success.
-- Keep the current function signatures.
-- Parser rule: skip neutral `Verdict:` lines; do not keep a neutral flag that clears status fallback.
-- Report rule: if stored `semantic_verdict` is neutral, re-parse `result_summary` first, then `result_output` if present. Treat as absent only if re-parse yields no verdict.
-- Do not persist raw stdout. The concise DB plus `return.md` split remains unchanged.
+- Parity means practical orchestration parity and full use of supported Hermes plugin surfaces.
+- Hermes SPSI parity means non-persistent pre-LLM injection; system-prompt placement is not required.
+- Do not invent Hermes APIs or rely on private internals.
+- Treat SPSI/context injection, tool exposure, and filesystem/config access as security-sensitive.
 
 ## Task Breakdown
 
-- [ ] Slice 1 — sequential — Correct parser semantics
+- [x] Slice 1 — parallel-safe — Research Pi `/orch config`
   Reference: PLAN.md Slice 1
-  Scope: `src/orchestra/harnesses/common.py`, `tests/test_harness_common.py`
-  Boundaries: No report, storage, finalization, or plugin changes.
-  Interfaces: `parse_child_return(text) -> (summary, verdict, blocker_or_evidence, truncated)` unchanged.
-  Stop when: tests prove neutral `Verdict:` is ignored, `Status:` fallback survives before/after neutral verdicts, `Verdict: n/a` alone yields `None`, and later real `Verdict:` wins.
-  Verify: `python3 -m pytest tests/test_harness_common.py -q`
-  Risk: P1 — parser output drives return classification.
-  Gates: focused verification.
+  Result: Pi already supports `/orch config`; update help/docs/tests rather than command implementation.
 
-- [ ] Slice 2 — sequential — Correct report classification
+- [x] Slice 2 — parallel-safe — Research Hermes host capability limits
   Reference: PLAN.md Slice 2
-  Scope: `src/orchestra/reports.py`, `tests/test_reports.py`
-  Boundaries: No raw-output persistence, schema change, history/status/debug redesign, or auto-return delivery changes.
-  Interfaces: `_semantic_failure_verdict(run)` returns `None` for no semantic failure or a normalized failure verdict string.
-  Stop when: report tests prove DONE + `Status: complete\nVerdict: n/a` reports success, DONE + `Status: n/a` reports fail, stored neutral with recoverable success reports success, and stored neutral with recoverable suspicious status reports fail.
-  Verify: `python3 -m pytest tests/test_reports.py -q`
-  Risk: P1 — user-visible return outcome and follow-up hints depend on this.
-  Gates: focused verification.
+  Result: SPSI-style non-persistent pre-LLM injection is implementable via `pre_llm_call`; Pi-style footer/status widgets, rich rendered entries, progress display, and non-prompt notifications are host-limited.
 
-- [ ] Slice 3 — sequential — Cover real finalize/report behavior
-  Reference: PLAN.md Slice 3
-  Scope: `tests/test_process_supervision.py` using existing fake worker/runtime fixtures; source changes only if this exposes a remaining bug in Slice 1 or 2 code.
-  Boundaries: No migrations, raw stdout persistence, or plugin changes.
-  Interfaces: fake worker stdout -> `_result_from_completed_worker` -> `_finalize_run` -> stored `RunRecord` -> pending report.
-  Stop when: fake worker output `Status: n/a` produces pending report `[... fail]`, and `Status: complete\nVerdict: n/a` produces `[... success]`.
-  Verify: `python3 -m pytest tests/test_process_supervision.py -q`
-  Risk: P1 — protects actual production flow.
-  Gates: focused verification.
+- [x] Slice 2b — parallel-safe — Research Hermes UI feasibility
+  Reference: PLAN.md Slice 2b
+  Result: Supported UX parity is command metadata, static command completion, gateway menus, `args_hint`, plain text/ANSI output, and text transforms. Unsupported through public API: notifications, footer/status widgets, progress display, rich entries.
 
-- [ ] Slice 4 — sequential — Final quality gates
+- [x] Slice 4 — sequential — Make `/orch config` discoverable
   Reference: PLAN.md Slice 4
-  Scope: final diff across the scoped files.
-  Boundaries: No code changes unless a check fails; failures get a focused fix.
-  Stop when: focused suite, lint, type check, and full pytest pass.
-  Verify:
-  ```bash
-  python3 -m pytest tests/test_harness_common.py tests/test_reports.py tests/test_process_supervision.py -q
-  python3 -m ruff check src/orchestra/harnesses/common.py src/orchestra/reports.py tests/test_harness_common.py tests/test_reports.py tests/test_process_supervision.py
-  python3 -m mypy src tests
-  python3 -m pytest -q
-  ```
-  Risk: P1 — confirms no broader orchestration regression.
-  Gates: one reviewer gate after Slice 4, then one appsec gate before commit.
+  Result: Shared host help, Pi command description, README, architecture docs, and focused tests now include `/orch config [KEY] [VALUE]`; no command behavior changed.
+  Verification: `python3 -m pytest tests/test_config.py tests/test_pi_extension_source.py tests/test_cli_commands.py` — 177 passed; verifier confirmed live `python3 -m orchestra help-host | grep "orch config"` output.
+
+- [x] Slice 5 — sequential — Align supported Hermes CLI/gateway UX
+  Reference: PLAN.md Slice 5
+  Result: Hermes `args_hint` now includes `config [KEY] [VALUE]`; tests cover command description and args hint. Unsupported UI features remain documented as host API limits.
+  Verification: `python3 -m pytest tests/test_hermes_plugin_source.py tests/test_init_hermes.py tests/test_harness_hermes.py` — 116 passed, 1 skipped; ruff clean; verifier reran focused source test — 104 passed.
+
+- [x] Slice 6 — sequential — Add Hermes SPSI-style injection
+  Reference: PLAN.md Slice 6
+  Result: Hermes `pre_llm_call` returns SPSI payload content as `{"context": ...}` for pre-LLM injection without using persistent `inject_message`; tests cover SPSI-only and combined SPSI + budget behavior.
+  Verification: Builder red/green focused tests, `python3 -m pytest tests/test_hermes_plugin_source.py tests/test_harness_hermes.py -q` — 117 passed; ruff clean; verifier confirmed fail-closed payload handling and non-persistence strategy.
+  Gates: Appsec still required in Slice 9.
+
+- [x] Slice 7 — sequential — Clean up plugin docs
+  Reference: PLAN.md Slice 7
+  Result: README, architecture docs, and plugin creation docs now match source: Hermes SPSI is described as non-persistent pre-LLM injection via `pre_llm_call`; supported Hermes CLI/gateway UX surfaces and unsupported host API limits are documented; stale Hermes unsupported/NOT CURRENT claims removed.
+  Verification: verifier traced doc claims to current source, confirmed stale-phrase scan clean, and confirmed DECISIONS.md/AGENTS.md boundaries held.
+
+- [x] Slice 8 — sequential — Expand Hermes verification
+  Reference: PLAN.md Slice 8
+  Result: Added `scripts/smoke-hermes-live`, updated Hermes verification docs, and fixed the dangling init-test smoke reference.
+  Verification: `python3 -m pytest tests/test_hermes_plugin_source.py tests/test_init_hermes.py tests/test_harness_hermes.py` — 123 passed, 1 skipped; `python3 -m ruff check scripts/smoke-hermes-live tests/test_init_hermes.py` clean; `python3 scripts/smoke-hermes-live` pass; `python3 scripts/smoke-hermes-live --llm` pass with documented provider-dependent one-shot skip.
+
+- [x] Slice 9 — sequential — Review and security
+  Reference: PLAN.md Slice 9
+  Result: Code review found implementation/docs/tests correct and in scope after D-HOST-013 was recorded; appsec review passed with no HIGH/MEDIUM findings.
+  Verification: Reviewer verdict pass after decision record; appsec verdict pass. Security evidence covered `_spsi-payload` subprocess argv/no-shell use, runtime session-id source, fail-closed handling, non-persistent `{"context": ...}` injection, and isolated Hermes smoke script behavior.
 
 ## Parallelization Check
-
-- No parallel implementation slices. This is one shared parser/report/finalize behavior chain.
-- Slice 1 precedes Slice 2.
-- Slice 2 precedes Slice 3.
-- Slice 4 runs after Slices 1–3.
-- Reviewer runs once on the coherent final diff.
-- Appsec runs once after review, focused on whether neutral verdict handling can hide failures.
-- Blockers: none.
+- Slices 4, 5, and 6 are complete.
+- Slice 7 is complete.
+- Slice 8 is complete.
+- Slice 9 is complete.
 
 ## Tests to Add or Update
-
-- `tests/test_harness_common.py`
-  - `Status: complete\nVerdict: n/a` -> verdict `complete`.
-  - `Status: failed\nVerdict: n/a` -> verdict `failed`.
-  - `Verdict: n/a\nStatus: failed` -> verdict `failed`.
-  - `Verdict: n/a` -> verdict `None`.
-  - `Verdict: n/a\nVerdict: blocked` -> verdict `blocked`.
-
-- `tests/test_reports.py`
-  - DONE + `Status: n/a` reports fail with `verdict: n/a`.
-  - DONE + `Status: complete\nVerdict: n/a` reports success.
-  - Stored neutral `semantic_verdict` with summary `Status: complete\nVerdict: n/a` reports success.
-  - Stored neutral `semantic_verdict` with summary `Status: n/a` reports fail.
-
-- `tests/test_process_supervision.py`
-  - Fake worker output `Status: n/a` finalizes and pending report shows fail.
-  - Fake worker output `Status: complete\nVerdict: n/a` finalizes and pending report shows success.
+- Shared/Pi help tests for `/orch config` discoverability — added.
+- Hermes tests for supported CLI/gateway UX metadata — added.
+- Hermes SPSI-style tests proving pre-LLM injection and non-persistence — added.
+- Init/install tests if profile/config paths change.
+- Live smoke docs/scripts for Hermes commands that can be exercised reliably — added.
 
 ## Verification
-
-Focused checks:
-
-```bash
-python3 -m pytest tests/test_harness_common.py -q
-python3 -m pytest tests/test_reports.py -q
-python3 -m pytest tests/test_process_supervision.py -q
-```
-
-Final checks:
-
-```bash
-python3 -m pytest tests/test_harness_common.py tests/test_reports.py tests/test_process_supervision.py -q
-python3 -m ruff check src/orchestra/harnesses/common.py src/orchestra/reports.py tests/test_harness_common.py tests/test_reports.py tests/test_process_supervision.py
-python3 -m mypy src tests
-python3 -m pytest -q
-```
+Focused checks by touched area:
+- Hermes: `python3 -m pytest tests/test_hermes_plugin_source.py tests/test_init_hermes.py tests/test_harness_hermes.py`
+- Pi: focused Pi plugin/source tests if present, plus `python3 scripts/smoke-pi-live` when practical
+- Broader Python changes: `python3 -m pytest`, `python3 -m ruff check .`, `python3 -m mypy src tests`, `python3 -m build`
 
 ## Risks
-
-- Misclassifying neutral `Verdict:` as success could hide failures; this plan avoids that by keeping `Status:` fallback intact.
-- Legacy stored neutral values are ambiguous; re-parsing persisted summary/output is the safest compatibility behavior without a migration.
-- A test-only unit fix could miss production behavior; Slice 3 covers real finalize/report flow.
+- Hermes does not expose supported plugin APIs for Pi-like footer/status widgets, rich rendered entries, Pi-style progress display, or non-prompt notification behavior.
+- Hermes SPSI-style injection uses current-turn user-message context rather than system-prompt placement; tests must prove non-persistence.
+- Docs drift can cause false parity conclusions if not checked against source.
 
 ## Open Questions
+1. Should parity mean practical orchestration parity and full use of supported Hermes plugin surfaces rather than literal Pi UI parity? Recommended: yes.
+2. Should Hermes SPSI-style pre-LLM injection be implemented now? Recommended: yes.
+3. Are documented Hermes UI host limitations acceptable for CLI/TUI parity? Recommended: yes.
 
-None.
+## Third-Pass Validation
+- Requirement coverage: covered by Slices 1–8; final review/security covered by Slice 9.
+- Evidence sufficiency: Pi config, Hermes SPSI, and Hermes CLI/TUI UI evidence has been gathered and implemented for active scope.
+- Dependency correctness: active plan work is complete.
+- Interface consistency: command, plugin, test, and docs targets are named per slice.
+- Scope control: broad core redesign, private Hermes internals, dashboard work, and unapproved decisions remain out of scope.
 
-## Planning Verdict
-
-Ready. The implementation is narrow, sequential, and does not require owner decisions beyond approval to implement.
+## Next Action
+Commit/PR handoff if requested.

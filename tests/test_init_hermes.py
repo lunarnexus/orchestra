@@ -147,6 +147,39 @@ def test_init_hermes_passes_force_to_local_plugin_copy(
     ]
 
 
+def test_init_hermes_refreshes_stale_plugin_copy_without_force(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source"
+    hermes_home = tmp_path / "hermes-home"
+    source.mkdir()
+    _write_source_tree(source)
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+    def fake_runner(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        return completed(args, stdout="enabled")
+
+    init_hermes(profile="mina", source_root=source, runner=fake_runner)
+
+    installed = hermes_home / "profiles" / "mina" / "plugins" / "orchestra"
+    plugin_yaml = installed / "plugin.yaml"
+    assert plugin_yaml.read_text(encoding="utf-8") == "name: orchestra\n"
+
+    # Simulate an older installed copy left behind by a previous init.
+    plugin_yaml.write_text("name: old-version\n", encoding="utf-8")
+
+    result = init_hermes(profile="mina", source_root=source, runner=fake_runner)
+
+    assert (installed / "plugin.yaml").read_text(encoding="utf-8") == (
+        "name: orchestra\n"
+    )
+    plugin_file = next(
+        item for item in result.files if item.target == installed
+    )
+    assert plugin_file.action == "updated"
+
+
 def test_init_hermes_reports_enable_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -299,5 +332,5 @@ def test_real_hermes_plugin_integration_skips_without_isolated_runtime_credentia
         )
     pytest.skip(
         "real Hermes plugin automation requires an interactive/runtime-capable Hermes session; "
-        "run manual sequence in SMOKETEST.md"
+        "run `python3 scripts/smoke-hermes-live --llm` with a configured inference provider"
     )

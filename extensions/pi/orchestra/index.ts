@@ -1499,7 +1499,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   await refreshOrchestraToolRegistrations(currentToolInfo);
 
   pi.registerCommand("orch", {
-    description: "Orchestra host adapter: /orch help|on|off|do|roles|status|stop|doctor|history",
+    description: "Orchestra host adapter: /orch help|on|off|do|roles|config|status|stop|doctor|history",
     getArgumentCompletions: getOrchArgumentCompletions,
     handler: async (args, ctx) => {
       const trimmed = args.trim();

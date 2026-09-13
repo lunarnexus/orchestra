@@ -148,6 +148,7 @@ host_help: |-
     /orch roles ROLE SETTING VALUE     Update a role setting
                                        Settings: harness, enabled, model, profile, agent
                                        VALUE for enabled: true, yes, y, 1, on | false, no, n, 0, off
+    /orch config [KEY] [VALUE]         Show or update supported config values
     /orch status                       Show active subagents for this session
     /orch stop <run-id>                Stop an active subagent.
     /orch history [limit]              Show recent results for this session
