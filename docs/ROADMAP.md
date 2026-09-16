@@ -27,6 +27,11 @@ Orchestra roadmap items are split into:
 4. [ ] Investigate verifier/reviewer run limits to prevent spiraling fix loops.
    - Specifically gpt-5.5/5.6 are bad about nitpicking everything to death.
 
+5. [ ] Add simple mode and full mode.  Some users want to just be able to dispatch by saying "Dispatch a builder to ... " with no extra skills or orchestration.
+       Some users want the full orchestration and planning workflow.  This used to be a "/slash" command, but was removed.  Investigate options
+       to make this easy to turn on/off.  I think we will simply remove the injected orchestrator skill from the main session for simple mode, which will 
+       require some adjustments to our tool descriptions and orchestrator skill.   
+
 ## Wishlist
 
 1. [ ] Ensure plugin feature parity with Codex.
@@ -75,10 +80,6 @@ Orchestra roadmap items are split into:
     - Integrate with plugins if necessary.
     - May be required for Codex and Qwen Coder support.
 
-12. [ ] Batch dispatch with decomposition-first fan-out.
-    - Decompose the goal into independent slices first, then fan out one subagent per slice as a grouped batch in a single dispatch round.
-    - Study oh-my-pi's parallel decomposed-work approach as prior art before designing the Orchestra equivalent.
-
 13. [ ] Git commit integration.
 
 14. [ ] Setup an actual approval system for non-sandboxed harnesses.
@@ -87,3 +88,8 @@ Orchestra roadmap items are split into:
 15. [ ] Cache config into memory.
     - Create load command and function.
     - Make config session-specific and saved to file specifically.
+
+16. [ ] Remove "/orch config" real-time config changes.  This causes more
+    problems than it's worth when we take into account multiple harnesses/plugins
+
+17. [ ] Add "utilities" to help with common tasks.  "/orch plan", "/orch clarify", "/orch enhance" type things. 
