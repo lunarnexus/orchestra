@@ -10,6 +10,8 @@ from typing import Any
 
 import yaml
 
+from orchestra.state import StateError, validate_main_session_mode
+
 DEFAULT_STATE_DIR = Path("state")
 DEFAULT_LOG_DIR = Path("logs")
 DEFAULT_CONFIG_FILENAME = "config.yaml"
@@ -21,7 +23,7 @@ DEFAULT_GLOBAL_CONCURRENCY = 4
 DEFAULT_PER_SESSION_CONCURRENCY = 3
 DEFAULT_AUTO_RETURN = True
 DEFAULT_AUTO_VERIFY = False
-DEFAULT_TOOLS_ENABLED_BY_DEFAULT = True
+DEFAULT_MAIN_SESSION_MODE = "on"
 DEFAULT_ROLE_NAME = "builder"
 ORCHESTRATOR_ROLE_NAME = "orchestrator"
 SKILL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
@@ -81,7 +83,7 @@ class AppConfig:
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
     auto_return: bool = DEFAULT_AUTO_RETURN
     auto_verify: bool = DEFAULT_AUTO_VERIFY
-    tools_enabled_by_default: bool = DEFAULT_TOOLS_ENABLED_BY_DEFAULT
+    mode: str = DEFAULT_MAIN_SESSION_MODE
 
 
 @dataclass(frozen=True)
@@ -202,11 +204,7 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
         raise ConfigError("'soft_timeout' must be less than 'default_timeout'")
     auto_return = _get_optional_bool(raw, "auto_return", DEFAULT_AUTO_RETURN)
     auto_verify = _get_optional_bool(raw, "auto_verify", DEFAULT_AUTO_VERIFY)
-    tools_enabled_by_default = _get_optional_bool(
-        raw,
-        "tools_enabled_by_default",
-        DEFAULT_TOOLS_ENABLED_BY_DEFAULT,
-    )
+    mode = _get_required_main_session_mode(raw, "mode")
     retention_days = _get_optional_positive_int(raw, "retention_days", 90)
 
     concurrency_raw = raw.get("concurrency", {})
@@ -299,7 +297,7 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
         concurrency=concurrency,
         auto_return=auto_return,
         auto_verify=auto_verify,
-        tools_enabled_by_default=tools_enabled_by_default,
+        mode=mode,
         retention_days=retention_days,
         prompts=prompts,
     )
@@ -308,7 +306,7 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
 CONFIG_MUTABLE_FIELDS = {
     "auto_verify",
     "auto_return",
-    "tools_enabled_by_default",
+    "mode",
     "default_timeout",
     "retention_days",
     "concurrency.global_limit",
@@ -325,7 +323,7 @@ def load_app_config_values(
     return {
         "auto_verify": config.auto_verify,
         "auto_return": config.auto_return,
-        "tools_enabled_by_default": config.tools_enabled_by_default,
+        "mode": config.mode,
         "default_timeout": config.default_timeout,
         "retention_days": config.retention_days,
         "concurrency.global_limit": config.concurrency.global_limit,
@@ -363,8 +361,11 @@ def list_config_values(
 
 
 def _apply_config_value(data: dict[str, Any], key: str, raw_value: str) -> None:
-    if key == "auto_verify" or key == "auto_return" or key == "tools_enabled_by_default":
+    if key == "auto_verify" or key == "auto_return":
         data[key] = _parse_bool(raw_value, key)
+        return
+    if key == "mode":
+        data[key] = _parse_main_session_mode(raw_value, key)
         return
     if key == "default_timeout" or key == "retention_days":
         data[key] = _parse_positive_int(raw_value, key)
@@ -401,11 +402,7 @@ def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> App
         raise ConfigError("'soft_timeout' must be less than 'default_timeout'")
     auto_return = _get_optional_bool(raw, "auto_return", DEFAULT_AUTO_RETURN)
     auto_verify = _get_optional_bool(raw, "auto_verify", DEFAULT_AUTO_VERIFY)
-    tools_enabled_by_default = _get_optional_bool(
-        raw,
-        "tools_enabled_by_default",
-        DEFAULT_TOOLS_ENABLED_BY_DEFAULT,
-    )
+    mode = _get_required_main_session_mode(raw, "mode")
     retention_days = _get_optional_positive_int(raw, "retention_days", 90)
     concurrency_raw = raw.get("concurrency", {})
     if not isinstance(concurrency_raw, dict):
@@ -492,10 +489,18 @@ def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> App
         concurrency=concurrency,
         auto_return=auto_return,
         auto_verify=auto_verify,
-        tools_enabled_by_default=tools_enabled_by_default,
+        mode=mode,
         retention_days=retention_days,
         prompts=prompts,
     )
+
+
+def _parse_main_session_mode(raw_value: str, key: str) -> str:
+    value = raw_value.strip()
+    try:
+        return validate_main_session_mode(value)
+    except StateError as exc:
+        raise ConfigError(f"'{key}' must be one of: off, on, orchestrate") from exc
 
 
 def _parse_bool(raw_value: str, key: str) -> bool:
@@ -815,6 +820,18 @@ def _get_optional_bool(data: dict[str, Any], key: str, default: bool) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"'{key}' must be a boolean")
     return value
+
+
+def _get_required_main_session_mode(data: dict[str, Any], key: str) -> str:
+    value = data.get(key)
+    if value is None:
+        raise ConfigError(f"'{key}' is required and must be one of: off, on, orchestrate")
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"'{key}' must be one of: off, on, orchestrate")
+    try:
+        return validate_main_session_mode(value.strip())
+    except StateError as exc:
+        raise ConfigError(f"'{key}' must be one of: off, on, orchestrate") from exc
 
 
 def _get_optional_enabled_mode(data: dict[str, Any], key: str) -> tuple[bool, str]:

@@ -5,12 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from orchestra.context import CONTRACT_VERSION, AppContext, AppError
-from orchestra.state import (
-    MAIN_SESSION_MODE_OFF,
-    MAIN_SESSION_MODE_ON,
-    MainSessionState,
-    validate_main_session_mode,
-)
+from orchestra.state import MainSessionState, validate_main_session_mode
 
 if TYPE_CHECKING:
     pass
@@ -49,11 +44,7 @@ def get_main_session_state(
 
 
 def default_main_session_mode(context: AppContext) -> str:
-    return (
-        MAIN_SESSION_MODE_ON
-        if context.config.tools_enabled_by_default
-        else MAIN_SESSION_MODE_OFF
-    )
+    return validate_main_session_mode(context.config.mode)
 
 
 def resolve_main_session_mode(context: AppContext, session_id: str) -> str:

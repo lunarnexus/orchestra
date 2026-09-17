@@ -437,7 +437,7 @@ def test_return_hints_come_from_prompts_yaml(
     prompts_path.write_text(
         yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
     )
-    config_path.write_text("default_timeout: 30\n", encoding="utf-8")
+    config_path.write_text("default_timeout: 30\nmode: 'on'\n", encoding="utf-8")
 
     config = load_app_config(config_path)
     assert config.prompts.return_hint_done == "custom done hint from prompts"

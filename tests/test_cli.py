@@ -91,7 +91,12 @@ def test_config_command_reads_and_updates_values(
     config_path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     config_path.write_text(
-        "default_timeout: 120\nauto_verify: false\nconcurrency:\n  global: 4\n  per_session: 3\n",
+        "default_timeout: 120\n"
+        "mode: 'on'\n"
+        "auto_verify: false\n"
+        "concurrency:\n"
+        "  global: 4\n"
+        "  per_session: 3\n",
         encoding="utf-8",
     )
     prompts_path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")

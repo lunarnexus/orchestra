@@ -5,7 +5,7 @@ These rules apply to all AI coding agents working on this project.
 ## Core Principles
 
 - Keep the implementation aligned with `DECISIONS.md`, `ARCHITECTURE.md`, and any active operational artifacts.
-- Treat `DECISIONS.md` as the authoritative record of owner-approved project decisions. Do not remove, weaken, reinterpret, or supersede a recorded decision without explicit owner approval. Treat `ARCHITECTURE.md` as the current implementation map. Treat `PLAN.md` and `RESEARCH.md` as Orchestra operational artifacts for the current orchestrator session, not casual edit targets.
+- Treat `DECISIONS.md` as the authoritative record of owner-approved project decisions. Do not remove, weaken, reinterpret, or supersede a recorded decision without explicit owner approval. Treat `ARCHITECTURE.md` as the current implementation map. Treat `PLAN.md` and `RESEARCH.md` as Orchestra operational artifacts for the current orchestrator session, not casual edit targets. `PLAN.md` is temporary local planning state and should stay ignored by git.
 - Favor simple MVP work over speculative framework building.
 - Prefer small, reviewable changes with clear verification.
 - Be explicit about what is implemented now versus only planned.
@@ -28,6 +28,15 @@ These rules apply to all AI coding agents working on this project.
 - Code reviews must check the diff against the plan, not just the final state.
 - Do not claim checks passed unless you ran them successfully.
 - If a check is skipped or blocked, say so clearly.
+
+## Changelog
+
+- `ROADMAP.md` is a living document and should be committed on every commit even when its updates are not directly related to the code change.
+- `ROADMAP.md` is for future work only.
+- Completed roadmap items belong in `CHANGELOG.md`, not `ROADMAP.md`.
+- When asked to update the changelog, check both git commits since the latest `vX.Y.Z` tag and `ROADMAP.md`.
+- Draft the changelog update, show it for owner approval, then edit `CHANGELOG.md`.
+- Do not tag or push a release until the owner approves.
 
 ## Project-Specific Commands
 

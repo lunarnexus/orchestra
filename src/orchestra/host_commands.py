@@ -75,7 +75,6 @@ class ToolInfoSchema:
     dispatch_timeout_error: str
     budget_trigger_label: str
     soft_timeout_block_reason: str
-    tools_enabled_by_default: bool
     main_session_mode: str
 
     def to_payload(self) -> dict[str, Any]:
@@ -117,7 +116,6 @@ def tool_info_payload(context: AppContext, session_id: str | None = None) -> Too
         dispatch_timeout_error=DISPATCH_TIMEOUT_ERROR,
         budget_trigger_label=prompts.budget_trigger_label,
         soft_timeout_block_reason=prompts.soft_timeout_block_reason,
-        tools_enabled_by_default=context.config.tools_enabled_by_default,
         main_session_mode=resolved_mode,
     )
 

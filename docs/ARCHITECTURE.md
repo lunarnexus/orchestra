@@ -78,21 +78,23 @@ runtime identity from the host and do not ask the user or model to provide it.
 
 ### Skill-guided orchestration
 
-`/orch on` enables Orchestra tools and system-prompt-skill-injection (SPSI)
-for the current session. SPSI applies configured role skills as ephemeral
-request-time instruction material, not as persisted user or follow-up messages.
-For the main session, core uses the `orchestrator` role's configured `skills`
-from `agent-catalog.yaml`. For worker sessions, core resolves the
-`orchestra-worker-<run-id>` session id back to the run role and injects that
-role's configured skills. The orchestrator skill guides decomposition, dispatch,
-sequencing, approvals, artifact alignment, synthesis, and project-document
-ownership. SPSI does not create the underlying dispatch capability.
+`/orch on` enables simple dispatch mode for the current session: Orchestra
+tools are available, launched subagents still receive configured role SPSI, and
+the main session does not receive the orchestrator skill. `/orch orchestrate`
+enables the full workflow by also injecting the main-session orchestrator skill.
+SPSI applies configured role skills as ephemeral request-time instruction
+material, not as persisted user or follow-up messages. For worker sessions, core
+resolves the `orchestra-worker-<run-id>` session id back to the run role and
+injects that role's configured skills. The orchestrator skill guides
+decomposition, dispatch, sequencing, approvals, artifact alignment, synthesis,
+and project-document ownership. SPSI does not create the underlying dispatch
+capability.
 
 A harness can load skills through its own native skill mechanism, including an
-orchestration skill. `/orch on|off` provides direct Orchestra session control:
-`/orch off` keeps orchestration guidance and dispatch behavior out of sessions
-where it would add unnecessary context or where work is too small to benefit.
-Exact tool-visibility and SPSI placement behavior follows the stable
+orchestration skill. `/orch off|on|orchestrate` provides direct Orchestra session
+control: `/orch off` keeps orchestration guidance and dispatch behavior out of
+sessions where it would add unnecessary context or where work is too small to
+benefit. Exact tool-visibility and SPSI placement behavior follows the stable
 non-persistent APIs available in each host.
 
 In the structured workflow, dispatch transfers the assigned scope to a
@@ -246,11 +248,11 @@ operations use the stored exact owner ID. Identity is never derived from prompts
 model output, working directory, user identity, process ancestry, recency, or host
 window.
 
-Core also stores main-session orchestration mode per session id. Runtime mode is
-`off` or `on`; absent session-mode state resolves from `config.yaml`
-`tools_enabled_by_default`. Other mode values fail validation with a clear core
-error. Host adapters update this state through the internal `_session-mode`
-command when `/orch off` or `/orch on` changes the session mode.
+Core also stores main-session mode per session id. Runtime mode is `off`, `on`,
+or `orchestrate`; absent session-mode state resolves from `config.yaml` `mode`.
+Other mode values fail validation with a clear core error. Host adapters update
+this state through the internal `_session-mode` command when `/orch off`, `/orch
+on`, or `/orch orchestrate` changes the session mode.
 
 Hermes context compression can create parent/child continuation sessions.
 Stored ownership remains exact. Read-only status and history may resolve known
@@ -271,6 +273,7 @@ APIs:
 ```text
 /orch help
 /orch on
+/orch orchestrate
 /orch off
 /orch do
 /orch roles
@@ -291,9 +294,9 @@ The model-callable `orch_dispatch` contract accepts:
 It intentionally does not accept a timeout. The configured default applies.
 Native manual `/orch do` implementations may expose a timeout option.
 
-`orch_status` provides host/session actions such as on, status, history, help,
-doctor, roles, and stop. It is a diagnostic and control surface, not part of the
-normal completion loop.
+`orch_status` provides host/session actions such as on, orchestrate, status,
+history, help, doctor, roles, and stop. It is a diagnostic and control surface,
+not part of the normal completion loop.
 
 ### Prompt shape
 
@@ -323,7 +326,7 @@ Runtime settings, including:
 - per-model limits where configured
 - required default timeout
 - host/runtime defaults
-- whether Orchestra tools are enabled by default in host sessions via `tools_enabled_by_default`
+- the default host-session mode via top-level `mode`
 - whether successful builder runs automatically trigger verifier runs via `auto_verify`
 - the dry-run prune retention window via top-level `retention_days`
 

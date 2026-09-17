@@ -22,7 +22,7 @@ from orchestra.state import RunRecord, StateError
 from tests.helpers import write_runtime_files
 
 
-def make_context(base_dir: Path, *, tools_enabled_by_default: bool | None) -> AppContext:
+def make_context(base_dir: Path, *, mode: str = "on") -> AppContext:
     base_dir.mkdir(parents=True, exist_ok=True)
     config_path, catalog_path, _ = write_runtime_files(
         base_dir,
@@ -30,8 +30,7 @@ def make_context(base_dir: Path, *, tools_enabled_by_default: bool | None) -> Ap
         [sys.executable, "-c", "pass"],
     )
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    if tools_enabled_by_default is not None:
-        data["tools_enabled_by_default"] = tools_enabled_by_default
+    data["mode"] = mode
     config_path.write_text(yaml.safe_dump(data), encoding="utf-8")
     catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
     catalog["roles"]["orchestrator"] = {"skills": ["orchestrator", "planner"]}
@@ -46,11 +45,10 @@ def test_effect_payload_omits_empty_fields() -> None:
 
 
 def test_tool_info_schema_uses_resolved_session_mode(tmp_path: Path) -> None:
-    context = make_context(tmp_path / "rt", tools_enabled_by_default=False)
+    context = make_context(tmp_path / "rt", mode="off")
 
     payload = tool_info_payload(context, "pi:session-a").to_payload()
 
-    assert payload["tools_enabled_by_default"] is False
     assert payload["main_session_mode"] == "off"
     assert payload["prompt_snippet"] == ""
     assert payload["prompt_guidelines"] == []
@@ -63,7 +61,7 @@ def test_tool_info_schema_uses_resolved_session_mode(tmp_path: Path) -> None:
 
 
 def test_session_mode_payload_matches_current_mode_resolution(tmp_path: Path) -> None:
-    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    context = make_context(tmp_path / "rt", mode="on")
 
     payload = session_mode_payload(context, "pi:session-a").to_payload()
 
@@ -79,7 +77,7 @@ def test_session_mode_payload_matches_current_mode_resolution(tmp_path: Path) ->
 def test_session_mode_payload_uses_explicit_core_mode_for_tool_visibility(
     tmp_path: Path,
 ) -> None:
-    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    context = make_context(tmp_path / "rt", mode="on")
     context.store.set_main_session_mode("pi:session-a", "off")
 
     payload = session_mode_payload(context, "pi:session-a").to_payload()
@@ -91,7 +89,7 @@ def test_session_mode_payload_uses_explicit_core_mode_for_tool_visibility(
 
 
 def test_tool_info_payload_renders_role_order_and_omits_auto_only_roles(tmp_path: Path) -> None:
-    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    context = make_context(tmp_path / "rt", mode="on")
     context = replace(
         context,
         catalog=replace(
@@ -177,7 +175,7 @@ def test_tool_info_payload_renders_role_order_and_omits_auto_only_roles(tmp_path
 
 
 def test_tool_info_payload_places_custom_role_at_catalog_position(tmp_path: Path) -> None:
-    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    context = make_context(tmp_path / "rt", mode="on")
     context = replace(
         context,
         catalog=replace(
@@ -239,13 +237,16 @@ def test_dispatch_command_payload_builds_core_dispatch_argv() -> None:
     }
 
 
-def test_session_mode_transition_payloads_cover_on_off(
+def test_session_mode_transition_payloads_cover_modes(
     tmp_path: Path,
 ) -> None:
-    context = make_context(tmp_path / "rt", tools_enabled_by_default=False)
+    context = make_context(tmp_path / "rt", mode="off")
 
     off_payload = session_mode_transition_payload(context, "pi:session-a", "off").to_payload()
     on_payload = session_mode_transition_payload(context, "pi:session-a", "on").to_payload()
+    orchestrate_payload = session_mode_transition_payload(
+        context, "pi:session-a", "orchestrate"
+    ).to_payload()
     assert off_payload["effect"] == {
         "display_text": (
             "Orchestra tools hidden for this session. Run /orch on to enable them again."
@@ -254,8 +255,13 @@ def test_session_mode_transition_payloads_cover_on_off(
         "tools_enabled": False,
     }
     assert on_payload["effect"] == {
-        "display_text": "Orchestra tools and SPSI guidance enabled for this session.",
+        "display_text": "Orchestra tools enabled for this session.",
         "mode": "on",
+        "tools_enabled": True,
+    }
+    assert orchestrate_payload["effect"] == {
+        "display_text": "Orchestra tools enabled for this session.",
+        "mode": "orchestrate",
         "tools_enabled": True,
     }
 
@@ -263,8 +269,19 @@ def test_session_mode_transition_payloads_cover_on_off(
         session_mode_transition_payload(context, "pi:session-a", "orchestrator")
 
 
-def test_spsi_payload_enabled_uses_stable_content_and_revision(tmp_path: Path) -> None:
-    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+def test_spsi_payload_on_mode_disables_main_session_orchestrator_skill(
+    tmp_path: Path,
+) -> None:
+    context = make_context(tmp_path / "rt", mode="on")
+
+    payload = spsi_payload(context, "pi:session-a").to_payload()
+
+    assert payload["enabled"] is False
+    assert "content" not in payload
+
+
+def test_spsi_payload_orchestrate_uses_stable_content_and_revision(tmp_path: Path) -> None:
+    context = make_context(tmp_path / "rt", mode="orchestrate")
 
     payload = spsi_payload(context, "pi:session-a").to_payload()
 
@@ -288,7 +305,7 @@ def test_spsi_payload_omits_missing_skill_sections(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    context = make_context(tmp_path / "rt", mode="on")
     empty_cwd = tmp_path / "empty-cwd"
     empty_cwd.mkdir()
     monkeypatch.chdir(empty_cwd)
@@ -301,7 +318,7 @@ def test_spsi_payload_omits_missing_skill_sections(
 
 
 def test_spsi_payload_uses_worker_role_skills_for_worker_sessions(tmp_path: Path) -> None:
-    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    context = make_context(tmp_path / "rt", mode="on")
     skill_dir = context.paths.catalog_path.parent / "skills" / "worker"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -345,7 +362,7 @@ def test_spsi_payload_uses_worker_role_skills_for_worker_sessions(tmp_path: Path
 
 
 def test_spsi_payload_disabled_omits_content_and_revision(tmp_path: Path) -> None:
-    context = make_context(tmp_path / "rt", tools_enabled_by_default=True)
+    context = make_context(tmp_path / "rt", mode="on")
     context.store.set_main_session_mode("pi:session-a", "off")
 
     payload = spsi_payload(context, "pi:session-a").to_payload()

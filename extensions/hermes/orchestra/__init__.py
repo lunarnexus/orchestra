@@ -51,8 +51,9 @@ _ORCH_DISABLED_SESSIONS: set[str] = set()
 _ORCH_DISABLED_SESSIONS_LOCK = threading.Lock()
 
 _ORCH_COMMAND_ARGS_HINT = (
-    "help | on | off | do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal> | "
-    "roles ... | status | stop <run-id> | doctor | config [KEY] [VALUE] | history [LIMIT]"
+    "help | on | orchestrate | off | do [--role ROLE] [--timeout SEC] "
+    "[--task-label LABEL] <goal> | roles ... | status | stop <run-id> | doctor | "
+    "config [KEY] [VALUE] | history [LIMIT]"
 )
 
 _ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET"
@@ -170,9 +171,9 @@ def _core_dispatch_disabled(payload: Any) -> bool:
     if not isinstance(payload, dict):
         return False
     mode = payload.get("mainSessionMode")
-    if isinstance(mode, str) and mode in {"off", "on"}:
+    if isinstance(mode, str) and mode in {"off", "on", "orchestrate"}:
         return mode == "off"
-    return payload.get("toolsEnabledByDefault") is False
+    return False
 
 
 def _apply_core_session_mode_gating(runtime_session_id: str) -> None:
@@ -349,7 +350,16 @@ def _status_schema(tool_info: dict[str, Any]) -> dict[str, Any]:
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["on", "status", "history", "help", "doctor", "roles", "stop"],
+                    "enum": [
+                        "on",
+                        "orchestrate",
+                        "status",
+                        "history",
+                        "help",
+                        "doctor",
+                        "roles",
+                        "stop",
+                    ],
                     "description": str(tool_info["statusActionDescription"]),
                 },
                 "limit": {
@@ -923,11 +933,11 @@ def orch_dispatch(args: dict[str, Any], **kwargs: Any) -> str:
     return _dispatch_orchestra_run(args, runtime_session_id, ctx=kwargs.get("_ctx"))
 
 
-def _orch_on(ctx: Any | None, runtime_session_id: str) -> str:
+def _orch_enable(ctx: Any | None, runtime_session_id: str, mode: str) -> str:
     del ctx
-    warning = _record_core_session_mode(runtime_session_id, "on")
+    warning = _record_core_session_mode(runtime_session_id, mode)
     _orch_dispatch_enable(runtime_session_id)
-    message = "Hermes /orch on succeeded: Orchestra dispatch enabled for this session"
+    message = f"Hermes /orch {mode} succeeded: Orchestra dispatch enabled for this session"
     if warning is not None:
         message += f"\nWarning: {warning}"
     return message
@@ -944,11 +954,11 @@ def orch_status(args: dict[str, Any], **kwargs: Any) -> str:
     if not action:
         return _orch_status_error("action is required")
 
-    if action not in {"on", "status", "history", "help", "doctor", "roles", "stop"}:
+    if action not in {"on", "orchestrate", "status", "history", "help", "doctor", "roles", "stop"}:
         return _orch_status_error(f"unsupported action: {action}")
 
     runtime_session_id: str | None = None
-    if action in {"on", "status", "history", "stop"}:
+    if action in {"on", "orchestrate", "status", "history", "stop"}:
         runtime_session_id = _orch_status_runtime_session_id(kwargs.get("session_id"))
         if runtime_session_id is None:
             return _orch_status_error("Hermes session_id is required")
@@ -956,8 +966,8 @@ def orch_status(args: dict[str, Any], **kwargs: Any) -> str:
     assert runtime_session_id is not None or action in {"help", "doctor", "roles"}
     runtime_session_id_str = runtime_session_id or ""
 
-    if action == "on":
-        return _orch_on(kwargs.get("_ctx"), runtime_session_id_str)
+    if action == "on" or action == "orchestrate":
+        return _orch_enable(kwargs.get("_ctx"), runtime_session_id_str, action)
 
     if action == "status":
         result = _run_orchestra(["status", "--session-id", runtime_session_id_str])
@@ -1033,8 +1043,8 @@ def _orch_command(raw_args: str, ctx: Any | None = None) -> str:
             "Start a new Hermes session or use the orch_dispatch tool."
         )
 
-    if subcommand == "on":
-        return _orch_on(ctx, runtime_session_id)
+    if subcommand == "on" or subcommand == "orchestrate":
+        return _orch_enable(ctx, runtime_session_id, subcommand)
 
     if subcommand == "off":
         _orch_dispatch_disable(runtime_session_id)
@@ -1193,7 +1203,8 @@ def register(ctx: Any) -> None:
         "orch",
         handler=command_handler,
         description=(
-            "Orchestra host adapter: /orch help|on|off|do|roles|config|status|stop|doctor|history "
+            "Orchestra host adapter: "
+            "/orch help|on|orchestrate|off|do|roles|config|status|stop|doctor|history "
             "(use /orch on to enable Orchestra dispatch)"
         ),
         args_hint=_ORCH_COMMAND_ARGS_HINT,

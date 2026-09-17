@@ -28,6 +28,7 @@ def _write_cli_runtime(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 30,
+                "mode": "on",
                 "concurrency": {"global": 4, "per_session": 3},
                 "auto_return": auto_return,
             },

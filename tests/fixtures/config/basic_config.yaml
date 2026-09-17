@@ -2,6 +2,7 @@
 state_dir: state
 log_dir: logs
 default_timeout: 600
+mode: 'on'
 concurrency:
   global: 4
   per_session: 3

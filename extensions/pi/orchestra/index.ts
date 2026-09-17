@@ -19,7 +19,7 @@ interface OrchestraFooterTheme {
   fg(color: string, text: string): string;
 }
 
-type MainSessionMode = "off" | "on";
+type MainSessionMode = "off" | "on" | "orchestrate";
 
 interface ActiveRoleCount {
   role: string;
@@ -410,7 +410,6 @@ interface ToolInfoPayload {
   dispatchTimeoutError: string;
   budgetTriggerLabel: string;
   softTimeoutBlockReason: string;
-  toolsEnabledByDefault?: boolean;
   mainSessionMode?: string;
 }
 
@@ -542,7 +541,7 @@ function doArgumentContext(tokens: string[]): { expecting: "role" | "timeout" | 
   return { expecting, goalStarted };
 }
 
-type OrchStatusAction = "on" | "status" | "history" | "help" | "doctor" | "roles" | "stop";
+type OrchStatusAction = "on" | "orchestrate" | "status" | "history" | "help" | "doctor" | "roles" | "stop";
 
 type OrchestraToolName = "orch_status" | "orch_dispatch";
 
@@ -1055,7 +1054,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       const sessionToolInfo = await loadToolInfo(currentSessionId);
       if (
         sessionToolInfo.mainSessionMode === "off" ||
-        sessionToolInfo.mainSessionMode === "on"
+        sessionToolInfo.mainSessionMode === "on" ||
+        sessionToolInfo.mainSessionMode === "orchestrate"
       ) {
         mainSessionMode = sessionToolInfo.mainSessionMode;
       }
@@ -1173,29 +1173,14 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
   }
 
-  async function handleOrchOn(sessionId: string): Promise<{ code: number; output: string }> {
-    const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", "on", "--json"]);
+  async function handleOrchMode(sessionId: string, mode: MainSessionMode): Promise<{ code: number; output: string }> {
+    const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", mode, "--json"]);
     if (modeResult.code !== 0 || !modeResult.stdout.trim()) {
       return { code: 1, output: modeResult.stderr || "Orchestra mode transition failed." };
     }
     const payload = parseSessionModeTransitionPayload(modeResult.stdout);
     const effect = payload.effect;
-    if (payload.ok !== true || effect?.mode !== "on" || effect.tools_enabled !== true) {
-      return { code: 1, output: effect?.error || "Orchestra returned an invalid mode transition." };
-    }
-    mainSessionMode = effect.mode;
-    setOrchestraToolsActive(effect.tools_enabled);
-    return { code: 0, output: effect.display_text || "" };
-  }
-
-  async function handleOrchOff(sessionId: string): Promise<{ code: number; output: string }> {
-    const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", "off", "--json"]);
-    if (modeResult.code !== 0 || !modeResult.stdout.trim()) {
-      return { code: 1, output: modeResult.stderr || "Orchestra mode transition failed." };
-    }
-    const payload = parseSessionModeTransitionPayload(modeResult.stdout);
-    const effect = payload.effect;
-    if (payload.ok !== true || effect?.mode !== "off" || effect.tools_enabled !== false) {
+    if (payload.ok !== true || effect?.mode !== mode || effect.tools_enabled !== (mode !== "off")) {
       return { code: 1, output: effect?.error || "Orchestra returned an invalid mode transition." };
     }
     mainSessionMode = effect.mode;
@@ -1209,7 +1194,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
     const subcommands = [
       { token: "help", description: "Show Orchestra help" },
-      { token: "on", description: "Enable Orchestra tools and SPSI guidance" },
+      { token: "on", description: "Enable Orchestra tools" },
+      { token: "orchestrate", description: "Enable full Orchestra guidance" },
       { token: "off", description: "Hide Orchestra tools for this session" },
       { token: "doctor", description: "Check Orchestra setup" },
       { token: "do ", description: "Dispatch a subagent" },
@@ -1366,6 +1352,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       parameters: Type.Object({
         action: Type.Union([
           Type.Literal("on"),
+          Type.Literal("orchestrate"),
           Type.Literal("status"),
           Type.Literal("history"),
           Type.Literal("help"),
@@ -1400,12 +1387,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           return success(result.stdout || result.stderr);
         }
 
-        if (params.action === "on") {
+        if (params.action === "on" || params.action === "orchestrate") {
           const sessionId = runtimeSessionId();
           if (!sessionId) {
             return failure("Pi session_id is required for orch_status on.");
           }
-          const result = await handleOrchOn(sessionId);
+          const result = await handleOrchMode(sessionId, params.action);
           return result.code === 0 ? success(result.output) : failure(result.output);
         }
 
@@ -1499,7 +1486,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   await refreshOrchestraToolRegistrations(currentToolInfo);
 
   pi.registerCommand("orch", {
-    description: "Orchestra host adapter: /orch help|on|off|do|roles|config|status|stop|doctor|history",
+    description: "Orchestra host adapter: /orch help|on|orchestrate|off|do|roles|config|status|stop|doctor|history",
     getArgumentCompletions: getOrchArgumentCompletions,
     handler: async (args, ctx) => {
       const trimmed = args.trim();
@@ -1519,15 +1506,15 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         return;
       }
 
-      if (subcommand === "on") {
-        const result = await handleOrchOn(runtimeSessionId);
+      if (subcommand === "on" || subcommand === "orchestrate") {
+        const result = await handleOrchMode(runtimeSessionId, subcommand);
         setOrchestraWorkerStatus(ctx, null, mainSessionMode);
         emitOutput(ctx, result.output, result.code === 0 ? "info" : "warning");
         return;
       }
 
       if (subcommand === "off") {
-        const result = await handleOrchOff(runtimeSessionId);
+        const result = await handleOrchMode(runtimeSessionId, "off");
         setOrchestraWorkerStatus(ctx, null, mainSessionMode);
         emitOutput(ctx, result.output, result.code === 0 ? "info" : "warning");
         return;

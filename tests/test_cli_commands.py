@@ -1001,9 +1001,9 @@ def test_status_without_session_id_reports_global_active_runs(
     assert second_run_id in status_output
 
 
-def _set_tools_enabled_by_default(config_path: Path, enabled: bool) -> None:
+def _set_default_mode(config_path: Path, mode: str) -> None:
     data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    data["tools_enabled_by_default"] = enabled
+    data["mode"] = mode
     config_path.write_text(yaml.safe_dump(data), encoding="utf-8")
 
 
@@ -1058,7 +1058,7 @@ def test_bare_status_reports_config_resolved_default_when_disabled(
         tmp_path,
         [python_executable, str(fake_worker_script), "success"],
     )
-    _set_tools_enabled_by_default(config_path, False)
+    _set_default_mode(config_path, "off")
 
     from orchestra.cli import main
 
@@ -1086,7 +1086,7 @@ def test_session_mode_set_get_roundtrip_and_status_resolution(
         tmp_path,
         [python_executable, str(fake_worker_script), "success"],
     )
-    _set_tools_enabled_by_default(config_path, False)
+    _set_default_mode(config_path, "off")
 
     from orchestra.cli import main
 
@@ -1486,6 +1486,7 @@ def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             },
             sort_keys=False,
         ),
@@ -1565,6 +1566,7 @@ def test_roles_command_accepts_common_true_enabled_values(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             }
         ),
         encoding="utf-8",
@@ -1623,6 +1625,7 @@ def test_roles_command_accepts_common_false_enabled_values(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             }
         ),
         encoding="utf-8",
@@ -1679,6 +1682,7 @@ def test_roles_command_accepts_auto_enabled_value(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             }
         ),
         encoding="utf-8",
@@ -1737,6 +1741,7 @@ def test_roles_command_rejects_disabling_default_role(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             }
         ),
         encoding="utf-8",
@@ -1789,6 +1794,7 @@ def test_roles_command_updates_role_routing_settings(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             }
         ),
         encoding="utf-8",
@@ -1853,6 +1859,7 @@ def test_roles_command_rejects_invalid_role_mutations(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             }
         ),
         encoding="utf-8",
@@ -1937,6 +1944,7 @@ def test_role_metadata_lists_unused_harness_configs(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             }
         ),
         encoding="utf-8",
@@ -2000,6 +2008,7 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             }
         ),
         encoding="utf-8",
@@ -2048,12 +2057,15 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert help_exit == 0
     assert tool_exit == 0
     assert (
-        "/orch on                           Enable Orchestra tools and SPSI guidance"
+        "/orch on                           Enable Orchestra tools"
         in help_output
     )
     assert "/orch off                          Hide Orchestra tools for this session" in help_output
     assert "/orch roles" in help_output
-    assert "/orch config [KEY] [VALUE]         Show or update supported config values" in help_output
+    assert (
+        "/orch config [KEY] [VALUE]         Show or update supported config values"
+        in help_output
+    )
     assert "/orch roles ROLE SETTING VALUE" in help_output
     assert "Settings: harness, enabled, model, profile, agent" in help_output
     assert "VALUE for enabled: true, yes, y, 1, on | false, no, n, 0, off" in help_output
@@ -2120,6 +2132,7 @@ def _write_tool_info_fixture(
         "state_dir": str(tmp_path / "state"),
         "log_dir": str(tmp_path / "logs"),
         "default_timeout": 600,
+        "mode": "on",
     }
     if config_extra:
         config_body.update(config_extra)
@@ -2144,7 +2157,7 @@ def _write_tool_info_fixture(
     return config_path, catalog_path
 
 
-def test_tool_info_exposes_tools_default_and_resolved_session_mode(
+def test_tool_info_exposes_default_and_resolved_session_mode(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -2157,7 +2170,7 @@ def test_tool_info_exposes_tools_default_and_resolved_session_mode(
     payload = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
-    assert payload["toolsEnabledByDefault"] is True
+    assert "toolsEnabledByDefault" not in payload
     assert payload["mainSessionMode"] == "on"
     # Existing tool-info fields remain intact.
     for key in (
@@ -2185,7 +2198,13 @@ def test_tool_info_exposes_tools_default_and_resolved_session_mode(
     resolved = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert resolved["mainSessionMode"] == "on"
-    assert resolved["toolsEnabledByDefault"] is True
+    assert "toolsEnabledByDefault" not in resolved
+
+    spsi_set_exit = main(
+        [*base_args, "_session-mode", "set", "--session-id", "pi:s1", "--mode", "orchestrate"]
+    )
+    capsys.readouterr()
+    assert spsi_set_exit == 0
 
     spsi_exit = main([*base_args, "_spsi-payload", "--session-id", "pi:s1", "--json"])
     spsi = json.loads(capsys.readouterr().out)
@@ -2203,15 +2222,13 @@ def test_tool_info_exposes_tools_default_and_resolved_session_mode(
     assert fallback["mainSessionMode"] == "on"
 
 
-def test_tool_info_reflects_disabled_tools_default(
+def test_tool_info_reflects_off_default_mode(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from orchestra.cli import main
 
-    config_path, catalog_path = _write_tool_info_fixture(
-        tmp_path, {"tools_enabled_by_default": False}
-    )
+    config_path, catalog_path = _write_tool_info_fixture(tmp_path, {"mode": "off"})
 
     exit_code = main(
         ["--config", str(config_path.parent), "_tool-info"]
@@ -2219,7 +2236,7 @@ def test_tool_info_reflects_disabled_tools_default(
     payload = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
-    assert payload["toolsEnabledByDefault"] is False
+    assert "toolsEnabledByDefault" not in payload
     assert payload["mainSessionMode"] == "off"
 
 
@@ -2236,6 +2253,7 @@ def test_disabled_role_is_rejected_without_fallback(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             }
         ),
         encoding="utf-8",
@@ -2304,6 +2322,7 @@ def test_requested_role_startup_fallback_preserves_requested_role_runtime_behavi
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             },
             sort_keys=False,
         ),
@@ -2435,6 +2454,7 @@ def test_do_without_role_uses_default_role(
                 "state_dir": str(tmp_path / "state"),
                 "log_dir": str(tmp_path / "logs"),
                 "default_timeout": 600,
+                "mode": "on",
             },
             sort_keys=False,
         ),

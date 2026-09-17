@@ -110,7 +110,7 @@ def test_pi_extension_host_on_refreshes_skill_each_time(
     assert result.returncode == 0
     output = result.stdout + result.stderr
     assert "Orchestra tools hidden for this session. Run /orch on to enable them again." in output
-    assert "Orchestra tools and SPSI guidance enabled for this session." in output
+    assert "Orchestra tools enabled for this session." in output
     assert "Orchestra orchestrator skill refreshed for this session." not in output
     assert "already loaded" not in output
 
@@ -150,7 +150,7 @@ def test_pi_extension_host_command_path(
     help_output = help_result.stdout + help_result.stderr
     assert "Orchestra commands:" in help_output
     assert (
-        "/orch on                           Enable Orchestra tools and SPSI guidance"
+        "/orch on                           Enable Orchestra tools"
         in help_output
     )
     assert "/orch off                          Hide Orchestra tools for this session" in help_output

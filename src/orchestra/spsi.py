@@ -11,7 +11,7 @@ from orchestra.config import ORCHESTRATOR_ROLE_NAME, RoleConfig
 from orchestra.context import CONTRACT_VERSION, AppContext
 from orchestra.harnesses.common import SKILL_FILENAME, SKILL_LIBRARY_DIR
 from orchestra.session_mode import resolve_main_session_mode
-from orchestra.state import StateError
+from orchestra.state import MAIN_SESSION_MODE_ORCHESTRATE, StateError
 
 SPSI_NAME = "orchestra.spsi.role-skills"
 WORKER_SESSION_PREFIX = "orchestra-worker-"
@@ -52,7 +52,9 @@ class SpsiPayload:
 
 def spsi_payload(context: AppContext, session_id: str) -> SpsiPayload:
     role_name, role, gate_session_id = _role_for_session(context, session_id)
-    enabled = resolve_main_session_mode(context, gate_session_id) != "off"
+    mode = resolve_main_session_mode(context, gate_session_id)
+    is_worker_session = _worker_run_id(session_id) is not None
+    enabled = mode != "off" if is_worker_session else mode == MAIN_SESSION_MODE_ORCHESTRATE
     if not enabled or role is None or not role.skills:
         return SpsiPayload(session_id=session_id, enabled=False)
 

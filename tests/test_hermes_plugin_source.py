@@ -142,7 +142,6 @@ def make_tool_info_payload() -> dict[str, Any]:
         "dispatchTimeoutError": "dynamic timeout error",
         "budgetTriggerLabel": "dynamic budget trigger label",
         "softTimeoutBlockReason": "dynamic soft timeout block reason",
-        "toolsEnabledByDefault": True,
         "mainSessionMode": "on",
     }
 

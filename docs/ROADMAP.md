@@ -27,10 +27,11 @@ Orchestra roadmap items are split into:
 4. [ ] Investigate verifier/reviewer run limits to prevent spiraling fix loops.
    - Specifically gpt-5.5/5.6 are bad about nitpicking everything to death.
 
-5. [ ] Add simple mode and full mode.  Some users want to just be able to dispatch by saying "Dispatch a builder to ... " with no extra skills or orchestration.
-       Some users want the full orchestration and planning workflow.  This used to be a "/slash" command, but was removed.  Investigate options
-       to make this easy to turn on/off.  I think we will simply remove the injected orchestrator skill from the main session for simple mode, which will 
-       require some adjustments to our tool descriptions and orchestrator skill.   
+5. [x] Add simple mode and full mode.
+   - `mode: 'on'` is simple dispatch mode: tools and subagent role SPSI are active, main-session orchestrator SPSI is not injected.
+   - `/orch orchestrate` enables the full main-session orchestrator guidance path.
+   - Tool-description and orchestrator-skill wording can be refined in a follow-up pass.
+6. [ ] Fix config paths, specifically state_dir, log_dir defaults.  There's nothing specifically wrong with them, but it's not as user-friendly as I'd like.  Everything should be as idiot-proof as possible.
 
 ## Wishlist
 

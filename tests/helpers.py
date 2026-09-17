@@ -30,6 +30,7 @@ def write_runtime_files(
                 "state_dir": str(state_dir),
                 "log_dir": str(log_dir),
                 "default_timeout": 30,
+                "mode": "on",
                 "concurrency": {"global": 4, "per_session": 3},
                 "auto_return": auto_return,
             },

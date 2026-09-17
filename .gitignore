@@ -2,6 +2,9 @@
 .env
 test-config/
 
+# Local planning state
+PLAN.md
+
 # OS junk
 .DS_Store
 Thumbs.db

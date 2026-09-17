@@ -140,7 +140,7 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
 
     # The extension caches only core-confirmed mode for synchronous rendering.
-    assert 'type MainSessionMode = "off" | "on";' in extension_source
+    assert 'type MainSessionMode = "off" | "on" | "orchestrate";' in extension_source
     assert "let mainSessionMode: MainSessionMode | null = null;" in extension_source
 
     # Footer composes a labeled dimmed mode with the existing role/active-run text.
@@ -207,13 +207,12 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     assert "mainSessionMode = null;" in shutdown_block
 
     assert "async function injectOrchestratorSkill(sessionId: string)" not in extension_source
-    on_idx = extension_source.index("async function handleOrchOn(")
+    on_idx = extension_source.index("async function handleOrchMode(")
 
-    # /orch off and /orch on apply only complete, core-confirmed effects.
+    # /orch off, /orch on, and /orch orchestrate apply only complete, core-confirmed effects.
     handler_end = extension_source.index("async function getOrchArgumentCompletions(", on_idx)
     handlers_block = extension_source[on_idx:handler_end]
-    assert 'effect?.mode !== "on" || effect.tools_enabled !== true' in handlers_block
-    assert 'effect?.mode !== "off" || effect.tools_enabled !== false' in handlers_block
+    assert 'effect?.mode !== mode || effect.tools_enabled !== (mode !== "off")' in handlers_block
     assert "mainSessionMode = effect.mode;" in handlers_block
     assert "setOrchestraToolsActive(effect.tools_enabled);" in handlers_block
     assert "mode change is local only" not in handlers_block
@@ -313,7 +312,7 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert 'rest.length > 0 ? ["roles", ...rest] : ["roles", "--all"]' in extension_source
     adapter_description = (
         'description: "Orchestra host adapter: '
-        '/orch help|on|off|do|roles|config|status|stop|doctor|history"'
+        '/orch help|on|orchestrate|off|do|roles|config|status|stop|doctor|history"'
     )
     assert adapter_description in extension_source
     assert (
@@ -326,7 +325,7 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     )
     assert 'Run "/orch on" again to load the orchestrator skill.' not in extension_source
     assert 'Run "/orch on" again to load the orchestrator skill.' not in prompts_source
-    assert "Orchestra tools and SPSI guidance enabled for this session." in prompts_source
+    assert "Orchestra tools enabled for this session." in prompts_source
     assert (
         'Orchestra tools hidden for this session. Run /orch on to enable them again.'
         not in extension_source

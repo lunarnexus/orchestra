@@ -71,36 +71,36 @@ subagent only when useful.
 
 **Source:** Owner clarification during the documentation review.
 
-### D-WORKFLOW-003 — `/orch on` enables Orchestra tools and SPSI guidance
+### D-WORKFLOW-003 — `/orch on` enables simple dispatch mode
 
-**Decision:** `/orch on` enables Orchestra tools and system-prompt-skill-injection
-(SPSI) guidance for the current session. SPSI must be delivered as ephemeral
-request-time instruction content through a verified non-persistent host hook. It
-must not be delivered through user messages, follow-up messages, transcript
-entries, conversation history, compaction-carried context, or other persistent
-model-visible context.
+**Decision:** `/orch on` enables Orchestra tools for the current session,
+including `orch_dispatch` and `orch_status`, without injecting the main-session
+orchestrator skill. Role SPSI still applies to launched subagents according to
+their configured roles. This supports lightweight use where the user or main
+agent wants to launch focused subagents without entering the full structured
+orchestration workflow.
 
-**Source:** Owner clarification during SPSI implementation planning.
+**Source:** Owner clarification during simple-mode planning.
 
 ### D-WORKFLOW-004 — Native skill loading remains possible
 
 **Decision:** A harness may load skills through its own native skill mechanism.
-A user who does not use `/orch on` could load the main orchestrator skill that
-way, although `/orch on|off` provides better direct control of Orchestra's
-session behavior. Native skill loading is not restricted to Orchestra's main
-orchestrator skill.
+A user who does not use Orchestra's built-in session modes could load the main
+orchestrator skill that way, although Orchestra mode commands provide better
+direct control of Orchestra's session behavior. Native skill loading is not
+restricted to Orchestra's main orchestrator skill.
 
 **Source:** Owner clarification during the documentation review.
 
 ### D-WORKFLOW-005 — `/orch off` keeps unnecessary orchestration out of the session
 
-**Decision:** `/orch off` disables Orchestra tools and SPSI guidance for the
-current session so the user can keep the main-session context lean when
-orchestration is not wanted and reduce dispatches for work that is too small or
-unlikely to benefit from subagent execution.
+**Decision:** `/orch off` disables Orchestra for the current session so the user
+can keep the main-session context lean when orchestration is not wanted and
+avoid dispatch behavior for work that is too small or unlikely to benefit from
+subagent execution.
 
-**Source:** Owner clarification during the documentation review and SPSI
-implementation planning.
+**Source:** Owner clarification during the documentation review and simple-mode
+planning.
 
 ### D-WORKFLOW-006 — Structured main-session responsibilities
 
@@ -122,27 +122,23 @@ implications, or proposed wording. The main-session orchestrator applies changes
 to project documentation. Subagents may write only operational artifact sections
 explicitly assigned to their role.
 
-### D-WORKFLOW-009 — Core-owned main-session orchestration mode
+### D-WORKFLOW-009 — Core-owned main-session mode
 
-**Decision:** Orchestra core tracks main-session orchestration mode per session
-id. The only valid modes are `off` and `on`: `off` means Orchestra tools and
-SPSI guidance are disabled for the main session, and `on` means Orchestra tools
-and SPSI guidance are enabled for hosts with verified non-persistent SPSI
-support. Any other mode value is invalid and must fail with a clear error.
-`config.yaml` defines the default tools/SPSI state with
-`tools_enabled_by_default`, defaulting to `true`; missing per-session mode state
-resolves from that configured default. Host adapters must initialize tool
-availability from core-owned configuration/state and update core mode when
-`/orch off` or `/orch on` changes the session mode. Hosts without verified
-non-persistent SPSI hooks must not emulate SPSI through user messages,
-transcript entries, conversation history, or persistent context.
+**Decision:** Orchestra core owns the main-session mode for each session. The
+configured default mode lives in `config.yaml`, and host slash commands update
+the session mode through core rather than implementing mode behavior separately.
 
-**Reconciliation:** This decision replaces the prior three-mode design that
-distinguished tools-enabled `on` from skill-active `orchestrator`. Orchestra now
-uses one-step session mode: tools-active implies SPSI-active where the host can
-safely support SPSI, and tools-inactive implies SPSI-inactive.
+Mode controls whether Orchestra is disabled, available for simple dispatch, or
+running with full orchestration guidance. Simple dispatch mode exposes Orchestra
+tools and keeps configured subagent role SPSI active, but does not inject the
+main-session orchestrator skill. Full orchestration mode adds the main-session
+orchestrator guidance through supported non-persistent host injection.
 
-**Source:** Owner clarification during SPSI implementation planning.
+Mode configuration should be explicit and current. Orchestra should not preserve
+old fallback settings or compatibility mappings when this mode system is
+adopted.
+
+**Source:** Owner clarification during simple-mode planning.
 
 ## Terminology and domain model
 

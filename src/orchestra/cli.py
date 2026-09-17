@@ -772,7 +772,6 @@ def _handle_tool_info(args: argparse.Namespace) -> int:
                 "dispatchTimeoutError": info["dispatch_timeout_error"],
                 "budgetTriggerLabel": info["budget_trigger_label"],
                 "softTimeoutBlockReason": info["soft_timeout_block_reason"],
-                "toolsEnabledByDefault": info["tools_enabled_by_default"],
                 "mainSessionMode": info["main_session_mode"],
             }
         )

@@ -39,7 +39,10 @@ def _write_runtime_files(tmp_path: Path, *, harness: str = "dummy") -> tuple[Pat
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
     config_path.write_text(
-        f"default_timeout: 600\nstate_dir: {tmp_path / 'state'}\nlog_dir: {tmp_path / 'logs'}\n",
+        f"default_timeout: 600\n"
+        "mode: 'on'\n"
+        f"state_dir: {tmp_path / 'state'}\n"
+        f"log_dir: {tmp_path / 'logs'}\n",
         encoding="utf-8",
     )
     prompts_path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
@@ -136,7 +139,7 @@ def test_run_doctor_passes_with_one_usable_enabled_harness(tmp_path: Path) -> No
     config_path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
-    config_path.write_text("default_timeout: 600\n", encoding="utf-8")
+    config_path.write_text("default_timeout: 600\nmode: 'on'\n", encoding="utf-8")
     prompts_path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
     catalog_path.write_text(
         """
@@ -168,7 +171,7 @@ def test_run_doctor_fails_without_enabled_roles(tmp_path: Path) -> None:
     config_path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     catalog_path = tmp_path / "agent-catalog.yaml"
-    config_path.write_text("default_timeout: 600\n", encoding="utf-8")
+    config_path.write_text("default_timeout: 600\nmode: 'on'\n", encoding="utf-8")
     prompts_path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
     catalog_path.write_text(
         """

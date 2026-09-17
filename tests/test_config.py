@@ -62,7 +62,7 @@ def test_resolve_config_paths_prefer_explicit_then_env_then_pi_global_then_cwd(
         env_config,
         env_catalog,
     ):
-        path.write_text("{}\n", encoding="utf-8")
+        path.write_text("mode: 'on'\n", encoding="utf-8")
 
     monkeypatch.chdir(cwd)
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
@@ -101,7 +101,7 @@ def test_load_app_config_reads_values_from_fixture(fixture_dir: Path) -> None:
 def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 600\n", encoding="utf-8")
+    path.write_text("default_timeout: 600\nmode: 'on'\n", encoding="utf-8")
     write_root_prompts(prompts_path)
 
     config = load_app_config(path)
@@ -112,7 +112,7 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.concurrency.per_session_limit == DEFAULT_PER_SESSION_CONCURRENCY
     assert config.auto_return is DEFAULT_AUTO_RETURN
     assert config.auto_verify is False
-    assert config.tools_enabled_by_default is True
+    assert config.mode == "on"
     assert config.turn_limit is None
     assert config.soft_timeout is None
     assert config.prompts.tool_description
@@ -130,7 +130,10 @@ def test_load_app_config_expands_tilde_paths(
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     path.write_text(
-        "default_timeout: 600\nstate_dir: ~/orchestra/state\nlog_dir: ~/orchestra/logs\n",
+        "default_timeout: 600\n"
+        "mode: 'on'\n"
+        "state_dir: ~/orchestra/state\n"
+        "log_dir: ~/orchestra/logs\n",
         encoding="utf-8",
     )
     write_root_prompts(prompts_path)
@@ -145,7 +148,7 @@ def test_root_host_help_uses_generic_session_wording() -> None:
     config = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml")
 
     assert (
-        "/orch on                           Enable Orchestra tools and SPSI guidance"
+        "/orch on                           Enable Orchestra tools"
         in config.prompts.host_help
     )
     assert (
@@ -215,7 +218,10 @@ def test_load_app_config_keeps_yaml_native_boolean_parsing(
 ) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text(f"default_timeout: 30\nauto_return: {raw_value}\n", encoding="utf-8")
+    path.write_text(
+        f"default_timeout: 30\nmode: 'on'\nauto_return: {raw_value}\n",
+        encoding="utf-8",
+    )
     write_root_prompts(prompts_path)
 
     config = load_app_config(path)
@@ -241,7 +247,10 @@ def test_load_app_config_reads_auto_verify(
 ) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text(f"default_timeout: 30\nauto_verify: {raw_value}\n", encoding="utf-8")
+    path.write_text(
+        f"default_timeout: 30\nmode: 'on'\nauto_verify: {raw_value}\n",
+        encoding="utf-8",
+    )
     write_root_prompts(prompts_path)
 
     config = load_app_config(path)
@@ -252,26 +261,27 @@ def test_load_app_config_reads_auto_verify(
 @pytest.mark.parametrize(
     ("raw_value", "expected"),
     [
-        ("true", True),
-        ("false", False),
+        ("on", "on"),
+        ("off", "off"),
+        ("orchestrate", "orchestrate"),
     ],
 )
-def test_load_app_config_reads_tools_enabled_by_default(
+def test_load_app_config_reads_mode(
     tmp_path: Path,
     raw_value: str,
-    expected: bool,
+    expected: str,
 ) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     path.write_text(
-        f"default_timeout: 30\ntools_enabled_by_default: {raw_value}\n",
+        f"default_timeout: 30\nmode: '{raw_value}'\n",
         encoding="utf-8",
     )
     write_root_prompts(prompts_path)
 
     config = load_app_config(path)
 
-    assert config.tools_enabled_by_default is expected
+    assert config.mode == expected
 
 
 def test_load_app_config_missing_default_timeout_raises_config_error(
@@ -279,7 +289,7 @@ def test_load_app_config_missing_default_timeout_raises_config_error(
 ) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("{}\n", encoding="utf-8")
+    path.write_text("mode: 'on'\n", encoding="utf-8")
     write_root_prompts(prompts_path)
 
     with pytest.raises(ConfigError, match="'default_timeout' is required"):
@@ -300,7 +310,7 @@ def test_load_app_config_rejects_zero_and_negative_default_timeout(
 ) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text(f"default_timeout: {raw_value}\n", encoding="utf-8")
+    path.write_text(f"default_timeout: {raw_value}\nmode: 'on'\n", encoding="utf-8")
     write_root_prompts(prompts_path)
 
     with pytest.raises(ConfigError, match="'default_timeout' must be a positive integer"):
@@ -310,7 +320,7 @@ def test_load_app_config_rejects_zero_and_negative_default_timeout(
 def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 120\n", encoding="utf-8")
+    path.write_text("default_timeout: 120\nmode: 'on'\n", encoding="utf-8")
     write_root_prompts(prompts_path)
 
     config = load_app_config(path)
@@ -321,7 +331,7 @@ def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
 def test_load_app_config_reads_retention_days(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 120\nretention_days: 45\n", encoding="utf-8")
+    path.write_text("default_timeout: 120\nmode: 'on'\nretention_days: 45\n", encoding="utf-8")
     write_root_prompts(prompts_path)
 
     config = load_app_config(path)
@@ -333,7 +343,12 @@ def test_list_read_and_write_supported_config_values(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     path.write_text(
-        "default_timeout: 120\nauto_verify: false\nconcurrency:\n  global: 4\n  per_session: 3\n",
+        "default_timeout: 120\n"
+        "mode: 'on'\n"
+        "auto_verify: false\n"
+        "concurrency:\n"
+        "  global: 4\n"
+        "  per_session: 3\n",
         encoding="utf-8",
     )
     write_root_prompts(prompts_path)
@@ -357,10 +372,8 @@ def test_list_read_and_write_supported_config_values(tmp_path: Path) -> None:
         ("default_timeout: 30\nauto_return: maybe\n", "'auto_return' must be a boolean"),
         ("default_timeout: 30\nauto_verify: maybe\n", "'auto_verify' must be a boolean"),
         ("default_timeout: 30\nretention_days: 0\n", "'retention_days' must be a positive integer"),
-        (
-            "default_timeout: 30\ntools_enabled_by_default: maybe\n",
-            "'tools_enabled_by_default' must be a boolean",
-        ),
+        ("default_timeout: 30\nmode: maybe\n", "'mode' must be one of"),
+        ("default_timeout: 30\n", "'mode' is required"),
         ("default_timeout: 30\nturn_limit: 0\n", "'turn_limit' must be a positive integer"),
         (
             "default_timeout: 30\nsoft_timeout: 30\n",
@@ -378,6 +391,8 @@ def test_load_app_config_rejects_invalid_values(
     expected_message: str,
 ) -> None:
     path = tmp_path / "config.yaml"
+    if "mode:" not in content and "'mode' is required" not in expected_message:
+        content = content.replace("\n", "\nmode: 'on'\n", 1)
     path.write_text(content, encoding="utf-8")
 
     with pytest.raises(ConfigError, match=expected_message):
@@ -402,7 +417,7 @@ def test_update_config_value_rejects_invalid_values_without_writing(
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
     original = (
-        "default_timeout: 120\nauto_verify: false\nconcurrency:\n"
+        "default_timeout: 120\nmode: 'on'\nauto_verify: false\nconcurrency:\n"
         "  global: 4\n  per_session: 3\n"
     )
     path.write_text(original, encoding="utf-8")
@@ -497,7 +512,10 @@ def test_root_agent_catalog_phase_1_role_dispatch_hints_match_plan(
 def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
     path = tmp_path / "explicit-config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 30\nturn_limit: 7\nsoft_timeout: 20\n", encoding="utf-8")
+    path.write_text(
+        "default_timeout: 30\nmode: 'on'\nturn_limit: 7\nsoft_timeout: 20\n",
+        encoding="utf-8",
+    )
     prompts_path.write_text(
         """
 default_return_format: Custom return.
@@ -562,7 +580,7 @@ session_mode_on_message: Custom on message.
 def test_load_app_config_rejects_missing_prompt_values(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 30\n", encoding="utf-8")
+    path.write_text("default_timeout: 30\nmode: 'on'\n", encoding="utf-8")
     prompts_path.write_text(
         """
 default_return_format: ok
@@ -602,7 +620,7 @@ session_mode_on_message: ok
 def test_load_app_config_accepts_explicitly_empty_prompt_values(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 30\n", encoding="utf-8")
+    path.write_text("default_timeout: 30\nmode: 'on'\n", encoding="utf-8")
     prompts_path.write_text(
         """
 default_return_format: ok
@@ -644,7 +662,7 @@ session_mode_on_message: ok
 def test_load_app_config_rejects_invalid_prompt_types(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 30\n", encoding="utf-8")
+    path.write_text("default_timeout: 30\nmode: 'on'\n", encoding="utf-8")
     prompts_path.write_text(
         """
 default_return_format: ok
@@ -1260,7 +1278,7 @@ roles:
 
 def test_missing_prompts_file_raises_clear_error(tmp_path: Path) -> None:
     path = tmp_path / "config.yaml"
-    path.write_text("default_timeout: 30\n", encoding="utf-8")
+    path.write_text("default_timeout: 30\nmode: 'on'\n", encoding="utf-8")
 
     with pytest.raises(ConfigError, match="configuration file not found"):
         load_app_config(path)
@@ -1284,7 +1302,7 @@ def _write_root_prompts_copy(
 ) -> tuple[Path, Path]:
     path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 30\n", encoding="utf-8")
+    path.write_text("default_timeout: 30\nmode: 'on'\n", encoding="utf-8")
     data = yaml.safe_load(ROOT_PROMPTS.read_text(encoding="utf-8"))
     mutate(data)
     prompts_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")

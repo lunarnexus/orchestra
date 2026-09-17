@@ -184,11 +184,12 @@ On Pi or Hermes, start a normal session and use `/orch`:
 For the full skill-guided workflow:
 
 ```text
-/orch on
+/orch orchestrate
 I'd like to build a project that ...
 ```
 
-To turn Orchestra off for that session:
+`/orch on` keeps Orchestra available for simple dispatch without main-session
+orchestrator guidance. To turn Orchestra off for that session:
 
 ```text
 /orch off
@@ -237,7 +238,7 @@ implementations.
 | Subagent | ✅ | ✅ |
 | Orchestra tool support | ✅ | ✅ |
 | MCP | ⚠️ | ⚠️ |
-| `/slash` commands (`/orch on\|off\|status`) | ✅ | ✅ |
+| `/slash` commands (`/orch on\|orchestrate\|off\|status`) | ✅ | ✅ |
 | Status notifications | ✅ | ❌ |
 | Status/footer UI | ✅ | ❌ |
 | Rich rendered UI entries | ✅ | ❌ |
@@ -273,8 +274,7 @@ Most customization happens in `agent-catalog.yaml`:
 - enabled and disabled roles
 
 `config.yaml` controls runtime paths, timeouts, auto-return, concurrency, and
-whether Orchestra tools are enabled by default in host sessions with
-`tools_enabled_by_default`.
+the default host-session mode with `mode: 'on'`.
 `prompts.yaml` contains shared tool descriptions, help text, prompt labels, and
 return formats so host adapters do not carry inconsistent copies.
 
