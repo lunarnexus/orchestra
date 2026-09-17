@@ -4,6 +4,11 @@ Notable user-facing changes to Orchestra are recorded here.
 
 ## Recent changes
 
+- None yet.
+
+## v0.5.1 - 2026-09-17
+
+- Added mode selection: off, on (tools only), and orchestrate (tools plus orchestrator skill).
 - Refined subagent prompt context handling.
 - Fixed missing skill fallback handling in system prompt skill injection.
 - Fixed subagent report summaries being truncated.

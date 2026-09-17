@@ -27,11 +27,7 @@ Orchestra roadmap items are split into:
 4. [ ] Investigate verifier/reviewer run limits to prevent spiraling fix loops.
    - Specifically gpt-5.5/5.6 are bad about nitpicking everything to death.
 
-5. [x] Add simple mode and full mode.
-   - `mode: 'on'` is simple dispatch mode: tools and subagent role SPSI are active, main-session orchestrator SPSI is not injected.
-   - `/orch orchestrate` enables the full main-session orchestrator guidance path.
-   - Tool-description and orchestrator-skill wording can be refined in a follow-up pass.
-6. [ ] Fix config paths, specifically state_dir, log_dir defaults.  There's nothing specifically wrong with them, but it's not as user-friendly as I'd like.  Everything should be as idiot-proof as possible.
+5. [ ] Fix config paths, specifically state_dir, log_dir defaults.  There's nothing specifically wrong with them, but it's not as user-friendly as I'd like.  Everything should be as idiot-proof as possible.
 
 ## Wishlist
 
