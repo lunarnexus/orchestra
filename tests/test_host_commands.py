@@ -260,7 +260,7 @@ def test_session_mode_transition_payloads_cover_modes(
         "tools_enabled": True,
     }
     assert orchestrate_payload["effect"] == {
-        "display_text": "Orchestra tools enabled for this session.",
+        "display_text": "Orchestra tools and orchestrator skill enabled for this session.",
         "mode": "orchestrate",
         "tools_enabled": True,
     }

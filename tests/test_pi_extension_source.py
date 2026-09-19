@@ -326,6 +326,7 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert 'Run "/orch on" again to load the orchestrator skill.' not in extension_source
     assert 'Run "/orch on" again to load the orchestrator skill.' not in prompts_source
     assert "Orchestra tools enabled for this session." in prompts_source
+    assert "Orchestra tools and orchestrator skill enabled for this session." in prompts_source
     assert (
         'Orchestra tools hidden for this session. Run /orch on to enable them again.'
         not in extension_source
@@ -336,6 +337,7 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     )
     assert "session_mode_off_message" in core_host_commands_source
     assert "session_mode_on_message" in core_host_commands_source
+    assert "session_mode_orchestrate_message" in core_host_commands_source
     assert "compactReturnMessage" not in extension_source
     assert "format_orchestrator_return" in core_reports_source
     assert "clean_result_summary" in core_reports_source

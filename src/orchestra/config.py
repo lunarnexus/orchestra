@@ -69,6 +69,7 @@ class PromptConfig:
     soft_timeout_block_reason: str
     session_mode_off_message: str
     session_mode_on_message: str
+    session_mode_orchestrate_message: str
 
 
 @dataclass(frozen=True)
@@ -286,6 +287,9 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
         session_mode_on_message=_get_required_prompt_string(
             prompts_raw, "session_mode_on_message"
         ),
+        session_mode_orchestrate_message=_get_required_prompt_string(
+            prompts_raw, "session_mode_orchestrate_message"
+        ),
     )
 
     return AppConfig(
@@ -478,6 +482,9 @@ def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> App
         ),
         session_mode_on_message=_get_required_prompt_string(
             prompts_raw, "session_mode_on_message"
+        ),
+        session_mode_orchestrate_message=_get_required_prompt_string(
+            prompts_raw, "session_mode_orchestrate_message"
         ),
     )
     return AppConfig(

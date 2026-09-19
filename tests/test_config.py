@@ -545,6 +545,7 @@ budget_trigger_label: Custom budget label.
 soft_timeout_block_reason: Custom soft timeout reason.
 session_mode_off_message: Custom off message.
 session_mode_on_message: Custom on message.
+session_mode_orchestrate_message: Custom orchestrate message.
 """.lstrip(),
         encoding="utf-8",
     )
@@ -575,6 +576,7 @@ session_mode_on_message: Custom on message.
     assert config.prompts.soft_timeout_block_reason == "Custom soft timeout reason."
     assert config.prompts.session_mode_off_message == "Custom off message."
     assert config.prompts.session_mode_on_message == "Custom on message."
+    assert config.prompts.session_mode_orchestrate_message == "Custom orchestrate message."
 
 
 def test_load_app_config_rejects_missing_prompt_values(tmp_path: Path) -> None:
@@ -607,6 +609,7 @@ budget_trigger_label: ok
 soft_timeout_block_reason: ok
 session_mode_off_message: ok
 session_mode_on_message: ok
+session_mode_orchestrate_message: ok
 """.lstrip(),
         encoding="utf-8",
     )
@@ -649,6 +652,7 @@ budget_trigger_label: ok
 soft_timeout_block_reason: ok
 session_mode_off_message: ok
 session_mode_on_message: ok
+session_mode_orchestrate_message: ok
 """.lstrip(),
         encoding="utf-8",
     )
@@ -1293,6 +1297,7 @@ REQUIRED_PROMPT_KEYS = (
     "soft_timeout_block_reason",
     "session_mode_off_message",
     "session_mode_on_message",
+    "session_mode_orchestrate_message",
 )
 
 

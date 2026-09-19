@@ -29,6 +29,15 @@ Orchestra roadmap items are split into:
 
 5. [ ] Fix config paths, specifically state_dir, log_dir defaults.  There's nothing specifically wrong with them, but it's not as user-friendly as I'd like.  Everything should be as idiot-proof as possible.
 
+9. [ ] More formal ToDo tool.
+   - Create a task list through the orch tool as tasks are marked complete.
+   - Include hints that propose the next step.
+   - Integrate with workflow tracking and verifier mode.
+7. [ ] Better integrate workflows into Orchestra core.
+   - Don't make the workflow so reliant on the orchestrator skill.
+   - Take better advantage of hints to prod the orchestrator along.
+   - Track workflow steps in Orchestra rather than primarily in the orchestrator session.
+
 ## Wishlist
 
 1. [ ] Ensure plugin feature parity with Codex.
@@ -43,32 +52,13 @@ Orchestra roadmap items are split into:
    - Compare supported commands, status/history/help/doctor behavior, auto-return handling, session identity, role exposure, error reporting, and installation/update flow.
    - Move shared behavior into Orchestra core/config where practical; keep the host plugin focused on host runtime identity, UI/rendering, and harness-specific integration.
 
-4. [ ] Queued subagent requests instead of MVP fail-fast over-limit behavior.
-   - Keep timeout semantics clean: subagent timeout starts when subagent execution starts, not while queued.
-   - Include clear queue status, cancellation, and retry behavior before enabling by default.
-
 5. [ ] Interactive/streaming harness modes.
    - Covers Pi RPC, ACP, other streaming protocols, attach/steer, and approval pass-through.
    - Keep optional until a harness exposes a reliable interactive protocol.
 
-6. [ ] Command de-duplication guard for subagent tool use.
-   - Detect repeated normalized test commands, especially pytest commands, within one subagent session.
-   - Repeating the same command 3+ times should require a concise reason, trigger a handoff, or stop the subagent according to the active harness capability.
-   - Design after harness/plugin budget and tool-call interception semantics are verified across Pi, Hermes, OpenCode, and future harnesses.
-
-7. [ ] Better integrate workflows into Orchestra core.
-   - Don't make the workflow so reliant on the orchestrator skill.
-   - Take better advantage of hints to prod the orchestrator along.
-   - Track workflow steps in Orchestra rather than primarily in the orchestrator session.
-
 8. [ ] Investigate RPC mode and holding long-running subagent sessions open until completion.
    - Enables live investigation, complex control, park/resume, message approval returns, and possibly context pass-back.
    - Possibly integrate with a tty/cmux/tmux, assigning and spawning durable reconnectable ttys.
-
-9. [ ] More formal ToDo tool.
-   - Create a task list through the orch tool as tasks are marked complete.
-   - Include hints that propose the next step.
-   - Integrate with workflow tracking and verifier mode.
 
 10. [ ] Integrated cross-session memory that can be stored and recalled between sessions.
     - Might be better than context passing. Needs investigation.
@@ -82,11 +72,15 @@ Orchestra roadmap items are split into:
 14. [ ] Setup an actual approval system for non-sandboxed harnesses.
     - Passthrough approval probably requires RPC or an env var. Research it.
 
-15. [ ] Cache config into memory.
-    - Create load command and function.
-    - Make config session-specific and saved to file specifically.
-
 16. [ ] Remove "/orch config" real-time config changes.  This causes more
     problems than it's worth when we take into account multiple harnesses/plugins
 
 17. [ ] Add "utilities" to help with common tasks.  "/orch plan", "/orch clarify", "/orch enhance" type things. 
+
+18. [ ] Investigate visual workflow editing.
+    - Explore whether an n8n-style graph/node editor could create or edit Orchestra workflows.
+    - Treat this as ambitious future work until workflow representation, editing safety, and real user demand are better understood.
+
+19. [ ] Investigate LLM-assisted error recovery as a front-line technique.
+    - Explore using hard-coded tracking, possibly through `PLAN.md`, for recovery state.
+    - Use LLM interpretation for parsing and understanding errors that are difficult to handle with rigid rules.

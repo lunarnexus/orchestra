@@ -161,11 +161,12 @@ def session_mode_transition_payload(
 ) -> HostActionPayload:
     prompts = context.config.prompts
     resolved_mode = validate_main_session_mode(mode)
-    display_text = (
-        prompts.session_mode_off_message
-        if resolved_mode == "off"
-        else prompts.session_mode_on_message
-    )
+    if resolved_mode == "off":
+        display_text = prompts.session_mode_off_message
+    elif resolved_mode == "orchestrate":
+        display_text = prompts.session_mode_orchestrate_message
+    else:
+        display_text = prompts.session_mode_on_message
     return HostActionPayload(
         kind="main_session_state",
         ok=True,

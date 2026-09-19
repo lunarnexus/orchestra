@@ -73,6 +73,7 @@ def load_root_prompt_config() -> PromptConfig:
         soft_timeout_block_reason=data["soft_timeout_block_reason"],
         session_mode_off_message=data["session_mode_off_message"],
         session_mode_on_message=data["session_mode_on_message"],
+        session_mode_orchestrate_message=data["session_mode_orchestrate_message"],
     )
 
 
