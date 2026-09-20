@@ -60,11 +60,20 @@ Most of my testing uses https://github.com/lunarnexus/orchestra-bench
 
 The broad summary of testing shows:
 
-Using the same model for every role (including the orchestrator):
+Using the SAME model for EVERY role (including the orchestrator):
 
 - a measurable but slight quality improvement
 - roughly 2x–5x total token consumption
 - roughly 2x–3x completion time
+
+Not so great.
+
+But using cheaper models for the auxillary roles, shows a big savings in main session tokens.
+
+Typical main session tokens savings are in the 30%-40% range for long running/complicated tasks.
+I've had as much as 70% main session savings on really specific tasks.  
+Some of these metrics were pulled directly from the pi footer (shows tokens offloaded to subagents), 
+but most metrics were pulled using orchestra-bench.  
 
 On VERY long tasks, the savings on main session compaction had a big quality improvement,
 but most tasks just don't benefit from agentic workflows unless you want to offload to
@@ -107,18 +116,16 @@ Orchestra installs as an external Python app with plugins for supported harnesse
   - Skills are injected automatically using SPSI (configured in agent-catalog.yaml)
     Since Orchestra is built on top of your favorite harness, other skills, memory layers,
     wikis, tools, all work the same.
+If you use "on" (simple) mode (/orch on):
+- Just ask pi to "Dispatch [optionally specify a role] to do tell me a haiku"
+
+If you use "orchestrate" (advanced) mode (/orch orchestrate):
   - Ask pi to "Create a PLAN.md to ......".  
     The SPSI planner skill creates all the necessary parts to get your stuff done.
   - Ask pi to "Dispatch and execute the plan".
 
-You can also turn the tools on/off with "/orch" commands, along with a lot of other stuff.
-
-
-session in that host. Orchestra's tools and `/orch` commands are available based
-on what the host supports.
-
-Dispatch a subagent directly ("Disptch a <role> to tell me a haiku") or start with 
-a PLAN.md ("I'd like to do .... create a PLAN.md")
+You can turn the tools on/off with "/orch [on|off|orchestrate]" commands, or pick a default
+in config.yaml, along with a lot of other stuff.
 
 The main-session host and subagent harness do not have to be the same. A Pi main
 session can dispatch a Hermes subagent when the selected role is configured that
