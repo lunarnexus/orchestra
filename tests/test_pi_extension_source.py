@@ -171,7 +171,7 @@ def test_pi_extension_footer_includes_session_mode() -> None:
     assert 'totalTokens: input + output + cacheRead + cacheWrite' in extension_source
     assert (
         'theme.fg("dim", '
-        '`$${orchestraCostForMainModel(accounting, mainModel).toFixed(3)}`)'
+        '`-$${orchestraCostForMainModel(accounting, mainModel).toFixed(3)}`)'
         in footer_body
     )
     assert "status, ctx.model" in extension_source

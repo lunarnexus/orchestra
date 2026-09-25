@@ -141,7 +141,7 @@ function renderOrchestraFooterStatus(
     parts.push(theme.fg("dim", `↓${formatCompactTokenCount(accounting.output_tokens)}`));
     parts.push(theme.fg("dim", `R${formatCompactTokenCount(accounting.reasoning_tokens)}`));
     parts.push(theme.fg("dim", `CH${cacheHit}%`));
-    parts.push(theme.fg("dim", `$${orchestraCostForMainModel(accounting, mainModel).toFixed(3)}`));
+    parts.push(theme.fg("dim", `-$${orchestraCostForMainModel(accounting, mainModel).toFixed(3)}`));
   }
   parts.push(theme.fg("dim", `(Orchestra:${mode})`));
   if (status && status.activeCount > 0) {
