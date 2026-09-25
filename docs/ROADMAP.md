@@ -52,9 +52,13 @@ Orchestra roadmap items are split into:
    - Compare supported commands, status/history/help/doctor behavior, auto-return handling, session identity, role exposure, error reporting, and installation/update flow.
    - Move shared behavior into Orchestra core/config where practical; keep the host plugin focused on host runtime identity, UI/rendering, and harness-specific integration.
 
+4. [ ] Look into a non-invasive, opt-out, privacy based telemetry.  It would be nice to see how many people are using Orchestra daily.  Probably just a unique randomized ID and a quick ping weekly.
+
 5. [ ] Interactive/streaming harness modes.
    - Covers Pi RPC, ACP, other streaming protocols, attach/steer, and approval pass-through.
    - Keep optional until a harness exposes a reliable interactive protocol.
+
+6. [ ] Do we want an update notification on startup?  
 
 8. [ ] Investigate RPC mode and holding long-running subagent sessions open until completion.
    - Enables live investigation, complex control, park/resume, message approval returns, and possibly context pass-back.
