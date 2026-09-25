@@ -18,7 +18,7 @@ ec]
 
 Governing question: **Can an implementer execute this plan without inventing requirements, dependencies, interfaces, files, or verification?**
 
-PLAN.md is where you will write the plan.  The PLAN.md is not a place to track issues, it's a roadmap to success.  It's not a log or history, it's a task list/how-to list that simply tracks what's finished and unfinished.
+PLAN.md is where you will write the plan.  The PLAN.md is not a place to track issues, it's a roadmap to success.  It's not a log or history, it's a task list/how-to list that simply tracks what's finished and unfinished.  
 
 ## Planning Process
 
@@ -80,6 +80,8 @@ Use research when a fact can change scope, interfaces, ordering, tests, risks, o
 
 Research may be done by the planner, delegated if a research capability is available, or marked as blocked when evidence cannot be gathered safely in the current context.
 
+A plan is an outline, not bloated details or micromanagement.  Keep it clean, concise and instructional.
+
 Each research item must state:
 - the exact question;
 - the source scope to inspect;
@@ -90,7 +92,6 @@ A plan must include:
 - intended end-state behavior and user-visible result
 - goal and acceptance criteria
 - in scope, out of scope, constraints, assumptions, and user-owned decisions
-- evidence used and evidence still missing
 - files or modules to change and interfaces each slice consumes or produces
 - design notes that constrain implementation
 - slices marked `sequential`, `parallel-safe`, or `blocked`
