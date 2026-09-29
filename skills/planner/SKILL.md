@@ -34,8 +34,9 @@ First Pass — frame the plan:
 - Frame the work, success criteria, in-scope/out-of-scope, constraints,
   describe what "Finished Successfully" looks like.  Focus on functionality,
   user-owned decisions.
-- If any parts of the broad plan are unknown, ambiguous, assumptions, plan
-  spikes to verify, research or query the user (in that priority order) unknowns
+- If any parts of the broad plan are unknown, ambiguous, or assumption-heavy,
+  resolve discoverable facts with local evidence or delegated research when available; plan spikes only for feasibility questions; ask the user only for user-owned decisions.
+- At the end of each planning pass, classify any unresolved question before returning: discoverable fact → research it or mark affected work blocked on evidence; spike question → mark affected work blocked on the spike; user-owned decision → ask the user directly, with a recommended answer. Do not present a pass as complete if a user-owned decision is still waiting for the user.
 - Lay out the broad modules as Phases, each accomplishing a goal.
   - For each phase, list concerns, user-visible behaviors, artifacts, risks, verification, and likely dependencies.
   - Classify unknowns as known evidence, local evidence to inspect, researcher-owned evidence, user decision, spike, or safe assumption.
@@ -44,9 +45,8 @@ First Pass — frame the plan:
 - Before planning for, or leaving legacy compatability, obtain approval from the user.
 
 Second Pass — fill in executable slices:
-- Review the plan again. Expand each phase into executable vertical slices
-  that preserve the intended user-visible outcome. Do NOT overcomplicate.
-- Each slice must include a stable reference such as `PLAN.md Slice N`, exact scope, boundaries/out-of-scope, acceptance or stop condition, verification command, risk tier, and gates.
+- Review the plan again. Expand each phase into executable vertical slices within the existing phase structure when the phase headings communicate ordering, intent, or review boundaries. Do not replace useful first-pass phase framing with a flat slice list. Do NOT overcomplicate.
+- Each slice must include a stable reference such as `PLAN.md Slice N`, exact scope, boundaries/out-of-scope, acceptance or stop condition, verification command, risk tier, and gates. Slices may be nested under phase headings; the stable reference remains `PLAN.md Slice N`.
 - Add a `Parallelization check` section to the plan:
   - slices that can run in parallel;
   - slices that must run sequentially;
@@ -65,18 +65,20 @@ Third Pass — refine and simplify:
 - Confirm that each unblocked builder slice can be executed without inventing re
 quirements, interfaces, or verification.
 - Re-check the `Parallelization check` against the finalized slices and gates.
-- If user input is needed, ask the decision-blocking question with a recommendat
-ion.  Otherwise update `PLAN.md`
+- If user input is needed, ask the decision-blocking question with a recommendation in the response; do not bury blocking questions only in `PLAN.md`. Otherwise update `PLAN.md`.
+- If new research or spike evidence materially changes scope, interfaces, dependencies, verification, or risk, rerun the three-pass method over the affected portions before marking the plan ready.
 - Do NOT overcomplicate, plan the smallest most efficient solution that will fit user criteria, do NOT invent complexity.
 
-The three passes create one unified plan: frame it, fill in executable slice details, then refine and simplify it. Do not dump three duplicate plans into `PLAN.md`.
+The three passes create one unified plan through progressive refinement: frame it, add executable slice details to the existing structure, then refine and simplify it in place. Do not dump three duplicate plans into `PLAN.md`.
 
 Planning state:
-- `ready` — enough evidence exists for executable slices;
+- `ready` — enough evidence exists for executable slices, with no unresolved research or spike that could change scope, interfaces, dependencies, verification, or risk;
 - `partially ready` — independent slices can proceed and dependent slices are marked `blocked`;
 - `blocked` — no safe implementation slice can proceed without missing evidence, a user decision, or a spike result.
 
 Use research when a fact can change scope, interfaces, ordering, tests, risks, or blockers.
+
+Research and spikes are planning evidence work, not normal implementation slices, unless they intentionally produce production artifacts. In `PLAN.md`, represent unresolved research or spikes as blockers or evidence needs tied to affected slices, not as a broad discovery backlog.
 
 Research may be done by the planner, delegated if a research capability is available, or marked as blocked when evidence cannot be gathered safely in the current context.
 
@@ -91,7 +93,7 @@ Each research item must state:
 A plan must include:
 - intended end-state behavior and user-visible result
 - goal and acceptance criteria
-- in scope, out of scope, constraints, assumptions, and user-owned decisions
+- in scope, out of scope, constraints, assumptions, and user-owned decisions; `Open Questions` is only for user-owned decisions that have been asked directly or are blocking later work. Do not use it as a passive parking lot for questions.
 - files or modules to change and interfaces each slice consumes or produces
 - design notes that constrain implementation
 - slices marked `sequential`, `parallel-safe`, or `blocked`
