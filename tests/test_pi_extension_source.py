@@ -183,7 +183,7 @@ def test_pi_extension_footer_includes_session_mode() -> None:
         in extension_source
     )
     assert (
-        'ctx.ui.setWidget("orchestra", [text], { placement: "belowEditor" });'
+        'ctx.ui.setWidget("orchestra", () => new Text(text, 0, 0), { placement: "belowEditor" });'
         in extension_source
     )
     # The existing role renderer is preserved.

@@ -167,7 +167,7 @@ function setOrchestraWorkerStatus(
     ctx.ui.setWidget("orchestra", undefined, { placement: "belowEditor" });
     return;
   }
-  ctx.ui.setWidget("orchestra", [text], { placement: "belowEditor" });
+  ctx.ui.setWidget("orchestra", () => new Text(text, 0, 0), { placement: "belowEditor" });
 }
 
 function orchestraDispatchBudget(): number {
