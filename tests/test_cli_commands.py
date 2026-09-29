@@ -1959,7 +1959,10 @@ def test_role_metadata_lists_unused_harness_configs(
                     "pi": {"harness": "pi", "command": ["pi", "-p", "{prompt}"]},
                     "unused": {"harness": "hermes", "command": ["hermes", "-z", "{prompt}"]},
                 },
-                "roles": {"worker": {"harness_config": "pi"}},
+                "roles": {
+                    "worker": {"harness_config": "pi"},
+                    "builder": {"harness_config": "pi", "pass_parent_context": True},
+                },
             },
             sort_keys=False,
         ),
@@ -1978,7 +1981,13 @@ def test_role_metadata_lists_unused_harness_configs(
     payload = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
-    assert payload == {"roles": ["worker"], "harnessConfigs": ["pi", "unused"]}
+    # Host adapters read opt-in and default role from core metadata instead of scanning YAML.
+    assert payload == {
+        "roles": ["builder", "worker"],
+        "harnessConfigs": ["pi", "unused"],
+        "passParentContext": ["builder"],
+        "defaultRole": "worker",
+    }
 
 
 def test_opencode_help_describes_supported_open_code_template_commands(
@@ -2506,3 +2515,169 @@ def test_do_without_role_uses_default_role(
     assert record.role == "reviewer"
     assert record.harness == "pi"
     assert record.result_summary == "default reviewer ran"
+
+
+def test_do_parent_context_artifact_missing_file_errors(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, _, _ = runtime_files_factory(
+        tmp_path,
+        [python_executable, "-c", "print('done')"],
+    )
+
+    from orchestra.cli import main
+
+    missing_path = str(tmp_path / "does-not-exist.md")
+    exit_code = main(
+        [
+            "--config",
+            str(config_path.parent),
+            "do",
+            "--session-id",
+            "manual:parent-ctx-missing",
+            "--goal",
+            "Test missing artifact.",
+            "--parent-context-artifact",
+            missing_path,
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert f"parent context artifact file does not exist: {missing_path}" in output
+
+
+def test_do_parent_context_artifact_is_copied_into_run_state(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, _, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, "-c", "print('done')"],
+    )
+
+    artifact_file = tmp_path / "parent-context.md"
+    artifact_file.write_text("# Parent Context\nSome session data.", encoding="utf-8")
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path.parent),
+            "do",
+            "--session-id",
+            "manual:parent-ctx-valid",
+            "--goal",
+            "Test valid artifact.",
+            "--additional-context",
+            "extra context here",
+            "--parent-context-artifact",
+            str(artifact_file),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    run_id = extract_run_id(output)
+    request_file = tmp_path / "state" / "runs" / run_id / "request.json"
+    payload = json.loads(request_file.read_text(encoding="utf-8"))
+
+    # Core owns the run-scoped copy; the request carries that path, not the adapter temp file.
+    run_scoped = tmp_path / "state" / "runs" / run_id / "parent-context.jsonl"
+    assert payload["parent_context_artifact"] == str(run_scoped)
+    assert run_scoped.read_text(encoding="utf-8") == "# Parent Context\nSome session data."
+    assert run_scoped.stat().st_mode & 0o777 == 0o600
+    # Existing additional context behavior unchanged.
+    assert payload["additional_context"] == "extra context here"
+
+
+def test_do_parent_context_artifact_stdin_written_to_run_state(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+
+    config_path, _, _ = runtime_files_factory(
+        tmp_path,
+        [python_executable, "-c", "print('done')"],
+    )
+
+    stdin_content = '{"role": "user", "content": "live parent turn"}\n'
+    monkeypatch.setattr("sys.stdin", io.StringIO(stdin_content))
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path.parent),
+            "do",
+            "--session-id",
+            "manual:parent-ctx-stdin",
+            "--goal",
+            "Test stdin artifact.",
+            "--additional-context",
+            "extra context here",
+            "--parent-context-artifact",
+            "-",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    run_id = extract_run_id(output)
+    request_file = tmp_path / "state" / "runs" / run_id / "request.json"
+    payload = json.loads(request_file.read_text(encoding="utf-8"))
+
+    # Core writes the only persistent snapshot to the run-scoped private artifact.
+    run_scoped = tmp_path / "state" / "runs" / run_id / "parent-context.jsonl"
+    assert payload["parent_context_artifact"] == str(run_scoped)
+    assert run_scoped.read_text(encoding="utf-8") == stdin_content
+    assert run_scoped.stat().st_mode & 0o777 == 0o600
+    # The stdin content never enters the request payload or additional context.
+    assert "live parent turn" not in request_file.read_text(encoding="utf-8")
+    assert payload["additional_context"] == "extra context here"
+
+
+def test_do_without_parent_context_artifact_defaults_to_none(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    python_executable: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, _, _ = runtime_files_factory(
+        tmp_path,
+        [python_executable, "-c", "print('done')"],
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path.parent),
+            "do",
+            "--session-id",
+            "manual:parent-ctx-absent",
+            "--goal",
+            "No parent context.",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    run_id = extract_run_id(output)
+    request_file = tmp_path / "state" / "runs" / run_id / "request.json"
+    payload = json.loads(request_file.read_text(encoding="utf-8"))
+
+    assert payload["parent_context_artifact"] is None
+    assert not (tmp_path / "state" / "runs" / run_id / "parent-context.jsonl").exists()

@@ -210,9 +210,46 @@ function orchestraBaseArgs(): string[] {
   return args;
 }
 
-async function runOrchestra(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+function runOrchestraWithInput(
+  args: string[],
+  input: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn("orchestra", [...orchestraBaseArgs(), ...args], { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error: Error) => {
+      resolve({ code: 1, stdout: "", stderr: error.message.trim() });
+    });
+    child.on("close", (code: number | null) => {
+      resolve({ code: code ?? 0, stdout: stdout.trim(), stderr: stderr.trim() });
+    });
+    // Writing then ending stdin signals EOF so the child's sys.stdin.read() returns.
+    child.stdin.on("error", () => {
+      // Ignore EPIPE when the child exits before consuming all input.
+    });
+    child.stdin.end(input);
+  });
+}
+
+async function runOrchestra(
+  args: string[],
+  input?: string,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  if (input !== undefined) {
+    return runOrchestraWithInput(args, input);
+  }
   try {
-    const { stdout, stderr } = await execFileAsync("orchestra", [...orchestraBaseArgs(), ...args], { encoding: "utf8" });
+    const options: Parameters<typeof execFileAsync>[2] = { encoding: "utf8" };
+    const { stdout, stderr } = await execFileAsync("orchestra", [...orchestraBaseArgs(), ...args], options);
     return { code: 0, stdout: stdout.trim(), stderr: stderr.trim() };
   } catch (error) {
     const err = error as { code?: number; stdout?: string; stderr?: string; message: string };
@@ -456,15 +493,31 @@ function parseSessionModeTransitionPayload(output: string): SessionModeTransitio
   return JSON.parse(output) as SessionModeTransitionPayload;
 }
 
-function parseRoleMetadata(output: string): { roles: string[]; harnessConfigs: string[] } {
-  const payload = JSON.parse(output) as { roles?: unknown; harnessConfigs?: unknown };
+interface RoleMetadata {
+  roles: string[];
+  harnessConfigs: string[];
+  passParentContext: string[];
+  defaultRole: string | null;
+}
+
+function parseRoleMetadata(output: string): RoleMetadata {
+  const payload = JSON.parse(output) as {
+    roles?: unknown;
+    harnessConfigs?: unknown;
+    passParentContext?: unknown;
+    defaultRole?: unknown;
+  };
   const roles = Array.isArray(payload.roles)
     ? payload.roles.filter((role): role is string => typeof role === "string" && role.trim().length > 0)
     : [];
   const harnessConfigs = Array.isArray(payload.harnessConfigs)
     ? payload.harnessConfigs.filter((cfg): cfg is string => typeof cfg === "string" && cfg.trim().length > 0)
     : [];
-  return { roles, harnessConfigs };
+  const passParentContext = Array.isArray(payload.passParentContext)
+    ? payload.passParentContext.filter((role): role is string => typeof role === "string" && role.trim().length > 0)
+    : [];
+  const defaultRole = typeof payload.defaultRole === "string" && payload.defaultRole.trim() ? payload.defaultRole : null;
+  return { roles, harnessConfigs, passParentContext, defaultRole };
 }
 
 function parseActiveSessionStatus(output: string): ActiveSessionStatus {
@@ -554,6 +607,56 @@ interface OrchStatusParams {
   value?: string;
 }
 
+function roleWantsParentContext(metadata: RoleMetadata, requestedRole?: string | null): boolean {
+  const selected = (requestedRole ?? "").trim() || metadata.defaultRole;
+  if (!selected) return false;
+  return metadata.passParentContext.includes(selected);
+}
+
+interface ParentContextSessionManager {
+  buildContextEntries?: () => unknown[];
+  getBranch?: (fromId?: string) => unknown[];
+}
+
+function isSessionMessageEntry(value: unknown): value is { type: "message"; message: unknown } {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as { type?: unknown; message?: unknown };
+  return entry.type === "message" && typeof entry.message === "object" && entry.message !== null;
+}
+
+function renderParentContextArtifact(entries: unknown[]): string {
+  const lines = entries.filter(isSessionMessageEntry).map((entry) => JSON.stringify(entry.message));
+  return lines.length > 0 ? `${lines.join("\n")}\n` : "";
+}
+
+function renderDispatchRequestFallback(params: DispatchParams): string {
+  const lines: string[] = [];
+  const goal = (params.goal ?? "").trim();
+  if (goal) lines.push(`goal: ${goal}`);
+  const role = (params.role ?? "").trim();
+  if (role) lines.push(`role: ${role}`);
+  const taskLabel = (params.taskLabel ?? "").trim();
+  if (taskLabel) lines.push(`task_label: ${taskLabel}`);
+  return lines.length > 0 ? `${lines.join("\n")}\n` : "";
+}
+
+function captureParentContextText(sessionManager: ParentContextSessionManager, params: DispatchParams): string {
+  if (typeof sessionManager.buildContextEntries !== "function") {
+    throw new Error("Pi session manager does not expose buildContextEntries()");
+  }
+  let text = renderParentContextArtifact(sessionManager.buildContextEntries());
+  if (!text && typeof sessionManager.getBranch === "function") {
+    // The current command may not be recorded in the compacted context yet.
+    text = renderParentContextArtifact(sessionManager.getBranch());
+  }
+  if (!text) {
+    // Fresh sessions have no recorded messages; capture the dispatch request itself.
+    text = renderDispatchRequestFallback(params);
+  }
+  if (!text) throw new Error("parent context capture produced no session content");
+  return text;
+}
+
 export default async function orchestraExtension(pi: ExtensionAPI) {
   let currentSessionId: string | null = null;
   const reportWatchers = new Map<string, Set<ChildProcessWithoutNullStreams>>();
@@ -564,7 +667,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   const sessionRefreshRequests = new Map<string, number>();
   const reportWatcherRetries = new Map<string, ReturnType<typeof setTimeout>>();
   const pendingSessionReports = new Map<string, PendingSessionReport>();
-  let cachedRoleNames: { expiresAt: number; roles: string[]; harnessConfigs: string[] } | null = null;
+  let cachedRoleNames: ({ expiresAt: number } & RoleMetadata) | null = null;
   let cachedActiveStatus: { expiresAt: number; sessionId: string; status: ActiveSessionStatus } | null = null;
   let turnBudget = parseBudgetEnv(ORCHESTRA_TURN_BUDGET_ENV);
   let softTimeoutSeconds = parseBudgetEnv(ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV);
@@ -841,9 +944,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     params: DispatchParams,
     notifier: ProgressNotifier,
     updateStatus?: (status: ActiveSessionStatus | null) => void,
+    sessionManager?: ParentContextSessionManager,
   ): Promise<DispatchResult> {
     const goal = params.goal?.trim() ?? "";
     if (!goal) return { code: 1, runId: null, output: "Usage: provide a worker goal." };
+
+    let parentContextInput: string | null = null;
 
     const command = [
       "do",
@@ -867,8 +973,22 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     if (params.taskLabel?.trim()) {
       command.push("--task-label", params.taskLabel.trim());
     }
+    if (roleWantsParentContext(await getRoleMetadata(), requestedRole)) {
+      if (!sessionManager) {
+        return { code: 1, runId: null, output: "parent context capture unavailable: Pi session manager is required for pass_parent_context roles" };
+      }
+      try {
+        // Captured context stays in memory and is piped to core stdin; the adapter never
+        // writes a staging or temp file, so the run-scoped artifact is the only copy.
+        parentContextInput = captureParentContextText(sessionManager, params);
+        command.push("--parent-context-artifact", "-");
+      } catch (error) {
+        const message = (error as { message?: string }).message ?? String(error);
+        return { code: 1, runId: null, output: `parent context capture failed: ${message}` };
+      }
+    }
 
-    const result = await runOrchestra(command);
+    const result = await runOrchestra(command, parentContextInput ?? undefined);
     const dispatch = result.code === 0 ? parseDispatchPayload(result.stdout) : null;
     const runId = typeof dispatch?.run_id === "string" ? dispatch.run_id : null;
     if (runId) {
@@ -1091,15 +1211,20 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     orchestraToolsEnabled = enabled;
   }
 
-  async function getRoleMetadata(): Promise<{ roles: string[]; harnessConfigs: string[] }> {
+  async function getRoleMetadata(): Promise<RoleMetadata> {
     const now = Date.now();
     if (cachedRoleNames && cachedRoleNames.expiresAt > now) {
-      return { roles: cachedRoleNames.roles, harnessConfigs: cachedRoleNames.harnessConfigs };
+      return {
+        roles: cachedRoleNames.roles,
+        harnessConfigs: cachedRoleNames.harnessConfigs,
+        passParentContext: cachedRoleNames.passParentContext,
+        defaultRole: cachedRoleNames.defaultRole,
+      };
     }
     const result = await runOrchestra(["_role-metadata"]);
-    const metadata = result.code === 0
+    const metadata: RoleMetadata = result.code === 0
       ? parseRoleMetadata(result.stdout)
-      : { roles: [], harnessConfigs: [] };
+      : { roles: [], harnessConfigs: [], passParentContext: [], defaultRole: null };
     cachedRoleNames = { expiresAt: now + 5_000, ...metadata };
     return metadata;
   }
@@ -1466,7 +1591,13 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           return toolTextResult(toolInfo.dispatchTimeoutError, true);
         }
         const runtimeSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
-        const result = await dispatchWorker(runtimeSessionId, params, progressNotifier(ctx), (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode));
+        const result = await dispatchWorker(
+          runtimeSessionId,
+          params,
+          progressNotifier(ctx),
+          (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode),
+          ctx.sessionManager,
+        );
         return toolTextResult(result.output, result.code !== 0);
       },
     });
@@ -1605,6 +1736,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           },
           progressNotifier(ctx),
           (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode),
+          ctx.sessionManager,
         );
         emitOutput(ctx, result.output, result.code === 0 ? "info" : "error");
         return;

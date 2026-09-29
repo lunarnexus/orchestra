@@ -123,6 +123,16 @@ def completed(
     return subprocess.CompletedProcess(args=args, returncode=code, stdout=stdout, stderr=stderr)
 
 
+ROLE_METADATA_NO_OPT_IN_JSON = json.dumps(
+    {
+        "roles": ["builder", "worker"],
+        "harnessConfigs": [],
+        "passParentContext": [],
+        "defaultRole": "worker",
+    }
+)
+
+
 def make_tool_info_payload() -> dict[str, Any]:
     return {
         "description": "dynamic description",
@@ -185,11 +195,15 @@ def make_hermes_fake_run(
             return completed(
                 args, json.dumps(tool_info or make_tool_info_payload())
             )
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         if args[0] == "_spsi-payload":
             if raise_on_spsi:
                 raise RuntimeError("core call exploded")
             stdout = "" if spsi_payload is None else json.dumps(spsi_payload)
             return completed(args, stdout, code=spsi_code)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     return fake_run, calls
@@ -424,6 +438,8 @@ def test_hermes_orch_status_routes_session_actions_and_keeps_roles_read_only(
             )
         if args[0] == "_session-mode":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -475,6 +491,8 @@ def test_hermes_orch_status_rejects_model_supplied_identity_args(
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -501,6 +519,8 @@ def test_hermes_orch_status_requires_run_id_for_stop(
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -535,6 +555,8 @@ def test_hermes_plugin_session_report_watcher_suppresses_late_delivery_after_cle
                 args,
                 json.dumps({"runIds": ["abc123"], "report": "worker done"}),
             )
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     original_watch = plugin._watch_session_report
@@ -885,6 +907,8 @@ def test_hermes_register_disables_dispatch_when_core_session_mode_off(
         calls.append(list(args))
         if args[0] == "_tool-info":
             return completed(args, json.dumps(payload))
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -909,6 +933,8 @@ def test_hermes_on_session_start_disables_dispatch_when_core_session_mode_off(
         calls.append(list(args))
         if args[0] == "_tool-info":
             return completed(args, json.dumps(payload))
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -937,6 +963,8 @@ def test_hermes_session_start_keeps_dispatch_enabled_for_on_mode(
         calls.append(list(args))
         if args[0] == "_tool-info":
             return completed(args, json.dumps(payload))
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -960,6 +988,8 @@ def test_hermes_register_falls_back_to_enabled_when_core_tool_info_fails(
             return completed(args, stderr="core unavailable", code=1)
         if args[0] == "_tool-info":
             return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -980,6 +1010,8 @@ def test_hermes_register_falls_back_to_enabled_when_core_call_raises(
             raise RuntimeError("core call exploded")
         if args[0] == "_tool-info":
             return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1093,6 +1125,8 @@ def test_orch_slash_session_scoped_commands_fail_closed_without_runtime_context(
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1125,6 +1159,8 @@ def test_orch_slash_on_enables_dispatch_without_user_message_skill_injection(
             return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "_session-mode":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1153,6 +1189,8 @@ def test_orch_slash_on_records_mode_each_time_without_user_message_injection(
             return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "_session-mode":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1190,6 +1228,8 @@ def test_orch_slash_off_disables_dispatch_until_reenabled(
             return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "_session-mode":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1229,6 +1269,8 @@ def test_orch_slash_on_after_off_requires_second_call_to_inject_skill(
             return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "_session-mode":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1267,6 +1309,8 @@ def test_orch_slash_off_records_session_mode_off_in_core(
             return completed(args, json.dumps(make_tool_info_payload()))
         if args[0] == "_session-mode":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1298,6 +1342,8 @@ def test_orch_slash_off_keeps_success_echo_and_warns_when_core_write_fails(
             if scenario == "raises":
                 raise RuntimeError("core unavailable")
             return completed(args, stderr="mode write failed\n", code=1)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1327,6 +1373,8 @@ def test_orch_slash_on_first_enable_records_mode_before_local_dispatch_enablemen
         if args[0] == "_session-mode":
             mode_write_seen_disabled = plugin._orch_dispatch_is_disabled("hermes:cli-session")
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1361,6 +1409,8 @@ def test_orch_status_tool_on_action_records_core_session_mode_through_same_path(
         if args[0] == "_session-mode":
             mode_write_seen_disabled = plugin._orch_dispatch_is_disabled("hermes:runtime")
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1403,6 +1453,8 @@ def test_orch_session_cleanup_clears_dispatch_disabled_state(
             return completed(args)
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: builder abc123\n")
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1424,6 +1476,7 @@ def test_orch_session_cleanup_clears_dispatch_disabled_state(
     assert output == "orchestra dispatched: builder abc123"
     assert calls == [
         ["_session-mode", "set", "--session-id", "hermes:cli-session", "--mode", "off"],
+        ["_role-metadata"],
         ["do", "--session-id", "hermes:cli-session", "--goal", "do work", "--json"],
         ["_dispatch-ack", "--run-id", "abc123", "--role", "builder"],
     ]
@@ -1445,6 +1498,8 @@ def test_orch_slash_on_keeps_success_echo_and_warns_when_core_write_fails(
             if scenario == "raises":
                 raise RuntimeError("core unavailable")
             return completed(args, stderr="mode write failed\n", code=1)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1559,6 +1614,8 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_injects_when_
             return completed(args, "orchestra dispatched: reviewer cli-run\n")
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1640,6 +1697,8 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_steers_when_b
             return completed(args, "orchestra dispatched: reviewer cli-run\n")
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1740,6 +1799,8 @@ def test_orch_dispatch_rejects_timeout_parameter(
                     }
                 ),
             )
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1809,6 +1870,8 @@ def test_orch_slash_cli_private_session_fallback_dispatches_hermes_escaped_quote
             return completed(args, "orchestra: researcher cli-run returned done (1/1)\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: researcher cli-run\n")
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1849,6 +1912,7 @@ def test_orch_slash_cli_private_session_fallback_dispatches_hermes_escaped_quote
         "researcher",
     ] in calls
     assert calls == [
+        ["_role-metadata"],
         [
             "do",
             "--session-id",
@@ -1881,6 +1945,8 @@ def test_orch_slash_do_rejects_malformed_quotes_without_dispatch(
         calls.append(args)
         if args[0] == "_tool-info":
             return completed(args, json.dumps(make_tool_info_payload()))
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1906,6 +1972,8 @@ def test_orch_dispatch_builds_cli_args_from_runtime_kwargs_and_returns_ack(
             return completed(args, "run_id: abc123\ntimeout_seconds: 600\nstatus: queued\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: reviewer abc123\n")
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1921,6 +1989,7 @@ def test_orch_dispatch_builds_cli_args_from_runtime_kwargs_and_returns_ack(
 
     assert output == "orchestra dispatched: reviewer abc123"
     assert calls == [
+        ["_role-metadata"],
         [
             "do",
             "--session-id",
@@ -1961,6 +2030,8 @@ def test_orch_dispatch_uses_effective_default_role_from_cli_output(
             return completed(args, "orchestra: reviewer abc123 returned done (1/1)\n")
         if args[0] == "_dispatch-ack":
             return completed(args, "orchestra dispatched: reviewer abc123\n")
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -1969,6 +2040,7 @@ def test_orch_dispatch_uses_effective_default_role_from_cli_output(
 
     assert output == "orchestra dispatched: reviewer abc123"
     assert calls == [
+        ["_role-metadata"],
         ["do", "--session-id", "hermes:runtime", "--goal", "do work", "--json"],
         ["_dispatch-ack", "--run-id", "abc123", "--role", "reviewer"],
     ]
@@ -1986,7 +2058,10 @@ def test_orch_dispatch_requires_run_id_before_ack(monkeypatch: pytest.MonkeyPatc
 
     payload = json.loads(plugin.orch_dispatch({"goal": "do work"}, session_id="runtime"))
 
-    assert calls == [["do", "--session-id", "hermes:runtime", "--goal", "do work", "--json"]]
+    assert calls == [
+        ["_role-metadata"],
+        ["do", "--session-id", "hermes:runtime", "--goal", "do work", "--json"],
+    ]
     assert payload == {"error": "orchestra dispatch did not return a run_id"}
 
 
@@ -2019,6 +2094,8 @@ def test_registered_orch_dispatch_injects_when_idle_and_marks_report_delivered(
             return completed(args, "orchestra: reviewer abc123 returned done (1/1)\n")
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2091,6 +2168,8 @@ def test_registered_orch_dispatch_prefers_runtime_tool_context_for_report(
             return completed(args, "orchestra: reviewer abc123 returned done (1/1)\n")
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2162,6 +2241,8 @@ def test_final_report_uses_inject_fallback_without_steer(
             return completed(args, "orchestra: reviewer abc123 returned done (1/1)\n")
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2306,6 +2387,8 @@ def test_session_report_watcher_retries_after_transient_failure(
             )
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2368,6 +2451,8 @@ def test_session_report_busy_prefers_steer_and_marks_delivered(
         calls.append(args)
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2407,6 +2492,8 @@ def test_session_report_tui_busy_steers_live_session_without_cli_ref(
         calls.append(args)
         if args[0] == "_mark-session-report-delivered":
             return completed(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2456,6 +2543,8 @@ def test_session_report_busy_queue_failure_leaves_run_unreported(
 
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2488,6 +2577,8 @@ def test_session_report_idle_mark_failure_leaves_run_unreported(
         calls.append(args)
         if args[0] == "_mark-session-report-delivered":
             return completed(args, stderr="mark failed", code=1)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2523,6 +2614,8 @@ def test_session_report_malformed_json_is_ignored(
 
     def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
 
     monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
@@ -2563,6 +2656,7 @@ def test_run_orchestra_uses_bounded_subprocess_timeout(monkeypatch: pytest.Monke
             "capture_output": True,
             "text": True,
             "timeout": plugin._SUBPROCESS_TIMEOUT_SECONDS,
+            "input": None,
         }
     ]
 
@@ -2599,5 +2693,244 @@ def test_watcher_subprocess_calls_use_larger_hard_stop(monkeypatch: pytest.Monke
             "capture_output": True,
             "text": True,
             "timeout": 65,
+            "input": None,
         }
     ]
+
+
+def test_hermes_load_pass_parent_context_settings_uses_core_role_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    payload = {
+        "roles": ["builder", "worker"],
+        "harnessConfigs": [],
+        "passParentContext": ["builder"],
+        "defaultRole": "worker",
+    }
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        return completed(args, json.dumps(payload))
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+
+    assert plugin._load_pass_parent_context_settings() == ({"builder"}, "worker")
+    assert calls == [["_role-metadata"]]
+
+
+def test_hermes_load_pass_parent_context_settings_fails_open_on_bad_core_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+
+    monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, "", code=1))
+    assert plugin._load_pass_parent_context_settings() == (set(), None)
+
+    monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, "not json"))
+    assert plugin._load_pass_parent_context_settings() == (set(), None)
+
+    monkeypatch.setattr(plugin, "_run_orchestra", lambda args: completed(args, "{}"))
+    assert plugin._load_pass_parent_context_settings() == (set(), None)
+
+
+def test_hermes_pre_llm_call_caches_conversation_history_per_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    fake_run, _ = make_hermes_fake_run({"ok": True, "enabled": False})
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
+    history = [
+        {"role": "user", "content": "first turn"},
+        {"role": "assistant", "content": "first reply"},
+    ]
+
+    assert pre_llm_call(session_id="runtime-a", conversation_history=history) is None
+
+    assert plugin._PARENT_CONTEXT_CACHE["hermes:runtime-a"] == history
+    assert "hermes:runtime-b" not in plugin._PARENT_CONTEXT_CACHE
+
+
+def test_hermes_pre_llm_call_ignores_missing_or_malformed_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    fake_run, _ = make_hermes_fake_run({"ok": True, "enabled": False})
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
+    history = [{"role": "user", "content": "known turn"}]
+
+    assert pre_llm_call(session_id="runtime-a", conversation_history=history) is None
+    assert pre_llm_call(session_id="runtime-a", conversation_history=None) is None
+    assert pre_llm_call(session_id="runtime-a") is None
+    assert pre_llm_call(session_id="runtime-a", conversation_history=[]) is None
+
+    assert plugin._PARENT_CONTEXT_CACHE["hermes:runtime-a"] == history
+
+
+def test_hermes_session_cleanup_clears_parent_context_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    fake_run, _ = make_hermes_fake_run({"ok": True, "enabled": False})
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
+    cleanup = dict(ctx.hooks)["on_session_finalize"]
+
+    pre_llm_call(
+        session_id="runtime-a",
+        conversation_history=[{"role": "user", "content": "secret"}],
+    )
+    assert "hermes:runtime-a" in plugin._PARENT_CONTEXT_CACHE
+
+    cleanup(session_id="runtime-a")
+
+    assert "hermes:runtime-a" not in plugin._PARENT_CONTEXT_CACHE
+
+
+def test_hermes_dispatch_pipes_parent_context_to_core_stdin_for_opted_in_role(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+    stdin_payloads: list[str | None] = []
+
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        if args[0] == "do":
+            stdin_payloads.append(kwargs.get("input"))
+            return completed(args, "run_id: abc123\nrole: builder\ntimeout_seconds: 60\n")
+        if args[0] == "_dispatch-ack":
+            return completed(args, "ok ack\n")
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(
+        plugin,
+        "_load_pass_parent_context_settings",
+        lambda: ({"builder"}, "worker"),
+    )
+    messages = [
+        {"role": "user", "content": "inspect the repo"},
+        {"role": "assistant", "content": "inspected"},
+    ]
+    plugin._PARENT_CONTEXT_CACHE["hermes:runtime"] = messages
+
+    output = plugin.orch_dispatch({"goal": "ship it", "role": "builder"}, session_id="runtime")
+
+    assert output == "ok ack"
+    do_call = calls[0]
+    assert "--parent-context-artifact" in do_call
+    # Only the stdin sentinel goes on the command line; context content is not in argv.
+    assert do_call[do_call.index("--parent-context-artifact") + 1] == "-"
+    assert "inspect the repo" not in " ".join(do_call)
+    # The captured JSONL context is piped to core over stdin, one line per message.
+    assert stdin_payloads == [
+        "".join(f"{json.dumps(m, ensure_ascii=False)}\n" for m in messages)
+    ]
+    # The adapter writes no staging or temp file anywhere outside Orchestra state.
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_hermes_dispatch_uses_default_role_cache_for_opted_in_parent_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        if args[0] == "do":
+            assert kwargs.get("input")
+            return completed(args, "run_id: abc123\nrole: worker\ntimeout_seconds: 60\n")
+        if args[0] == "_dispatch-ack":
+            return completed(args, "ok ack\n")
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(
+        plugin,
+        "_load_pass_parent_context_settings",
+        lambda: ({"worker"}, "worker"),
+    )
+    plugin._PARENT_CONTEXT_CACHE["hermes:runtime"] = [
+        {"role": "user", "content": "default role turn"}
+    ]
+
+    output = plugin.orch_dispatch({"goal": "ship it"}, session_id="runtime")
+
+    assert output == "ok ack"
+    assert "--parent-context-artifact" in calls[0]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_hermes_dispatch_errors_for_opted_in_role_without_cached_context(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        raise AssertionError(f"core should not be invoked without cached context: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(
+        plugin,
+        "_load_pass_parent_context_settings",
+        lambda: ({"builder"}, "worker"),
+    )
+
+    output = plugin.orch_dispatch({"goal": "ship it", "role": "builder"}, session_id="runtime")
+
+    error = json.loads(output)["error"]
+    assert "no cached parent context" in error
+    assert "builder" in error
+    assert calls == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_hermes_dispatch_allows_non_opted_in_role(monkeypatch: pytest.MonkeyPatch) -> None:
+    plugin = load_plugin()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        if args[0] == "do":
+            return completed(args, "run_id: abc123\nrole: reviewer\ntimeout_seconds: 60\n")
+        if args[0] == "_dispatch-ack":
+            return completed(args, "ok ack\n")
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(
+        plugin,
+        "_load_pass_parent_context_settings",
+        lambda: ({"builder"}, "worker"),
+    )
+
+    output = plugin.orch_dispatch({"goal": "ship it", "role": "reviewer"}, session_id="runtime")
+
+    assert calls[0][0] == "do"
+    assert "--role" in calls[0]
+    assert "reviewer" in calls[0]
+    assert "--parent-context-artifact" not in calls[0]
+    # A non-opted-in dispatch proceeds unchanged and returns the core ack, not an error payload.
+    assert output == "ok ack"

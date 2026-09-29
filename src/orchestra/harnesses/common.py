@@ -72,6 +72,10 @@ def render_worker_prompt(request: WorkerRequest, role: RoleConfig) -> str:
     sections.append(f"Goal: {request.goal.strip()}")
     if role.dispatch_hint:
         sections.append(f"Role instructions: {role.dispatch_hint.strip()}")
+    if request.parent_context_artifact.strip():
+        sections.append(
+            f"Parent context: Read {request.parent_context_artifact.strip()} before starting."
+        )
     if request.additional_context.strip():
         sections.append(f"Additional context: {request.additional_context.strip()}")
     if request.boundaries.strip():

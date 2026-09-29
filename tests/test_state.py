@@ -263,6 +263,11 @@ def test_plan_prune_reports_old_terminal_runs_and_owned_paths(tmp_path: Path) ->
         tmp_path / "logs" / "old-done.jsonl",
     )
     assert tmp_path / "transcripts" / "old-done.jsonl" not in plan.candidates[0].owned_paths
+    # The run-scoped parent-context copy is owned by the run, so retention reclaims it.
+    assert (
+        tmp_path / "state" / "runs" / "old-done" / "parent-context.jsonl"
+        in plan.candidates[0].owned_paths
+    )
     assert all(candidate.run_id != "running" for candidate in plan.candidates)
     assert all(candidate.run_id != "recent-done" for candidate in plan.candidates)
     assert all(candidate.run_id != "recently-ended" for candidate in plan.candidates)

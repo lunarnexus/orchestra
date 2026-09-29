@@ -4,7 +4,14 @@ Notable user-facing changes to Orchestra are recorded here.
 
 ## Recent changes
 
-- None yet.
+### Features
+
+- Add opt-in `pass_parent_context` role setting for subagents. Opted-in Pi and Hermes roles can receive a run-scoped parent context artifact via `Parent context: Read <path> before starting.` Core owns the artifact under `state/runs/<run-id>/`, supports file and stdin transport, and keeps default dispatch behavior unchanged.
+
+### Fixes
+
+- Fixed Pi footer indent and negative cost display.
+- Fixed generic session message for orchestrate mode.
 
 ## v0.5.1 - 2026-09-17
 

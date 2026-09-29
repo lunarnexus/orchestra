@@ -120,6 +120,7 @@ class RoleConfig:
     enabled_mode: str = "manual"
     skills: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
+    pass_parent_context: bool = False
 
 
 @dataclass(frozen=True)
@@ -642,6 +643,9 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                     context=f"role '{role_name}'",
                 )
                 or {},
+                pass_parent_context=_get_optional_bool(
+                    role_raw, "pass_parent_context", False
+                ),
             )
             continue
 
@@ -687,6 +691,9 @@ def load_agent_catalog(path: str | Path) -> AgentCatalog:
                 context=f"role '{role_name}'",
             )
             or {},
+            pass_parent_context=_get_optional_bool(
+                role_raw, "pass_parent_context", False
+            ),
         )
 
     if default_role not in roles:
@@ -888,6 +895,10 @@ def _get_optional_nested_dispatch_depth(data: dict[str, Any]) -> int | None:
 
 
 def _validate_orchestrator_role_keys(data: dict[str, Any], role_name: str) -> None:
+    if "pass_parent_context" in data:
+        raise ConfigError(
+            f"role '{role_name}' does not support pass_parent_context; remove the setting"
+        )
     allowed_keys = {"skills"}
     unknown_keys = sorted(set(data) - allowed_keys)
     if unknown_keys:
@@ -912,6 +923,7 @@ def _validate_role_keys(
         "nested_dispatch_depth",
         "turn_limit",
         "soft_timeout",
+        "pass_parent_context",
         "enabled",
         "skills",
         "env",

@@ -158,10 +158,20 @@ def _fallback_note(
     )
 
 
-def role_metadata(context: AppContext) -> dict[str, list[str]]:
+def role_metadata(context: AppContext) -> dict[str, list[str] | str]:
+    """Describe configured roles for host adapters.
+
+    ``passParentContext`` lists roles whose parent-session context opt-in passed core
+    catalog validation, and ``defaultRole`` is the catalog default. Adapters use this
+    single source of truth rather than parsing the catalog themselves.
+    """
     return {
         "roles": sorted(context.catalog.roles),
         "harnessConfigs": sorted(context.catalog.harness_configs),
+        "passParentContext": sorted(
+            name for name, role in context.catalog.roles.items() if role.pass_parent_context
+        ),
+        "defaultRole": context.catalog.default_role,
     }
 
 

@@ -1,10 +1,61 @@
-"""Focused tests for shared harness child-return parsing."""
+"""Focused tests for shared harness child-return parsing and prompt rendering."""
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from orchestra.harnesses.common import parse_child_return
+from orchestra.config import RoleConfig, load_app_config
+from orchestra.harnesses.base import WorkerRequest
+from orchestra.harnesses.common import parse_child_return, render_worker_prompt
+
+ROOT_PROMPTS = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml").prompts
+
+
+def _prompt_request(tmp_path: Path, **overrides: object) -> WorkerRequest:
+    values: dict[str, object] = {
+        "role_name": "worker",
+        "goal": "Do the assigned work.",
+        "additional_context": "Existing additional context.",
+        "boundaries": "Stay in scope.",
+        "acceptance_target": "Return a status report.",
+        "timeout_seconds": 30,
+        "log_path": tmp_path / "logs" / "worker.jsonl",
+        "prompts": ROOT_PROMPTS,
+    }
+    values.update(overrides)
+    return WorkerRequest(**values)  # type: ignore[arg-type]
+
+
+def test_render_worker_prompt_includes_parent_context_artifact_line(
+    tmp_path: Path,
+) -> None:
+    artifact = str(tmp_path / "parent-context.md")
+    request = _prompt_request(tmp_path, parent_context_artifact=artifact)
+    role = RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])
+
+    prompt = render_worker_prompt(request, role)
+    sections = prompt.split("\n\n")
+
+    assert f"Parent context: Read {artifact} before starting." in sections
+    # Rendered as its own section, separate from Additional context.
+    assert "Additional context: Existing additional context." in sections
+    combined_index = [i for i, s in enumerate(sections) if s.startswith("Parent context")]
+    assert len(combined_index) == 1
+
+
+def test_render_worker_prompt_without_parent_context_keeps_old_behavior(
+    tmp_path: Path,
+) -> None:
+    request = _prompt_request(tmp_path)
+    role = RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])
+
+    prompt = render_worker_prompt(request, role)
+
+    assert "Parent context" not in prompt
+    sections = prompt.split("\n\n")
+    assert "Additional context: Existing additional context." in sections
 
 
 @pytest.mark.parametrize("value", ["none", "n/a", "na", "not applicable"])

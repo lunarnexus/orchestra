@@ -871,6 +871,11 @@ def _load_pending_request(run_id: str, request_file: Path) -> PendingRunRequest:
         sequence_index=(
             int(payload["sequence_index"]) if payload.get("sequence_index") is not None else None
         ),
+        parent_context_artifact=(
+            str(payload["parent_context_artifact"])
+            if payload.get("parent_context_artifact") is not None
+            else None
+        ),
     )
 
 
@@ -914,6 +919,7 @@ def _start_worker_process(
         goal=pending_request.goal,
         run_id=pending_request.run_id,
         additional_context=pending_request.additional_context,
+        parent_context_artifact=pending_request.parent_context_artifact or "",
         boundaries=pending_request.boundaries,
         acceptance_target=pending_request.acceptance_target,
         return_format=pending_request.return_format,

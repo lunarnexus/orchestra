@@ -800,6 +800,71 @@ roles:
     assert reviewer.env == {"FEATURE_FLAG": "1", "EMPTY_OK": ""}
 
 
+def test_load_agent_catalog_pass_parent_context_defaults_false(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "agent-catalog.yaml"
+    path.write_text(
+        "default_role: builder\n"
+        "roles:\n"
+        "  orchestrator: {}\n"
+        "  builder:\n"
+        "    harness: pi\n"
+        "    command: [pi, -p, '{prompt}']\n",
+        encoding="utf-8",
+    )
+
+    catalog = load_agent_catalog(path)
+
+    assert catalog.roles["builder"].pass_parent_context is False
+
+
+@pytest.mark.parametrize("raw_value, expected", [("true", True), ("false", False)])
+def test_load_agent_catalog_reads_pass_parent_context(
+    tmp_path: Path, raw_value: str, expected: bool
+) -> None:
+    path = tmp_path / "agent-catalog.yaml"
+    path.write_text(
+        "harness_configs:\n"
+        "  pi:\n"
+        "    harness: pi\n"
+        "    command: [pi, -p, '{prompt}']\n"
+        "roles:\n"
+        "  builder:\n"
+        "    harness_config: pi\n"
+        f"    pass_parent_context: {raw_value}\n",
+        encoding="utf-8",
+    )
+
+    catalog = load_agent_catalog(path)
+
+    assert catalog.roles["builder"].pass_parent_context is expected
+
+
+@pytest.mark.parametrize("raw_value", ["true", "false"])
+def test_load_agent_catalog_rejects_pass_parent_context_on_orchestrator(
+    tmp_path: Path, raw_value: str
+) -> None:
+    path = tmp_path / "agent-catalog.yaml"
+    path.write_text(
+        "harness_configs:\n"
+        "  pi:\n"
+        "    harness: pi\n"
+        "    command: [pi, -p, '{prompt}']\n"
+        "roles:\n"
+        f"  orchestrator:\n"
+        f"    pass_parent_context: {raw_value}\n"
+        "  builder:\n"
+        "    harness_config: pi\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ConfigError, match="role 'orchestrator' does not support pass_parent_context"
+    ):
+        load_agent_catalog(path)
+
+
 def test_load_agent_catalog_accepts_explicit_empty_skills(tmp_path: Path) -> None:
     path = tmp_path / "agent-catalog.yaml"
     path.write_text(

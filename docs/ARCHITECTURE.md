@@ -312,6 +312,11 @@ includes:
 - acceptance target
 - expected compact return format
 
+When an opted-in role has a captured parent-session context artifact, the
+renderer appends exactly `Parent context: Read <path> before starting.` It passes
+only the artifact path; it never inlines parent conversation content. Roles with
+`pass_parent_context` unset or false render unchanged.
+
 Artifact-first handoff is preferred: `additionalContext` should usually be a compact reference such as `PLAN.md Slice N`, where scope, boundaries, acceptance or stop condition, and verification live. Read-only or file-disjoint independent slices can run in parallel; dependent or resource-overlapping work remains sequential.
 
 ## Configuration
@@ -356,6 +361,8 @@ The catalog contains:
 - model, profile, and agent fields
 - role skills and prompt additions
 - role environment values
+- opt-in parent context handoff via per-role `pass_parent_context` (default
+  false; rejected on the orchestrator role)
 - enabled state (`true`, `false`, or `auto`)
 - role-level harness fallback
 - subagent budgets
@@ -555,6 +562,10 @@ Pi can enforce configured turn and soft-timeout budgets through host events. Its
 watchers use session-generation and refresh guards so stale callbacks cannot
 update a newer session.
 
+For opted-in roles, Pi captures LLM-ready parent-session context from the
+session manager into a run-scoped artifact file and passes only that path via
+`--parent-context-artifact <path>`. Non-opted-in dispatch is unchanged.
+
 ### Hermes
 
 Hermes provides model-callable tools and native `/orch` commands through its
@@ -576,6 +587,14 @@ command output, and core-formatted reports delivered to live CLI/gateway session
 Hermes lacks stable public APIs for Pi-equivalent footer/status widgets,
 rendered entries, dynamic completions, non-prompt progress notifications, including Pi-style
 turn progress display, so those features are not emulated with model prompts.
+
+For opted-in roles, the Hermes `pre_llm_call` hook caches the documented
+`conversation_history` payload per runtime session and clears it on session
+cleanup. At dispatch the plugin writes that cache to a private (`0600`) JSONL
+artifact and passes only its path via `--parent-context-artifact <path>`. If no
+context has been cached for the session yet, dispatch fails with a clear error
+rather than silently omitting the requested context. Non-opted-in dispatch is
+unchanged.
 
 ### OpenCode
 

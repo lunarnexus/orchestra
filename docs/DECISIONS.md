@@ -323,7 +323,14 @@ and referenced artifacts.
 
 **Source:** Existing `FOUNDATION.md` decision dated 2026-08-21.
 
-### D-DELEGATE-010 — Checker roles are capped
+### D-DELEGATE-010 — Parent context handoff is opt-in
+
+Status: Approved
+
+Selected subagent roles may opt in to parent context handoff with `pass_parent_context`.
+The default remains no parent context handoff.
+
+### D-DELEGATE-011 — Checker roles are capped
 
 **Decision:** Verifier, reviewer, and appsec roles run one capped pass for their
 assigned scope, reuse existing evidence where appropriate, and do not start

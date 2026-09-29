@@ -96,11 +96,7 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert 'subcommand === "roles"' in extension_source
     assert 'cachedRoleNames = null;' in extension_source
     assert 'getArgumentCompletions: getOrchArgumentCompletions' in extension_source
-    assert (
-        'function parseRoleMetadata(output: string): '
-        '{ roles: string[]; harnessConfigs: string[] }'
-        in extension_source
-    )
+    assert "function parseRoleMetadata(output: string): RoleMetadata {" in extension_source
     assert 'const result = await runOrchestra(["_role-metadata"]);' in extension_source
     assert 'function parseDispatchPayload(output: string): DispatchPayload {' in extension_source
     assert (
@@ -352,3 +348,41 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     assert "tool_info_payload" in Path("src/orchestra/host_commands.py").read_text(
         encoding="utf-8"
     )
+
+
+def test_pi_extension_parent_context_capture_handoff() -> None:
+    extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
+
+    # Opted-in role detection reads core _role-metadata (no bespoke catalog scan).
+    assert "interface RoleMetadata {" in extension_source
+    assert "passParentContext: string[];" in extension_source
+    assert "defaultRole: string | null;" in extension_source
+    assert "function roleWantsParentContext(metadata: RoleMetadata" in extension_source
+    assert "roleWantsParentContext(await getRoleMetadata(), requestedRole)" in extension_source
+    assert "parsePassParentContextCatalog" not in extension_source
+    assert "loadPassParentContextSettings" not in extension_source
+    assert "resolveParentContextCatalogPath" not in extension_source
+    assert "agent-catalog.yaml" not in extension_source
+
+    # Capture uses the Pi session manager LLM-ready context API.
+    assert "buildContextEntries" in extension_source
+    assert "function captureParentContextText(sessionManager" in extension_source
+    assert "renderParentContextArtifact(entries: unknown[])" in extension_source
+    assert "renderDispatchRequestFallback(params: DispatchParams)" in extension_source
+
+    # Option C: captured context stays in memory and is piped to core stdin; the adapter
+    # never stages a temp or private file, so the run-scoped artifact is the only copy.
+    assert 'command.push("--parent-context-artifact", "-")' in extension_source
+    assert "runOrchestra(command, parentContextInput ?? undefined)" in extension_source
+    # Input must be piped via spawn + stdin.end so the child sees EOF (execFile+input
+    # does not close stdin and hangs sys.stdin.read()).
+    assert "child.stdin.end(input)" in extension_source
+    assert ".input = input" not in extension_source
+    assert "captureParentContextArtifact" not in extension_source
+    assert "artifactPath" not in extension_source
+    assert "stagedParentContextPath" not in extension_source
+    assert "fs.writeFileSync" not in extension_source
+    assert "fs.chmodSync" not in extension_source
+    assert "fs.rmSync" not in extension_source
+    assert "os.tmpdir()" not in extension_source
+    assert "randomUUID" not in extension_source

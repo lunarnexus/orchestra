@@ -20,6 +20,10 @@ _REPORT_WATCHER_RETRY_BASE_DELAY_SECONDS = 0.25
 _REPORT_WATCHER_RETRY_MAX_DELAY_SECONDS = 3.0
 _REPORT_WATCHERS: set[str] = set()
 _REPORT_WATCHERS_LOCK = threading.Lock()
+# Last `pre_llm_call` LLM-ready conversation history per Hermes runtime session, used only for
+# roles that opt in with `pass_parent_context`. Cleared on session cleanup.
+_PARENT_CONTEXT_CACHE: dict[str, list[dict[str, Any]]] = {}
+_PARENT_CONTEXT_CACHE_LOCK = threading.Lock()
 _SESSION_WATCHER_GENERATIONS: dict[str, int] = {}
 _SESSION_WATCHER_GENERATIONS_LOCK = threading.Lock()
 
@@ -255,6 +259,87 @@ def _orchestra_base_args() -> list[str]:
     return args
 
 
+def _load_pass_parent_context_settings() -> tuple[set[str], str | None]:
+    """Load ``(opted_in_roles, default_role)`` from core `_role-metadata`.
+
+    Core validates the agent catalog, so the plugin never parses catalog YAML
+    itself. Any core failure or malformed payload fails open to no opt-in.
+    """
+    result = _run_orchestra(["_role-metadata"])
+    if result.returncode != 0 or not result.stdout.strip():
+        return set(), None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return set(), None
+    if not isinstance(payload, dict):
+        return set(), None
+    roles = payload.get("passParentContext")
+    opted_in = (
+        {role for role in roles if isinstance(role, str) and role.strip()}
+        if isinstance(roles, list)
+        else set()
+    )
+    default_role = payload.get("defaultRole")
+    default = default_role if isinstance(default_role, str) and default_role.strip() else None
+    return opted_in, default
+
+
+def _role_wants_parent_context(requested_role: str) -> tuple[bool, str]:
+    opted_in_roles, default_role = _load_pass_parent_context_settings()
+    selected = requested_role.strip() or (default_role or "")
+    if not selected:
+        return False, ""
+    return selected in opted_in_roles, selected
+
+
+def _cache_parent_context(runtime_session_id: str, history: Any) -> None:
+    """Cache the documented `pre_llm_call` `conversation_history` for one session.
+
+    Only a non-empty list of OpenAI-format message objects is cached; a missing or
+    malformed payload keeps the previous snapshot so a turn with no usable history
+    never silently downgrades an opted-in dispatch to partial context.
+    """
+    if not isinstance(history, list):
+        return
+    messages = [message for message in history if isinstance(message, dict)]
+    if not messages:
+        return
+    with _PARENT_CONTEXT_CACHE_LOCK:
+        _PARENT_CONTEXT_CACHE[runtime_session_id] = messages
+
+
+def _clear_parent_context(runtime_session_id: str) -> None:
+    with _PARENT_CONTEXT_CACHE_LOCK:
+        _PARENT_CONTEXT_CACHE.pop(runtime_session_id, None)
+
+
+def _render_parent_context_payload(
+    runtime_session_id: str,
+    role: str,
+) -> tuple[str | None, str | None]:
+    """Render cached parent context as JSONL text for core stdin; return ``(content, error)``.
+
+    The captured context holds sensitive parent session data and stays in memory here;
+    it is piped to core stdin so core writes the only on-disk run-scoped artifact. The
+    adapter never writes a staging or temp file. Missing cached context is a hard error
+    for opted-in roles so requested context is never silently omitted.
+    """
+    with _PARENT_CONTEXT_CACHE_LOCK:
+        messages = list(_PARENT_CONTEXT_CACHE.get(runtime_session_id, ()))
+    if not messages:
+        return None, (
+            f"no cached parent context for this Hermes session; role '{role}' sets "
+            "pass_parent_context but no conversation history has been captured from the "
+            "pre_llm_call hook yet"
+        )
+    try:
+        content = "".join(f"{json.dumps(message, ensure_ascii=False)}\n" for message in messages)
+    except (TypeError, ValueError) as exc:
+        return None, f"parent context capture failed: {exc}"
+    return content, None
+
+
 def _watcher_wait_budget_seconds(timeout_seconds: int) -> int:
     return timeout_seconds + _WATCHER_TIMEOUT_MARGIN_SECONDS
 
@@ -267,6 +352,7 @@ def _run_orchestra(
     args: list[str],
     *,
     timeout_seconds: int = _SUBPROCESS_TIMEOUT_SECONDS,
+    input: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = ["orchestra", *_orchestra_base_args(), *args]
     try:
@@ -276,6 +362,7 @@ def _run_orchestra(
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
+            input=input,
         )
     except subprocess.TimeoutExpired as exc:
         stdout = exc.stdout.decode() if isinstance(exc.stdout, bytes) else exc.stdout or ""
@@ -832,6 +919,7 @@ def _on_session_cleanup(**kwargs: Any) -> None:
         return
     _invalidate_session_watcher_generation(runtime_session_id)
     _clear_budget_state(runtime_session_id)
+    _clear_parent_context(runtime_session_id)
     _orch_dispatch_enable(runtime_session_id)
     with _REPORT_WATCHERS_LOCK:
         _REPORT_WATCHERS.discard(runtime_session_id)
@@ -862,6 +950,15 @@ def _dispatch_orchestra_run(
 
     additional_context = str(payload.get("additionalContext") or "").strip()
     requested_role = str(payload.get("role") or "").strip()
+    wants_parent_context, selected_role = _role_wants_parent_context(requested_role)
+    parent_context_content: str | None = None
+    if wants_parent_context:
+        content, capture_error = _render_parent_context_payload(
+            runtime_session_id, selected_role
+        )
+        if capture_error is not None or content is None:
+            return _error(capture_error or "parent context capture failed")
+        parent_context_content = content
     command = [
         "do",
         "--session-id",
@@ -878,9 +975,11 @@ def _dispatch_orchestra_run(
     task_label = str(payload.get("taskLabel", "")).strip()
     if task_label:
         command.extend(["--task-label", task_label])
+    if parent_context_content is not None:
+        command.extend(["--parent-context-artifact", "-"])
 
     command.append("--json")
-    result = _run_orchestra(command)
+    result = _run_orchestra(command, input=parent_context_content)
     if result.returncode != 0:
         return _error((result.stdout or result.stderr).strip() or "orchestra dispatch failed")
 
@@ -1142,6 +1241,7 @@ def register(ctx: Any) -> None:
         runtime_session_id = _hook_session_id(ctx, _kwargs)
         if runtime_session_id is None:
             return None
+        _cache_parent_context(runtime_session_id, _kwargs.get("conversation_history"))
         spsi_context = _spsi_context(runtime_session_id)
         budget_message: str | None = None
         with _BUDGET_STATES_LOCK:

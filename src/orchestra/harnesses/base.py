@@ -18,6 +18,7 @@ class WorkerRequest:
     timeout_seconds: int
     run_id: str = ""
     additional_context: str = ""
+    parent_context_artifact: str = ""
     boundaries: str = ""
     acceptance_target: str = ""
     return_format: str = ""

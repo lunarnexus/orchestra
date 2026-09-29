@@ -256,6 +256,7 @@ implementations.
 | SPSI (System Prompt Skill Injection) | ✅ | ✅ |
 | Role env vars | ✅ | ✅ |
 | Harness fallback | ✅ | ✅ |
+| Parent context handoff (opt-in) | ✅ | ✅ |
 | Debug/history artifacts | ✅ | ✅ |
 
 ## Configuration
@@ -276,6 +277,7 @@ Most customization happens in `agent-catalog.yaml`:
 - profiles and agents
 - role skills
 - role environment values
+- opt-in parent context handoff (`pass_parent_context`)
 - prompt additions
 - role budgets
 - enabled and disabled roles
@@ -299,6 +301,7 @@ orchestra stop --session-id manual:demo --run-id <run-id>
 orchestra history --session-id manual:demo --limit 10
 orchestra debug --run-id <run-id>
 ```
+
 
 CLI `--session-id` is a local/manual identifier. It is not a source of trusted
 host runtime identity.

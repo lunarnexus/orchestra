@@ -11,6 +11,7 @@ from pathlib import Path
 
 from orchestra.artifacts import (
     canonical_events_path,
+    canonical_parent_context_path,
     canonical_request_path,
     canonical_return_path,
     legacy_lifecycle_path,
@@ -641,6 +642,11 @@ class StateStore:
                     request_dir / f"{record.run_id}.json" if request_dir is not None else None,
                     legacy_request_path(state_dir, record.run_id) if state_dir else None,
                     legacy_lifecycle_path(log_dir, record.run_id) if log_dir is not None else None,
+                    (
+                        canonical_parent_context_path(state_dir, record.run_id)
+                        if state_dir is not None
+                        else None
+                    ),
                 )
                 if path is not None
             )
@@ -669,6 +675,11 @@ class StateStore:
                     request_dir / f"{record.run_id}.json" if request_dir is not None else None,
                     legacy_request_path(state_dir, record.run_id) if state_dir else None,
                     legacy_lifecycle_path(log_dir, record.run_id) if log_dir is not None else None,
+                    (
+                        canonical_parent_context_path(state_dir, record.run_id)
+                        if state_dir is not None
+                        else None
+                    ),
                 )
                 if path is not None
             )

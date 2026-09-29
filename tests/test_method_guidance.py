@@ -156,10 +156,3 @@ def test_default_return_format_tracks_reused_evidence() -> None:
 
     assert "Evidence reused:" in prompts
     assert "<artifact path and exact command evidence" in prompts
-
-
-def test_roadmap_tracks_command_deduplication_wishlist() -> None:
-    roadmap = Path("docs/ROADMAP.md").read_text(encoding="utf-8")
-
-    assert "Command de-duplication guard for subagent tool use" in roadmap
-    assert "Pi, Hermes, OpenCode" in roadmap

@@ -135,6 +135,15 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         default="",
         help="additional context for the worker",
     )
+    do_parser.add_argument(
+        "--parent-context-artifact",
+        default=None,
+        help=(
+            "path to a parent session context artifact file, or '-' to read the parent "
+            "context from stdin; core writes the only run-scoped private artifact under "
+            "the run state directory"
+        ),
+    )
     do_parser.add_argument("--boundaries", default="", help="out-of-scope boundaries")
     do_parser.add_argument("--acceptance-target", default="", help="acceptance target")
     do_parser.add_argument("--return-format", default="", help="explicit return format")
@@ -442,6 +451,21 @@ def _positive_int(raw: str) -> int:
 
 def _handle_do(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=None)
+
+    parent_context_content: str | None = None
+    parent_context_artifact = args.parent_context_artifact
+    if parent_context_artifact == "-":
+        parent_context_content = sys.stdin.read()
+        parent_context_artifact = None
+    elif parent_context_artifact is not None:
+        from pathlib import Path as _Path
+        artifact_path = _Path(parent_context_artifact)
+        if not artifact_path.is_file():
+            raise AppError(
+                f"parent context artifact file does not exist: {parent_context_artifact}"
+            )
+        parent_context_artifact = str(artifact_path.resolve())
+
     started = start_run(
         context,
         session_id=args.session_id,
@@ -454,6 +478,8 @@ def _handle_do(args: argparse.Namespace) -> int:
         timeout_seconds=args.timeout,
         task_label=args.task_label,
         batch_id=args.batch_id,
+        parent_context_artifact=parent_context_artifact,
+        parent_context_content=parent_context_content,
     )
     if args.json:
         print(

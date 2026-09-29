@@ -7,7 +7,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from orchestra.artifacts import canonical_request_path, run_state_dir, write_json_atomically
+from orchestra.artifacts import (
+    canonical_parent_context_path,
+    canonical_request_path,
+    copy_private_file,
+    run_state_dir,
+    write_json_atomically,
+    write_private_text,
+)
 from orchestra.config import ModelLimitConfig, PromptConfig
 from orchestra.context import CONTRACT_VERSION, AppContext, AppError
 from orchestra.harnesses.common import orchestra_can_dispatch
@@ -49,6 +56,7 @@ class PendingRunRequest:
     triggered_by_run_id: str | None = None
     trigger_reason: str | None = None
     sequence_index: int | None = None
+    parent_context_artifact: str | None = None
 
 
 @dataclass(frozen=True)
@@ -94,6 +102,7 @@ def _request_payload(pending_request: PendingRunRequest) -> dict[str, object]:
         "triggered_by_run_id": pending_request.triggered_by_run_id,
         "trigger_reason": pending_request.trigger_reason,
         "sequence_index": pending_request.sequence_index,
+        "parent_context_artifact": pending_request.parent_context_artifact,
     }
 
 
@@ -220,6 +229,8 @@ def start_run(
     trigger_reason: str | None = None,
     sequence_index: int | None = None,
     allow_auto_only: bool = False,
+    parent_context_artifact: str | None = None,
+    parent_context_content: str | None = None,
 ) -> StartedRun:
     _require_session_id(session_id)
 
@@ -243,6 +254,17 @@ def start_run(
     if effective_soft_timeout is not None and effective_soft_timeout >= effective_timeout:
         raise _app_error("soft_timeout must be less than effective worker timeout")
 
+    # Core owns the final parent-context artifact. A source file is copied, or captured
+    # stdin content is written, into the run state directory so run retention/prune
+    # reclaims it; hosts must never leave their own copy behind.
+    parent_context_source = (parent_context_artifact or "").strip()
+    has_parent_context = bool(parent_context_source) or parent_context_content is not None
+    parent_context_path = (
+        canonical_parent_context_path(context.config.state_dir, run_id)
+        if has_parent_context
+        else None
+    )
+
     pending_request = PendingRunRequest(
         run_id=run_id,
         role_name=selected_role.name,
@@ -258,6 +280,7 @@ def start_run(
         triggered_by_run_id=triggered_by_run_id,
         trigger_reason=trigger_reason,
         sequence_index=sequence_index,
+        parent_context_artifact=str(parent_context_path) if parent_context_path else None,
     )
 
     record = RunRecord(
@@ -291,6 +314,22 @@ def start_run(
         raise _app_error(
             _format_concurrency_limit_error(str(exc), context=context, session_id=session_id)
         ) from exc
+
+    if parent_context_path is not None:
+        if parent_context_content is not None:
+            try:
+                write_private_text(parent_context_path, parent_context_content)
+            except OSError as exc:
+                raise _app_error(
+                    f"parent context artifact could not be written: {exc}"
+                ) from exc
+        else:
+            try:
+                copy_private_file(parent_context_source, parent_context_path)
+            except OSError as exc:
+                raise _app_error(
+                    f"parent context artifact could not be read: {parent_context_source}: {exc}"
+                ) from exc
 
     _write_pending_request(pending_request)
     _spawn_supervisor(context, request_file, run_id)

@@ -294,3 +294,186 @@ def test_start_run_leaves_linkage_metadata_null_for_public_dispatch(
     assert request_payload["triggered_by_run_id"] is None
     assert request_payload["trigger_reason"] is None
     assert request_payload["sequence_index"] is None
+
+
+def test_start_run_copies_parent_context_into_run_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(tmp_path)
+    monkeypatch.setattr("orchestra.dispatch.orchestra_can_dispatch", lambda: True)
+    monkeypatch.setattr("orchestra.supervision.reconcile_stale_queued_runs", lambda _context: [])
+    monkeypatch.setattr("orchestra.supervision._spawn_supervisor", lambda *args, **kwargs: None)
+
+    source = tmp_path / "parent-context-source.jsonl"
+    source.write_text('{"role": "user", "content": "secret parent turn"}\n', encoding="utf-8")
+    source.chmod(0o644)
+
+    started = start_run(
+        context,
+        session_id="manual:test",
+        role_name=None,
+        goal="Do work.",
+        additional_context="additional context",
+        boundaries="scope",
+        acceptance_target="done",
+        return_format="summary",
+        timeout_seconds=10,
+        task_label="",
+        batch_id=None,
+        parent_context_artifact=str(source),
+    )
+
+    loaded_request = _load_pending_request(started.record.run_id, started.request_file)
+    request_payload = json.loads(started.request_file.read_text(encoding="utf-8"))
+    run_scoped = tmp_path / "state" / "runs" / started.record.run_id / "parent-context.jsonl"
+
+    # Core owns the final artifact under the run state directory, so retention/prune reach it.
+    assert loaded_request.parent_context_artifact == str(run_scoped)
+    assert request_payload["parent_context_artifact"] == str(run_scoped)
+    assert run_scoped.is_file()
+    assert run_scoped.read_text(encoding="utf-8") == (
+        '{"role": "user", "content": "secret parent turn"}\n'
+    )
+    # Parent context is sensitive session data: the run artifact is private.
+    assert run_scoped.stat().st_mode & 0o777 == 0o600
+    # The caller-provided source file is left as the adapter wrote it.
+    assert source.stat().st_mode & 0o777 == 0o644
+    # Existing additional context behavior is unchanged.
+    assert loaded_request.additional_context == "additional context"
+    assert request_payload["additional_context"] == "additional context"
+
+
+def test_start_run_writes_parent_context_content_into_run_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(tmp_path)
+    monkeypatch.setattr("orchestra.dispatch.orchestra_can_dispatch", lambda: True)
+    monkeypatch.setattr("orchestra.supervision.reconcile_stale_queued_runs", lambda _context: [])
+    monkeypatch.setattr("orchestra.supervision._spawn_supervisor", lambda *args, **kwargs: None)
+
+    content = '{"role": "user", "content": "stdin parent turn"}\n'
+
+    started = start_run(
+        context,
+        session_id="manual:test",
+        role_name=None,
+        goal="Do work.",
+        additional_context="additional context",
+        boundaries="scope",
+        acceptance_target="done",
+        return_format="summary",
+        timeout_seconds=10,
+        task_label="",
+        batch_id=None,
+        parent_context_content=content,
+    )
+
+    loaded_request = _load_pending_request(started.record.run_id, started.request_file)
+    request_payload = json.loads(started.request_file.read_text(encoding="utf-8"))
+    run_scoped = tmp_path / "state" / "runs" / started.record.run_id / "parent-context.jsonl"
+
+    # Core writes the captured stdin content as the only run-scoped artifact.
+    assert loaded_request.parent_context_artifact == str(run_scoped)
+    assert request_payload["parent_context_artifact"] == str(run_scoped)
+    assert run_scoped.is_file()
+    assert run_scoped.read_text(encoding="utf-8") == content
+    # Parent context is sensitive session data: the run artifact is private.
+    assert run_scoped.stat().st_mode & 0o777 == 0o600
+    # Existing additional context behavior is unchanged.
+    assert loaded_request.additional_context == "additional context"
+    assert request_payload["additional_context"] == "additional context"
+
+
+def test_start_run_missing_parent_context_source_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(tmp_path)
+    monkeypatch.setattr("orchestra.dispatch.orchestra_can_dispatch", lambda: True)
+    monkeypatch.setattr("orchestra.supervision.reconcile_stale_queued_runs", lambda _context: [])
+    monkeypatch.setattr("orchestra.supervision._spawn_supervisor", lambda *args, **kwargs: None)
+
+    with pytest.raises(AppError, match="parent context artifact could not be read"):
+        start_run(
+            context,
+            session_id="manual:test",
+            role_name=None,
+            goal="Do work.",
+            additional_context="",
+            boundaries="",
+            acceptance_target="",
+            return_format="",
+            timeout_seconds=10,
+            task_label="",
+            batch_id=None,
+            parent_context_artifact=str(tmp_path / "already-gone.jsonl"),
+        )
+
+
+def test_start_run_reserves_parent_context_only_for_the_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(tmp_path)
+    monkeypatch.setattr("orchestra.dispatch.orchestra_can_dispatch", lambda: True)
+    monkeypatch.setattr("orchestra.supervision.reconcile_stale_queued_runs", lambda _context: [])
+    monkeypatch.setattr("orchestra.supervision._spawn_supervisor", lambda *args, **kwargs: None)
+
+    source = tmp_path / "parent-context-source.jsonl"
+    source.write_text("parent turn\n", encoding="utf-8")
+
+    started = start_run(
+        context,
+        session_id="manual:test",
+        role_name=None,
+        goal="Do work.",
+        additional_context="",
+        boundaries="",
+        acceptance_target="",
+        return_format="",
+        timeout_seconds=10,
+        task_label="",
+        batch_id=None,
+        parent_context_artifact=str(source),
+    )
+
+    run_dir = tmp_path / "state" / "runs" / started.record.run_id
+    assert sorted(path.name for path in run_dir.iterdir()) == [
+        "events.jsonl",
+        "parent-context.jsonl",
+        "request.json",
+    ]
+
+
+def test_start_run_parent_context_artifact_defaults_to_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(tmp_path)
+    monkeypatch.setattr("orchestra.dispatch.orchestra_can_dispatch", lambda: True)
+    monkeypatch.setattr("orchestra.supervision.reconcile_stale_queued_runs", lambda _context: [])
+    monkeypatch.setattr("orchestra.supervision._spawn_supervisor", lambda *args, **kwargs: None)
+
+    started = start_run(
+        context,
+        session_id="manual:test",
+        role_name=None,
+        goal="Do work.",
+        additional_context="ctx",
+        boundaries="",
+        acceptance_target="",
+        return_format="",
+        timeout_seconds=10,
+        task_label="",
+        batch_id=None,
+    )
+
+    loaded_request = _load_pending_request(started.record.run_id, started.request_file)
+    request_payload = json.loads(started.request_file.read_text(encoding="utf-8"))
+
+    assert loaded_request.parent_context_artifact is None
+    assert request_payload["parent_context_artifact"] is None
+    run_dir = tmp_path / "state" / "runs" / started.record.run_id
+    assert not (run_dir / "parent-context.jsonl").exists()
