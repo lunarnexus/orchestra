@@ -4,6 +4,7 @@ test-config/
 
 # Local planning state
 PLAN.md
+HANDOFF.md
 
 # OS junk
 .DS_Store
