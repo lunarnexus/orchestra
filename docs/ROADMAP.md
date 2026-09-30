@@ -33,10 +33,16 @@ Orchestra roadmap items are split into:
    - Create a task list through the orch tool as tasks are marked complete.
    - Include hints that propose the next step.
    - Integrate with workflow tracking and verifier mode.
+   - We should call this task-back maybe.  The orchestrator creates the task
+   list through a tool, single steps tasks, as each step is completed, a return
+   prompt nudges the orchestrator forward.  We'll need a reliable way to keep
+   the loop going.  We might be able to use the return prompt to ask the 
+   orchestrator to evaluate a goal condition.  
 7. [ ] Better integrate workflows into Orchestra core.
    - Don't make the workflow so reliant on the orchestrator skill.
    - Take better advantage of hints to prod the orchestrator along.
    - Track workflow steps in Orchestra rather than primarily in the orchestrator session.
+
 
 ## Wishlist
 
