@@ -58,7 +58,7 @@ tool_description: >-
   Choose the enabled role matching the slice. Use distinct enabled roles for
   each required gate when available; otherwise the workflow assigns that gate
   to the main session.
-  Completed subagent reports return automatically. Do not poll. Do not call
+  Completed subagents wake you upon return automatically. Do not poll. Do not call
   orch_status unless the user explicitly asks for status, history, roles, help,
   doctor, activation, or stop. {roles}
 tool_prompt_snippet: ""

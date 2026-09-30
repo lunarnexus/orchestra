@@ -16,8 +16,10 @@ from typing import TYPE_CHECKING, TypedDict
 
 from orchestra.artifacts import (
     canonical_events_path,
+    canonical_parent_context_path,
     canonical_request_path,
     canonical_return_path,
+    copy_private_file,
     legacy_request_path,
     write_text_atomically,
 )
@@ -412,6 +414,24 @@ def _finalize_builder_with_auto_verifier(
         ),
         builder_request,
     )
+    verifier_parent_context: str | None = None
+    builder_parent_context = builder_request.parent_context_artifact
+    if builder_parent_context:
+        # The verifier gets the same orchestrator parent context the builder got,
+        # copied into its own run-scoped artifact with private permissions. Host
+        # context is never recaptured here, and the builder's session context is
+        # never passed through.
+        verifier_parent_context_path = canonical_parent_context_path(
+            context.config.state_dir, child_record.run_id
+        )
+        try:
+            copy_private_file(builder_parent_context, verifier_parent_context_path)
+        except OSError as exc:
+            raise _app_error(
+                "builder parent context could not be copied for the verifier: "
+                f"{exc}"
+            ) from exc
+        verifier_parent_context = str(verifier_parent_context_path)
     pending_child_request = PendingRunRequest(
         run_id=child_record.run_id,
         role_name=chain.next_role,
@@ -427,6 +447,7 @@ def _finalize_builder_with_auto_verifier(
         triggered_by_run_id=child_record.triggered_by_run_id,
         trigger_reason=child_record.trigger_reason,
         sequence_index=child_record.sequence_index,
+        parent_context_artifact=verifier_parent_context,
     )
     _write_pending_request(pending_child_request)
 

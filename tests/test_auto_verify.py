@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 
-from orchestra.artifacts import canonical_return_path
+from orchestra.artifacts import (
+    canonical_parent_context_path,
+    canonical_request_path,
+    canonical_return_path,
+)
 from orchestra.config import AgentCatalog, AppConfig, ConcurrencyConfig, RoleConfig
 from orchestra.context import AppContext, OrchestraPaths
 from orchestra.dispatch import PendingRunRequest, StartedRun, start_run
@@ -24,6 +28,7 @@ from orchestra.supervision import (
     AUTO_VERIFY_CHAIN,
     _auto_dispatch_chain_for_run,
     _finalize_run,
+    _load_pending_request,
     build_auto_verifier_assignment,
 )
 from tests.test_cli_commands import load_root_prompt_config
@@ -81,6 +86,7 @@ def _start_linked_run(
     trigger_reason: str | None = None,
     sequence_index: int | None = None,
     allow_auto_only: bool = False,
+    parent_context_artifact: str | None = None,
 ) -> StartedRun:
     monkeypatch.setattr("orchestra.dispatch.orchestra_can_dispatch", lambda: True)
     monkeypatch.setattr("orchestra.supervision.reconcile_stale_queued_runs", lambda _context: [])
@@ -102,6 +108,7 @@ def _start_linked_run(
         trigger_reason=trigger_reason,
         sequence_index=sequence_index,
         allow_auto_only=allow_auto_only,
+        parent_context_artifact=parent_context_artifact,
     )
     context.store.update_run(started.record.run_id, RunUpdate(status=STATUS_RUNNING))
     return started
@@ -511,6 +518,69 @@ def test_auto_verify_does_not_duplicate_existing_auto_verifier_run(
     verifier_runs = [run for run in runs if run.trigger_reason == "auto_verify"]
 
     assert len(verifier_runs) == 1
+
+
+def test_auto_verify_propagates_builder_parent_context_to_verifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(tmp_path, auto_verify=True)
+    source = tmp_path / "parent-context-source.jsonl"
+    source.write_text(
+        '{"role": "user", "content": "secret parent turn"}\n', encoding="utf-8"
+    )
+    builder_started = _start_linked_run(
+        context, monkeypatch, parent_context_artifact=str(source)
+    )
+    builder_run_id = builder_started.record.run_id
+    builder_context = canonical_parent_context_path(
+        context.config.state_dir, builder_run_id
+    )
+
+    _finalize_run(context, builder_run_id, _done_result())
+
+    runs = context.store.list_runs("manual:test", limit=10)
+    verifier = [run for run in runs if run.trigger_reason == "auto_verify"][0]
+    verifier_context = canonical_parent_context_path(
+        context.config.state_dir, verifier.run_id
+    )
+
+    loaded = _load_pending_request(
+        verifier.run_id,
+        canonical_request_path(context.config.state_dir, verifier.run_id),
+    )
+    # The verifier gets the builder's orchestrator parent context as its own
+    # run-scoped artifact, not a recaptured host context.
+    assert loaded.parent_context_artifact == str(verifier_context)
+    assert verifier_context.is_file()
+    assert verifier_context.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
+    # Parent context is sensitive session data: the run artifact is private.
+    assert verifier_context.stat().st_mode & 0o777 == 0o600
+    # The builder's own artifact is left untouched.
+    assert builder_context.is_file()
+    assert builder_context.read_text(encoding="utf-8") == source.read_text(encoding="utf-8")
+
+
+def test_auto_verify_without_builder_parent_context_leaves_verifier_without_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = _make_context(tmp_path, auto_verify=True)
+    builder_started = _start_linked_run(context, monkeypatch)
+
+    _finalize_run(context, builder_started.record.run_id, _done_result())
+
+    runs = context.store.list_runs("manual:test", limit=10)
+    verifier = [run for run in runs if run.trigger_reason == "auto_verify"][0]
+    loaded = _load_pending_request(
+        verifier.run_id,
+        canonical_request_path(context.config.state_dir, verifier.run_id),
+    )
+
+    assert loaded.parent_context_artifact is None
+    assert not canonical_parent_context_path(
+        context.config.state_dir, verifier.run_id
+    ).exists()
 
 
 def test_auto_verify_leaves_builder_alone_when_disabled(
