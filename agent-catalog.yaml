@@ -6,7 +6,7 @@ model_limits:
     concurrency: 2
   "lmstudio/qwen/qwen3.8-27b":
     concurrency: 1
-  "vllm/LOADED:low":
+  "vllm/LOADED":
     concurrency: 3
 harness_configs:
   pi:
@@ -58,7 +58,7 @@ roles:
     nested_dispatch_depth: 2
   researcher:
     harness_config: pi
-    model: "vllm/LOADED:low"
+    model: "vllm/LOADED"
     pass_parent_context: true
     dispatch_hint: Gather evidence with sources from docs, web, or code. Do not
       change code. Update only the explicitly assigned RESEARCH.md section when requested. Return
@@ -73,7 +73,7 @@ roles:
     - researcher
   builder:
     harness_config: pi
-    model: "vllm/LOADED:low"
+    model: "vllm/LOADED"
     pass_parent_context: true
     skills:
     - builder
@@ -88,7 +88,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   verifier:
     harness_config: pi
-    model: "vllm/LOADED:low"
+    model: "vllm/LOADED"
     pass_parent_context: true
     skills:
     - verifier
@@ -103,7 +103,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   reviewer:
     harness_config: pi
-    model: "vllm/LOADED:low"
+    model: "vllm/LOADED"
     pass_parent_context: true
     skills:
     - reviewer
@@ -118,7 +118,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   appsec:
     harness_config: pi
-    model: "vllm/LOADED:low"
+    model: "vllm/LOADED"
     pass_parent_context: true
     skills:
     - appsec
@@ -132,7 +132,7 @@ roles:
       HINDSIGHT4PI_AUTO_RECALL: '0'
   intern:
     harness_config: pi
-    model: "vllm/LOADED:low"
+    model: "vllm/LOADED"
     pass_parent_context: true
     dispatch_hint: Focus on the assigned task and return a compact result.
     enabled_workflow_hint: Use the intern role for any task that doesn't require special skills, generic testing, lightweight tasks.
