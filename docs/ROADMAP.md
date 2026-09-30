@@ -18,12 +18,6 @@ Orchestra roadmap items are split into:
    - Allow those artifacts to be passed directly between subagents instead of round-tripping through the orchestrator session context.
    - Align artifact shape with multi-step dispatch (TODO 1) so a step's return feeds the next step's task input.
 
-3. [ ] Fork mode and parent-context handoff experiments.
-   - Optional way to dispatch a subagent that's forked from the parent session using `--fork <session id>`.
-   - Revisit pre-run dispatches for compacting parent context and passing that compacted context to the child; earlier experiments had limited success, but the approach may still be useful.
-   - Investigate passing the whole parent context, or using a host fork function, when launching a child.
-   - Use SPSI to swap role skills outside persistent context: remove main-session orchestrator skills from the child request-time instructions and inject the child role skill, such as builder, instead.
-
 4. [ ] Investigate verifier/reviewer run limits to prevent spiraling fix loops.
    - Specifically gpt-5.5/5.6 are bad about nitpicking everything to death.
 
