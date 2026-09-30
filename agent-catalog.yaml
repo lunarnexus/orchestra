@@ -59,7 +59,7 @@ roles:
   researcher:
     harness_config: pi
     model: "vllm/LOADED:low"
-    pass_parent_context: false
+    pass_parent_context: true
     dispatch_hint: Gather evidence with sources from docs, web, or code. Do not
       change code. Update only the explicitly assigned RESEARCH.md section when requested. Return
       the compact schema only.
@@ -74,7 +74,7 @@ roles:
   builder:
     harness_config: pi
     model: "vllm/LOADED:low"
-    pass_parent_context: false
+    pass_parent_context: true
     skills:
     - builder
     dispatch_hint: Implement the assigned task only. Stay in scope. Run focused
@@ -89,7 +89,7 @@ roles:
   verifier:
     harness_config: pi
     model: "vllm/LOADED:low"
-    pass_parent_context: false
+    pass_parent_context: true
     skills:
     - verifier
     dispatch_hint: Independently prove whether the work satisfies its scope and
@@ -104,7 +104,7 @@ roles:
   reviewer:
     harness_config: pi
     model: "vllm/LOADED:low"
-    pass_parent_context: false
+    pass_parent_context: true
     skills:
     - reviewer
     dispatch_hint: Independently review whether the change is correct, maintainable,
@@ -119,7 +119,7 @@ roles:
   appsec:
     harness_config: pi
     model: "vllm/LOADED:low"
-    pass_parent_context: false
+    pass_parent_context: true
     skills:
     - appsec
     dispatch_hint: Independently identify realistic vulnerabilities across changed
@@ -133,7 +133,7 @@ roles:
   intern:
     harness_config: pi
     model: "vllm/LOADED:low"
-    pass_parent_context: false
+    pass_parent_context: true
     dispatch_hint: Focus on the assigned task and return a compact result.
     enabled_workflow_hint: Use the intern role for any task that doesn't require special skills, generic testing, lightweight tasks.
     enabled: true
