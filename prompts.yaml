@@ -84,7 +84,6 @@ status_description: >-
   subagents, history for completed subagent results, roles for read-only role
   information, doctor for setup checks, help for usage, on to enable Orchestra
   tools and SPSI guidance, and stop with a runId to cancel an owned active run.
-  Do not poll for completion. Completed subagent reports return automatically.
 status_action_description: >-
   Action to perform: help, doctor, roles, status, history, on, or stop. Use stop
   only with a runId for an active run owned by the current host session.
@@ -98,7 +97,7 @@ soft_timeout_block_reason: Orchestra soft timeout reached; return budget handoff
 session_mode_off_message: Orchestra tools hidden for this session. Run /orch on to enable them again.
 session_mode_on_message: Orchestra tools enabled for this session.
 session_mode_orchestrate_message: Orchestra tools and orchestrator skill enabled for this session.
-dispatch_ack_instruction: subagent will auto-return when finished. Do not poll, stop.
+dispatch_ack_instruction: Completed subagents wake you upon return automatically. Do not poll, do not re-dispatch the same task before it returns. 
 return_hint_done: advance the plan using this subagent return; do not repeat its work
 return_hint_incomplete: pass this return_path handoff artifact to the next dispatch and continue from it
 return_hint_failed: read the failed return artifact and decide how to proceed
