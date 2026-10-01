@@ -541,6 +541,7 @@ return_hint_done: Custom done hint.
 return_hint_incomplete: Custom incomplete hint.
 return_hint_failed: Custom failed hint.
 return_hint_builder_failed: Custom builder failed hint.
+return_hint_budget_exceeded: Custom budget exceeded hint.
 budget_trigger_label: Custom budget label.
 soft_timeout_block_reason: Custom soft timeout reason.
 session_mode_off_message: Custom off message.
@@ -605,6 +606,7 @@ return_hint_done: ok
 return_hint_incomplete: ok
 return_hint_failed: ok
 return_hint_builder_failed: ok
+return_hint_budget_exceeded: ok
 budget_trigger_label: ok
 soft_timeout_block_reason: ok
 session_mode_off_message: ok
@@ -648,6 +650,7 @@ return_hint_done: ok
 return_hint_incomplete: ok
 return_hint_failed: ok
 return_hint_builder_failed: ok
+return_hint_budget_exceeded: ok
 budget_trigger_label: ok
 soft_timeout_block_reason: ok
 session_mode_off_message: ok
@@ -1358,6 +1361,7 @@ REQUIRED_PROMPT_KEYS = (
     "return_hint_incomplete",
     "return_hint_failed",
     "return_hint_builder_failed",
+    "return_hint_budget_exceeded",
     "budget_trigger_label",
     "soft_timeout_block_reason",
     "session_mode_off_message",

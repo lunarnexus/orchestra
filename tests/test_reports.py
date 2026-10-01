@@ -27,6 +27,7 @@ from orchestra.state import (
     StateStore,
 )
 from orchestra.status import await_run_payload
+from orchestra.supervision import WORKER_BUDGET_EXCEEDED_BLOCKER
 from tests.helpers import ROOT_PROMPTS, extract_run_id, run_cli, wait_for_condition
 from tests.test_cli_commands import load_root_prompt_config
 from tests.types import RuntimeFilesFactory
@@ -1148,3 +1149,115 @@ def test_format_orchestrator_return_keeps_success_reports_compact(tmp_path: Path
     ], state_dir=tmp_path)
     assert "return_path:" in report
     assert "events_path:" not in report
+
+
+def test_budget_exceeded_builder_incomplete_renders_specific_outcome_and_hint(
+    tmp_path: Path,
+) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="budget-run",
+                orchestrator_session_id="manual:budget",
+                harness="pi",
+                role="builder",
+                task_label="budget test",
+                log_path=tmp_path / "budget-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_INCOMPLETE,
+                blocker_text=WORKER_BUDGET_EXCEEDED_BLOCKER,
+                result_summary="Status: incomplete Verdict: n/a",
+            )
+        ],
+        state_dir=tmp_path,
+    )
+
+    assert "[orchestra: builder budget-run budget_exceeded]" in report
+    assert f"next: {PROMPTS.return_hint_budget_exceeded}" in report
+    assert PROMPTS.return_hint_builder_failed not in report
+    assert PROMPTS.return_hint_incomplete not in report
+
+
+def test_budget_exceeded_via_stop_reason_marker_in_result_summary(
+    tmp_path: Path,
+) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="marker-run",
+                orchestrator_session_id="manual:budget",
+                harness="pi",
+                role="builder",
+                task_label="budget marker test",
+                log_path=tmp_path / "marker-run.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_INCOMPLETE,
+                result_summary=(
+                    "ORCHESTRA_STATUS: incomplete\n"
+                    "ORCHESTRA_STOP_REASON: budget_exceeded\n"
+                    "Status: incomplete Verdict: n/a"
+                ),
+            )
+        ],
+        state_dir=tmp_path,
+    )
+
+    assert "[orchestra: builder marker-run budget_exceeded]" in report
+    assert f"next: {PROMPTS.return_hint_budget_exceeded}" in report
+    assert PROMPTS.return_hint_builder_failed not in report
+
+
+def test_budget_exceeded_non_builder_incomplete_renders_specific_outcome(
+    tmp_path: Path,
+) -> None:
+    report = format_orchestrator_return(
+        [
+            RunRecord(
+                run_id="research-budget",
+                orchestrator_session_id="manual:budget",
+                harness="pi",
+                role="researcher",
+                task_label="research budget test",
+                log_path=tmp_path / "research-budget.jsonl",
+                created_at="2026-01-01T00:00:00Z",
+                status=STATUS_INCOMPLETE,
+                blocker_text=WORKER_BUDGET_EXCEEDED_BLOCKER,
+            )
+        ],
+        state_dir=tmp_path,
+    )
+
+    assert "[orchestra: researcher research-budget budget_exceeded]" in report
+    assert f"next: {PROMPTS.return_hint_budget_exceeded}" in report
+    assert PROMPTS.return_hint_incomplete not in report
+
+
+def test_budget_exceeded_await_run_payload_uses_budget_hint(
+    tmp_path: Path,
+) -> None:
+    record = RunRecord(
+        run_id="await-budget",
+        orchestrator_session_id="manual:budget",
+        harness="pi",
+        role="builder",
+        task_label="budget await test",
+        log_path=tmp_path / "await-budget.jsonl",
+        created_at="2026-01-01T00:00:00Z",
+        status=STATUS_INCOMPLETE,
+        blocker_text=WORKER_BUDGET_EXCEEDED_BLOCKER,
+    )
+
+    payload = await_run_payload(
+        record,
+        active_remaining=0,
+        details=SessionStatusDetails(
+            descendants_terminal=True,
+            session_report_available=False,
+            session_report_delivered=False,
+        ),
+        prompts=PROMPTS,
+    )
+
+    assert payload["next"] == PROMPTS.return_hint_budget_exceeded
+    assert payload["status"] == STATUS_INCOMPLETE
+    assert payload["blocker"] == WORKER_BUDGET_EXCEEDED_BLOCKER

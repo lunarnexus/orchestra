@@ -69,6 +69,7 @@ def load_root_prompt_config() -> PromptConfig:
         return_hint_incomplete=data["return_hint_incomplete"],
         return_hint_failed=data["return_hint_failed"],
         return_hint_builder_failed=data["return_hint_builder_failed"],
+        return_hint_budget_exceeded=data["return_hint_budget_exceeded"],
         budget_trigger_label=data["budget_trigger_label"],
         soft_timeout_block_reason=data["soft_timeout_block_reason"],
         session_mode_off_message=data["session_mode_off_message"],

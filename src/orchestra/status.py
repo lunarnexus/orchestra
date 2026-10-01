@@ -539,9 +539,22 @@ def await_run_payload(
     }
 
 
+def _is_budget_exceeded_run(run: RunRecord) -> bool:
+    from orchestra.supervision import WORKER_BUDGET_EXCEEDED_BLOCKER
+
+    if run.blocker_text == WORKER_BUDGET_EXCEEDED_BLOCKER:
+        return True
+    for text in (run.result_summary, run.result_output):
+        if text and "orchestra_stop_reason: budget_exceeded" in text.lower():
+            return True
+    return False
+
+
 def _return_hint(run: RunRecord, *, prompts: PromptConfig) -> str | None:
     from orchestra.state import STATUS_CANCELLED, STATUS_DONE
 
+    if _is_budget_exceeded_run(run):
+        return prompts.return_hint_budget_exceeded
     if run.status == STATUS_DONE:
         return prompts.return_hint_done
     if run.status == STATUS_INCOMPLETE:
