@@ -762,11 +762,28 @@ def _handle_dispatch_command(args: argparse.Namespace) -> int:
 
 
 def _handle_dispatch_ack(args: argparse.Namespace) -> int:
+    instruction = _load_dispatch_ack_instruction(args.config)
     if args.json:
-        print(json.dumps(dispatch_ack_payload(args.run_id, role=args.role)))
+        print(
+            json.dumps(
+                dispatch_ack_payload(args.run_id, role=args.role, instruction=instruction)
+            )
+        )
     else:
-        print(format_dispatch_ack(args.run_id, role=args.role))
+        print(format_dispatch_ack(args.run_id, role=args.role, instruction=instruction))
     return 0
+
+
+def _load_dispatch_ack_instruction(config_path: str | None) -> str:
+    try:
+        from orchestra.config import load_app_config, resolve_config_path, resolve_prompts_path
+
+        config_file = resolve_config_path(config_path)
+        prompts_file = resolve_prompts_path(config_path)
+        config = load_app_config(config_file, prompts_path=prompts_file)
+        return config.prompts.dispatch_ack_instruction
+    except Exception:
+        return "subagent will auto-return when finished. Do not poll, stop."
 
 
 def _handle_command_echo(args: argparse.Namespace) -> int:

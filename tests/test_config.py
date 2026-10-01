@@ -547,6 +547,7 @@ soft_timeout_block_reason: Custom soft timeout reason.
 session_mode_off_message: Custom off message.
 session_mode_on_message: Custom on message.
 session_mode_orchestrate_message: Custom orchestrate message.
+dispatch_ack_instruction: Custom dispatch ack instruction.
 """.lstrip(),
         encoding="utf-8",
     )
@@ -656,6 +657,7 @@ soft_timeout_block_reason: ok
 session_mode_off_message: ok
 session_mode_on_message: ok
 session_mode_orchestrate_message: ok
+dispatch_ack_instruction: ok
 """.lstrip(),
         encoding="utf-8",
     )

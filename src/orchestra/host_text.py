@@ -57,22 +57,32 @@ def _app_error(message: str) -> Exception:
     return AppError(message)
 
 
-def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
+def format_dispatch_ack(
+    run_id: str,
+    *,
+    role: str | None = None,
+    instruction: str = "subagent will auto-return when finished. Do not poll, stop.",
+) -> str:
     role_text = f" {role}" if role else ""
     return (
         f"orchestra dispatched:{role_text} {run_id}\n"
-        "subagent will auto-return when finished. Do not poll while waiting."
+        f"{instruction}"
     )
 
 
-def dispatch_ack_payload(run_id: str, *, role: str | None = None) -> dict[str, object]:
+def dispatch_ack_payload(
+    run_id: str,
+    *,
+    role: str | None = None,
+    instruction: str = "subagent will auto-return when finished. Do not poll, stop.",
+) -> dict[str, object]:
     return {
         "contract_version": CONTRACT_VERSION,
         "kind": "dispatch_ack",
         "ok": True,
         "run_id": run_id,
         "role": role,
-        "message": format_dispatch_ack(run_id, role=role),
+        "message": format_dispatch_ack(run_id, role=role, instruction=instruction),
     }
 
 

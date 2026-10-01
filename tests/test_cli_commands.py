@@ -75,6 +75,7 @@ def load_root_prompt_config() -> PromptConfig:
         session_mode_off_message=data["session_mode_off_message"],
         session_mode_on_message=data["session_mode_on_message"],
         session_mode_orchestrate_message=data["session_mode_orchestrate_message"],
+        dispatch_ack_instruction=data["dispatch_ack_instruction"],
     )
 
 
@@ -1307,7 +1308,7 @@ def test_internal_dispatch_ack_includes_role(capsys: pytest.CaptureFixture[str])
     assert exit_code == 0
     assert output.strip() == (
         "orchestra dispatched: critic abc123\n"
-        "subagent will auto-return when finished. Do not poll while waiting."
+        "subagent will auto-return when finished. Do not poll, stop."
     )
 
 

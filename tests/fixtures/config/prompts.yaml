@@ -78,6 +78,7 @@ soft_timeout_block_reason: Orchestra soft timeout reached; return budget handoff
 session_mode_off_message: Orchestra tools hidden for this session. Run /orch on to enable them again.
 session_mode_on_message: Orchestra tools enabled for this session.
 session_mode_orchestrate_message: Orchestra tools and orchestrator skill enabled for this session.
+dispatch_ack_instruction: subagent will auto-return when finished. Do not poll, stop.
 budget_exceeded_prompt: |-
   [Orchestra subagent budget exceeded]
   Stop everything you're doing immediately.
