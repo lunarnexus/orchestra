@@ -275,12 +275,9 @@ def format_run_report(
     if token_accounting:
         lines.append(token_accounting)
     if record.status == STATUS_INCOMPLETE:
-        hint = (
-            prompts.return_hint_budget_exceeded
-            if _is_budget_exceeded_run(record)
-            else prompts.return_hint_incomplete
-        )
-        lines.append(f"next: {hint}")
+        hint = _return_hint(record, prompts=prompts)
+        if hint:
+            lines.append(f"next: {hint}")
     if record.worker_session_id:
         lines.append(f"worker_session_id: {record.worker_session_id}")
     if record.transcript_path:

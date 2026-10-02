@@ -420,10 +420,12 @@ Role `enabled: auto` entries remain visible in role listings but are rejected by
 normal manual dispatch. Core auto-verification can select the auto-only
 `verifier` role when a completed `builder` run triggers verification.
 
-The main orchestration skill is `skills/orchestrator/SKILL.md`. `/orch on`
-loads it into the main session through host-specific message delivery. Role
-skills define methodology and stricter workflow; shared tool metadata defines
-basic dispatch behavior across hosts.
+The main orchestration role config lists `skills/orch-orchestrator/SKILL.md`
+for Orchestra-specific operations and `skills/orchestrator/SKILL.md` for
+orchestration method. `/orch orchestrate` injects both via SPSI; `/orch on`
+keeps tools available without main-session orchestration guidance. Role skills
+define methodology and stricter workflow; shared tool metadata defines basic
+dispatch behavior across hosts.
 
 Superseded skills remain under `skills/archive/`. Hermes-specific imported
 skills under `skills/hermes/` are not active Orchestra defaults.

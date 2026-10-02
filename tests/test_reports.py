@@ -502,6 +502,42 @@ def test_return_hints_come_from_prompts_yaml(
     assert done_payload["next"] is None
 
 
+@pytest.mark.parametrize(
+    ("status", "role", "blocker", "hint_field"),
+    [
+        (STATUS_INCOMPLETE, "researcher", None, "return_hint_incomplete"),
+        (STATUS_INCOMPLETE, "builder", None, "return_hint_builder_failed"),
+        (
+            STATUS_INCOMPLETE,
+            "builder",
+            WORKER_BUDGET_EXCEEDED_BLOCKER,
+            "return_hint_budget_exceeded",
+        ),
+    ],
+)
+def test_incomplete_hint_is_shared_across_surfaces(
+    status: str, role: str, blocker: str | None, hint_field: str
+) -> None:
+    run = RunRecord(
+        run_id="hint-run",
+        orchestrator_session_id="manual:hints",
+        harness="pi",
+        role=role,
+        task_label="hint test",
+        log_path=Path("hint-run.jsonl"),
+        created_at="2026-01-01T00:00:00Z",
+        status=status,
+        blocker_text=blocker,
+    )
+    hint = getattr(PROMPTS, hint_field)
+    details = SessionStatusDetails(True, False, False)
+
+    payload = await_run_payload(run, active_remaining=0, details=details, prompts=PROMPTS)
+    assert payload["next"] == hint
+    assert f"next: {hint}" in format_run_report(run, prompts=PROMPTS)
+    assert f"next: {hint}" in format_orchestrator_return([run], prompts=PROMPTS)
+
+
 def test_auto_chain_child_hint_is_suppressed_when_parent_is_present(
     tmp_path: Path,
 ) -> None:

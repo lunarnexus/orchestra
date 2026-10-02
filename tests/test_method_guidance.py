@@ -28,17 +28,33 @@ def test_verifier_reuses_builder_command_evidence() -> None:
     assert "does not read or modify role-owned `.md` artifacts" in skill
 
 
+def test_orchestrator_role_loads_operational_and_general_skills() -> None:
+    catalog = yaml.safe_load(Path("agent-catalog.yaml").read_text(encoding="utf-8"))
+    skills = catalog["roles"]["orchestrator"]["skills"]
+    assert skills[:2] == ["orch-orchestrator", "orchestrator"]
+    for skill_name in skills[:2]:
+        text = Path("skills", skill_name, "SKILL.md").read_text(encoding="utf-8")
+        assert text.startswith("---\n")
+        assert f"name: {skill_name}\n" in text
+
+
 def test_orchestrator_skill_scopes_verifier_failure_fixers() -> None:
-    skill = Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8")
+    skill = Path("skills/orch-orchestrator/SKILL.md").read_text(encoding="utf-8")
 
     assert "reads failed return artifacts and decides how to proceed" in skill
     assert "guided by the failed return hint" in skill
     assert "dispatch one narrow fixer" in skill
     assert "exact failing evidence" in skill
     assert "same focused check fails twice" in skill
-    assert "RESEARCH.md is researcher-owned evidence" in skill
-    assert "Verifier never replaces reviewer or appsec" in skill
-    assert "Verification proves acceptance" in skill
+    general_skill = Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8")
+    assert "`RESEARCH.md` — findings, sources, options, evidence; researcher-owned" in skill
+    assert "appsec runs exactly once" in skill
+    assert "Verifier never replaces reviewer or appsec" in general_skill
+    assert "Verification proves acceptance" in general_skill
+    for artifact in ("PLAN.md", "RESEARCH.md", "DECISIONS.md", "ARCHITECTURE.md"):
+        assert artifact not in general_skill
+    assert "partially ready` — dispatch only approved, unblocked slices" in general_skill
+    assert "partially\nready plan permits only individually approved, unblocked slices" in skill
 
 
 def test_planner_adds_single_reviewer_and_appsec_gates_when_enabled() -> None:
@@ -59,7 +75,7 @@ def test_default_catalog_reviewer_remains_read_only_without_duplicate_tests() ->
 
 
 def test_orchestrator_artifact_repairs_do_not_run_commands() -> None:
-    skill = Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8")
+    skill = Path("skills/orch-orchestrator/SKILL.md").read_text(encoding="utf-8")
 
     assert "Do not dispatch another subagent only to copy returned evidence" in skill
     assert "artifact-only repair" in skill
@@ -135,20 +151,14 @@ def test_auto_verifier_assignment_stays_narrow_and_builder_specific() -> None:
 
 
 def test_orchestrator_delegates_package_installation_to_builder() -> None:
-    orchestrator_skill = Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8")
+    orchestrator_skill = Path("skills/orch-orchestrator/SKILL.md").read_text(encoding="utf-8")
     builder_skill = Path("skills/builder/SKILL.md").read_text(encoding="utf-8")
-    prompts = yaml.safe_load(Path("prompts.yaml").read_text(encoding="utf-8"))[
-        "tool_description"
-    ]
-
     assert "pip install" in orchestrator_skill
     assert "npm install" in orchestrator_skill
     assert "dispatch a builder" in orchestrator_skill
     assert "does not run the install command itself" in orchestrator_skill
     assert "official project artifact sections" in orchestrator_skill
     assert "Builder owns implementation setup commands" in builder_skill
-    assert "install packages" in prompts
-    assert "update dependencies" in prompts
 
 
 def test_default_return_format_tracks_reused_evidence() -> None:

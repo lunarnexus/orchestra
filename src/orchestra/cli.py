@@ -32,7 +32,6 @@ from orchestra.host_text import (
     format_opencode_help,
     format_progress_notification,
     progress_notification_payload,
-    render_orchestrator_skill_message,
 )
 from orchestra.init import (
     InitFileResult,
@@ -87,7 +86,6 @@ INTERNAL_COMMANDS = frozenset(
         "_session-mode",
         "_tool-info",
         "_role-metadata",
-        "_orchestrator-skill",
         "_spsi-payload",
     }
 )
@@ -397,12 +395,6 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
 
         role_metadata_parser = subparsers.add_parser("_role-metadata", help=argparse.SUPPRESS)
         role_metadata_parser.set_defaults(handler=_handle_role_metadata)
-
-        orchestrator_skill_parser = subparsers.add_parser(
-            "_orchestrator-skill",
-            help=argparse.SUPPRESS,
-        )
-        orchestrator_skill_parser.set_defaults(handler=_handle_orchestrator_skill)
 
         spsi_payload_parser = subparsers.add_parser("_spsi-payload", help=argparse.SUPPRESS)
         spsi_payload_parser.add_argument("--session-id", required=True)
@@ -828,12 +820,6 @@ def _handle_role_metadata(args: argparse.Namespace) -> int:
     return 0
 
 
-def _handle_orchestrator_skill(args: argparse.Namespace) -> int:
-    del args
-    print(render_orchestrator_skill_message())
-    return 0
-
-
 def _handle_spsi_payload(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=None)
     print(json.dumps(spsi_payload(context, args.session_id).to_payload()))
@@ -918,17 +904,14 @@ def _handle_await_run(args: argparse.Namespace) -> int:
         run_id=args.run_id,
         timeout_seconds=args.timeout,
     )
+    payload = await_run_payload(
+        record,
+        active_remaining=active_remaining,
+        details=details,
+        prompts=context.config.prompts,
+    )
     if args.json:
-        print(
-            json.dumps(
-                await_run_payload(
-                    record,
-                    active_remaining=active_remaining,
-                    details=details,
-                    prompts=context.config.prompts,
-                )
-            )
-        )
+        print(json.dumps(payload))
         return 0
     print(f"run_id: {record.run_id}")
     print(f"status: {record.status}")
@@ -940,8 +923,8 @@ def _handle_await_run(args: argparse.Namespace) -> int:
         print(f"error: {record.error_text}")
     if record.blocker_text:
         print(f"blocker: {record.blocker_text}")
-    if record.status == "incomplete":
-        print(f"next: {context.config.prompts.return_hint_incomplete}")
+    if payload["next"]:
+        print(f"next: {payload['next']}")
     print(f"active_runs_remaining: {active_remaining}")
     print(f"descendants_terminal: {'yes' if details.descendants_terminal else 'no'}")
     print(f"session_report_available: {'yes' if details.session_report_available else 'no'}")

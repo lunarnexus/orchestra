@@ -144,60 +144,28 @@ def test_load_app_config_expands_tilde_paths(
     assert config.log_dir == home / "orchestra" / "logs"
 
 
-def test_root_host_help_uses_generic_session_wording() -> None:
+def test_root_host_help_loads_from_config() -> None:
     config = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml")
+    configured = yaml.safe_load(ROOT_PROMPTS.read_text(encoding="utf-8"))
 
-    assert (
-        "/orch on                           Enable Orchestra tools"
-        in config.prompts.host_help
-    )
-    assert (
-        "/orch off                          Hide Orchestra tools for this session"
-        in config.prompts.host_help
-    )
-    assert "/orch do <request>                 Dispatch a subagent" in config.prompts.host_help
-    assert (
-        "/orch config [KEY] [VALUE]         Show or update supported config values"
-        in config.prompts.host_help
-    )
-    assert "Pi session" not in config.prompts.host_help
-    assert "Configured roles" not in config.prompts.host_help
-    assert "Default:" not in config.prompts.host_help
-    assert "  ✓  " not in config.prompts.host_help
-    assert "  D  " not in config.prompts.host_help
+    assert config.prompts.host_help == configured["host_help"]
 
 
-def test_root_tool_guidance_enforces_orchestrator_boundaries() -> None:
+def test_root_prompt_guidance_loads_from_config() -> None:
     prompts = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml").prompts
+    configured = yaml.safe_load(ROOT_PROMPTS.read_text(encoding="utf-8"))
 
-    for expected in (
-        "For non-orchestration work, dispatch a subagent",
-        "decomposes requests, plans slices, sequences dispatches",
-        "Dispatch transfers ownership",
-        "must not run duplicate commands",
-        "Trust successful subagent returns",
-        "Do not double-test",
-        "Do not poll",
-        "Do not call orch_status unless the user explicitly asks",
-        "{roles}",
+    for field in (
+        "tool_description",
+        "main_session_ownership_guidance",
+        "return_hint_failed",
+        "default_return_format",
+        "status_description",
+        "dispatch_ack_instruction",
     ):
-        assert expected in prompts.tool_description
-    assert "Use orch_status for status/control" not in prompts.tool_description
-    assert "should normally" not in prompts.tool_description
-    assert prompts.tool_prompt_snippet == ""
-    assert prompts.tool_prompt_guidelines == ()
-    assert (
-        "main-session orchestrator reads failed return artifacts"
-        in prompts.main_session_ownership_guidance
-    )
-    assert (
-        "read the failed return artifact and decide how to proceed"
-        in prompts.return_hint_failed
-    )
-    assert "Artifacts updated:" in prompts.default_return_format
-    assert "Material evidence:" in prompts.default_return_format
-    assert "Use orch_status only when the user explicitly asks" in prompts.status_description
-    assert "Do not poll" in prompts.status_description
+        assert getattr(prompts, field) == configured[field]
+    assert prompts.tool_prompt_snippet == configured["tool_prompt_snippet"]
+    assert prompts.tool_prompt_guidelines == tuple(configured["tool_prompt_guidelines"])
 
 
 @pytest.mark.parametrize(

@@ -91,13 +91,7 @@ def tool_info_payload(context: AppContext, session_id: str | None = None) -> Too
         else default_main_session_mode(context)
     )
     return ToolInfoSchema(
-        description=(
-            prompts.tool_description.format(roles=roles)
-            + "\n\n"
-            + workflow
-            + "\n\n"
-            + prompts.main_session_ownership_guidance
-        ),
+        description=prompts.tool_description.format(roles=roles),
         prompt_snippet="",
         prompt_guidelines=[],
         goal_description=prompts.tool_goal_description,

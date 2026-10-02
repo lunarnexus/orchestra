@@ -16,7 +16,7 @@ from orchestra.host_commands import (
     session_mode_transition_payload,
     tool_info_payload,
 )
-from orchestra.host_text import render_orchestrator_skill_text
+from orchestra.roles import format_tool_roles
 from orchestra.spsi import SPSI_NAME, spsi_payload
 from orchestra.state import RunRecord, StateError
 from tests.helpers import write_runtime_files
@@ -58,6 +58,21 @@ def test_tool_info_schema_uses_resolved_session_mode(tmp_path: Path) -> None:
         "main-session orchestrator reads failed return artifacts"
         in payload["main_session_ownership_guidance"]
     )
+
+
+@pytest.mark.parametrize("mode", ["on", "orchestrate"])
+def test_dispatch_description_contains_only_shared_tool_guidance(
+    tmp_path: Path, mode: str
+) -> None:
+    context = make_context(tmp_path / mode, mode=mode)
+    payload = tool_info_payload(context, "pi:session-a")
+
+    assert payload.description == context.config.prompts.tool_description.format(
+        roles=format_tool_roles(context)
+    )
+    assert payload.workflow_instruction not in payload.description
+    assert context.config.prompts.main_session_ownership_guidance not in payload.description
+    assert spsi_payload(context, "pi:session-a").enabled is (mode == "orchestrate")
 
 
 def test_session_mode_payload_matches_current_mode_resolution(tmp_path: Path) -> None:
@@ -296,7 +311,7 @@ def test_spsi_payload_orchestrate_uses_stable_content_and_revision(tmp_path: Pat
     assert f'<orchestra_spsi name="{SPSI_NAME}" revision="{payload["revision"]}"' in content
     assert 'role="orchestrator"' in content
     assert 'skills="orchestrator,planner"' in content
-    assert render_orchestrator_skill_text() in content
+    assert Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8").strip() in content
     assert '<orchestra_spsi_skill name="planner">' in content
     assert "Role: intern" not in content
 
@@ -358,7 +373,7 @@ def test_spsi_payload_uses_worker_role_skills_for_worker_sessions(tmp_path: Path
     assert 'skills="worker"' in content
     assert "# Worker Skill" in content
     assert "Return WORKER_SKILL_OK when asked." in content
-    assert render_orchestrator_skill_text() not in content
+    assert Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8").strip() not in content
 
 
 def test_spsi_payload_disabled_omits_content_and_revision(tmp_path: Path) -> None:

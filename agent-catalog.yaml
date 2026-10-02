@@ -7,7 +7,7 @@ model_limits:
   "lmstudio/qwen/qwen3.8-27b":
     concurrency: 1
   "vllm/LOADED:low":
-    concurrency: 3
+    concurrency: 5
 harness_configs:
   pi:
     harness: pi
@@ -38,6 +38,7 @@ harness_configs:
 roles:
   orchestrator:
     skills:
+    - orch-orchestrator
     - orchestrator
     - planner
   planner:

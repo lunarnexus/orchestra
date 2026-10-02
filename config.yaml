@@ -9,4 +9,4 @@ concurrency: # Concurrent dispatches
   global: 6
   per_session: 3
 auto_return: true # Auto prompts the main session on subagent return
-auto_verify: false # Automatically runs a verifier after every sucessful builder return
+auto_verify: true # Automatically runs a verifier after every sucessful builder return
