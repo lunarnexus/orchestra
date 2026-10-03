@@ -73,7 +73,7 @@ After dispatching a subagent, the orchestrator stops working on that subagent's 
 
 Avoid duplicate work across roles. Before assigning review or appsec for the same files, commands, or acceptance target, use existing subagent evidence to narrow the next slice. Do not dispatch equivalent follow-ups when a returned subagent already completed the target. Do not ask multiple roles to run the same command unless the plan explicitly requires distinct evidence.
 
-Each phase subagent writes its artifact during the phase dispatch. Do not dispatch another subagent only to copy returned evidence into an artifact. Give each downstream role the artifact paths and command evidence produced by earlier roles. Assign only evidence that remains unresolved. Automatic verification reads the linked builder run's SQLite return output, not VERIFY.md, and uses a verifier-specific return format. If an artifact update is missing, dispatch an artifact-only repair. The repair uses existing evidence, runs no commands, and stops after updating the assigned section.
+Each phase subagent writes its artifact during the phase dispatch. Do not dispatch another subagent only to copy returned evidence into an artifact. Give each downstream role the artifact paths and command evidence produced by earlier roles. Assign only evidence that remains unresolved. Automatic verification receives the linked builder run's durable return and event artifact paths and uses a verifier-specific return format. If an artifact update is missing, dispatch an artifact-only repair. The repair uses existing evidence, runs no commands, and stops after updating the assigned section.
 
 Nested dispatch:
 - The orchestrator may dispatch researchers directly for planning evidence.

@@ -17,6 +17,29 @@ def test_builder_skill_caps_repeated_test_debugging() -> None:
     assert "same focused command fails twice" in skill
     assert "Use a single-test or test-filter command in the build loop" in skill
     assert "run a suite command once" in skill
+    assert "stop when either limit is reached" in skill
+    assert "Switching methods does not reset either limit" in skill
+    commit_resource = Path("skills/builder/resources/commit-handoff.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Reuse valid evidence" in commit_resource
+    assert "subsequent changes invalidate" in commit_resource
+
+
+def test_builder_role_loads_operational_and_general_skills() -> None:
+    catalog = yaml.safe_load(Path("agent-catalog.yaml").read_text(encoding="utf-8"))
+    assert catalog["roles"]["builder"]["skills"] == ["orch-builder", "builder"]
+    general = Path("skills/builder/SKILL.md").read_text(encoding="utf-8")
+    operational = Path("skills/orch-builder/SKILL.md").read_text(encoding="utf-8")
+    assert "## Required artifact gate" in operational
+    assert "## Return" in operational
+    assert "independent Orchestra verification" in operational
+    assert "Use the return format supplied with the dispatch" in operational
+    assert "```md" not in operational
+    assert "confirm the assigned slice" in operational
+    assert "PLAN.md" not in general
+    assert "resources/systematic-debugging.md" in general
+    assert "## Build loop" in general
 
 
 def test_verifier_reuses_builder_command_evidence() -> None:
@@ -43,6 +66,8 @@ def test_orchestrator_skill_scopes_verifier_failure_fixers() -> None:
 
     assert "reads failed return artifacts and decides how to proceed" in skill
     assert "guided by the failed return hint" in skill
+    assert "durable return and event artifact paths" in skill
+    assert "SQLite return output" not in skill
     assert "dispatch one narrow fixer" in skill
     assert "exact failing evidence" in skill
     assert "same focused check fails twice" in skill
