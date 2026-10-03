@@ -1349,6 +1349,69 @@ def test_internal_dispatch_ack_json_contract(capsys: pytest.CaptureFixture[str])
     assert output["role"] == "critic"
 
 
+def test_internal_dispatch_ack_reports_concurrency_headroom(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, _catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        ["python", "-c", "print('noop')"],
+    )
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    data["concurrency"] = {"global": 4, "per_session": 5}
+    config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    store = StateStore(db_path)
+    store.initialize()
+    store.create_run(
+        RunRecord(
+            run_id="ack-run-1",
+            orchestrator_session_id="manual:ack-session",
+            harness="pi",
+            role="builder",
+            task_label="ack",
+            log_path=tmp_path / "logs" / "ack-run-1.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+            transcript_path=tmp_path / "transcripts" / "ack-run-1.jsonl",
+        )
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path.parent),
+            "_dispatch-ack",
+            "--run-id",
+            "ack-run-1",
+            "--role",
+            "builder",
+        ]
+    )
+    text_output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "dispatch concurrency: 4/5 available" in text_output
+
+    json_exit = main(
+        [
+            "--config",
+            str(config_path.parent),
+            "_dispatch-ack",
+            "--run-id",
+            "ack-run-1",
+            "--role",
+            "builder",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert json_exit == 0
+    assert payload["concurrency_slots_remaining"] == 4
+    assert payload["concurrency_limit"] == 5
+
+
 def test_internal_progress_message_json_contract(capsys: pytest.CaptureFixture[str]) -> None:
     from orchestra.cli import main
 

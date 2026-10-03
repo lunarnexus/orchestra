@@ -48,12 +48,17 @@ def format_dispatch_ack(
     *,
     role: str | None = None,
     instruction: str,
+    concurrency_slots_remaining: int | None = None,
+    concurrency_limit: int | None = None,
 ) -> str:
     role_text = f" {role}" if role else ""
-    return (
-        f"orchestra dispatched:{role_text} {run_id}\n"
-        f"{instruction}"
-    )
+    text = f"orchestra dispatched:{role_text} {run_id}\n{instruction}"
+    if concurrency_slots_remaining is not None:
+        text += (
+            f"\ndispatch concurrency: "
+            f"{concurrency_slots_remaining}/{concurrency_limit} available"
+        )
+    return text
 
 
 def dispatch_ack_payload(
@@ -61,15 +66,28 @@ def dispatch_ack_payload(
     *,
     role: str | None = None,
     instruction: str,
+    concurrency_slots_remaining: int | None = None,
+    concurrency_limit: int | None = None,
 ) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "contract_version": CONTRACT_VERSION,
         "kind": "dispatch_ack",
         "ok": True,
         "run_id": run_id,
         "role": role,
-        "message": format_dispatch_ack(run_id, role=role, instruction=instruction),
+        "message": format_dispatch_ack(
+            run_id,
+            role=role,
+            instruction=instruction,
+            concurrency_slots_remaining=concurrency_slots_remaining,
+            concurrency_limit=concurrency_limit,
+        ),
     }
+    if concurrency_slots_remaining is not None:
+        payload["concurrency_slots_remaining"] = concurrency_slots_remaining
+    if concurrency_limit is not None:
+        payload["concurrency_limit"] = concurrency_limit
+    return payload
 
 
 def format_progress_notification(

@@ -755,14 +755,40 @@ def _handle_dispatch_command(args: argparse.Namespace) -> int:
 
 def _handle_dispatch_ack(args: argparse.Namespace) -> int:
     instruction = _load_dispatch_ack_instruction(args.config)
+    concurrency_slots_remaining: int | None = None
+    concurrency_limit: int | None = None
+    try:
+        context = load_context(config_path=args.config, catalog_path=None)
+        record = context.store.get_run(args.run_id)
+        active = context.store.count_active_runs(record.orchestrator_session_id)
+        limit = context.config.concurrency.per_session_limit
+        concurrency_limit = limit
+        concurrency_slots_remaining = max(0, limit - active)
+    except Exception:
+        concurrency_slots_remaining = None
+        concurrency_limit = None
     if args.json:
         print(
             json.dumps(
-                dispatch_ack_payload(args.run_id, role=args.role, instruction=instruction)
+                dispatch_ack_payload(
+                    args.run_id,
+                    role=args.role,
+                    instruction=instruction,
+                    concurrency_slots_remaining=concurrency_slots_remaining,
+                    concurrency_limit=concurrency_limit,
+                )
             )
         )
     else:
-        print(format_dispatch_ack(args.run_id, role=args.role, instruction=instruction))
+        print(
+            format_dispatch_ack(
+                args.run_id,
+                role=args.role,
+                instruction=instruction,
+                concurrency_slots_remaining=concurrency_slots_remaining,
+                concurrency_limit=concurrency_limit,
+            )
+        )
     return 0
 
 

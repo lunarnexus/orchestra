@@ -10,6 +10,7 @@ Notable user-facing changes to Orchestra are recorded here.
 
 - Add `pass_parent_context` role setting for subagents. Opted-in Pi and Hermes roles can receive a run-scoped parent context artifact via `Parent context: Read <path> before starting.` Core owns the artifact under `state/runs/<run-id>/`, supports file and stdin transport, and keeps default dispatch behavior unchanged.
 - Enable `pass_parent_context` by default for configured roles.
+- Report dispatch concurrency headroom in the `orch_dispatch` ack. Acks now append `dispatch concurrency: N/M available` (M = per-session concurrency limit, N = slots remaining after the current dispatch), and the `--json` ack carries integer `concurrency_slots_remaining`/`concurrency_limit`. When the dispatched run cannot be resolved to a session, the ack is unchanged.
 
 ### Fixes
 
