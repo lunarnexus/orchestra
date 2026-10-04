@@ -117,6 +117,20 @@ def test_reviewer_role_keeps_method_without_duplicate_return_schema() -> None:
     assert "## Return" not in general
 
 
+def test_researcher_separates_artifact_ownership_from_evidence_method() -> None:
+    catalog = yaml.safe_load(Path("agent-catalog.yaml").read_text(encoding="utf-8"))
+    assert catalog["roles"]["researcher"]["skills"] == ["orch-researcher", "researcher"]
+    general = Path("skills/researcher/SKILL.md").read_text(encoding="utf-8")
+    operational = Path("skills/orch-researcher/SKILL.md").read_text(encoding="utf-8")
+    assert "RESEARCH.md" not in general
+    assert "```md" not in general
+    assert "Do not inspect sources first" in general
+    assert "one to three bounded evidence units" in general
+    assert "Report confidence as high, medium, or low" in general
+    assert "Researchers alone write `RESEARCH.md`" in operational
+    assert "directly to the orchestrator" in operational
+
+
 def test_appsec_keeps_security_method_without_duplicate_return_contract() -> None:
     skill = Path("skills/appsec/SKILL.md").read_text(encoding="utf-8")
     assert "## Finding gate" in skill
