@@ -117,6 +117,17 @@ def test_reviewer_role_keeps_method_without_duplicate_return_schema() -> None:
     assert "## Return" not in general
 
 
+def test_appsec_keeps_security_method_without_duplicate_return_contract() -> None:
+    skill = Path("skills/appsec/SKILL.md").read_text(encoding="utf-8")
+    assert "## Finding gate" in skill
+    assert "## Review loop" in skill
+    assert "resources/finding-validation.md" in skill
+    assert "security-specific checks" in skill
+    assert "without explicit authorization" in skill
+    assert "## Return contract" not in skill
+    assert "run return" not in skill
+
+
 def test_default_catalog_reviewer_remains_read_only_without_duplicate_tests() -> None:
     catalog = yaml.safe_load(Path("agent-catalog.yaml").read_text(encoding="utf-8"))
 
