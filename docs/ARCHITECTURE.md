@@ -431,6 +431,8 @@ The builder role loads `orch-builder` for Orchestra artifact gates and return
 handoffs, and `builder` for implementation methods and conditional resources.
 The verifier role loads `orch-verifier` for linked-run handoffs and artifact
 boundaries, and `verifier` for acceptance-verification methods.
+The reviewer role loads `reviewer` for review methods and conditional resources;
+core supplies its configured return format.
 
 Superseded skills remain under `skills/archive/`. Hermes-specific imported
 skills under `skills/hermes/` are not active Orchestra defaults.

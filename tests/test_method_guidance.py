@@ -107,6 +107,16 @@ def test_planner_adds_single_reviewer_and_appsec_gates_when_enabled() -> None:
     assert "Do not create multiple reviewer/appsec passes" in skill
 
 
+def test_reviewer_role_keeps_method_without_duplicate_return_schema() -> None:
+    catalog = yaml.safe_load(Path("agent-catalog.yaml").read_text(encoding="utf-8"))
+    assert catalog["roles"]["reviewer"]["skills"] == ["reviewer"]
+    general = Path("skills/reviewer/SKILL.md").read_text(encoding="utf-8")
+    assert "## Review loop" in general
+    assert "Reviewer runs no test commands" in general
+    assert "resources/finding-validation.md" in general
+    assert "## Return" not in general
+
+
 def test_default_catalog_reviewer_remains_read_only_without_duplicate_tests() -> None:
     catalog = yaml.safe_load(Path("agent-catalog.yaml").read_text(encoding="utf-8"))
 

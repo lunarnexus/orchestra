@@ -1,7 +1,7 @@
 default_return_format: |-
   Return only this compact schema unless a blocker needs more detail:
   Status: complete|blocked|failed
-  Verdict: pass|fail|n/a
+  Verdict: pass|fail|blocked|n/a
   Artifacts updated:
   - <file or none>
   Files changed:
@@ -12,6 +12,8 @@ default_return_format: |-
   - <artifact path and exact command evidence, or none>
   Material evidence:
   - <one-line decisive evidence>
+  Findings:
+  - <severity; file:line or affected contract; finding, impact, and supporting evidence>
   Blockers:
   - none|<blocker>
   Risks:
@@ -19,6 +21,8 @@ default_return_format: |-
   Next:
   - <next dispatch/action>
 
+  Include Findings only for supported review or security findings. Preserve enough
+  location, impact, and evidence detail for each finding to be actionable.
   Keep the chat return under 1000 characters when possible. Put durable detail
   in the assigned artifact, not in the chat return. Omit empty fields. Do not
   include broad tables, history narratives, or lists of every file read unless
