@@ -1,6 +1,6 @@
 ---
 name: orch-builder
-description: Use for Orchestra builder dispatches. Apply assigned artifact gates, scoped verification boundaries, and compact return handoffs.
+description: Use for Orchestra builder dispatches. Apply scoped verification boundaries and compact return handoffs.
 version: 0.1.0
 author: LunarNexus
 license: MIT
@@ -12,10 +12,6 @@ metadata:
 ---
 
 # Orch Builder
-
-## Required artifact gate
-
-Before mutation, read the approved `PLAN.md` and confirm the assigned slice. Read authoritative decisions in `DECISIONS.md` and the relevant current design in `ARCHITECTURE.md` before changing design-affecting code. Update only assigned artifact sections, such as explicit `PLAN.md` progress markers or `ARCHITECTURE.md` notes for implemented design changes. Return a blocker if required artifact updates are outside the approved scope or the artifact target is unclear.
 
 ## Verification boundary
 

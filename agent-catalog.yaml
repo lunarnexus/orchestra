@@ -93,10 +93,11 @@ roles:
     model: "vllm/LOADED"
     pass_parent_context: true
     skills:
+    - orch-verifier
     - verifier
     dispatch_hint: Independently prove whether the work satisfies its scope and
       acceptance criteria using fresh evidence. Stay read-only. Return verdict, evidence,
-      missing checks, blockers, and risks. Do not write role-owned `.md` artifacts by default.
+      missing checks, blockers, and risks. Verification is always read-only.
     enabled_workflow_hint: Use verifier for independent acceptance checks.
     disabled_workflow_hint: Main session handles independent acceptance checks.
     enabled: auto

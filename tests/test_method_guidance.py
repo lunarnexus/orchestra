@@ -31,12 +31,10 @@ def test_builder_role_loads_operational_and_general_skills() -> None:
     assert catalog["roles"]["builder"]["skills"] == ["orch-builder", "builder"]
     general = Path("skills/builder/SKILL.md").read_text(encoding="utf-8")
     operational = Path("skills/orch-builder/SKILL.md").read_text(encoding="utf-8")
-    assert "## Required artifact gate" in operational
     assert "## Return" in operational
     assert "independent Orchestra verification" in operational
     assert "Use the return format supplied with the dispatch" in operational
     assert "```md" not in operational
-    assert "confirm the assigned slice" in operational
     assert "PLAN.md" not in general
     assert "resources/systematic-debugging.md" in general
     assert "## Build loop" in general
@@ -46,9 +44,15 @@ def test_verifier_reuses_builder_command_evidence() -> None:
     skill = Path("skills/verifier/SKILL.md").read_text(encoding="utf-8")
 
     assert "Do not rerun a builder command" in skill
-    assert "Evidence reused" in skill
-    assert "An artifact-only repair runs no commands" in skill
-    assert "does not read or modify role-owned `.md` artifacts" in skill
+    operational = Path("skills/orch-verifier/SKILL.md").read_text(encoding="utf-8")
+    catalog = yaml.safe_load(Path("agent-catalog.yaml").read_text(encoding="utf-8"))
+    assert catalog["roles"]["verifier"]["skills"] == ["orch-verifier", "verifier"]
+    assert "Verification is always read-only" in operational
+    assert "durable return and event artifact paths" in operational
+    assert "SQLite return output" not in operational
+    assert "Use the verifier-specific return format supplied with the dispatch" in operational
+    assert "PLAN.md" not in skill
+    assert "## Verdicts" in skill
 
 
 def test_orchestrator_role_loads_operational_and_general_skills() -> None:
@@ -72,7 +76,7 @@ def test_orchestrator_skill_scopes_verifier_failure_fixers() -> None:
     assert "exact failing evidence" in skill
     assert "same focused check fails twice" in skill
     general_skill = Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8")
-    assert "`RESEARCH.md` — findings, sources, options, evidence; researcher-owned" in skill
+    assert "`RESEARCH.md` — researcher-owned findings" in skill
     assert "appsec runs exactly once" in skill
     assert "Verifier never replaces reviewer or appsec" in general_skill
     assert "Verification proves acceptance" in general_skill
@@ -80,6 +84,19 @@ def test_orchestrator_skill_scopes_verifier_failure_fixers() -> None:
         assert artifact not in general_skill
     assert "partially ready` — dispatch only approved, unblocked slices" in general_skill
     assert "partially\nready plan permits only individually approved, unblocked slices" in skill
+
+
+def test_active_skills_do_not_require_project_specific_artifacts() -> None:
+    catalog = yaml.safe_load(Path("agent-catalog.yaml").read_text(encoding="utf-8"))
+    for role_name, role in catalog["roles"].items():
+        for name in role.get("skills", []):
+            path = Path("skills", name)
+            for source in path.rglob("*.md"):
+                text = source.read_text(encoding="utf-8")
+                assert "DECISIONS.md" not in text, source
+                assert "ARCHITECTURE.md" not in text, source
+                if role_name not in {"researcher", "orchestrator"}:
+                    assert "RESEARCH.md" not in text, source
 
 
 def test_planner_adds_single_reviewer_and_appsec_gates_when_enabled() -> None:

@@ -105,24 +105,8 @@ Do not convert blocked work into implementation work in the orchestrator session
 
 Always put document updates in the correct document. Subagents may update only the artifact and section assigned in their dispatch. Use artifacts by purpose:
 
-- `DECISIONS.md` — authoritative owner-approved project decisions; do not change recorded decisions without explicit owner approval
-- `ARCHITECTURE.md` — evolving technical design
-- `RESEARCH.md` — findings, sources, options, evidence; researcher-owned for assigned findings
+- `RESEARCH.md` — researcher-owned findings, passed directly to the orchestrator for evaluation when necessary
 - `PLAN.md` — active execution plan and progress markers; orchestrator-owned except explicit builder progress markers
-- `ROADMAP.md` — long-lived TODO and wishlist backlog, tech-debt
-
-## Artifact gates
-
-Artifact alignment is a phase gate. Before moving to the next phase, rely on successful subagent returns for their assigned artifact updates. Read artifacts only when resolving conflicts, blockers, missing evidence, or final git handoff. Required artifacts by phase:
-- scope: `DECISIONS.md`, active `PLAN.md`, relevant `ROADMAP.md`
-- research: `DECISIONS.md`, relevant `ARCHITECTURE.md`, `RESEARCH.md` when explicitly assigned
-- planning: `DECISIONS.md`, `RESEARCH.md`, relevant `ARCHITECTURE.md`, `PLAN.md`
-- build: approved `PLAN.md`, `DECISIONS.md`, relevant `ARCHITECTURE.md`
-- review: `PLAN.md`, `RESEARCH.md`, `ARCHITECTURE.md`, `DECISIONS.md`
-- final appsec: review evidence plus required artifact updates
-- commit: git status/diff plus required artifact updates
-
-If a required artifact is absent or not applicable, record that in the phase summary. Missing required artifact updates block implementation, review, security review, and commit; dispatch the owning role to fill the gap rather than writing it yourself unless it is parent-owned planning or decision content.
 
 Ask to commit Orchestra-owned changes after each successful, tested phase.
 

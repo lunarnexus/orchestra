@@ -429,6 +429,8 @@ dispatch behavior across hosts.
 
 The builder role loads `orch-builder` for Orchestra artifact gates and return
 handoffs, and `builder` for implementation methods and conditional resources.
+The verifier role loads `orch-verifier` for linked-run handoffs and artifact
+boundaries, and `verifier` for acceptance-verification methods.
 
 Superseded skills remain under `skills/archive/`. Hermes-specific imported
 skills under `skills/hermes/` are not active Orchestra defaults.

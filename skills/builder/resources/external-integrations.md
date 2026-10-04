@@ -1,6 +1,6 @@
 # External Integrations
 
-- Use verified primary documentation or approved `RESEARCH.md` findings for contracts and limits.
+- Use verified primary documentation or approved findings for contracts and limits.
 - Confirm authentication, request/response shapes, errors, pagination, rate limits, and version behavior.
 - Set bounded timeouts; retry only safe transient operations with project-standard backoff.
 - Validate remote data at the boundary and avoid leaking credentials or sensitive payloads.

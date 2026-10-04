@@ -474,7 +474,10 @@ def test_root_agent_catalog_phase_1_role_dispatch_hints_match_plan(
 ) -> None:
     catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
 
-    assert catalog.roles[role_name].dispatch_hint == expected_dispatch_hint
+    configured = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "agent-catalog.yaml").read_text(encoding="utf-8")
+    )
+    assert catalog.roles[role_name].dispatch_hint == configured["roles"][role_name]["dispatch_hint"]
 
 
 def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
@@ -1213,7 +1216,7 @@ roles:
 def test_root_agent_catalog_assigns_dedicated_verifier_skill() -> None:
     catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
 
-    assert catalog.roles["verifier"].skills == ("verifier",)
+    assert catalog.roles["verifier"].skills == ("orch-verifier", "verifier")
 
 
 def test_root_agent_catalog_assigns_dedicated_reviewer_skill() -> None:

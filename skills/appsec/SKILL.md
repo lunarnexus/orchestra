@@ -23,10 +23,6 @@ Governing question: **Does this change create a realistic attack path across a t
 - Stay read-only for source code. Report findings; do not fix them.
 - Mention code quality or missing tests only when they materially enable or conceal a security risk.
 
-## Required artifact gate
-
-Read `DECISIONS.md` for authoritative security and secret-handling decisions. Read relevant `ARCHITECTURE.md` trust boundaries before judging risk. Flag missing architecture or security documentation for changed trust boundaries as security evidence or findings according to impact.
-
 ## Establish the target
 
 Before judging:
