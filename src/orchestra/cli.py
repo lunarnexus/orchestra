@@ -32,7 +32,6 @@ from orchestra.host_text import (
     format_opencode_help,
     format_progress_notification,
     progress_notification_payload,
-    render_orchestrator_skill_message,
 )
 from orchestra.init import (
     InitFileResult,
@@ -87,7 +86,6 @@ INTERNAL_COMMANDS = frozenset(
         "_session-mode",
         "_tool-info",
         "_role-metadata",
-        "_orchestrator-skill",
         "_spsi-payload",
     }
 )
@@ -397,12 +395,6 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
 
         role_metadata_parser = subparsers.add_parser("_role-metadata", help=argparse.SUPPRESS)
         role_metadata_parser.set_defaults(handler=_handle_role_metadata)
-
-        orchestrator_skill_parser = subparsers.add_parser(
-            "_orchestrator-skill",
-            help=argparse.SUPPRESS,
-        )
-        orchestrator_skill_parser.set_defaults(handler=_handle_orchestrator_skill)
 
         spsi_payload_parser = subparsers.add_parser("_spsi-payload", help=argparse.SUPPRESS)
         spsi_payload_parser.add_argument("--session-id", required=True)
@@ -762,11 +754,54 @@ def _handle_dispatch_command(args: argparse.Namespace) -> int:
 
 
 def _handle_dispatch_ack(args: argparse.Namespace) -> int:
+    instruction = _load_dispatch_ack_instruction(args.config)
+    concurrency_slots_remaining: int | None = None
+    concurrency_limit: int | None = None
+    try:
+        context = load_context(config_path=args.config, catalog_path=None)
+        record = context.store.get_run(args.run_id)
+        active = context.store.count_active_runs(record.orchestrator_session_id)
+        limit = context.config.concurrency.per_session_limit
+        concurrency_limit = limit
+        concurrency_slots_remaining = max(0, limit - active)
+    except Exception:
+        concurrency_slots_remaining = None
+        concurrency_limit = None
     if args.json:
-        print(json.dumps(dispatch_ack_payload(args.run_id, role=args.role)))
+        print(
+            json.dumps(
+                dispatch_ack_payload(
+                    args.run_id,
+                    role=args.role,
+                    instruction=instruction,
+                    concurrency_slots_remaining=concurrency_slots_remaining,
+                    concurrency_limit=concurrency_limit,
+                )
+            )
+        )
     else:
-        print(format_dispatch_ack(args.run_id, role=args.role))
+        print(
+            format_dispatch_ack(
+                args.run_id,
+                role=args.role,
+                instruction=instruction,
+                concurrency_slots_remaining=concurrency_slots_remaining,
+                concurrency_limit=concurrency_limit,
+            )
+        )
     return 0
+
+
+def _load_dispatch_ack_instruction(config_path: str | None) -> str:
+    try:
+        from orchestra.config import load_app_config, resolve_config_path, resolve_prompts_path
+
+        config_file = resolve_config_path(config_path)
+        prompts_file = resolve_prompts_path(config_path)
+        config = load_app_config(config_file, prompts_path=prompts_file)
+        return config.prompts.dispatch_ack_instruction
+    except Exception:
+        return "subagent will auto-return when finished. Do not poll, stop."
 
 
 def _handle_command_echo(args: argparse.Namespace) -> int:
@@ -808,12 +843,6 @@ def _handle_tool_info(args: argparse.Namespace) -> int:
 def _handle_role_metadata(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=None)
     print(json.dumps(role_metadata(context)))
-    return 0
-
-
-def _handle_orchestrator_skill(args: argparse.Namespace) -> int:
-    del args
-    print(render_orchestrator_skill_message())
     return 0
 
 
@@ -901,17 +930,14 @@ def _handle_await_run(args: argparse.Namespace) -> int:
         run_id=args.run_id,
         timeout_seconds=args.timeout,
     )
+    payload = await_run_payload(
+        record,
+        active_remaining=active_remaining,
+        details=details,
+        prompts=context.config.prompts,
+    )
     if args.json:
-        print(
-            json.dumps(
-                await_run_payload(
-                    record,
-                    active_remaining=active_remaining,
-                    details=details,
-                    prompts=context.config.prompts,
-                )
-            )
-        )
+        print(json.dumps(payload))
         return 0
     print(f"run_id: {record.run_id}")
     print(f"status: {record.status}")
@@ -923,8 +949,8 @@ def _handle_await_run(args: argparse.Namespace) -> int:
         print(f"error: {record.error_text}")
     if record.blocker_text:
         print(f"blocker: {record.blocker_text}")
-    if record.status == "incomplete":
-        print(f"next: {context.config.prompts.return_hint_incomplete}")
+    if payload["next"]:
+        print(f"next: {payload['next']}")
     print(f"active_runs_remaining: {active_remaining}")
     print(f"descendants_terminal: {'yes' if details.descendants_terminal else 'no'}")
     print(f"session_report_available: {'yes' if details.session_report_available else 'no'}")

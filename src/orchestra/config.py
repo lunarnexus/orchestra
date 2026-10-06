@@ -65,11 +65,13 @@ class PromptConfig:
     return_hint_incomplete: str
     return_hint_failed: str
     return_hint_builder_failed: str
+    return_hint_budget_exceeded: str
     budget_trigger_label: str
     soft_timeout_block_reason: str
     session_mode_off_message: str
     session_mode_on_message: str
     session_mode_orchestrate_message: str
+    dispatch_ack_instruction: str
 
 
 @dataclass(frozen=True)
@@ -276,6 +278,9 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
         return_hint_builder_failed=_get_required_prompt_string(
             prompts_raw, "return_hint_builder_failed"
         ),
+        return_hint_budget_exceeded=_get_required_prompt_string(
+            prompts_raw, "return_hint_budget_exceeded"
+        ),
         budget_trigger_label=_get_required_prompt_string(
             prompts_raw, "budget_trigger_label"
         ),
@@ -290,6 +295,9 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
         ),
         session_mode_orchestrate_message=_get_required_prompt_string(
             prompts_raw, "session_mode_orchestrate_message"
+        ),
+        dispatch_ack_instruction=_get_required_prompt_string(
+            prompts_raw, "dispatch_ack_instruction"
         ),
     )
 
@@ -472,6 +480,9 @@ def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> App
         return_hint_builder_failed=_get_required_prompt_string(
             prompts_raw, "return_hint_builder_failed"
         ),
+        return_hint_budget_exceeded=_get_required_prompt_string(
+            prompts_raw, "return_hint_budget_exceeded"
+        ),
         budget_trigger_label=_get_required_prompt_string(
             prompts_raw, "budget_trigger_label"
         ),
@@ -486,6 +497,9 @@ def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> App
         ),
         session_mode_orchestrate_message=_get_required_prompt_string(
             prompts_raw, "session_mode_orchestrate_message"
+        ),
+        dispatch_ack_instruction=_get_required_prompt_string(
+            prompts_raw, "dispatch_ack_instruction"
         ),
     )
     return AppConfig(

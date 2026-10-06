@@ -44,14 +44,10 @@ Load every matching conditional resource:
 - `resources/external-integrations.md` — external API, service, SDK, or protocol integration
 - `resources/commit-handoff.md` — commit preparation was explicitly assigned
 
-## Required artifact gate
-
-Before mutation, read the approved `PLAN.md`. Read authoritative decisions in `DECISIONS.md` and the relevant current design in `ARCHITECTURE.md` before changing design-affecting code. Update only assigned artifact sections, such as explicit `PLAN.md` progress markers or `ARCHITECTURE.md` notes for implemented design changes. Return a blocker if required artifact updates are outside the approved scope or the artifact target is unclear.
-
 ## Orient
 
 Before editing, confirm:
-- goal, acceptance criteria, and assigned `PLAN.md` slice
+- goal, acceptance criteria, and assigned scope
 - in-scope files and explicit exclusions
 - project instructions such as `AGENTS.md`
 - relevant patterns, tests, and current git status
@@ -68,7 +64,7 @@ Always use TDD for production changes. Behavior changes and bug fixes require Re
 4. Run the focused test and confirm GREEN without new relevant warnings.
 5. Refactor only while green, then rerun the test.
 6. Repeat for the next behavior.
-7. Inspect the final diff and run the broader checks required by project rules or affected risk.
+7. Inspect the final diff and run required broader checks once after focused checks pass. Reuse valid command evidence; rerun a check only when subsequent changes invalidate it.
 
 Test observable behavior and contracts through the narrowest stable interface. Derive expected values independently, cover material boundaries, and keep tests deterministic, isolated, and readable. For a bug, require the regression test to fail on the original behavior; never weaken existing assertions merely to obtain green.
 
@@ -78,45 +74,20 @@ Prefer existing patterns and helpers, direct code, clear data flow, and explicit
 
 Builder owns implementation setup commands for its assigned slice, including approved package installs, dependency updates, lockfile changes, virtualenv setup, and tool/bootstrap commands needed to build or test the slice. Report every environment/package command run and any files changed by it.
 
-Self-checking prepares the handoff; it does not replace independent Orchestra verification or review.
-
 ## Test economy and stop rules
 
 Builders own implementation commands. Use a single-test or test-filter command in the build loop. For each fix attempt:
 - run the focused repro or failing test once before patching when it is not already proven by returned evidence;
 - run the exact focused check once after each patch;
 - if the focused check fails, inspect the new output, patch once, and rerun once;
-- run a suite command once, after focused checks pass, only when the plan assigns that suite to the builder.
+- run a suite command once, after focused checks pass, when required by the assignment, project rules, or affected risk.
 
 If the same focused command fails twice without new diagnostic evidence, stop editing and return a blocker or budget handoff with the failing command, output summary, hypothesis, files changed, and next smallest slice. If a broader final check fails after the focused check passes, capture the failure once, distinguish whether it is in scope, and return rather than entering an open-ended verification loop.
 
 ## Failure handling
 
-Separate baseline failures and warnings from those introduced by the task. For a new failure, read `resources/systematic-debugging.md` and follow its stop rule.
+Separate baseline failures and warnings from those introduced by the task. For a new failure, read `resources/systematic-debugging.md`. Apply both its hypothesis-attempt limit and the focused-check limit above; stop when either limit is reached. Switching methods does not reset either limit.
 
 ## Git handoff
 
 Leave only intended task changes in the worktree and preserve pre-existing dirty files. Create a commit only when the assigned slice explicitly requires one; then read `resources/commit-handoff.md`.
-
-## Return
-
-```md
-Status: complete|blocked|failed
-Verdict: n/a
-Artifacts updated:
-- <file:section or none>
-Files changed:
-- <file or none>
-Commands:
-- <command> — <red/green/result>
-Material evidence:
-- <one-line implementation evidence>
-Blockers:
-- none|<blocker>
-Risks:
-- none|<risk>
-Next:
-- <recommended verification/review/action>
-```
-
-Keep the chat return compact. Put durable implementation notes in the assigned artifact target.

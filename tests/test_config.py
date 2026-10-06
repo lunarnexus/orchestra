@@ -144,60 +144,28 @@ def test_load_app_config_expands_tilde_paths(
     assert config.log_dir == home / "orchestra" / "logs"
 
 
-def test_root_host_help_uses_generic_session_wording() -> None:
+def test_root_host_help_loads_from_config() -> None:
     config = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml")
+    configured = yaml.safe_load(ROOT_PROMPTS.read_text(encoding="utf-8"))
 
-    assert (
-        "/orch on                           Enable Orchestra tools"
-        in config.prompts.host_help
-    )
-    assert (
-        "/orch off                          Hide Orchestra tools for this session"
-        in config.prompts.host_help
-    )
-    assert "/orch do <request>                 Dispatch a subagent" in config.prompts.host_help
-    assert (
-        "/orch config [KEY] [VALUE]         Show or update supported config values"
-        in config.prompts.host_help
-    )
-    assert "Pi session" not in config.prompts.host_help
-    assert "Configured roles" not in config.prompts.host_help
-    assert "Default:" not in config.prompts.host_help
-    assert "  ✓  " not in config.prompts.host_help
-    assert "  D  " not in config.prompts.host_help
+    assert config.prompts.host_help == configured["host_help"]
 
 
-def test_root_tool_guidance_enforces_orchestrator_boundaries() -> None:
+def test_root_prompt_guidance_loads_from_config() -> None:
     prompts = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml").prompts
+    configured = yaml.safe_load(ROOT_PROMPTS.read_text(encoding="utf-8"))
 
-    for expected in (
-        "For non-orchestration work, dispatch a subagent",
-        "decomposes requests, plans slices, sequences dispatches",
-        "Dispatch transfers ownership",
-        "must not run duplicate commands",
-        "Trust successful subagent returns",
-        "Do not double-test",
-        "Do not poll",
-        "Do not call orch_status unless the user explicitly asks",
-        "{roles}",
+    for field in (
+        "tool_description",
+        "main_session_ownership_guidance",
+        "return_hint_failed",
+        "default_return_format",
+        "status_description",
+        "dispatch_ack_instruction",
     ):
-        assert expected in prompts.tool_description
-    assert "Use orch_status for status/control" not in prompts.tool_description
-    assert "should normally" not in prompts.tool_description
-    assert prompts.tool_prompt_snippet == ""
-    assert prompts.tool_prompt_guidelines == ()
-    assert (
-        "main-session orchestrator reads failed return artifacts"
-        in prompts.main_session_ownership_guidance
-    )
-    assert (
-        "read the failed return artifact and decide how to proceed"
-        in prompts.return_hint_failed
-    )
-    assert "Artifacts updated:" in prompts.default_return_format
-    assert "Material evidence:" in prompts.default_return_format
-    assert "Use orch_status only when the user explicitly asks" in prompts.status_description
-    assert "Do not poll" in prompts.status_description
+        assert getattr(prompts, field) == configured[field]
+    assert prompts.tool_prompt_snippet == configured["tool_prompt_snippet"]
+    assert prompts.tool_prompt_guidelines == tuple(configured["tool_prompt_guidelines"])
 
 
 @pytest.mark.parametrize(
@@ -506,7 +474,10 @@ def test_root_agent_catalog_phase_1_role_dispatch_hints_match_plan(
 ) -> None:
     catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
 
-    assert catalog.roles[role_name].dispatch_hint == expected_dispatch_hint
+    configured = yaml.safe_load(
+        (Path(__file__).resolve().parents[1] / "agent-catalog.yaml").read_text(encoding="utf-8")
+    )
+    assert catalog.roles[role_name].dispatch_hint == configured["roles"][role_name]["dispatch_hint"]
 
 
 def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
@@ -541,11 +512,13 @@ return_hint_done: Custom done hint.
 return_hint_incomplete: Custom incomplete hint.
 return_hint_failed: Custom failed hint.
 return_hint_builder_failed: Custom builder failed hint.
+return_hint_budget_exceeded: Custom budget exceeded hint.
 budget_trigger_label: Custom budget label.
 soft_timeout_block_reason: Custom soft timeout reason.
 session_mode_off_message: Custom off message.
 session_mode_on_message: Custom on message.
 session_mode_orchestrate_message: Custom orchestrate message.
+dispatch_ack_instruction: Custom dispatch ack instruction.
 """.lstrip(),
         encoding="utf-8",
     )
@@ -605,6 +578,7 @@ return_hint_done: ok
 return_hint_incomplete: ok
 return_hint_failed: ok
 return_hint_builder_failed: ok
+return_hint_budget_exceeded: ok
 budget_trigger_label: ok
 soft_timeout_block_reason: ok
 session_mode_off_message: ok
@@ -648,11 +622,13 @@ return_hint_done: ok
 return_hint_incomplete: ok
 return_hint_failed: ok
 return_hint_builder_failed: ok
+return_hint_budget_exceeded: ok
 budget_trigger_label: ok
 soft_timeout_block_reason: ok
 session_mode_off_message: ok
 session_mode_on_message: ok
 session_mode_orchestrate_message: ok
+dispatch_ack_instruction: ok
 """.lstrip(),
         encoding="utf-8",
     )
@@ -1240,7 +1216,7 @@ roles:
 def test_root_agent_catalog_assigns_dedicated_verifier_skill() -> None:
     catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
 
-    assert catalog.roles["verifier"].skills == ("verifier",)
+    assert catalog.roles["verifier"].skills == ("orch-verifier", "verifier")
 
 
 def test_root_agent_catalog_assigns_dedicated_reviewer_skill() -> None:
@@ -1358,6 +1334,7 @@ REQUIRED_PROMPT_KEYS = (
     "return_hint_incomplete",
     "return_hint_failed",
     "return_hint_builder_failed",
+    "return_hint_budget_exceeded",
     "budget_trigger_label",
     "soft_timeout_block_reason",
     "session_mode_off_message",

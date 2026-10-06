@@ -580,7 +580,9 @@ def test_budget_handoff_marker_marks_run_incomplete(
         run_id,
     )
     assert "status: incomplete" in await_run.stdout
-    assert "pass this return_path handoff artifact to the next dispatch" in await_run.stdout
+    prompts = load_context(config_path=str(config_path.parent)).config.prompts
+    budget_hint = prompts.return_hint_budget_exceeded
+    assert f"next: {budget_hint}" in await_run.stdout
 
     debug = run_cli(
         "--config",

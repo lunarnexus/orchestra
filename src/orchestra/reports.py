@@ -275,7 +275,9 @@ def format_run_report(
     if token_accounting:
         lines.append(token_accounting)
     if record.status == STATUS_INCOMPLETE:
-        lines.append(f"next: {prompts.return_hint_incomplete}")
+        hint = _return_hint(record, prompts=prompts)
+        if hint:
+            lines.append(f"next: {hint}")
     if record.worker_session_id:
         lines.append(f"worker_session_id: {record.worker_session_id}")
     if record.transcript_path:
@@ -293,7 +295,20 @@ def clean_result_summary(summary: str | None) -> str:
     return cleaned or "-"
 
 
+def _is_budget_exceeded_run(run: RunRecord) -> bool:
+    from orchestra.supervision import WORKER_BUDGET_EXCEEDED_BLOCKER
+
+    if run.blocker_text == WORKER_BUDGET_EXCEEDED_BLOCKER:
+        return True
+    for text in (run.result_summary, run.result_output):
+        if text and "orchestra_stop_reason: budget_exceeded" in text.lower():
+            return True
+    return False
+
+
 def _return_hint(run: RunRecord, *, prompts: PromptConfig) -> str | None:
+    if _is_budget_exceeded_run(run):
+        return prompts.return_hint_budget_exceeded
     if run.role == "builder" and run.status == STATUS_DONE:
         return prompts.return_hint_done
     if run.role == "builder" and run.status in {STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}:
@@ -395,7 +410,12 @@ def format_orchestrator_return(
     )
     blocks = []
     for run, semantic_failure in zip(runs, semantic_failures, strict=True):
-        outcome = "success" if run.status == STATUS_DONE and not semantic_failure else "fail"
+        if run.status == STATUS_DONE and not semantic_failure:
+            outcome = "success"
+        elif _is_budget_exceeded_run(run):
+            outcome = "budget_exceeded"
+        else:
+            outcome = "fail"
         lines = [
             f"[orchestra: {run.role} {run.run_id} {outcome}]",
             f"summary: {_format_run_summary(run)}",
@@ -406,7 +426,9 @@ def format_orchestrator_return(
         dispatch_failure = _auto_verify_dispatch_failure_note(run)
         if dispatch_failure:
             lines.append(f"auto_verify: {dispatch_failure}")
-        if semantic_failure:
+        if _is_budget_exceeded_run(run):
+            hint = prompts.return_hint_budget_exceeded
+        elif semantic_failure:
             hint = prompts.return_hint_failed
         elif report_has_issue and run.status == STATUS_DONE:
             hint = None

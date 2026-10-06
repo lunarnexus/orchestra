@@ -66,6 +66,13 @@ def test_public_help_hides_internal_subcommands() -> None:
         assert command not in help_text
 
 
+def test_legacy_orchestrator_skill_command_is_removed() -> None:
+    parser = build_parser(include_internal=True)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["_orchestrator-skill"])
+
+
 def test_release_session_report_command_is_removed() -> None:
     parser = build_parser(include_internal=True)
 

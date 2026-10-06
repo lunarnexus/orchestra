@@ -98,7 +98,7 @@ A plan must include:
 - design notes that constrain implementation
 - slices marked `sequential`, `parallel-safe`, or `blocked`
 - stop conditions and verification commands
-- For code-changing plans, include one reviewer gate at the end of each phase when reviewer is enabled, and one final appsec gate before final live end-to-end testing when appsec is enabled. Do not create multiple reviewer/appsec passes unless fixes require a targeted rerun.
+- For code-changing plans, include one reviewer gate at the end of each phase when reviewer is enabled; fixes may require a targeted reviewer rerun. In Orchestra, security gates follow `orch-orchestrator` Checker timing: at most one security scan per plan.
 - risks and deferred follow-up
 - a full live end-to-end test, if possible.
 
@@ -114,15 +114,15 @@ fe` only when files/modules are separate, no output dependency exists, and no sh
 ared schema, config, public API, migration, or global behavior changes. Mark sha
 red abstractions, schemas, migrations, public APIs, and broad refactors as `sequ
 ential`. Dispatch reviewers only at coherent boundaries defined by the plan. Dis
-patch appsec once after all implementation, automatic verification, review, and
-fixes are complete, before final live end-to-end testing when live E2E is part
-of the plan.
+patch appsec, when required, after all implementation, automatic verification,
+review, and fixes are complete, before final live end-to-end testing when live
+E2E is part of the plan.
 
 For behavior changes and bug fixes, plan TDD-first when practical: failing test
 or exact repro, minimal green implementation, safe refactor, and focused verific
 ation. Account for core automatic verification after acceptance-relevant builder
  runs, add reviewer gates at coherent plan boundaries when reviewer is enabled,
- and add exactly one appsec gate at the end of the plan when appsec is enabled.
+ and add the conditional single appsec gate described above.
 
 Before treating a production plan as ready, validate requirement coverage, inter
 face consistency, dependency markers, research citations, scope boundaries, stop

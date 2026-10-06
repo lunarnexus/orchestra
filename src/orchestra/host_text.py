@@ -2,16 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING
-
-from orchestra.context import AppContext, AppError
-from orchestra.harnesses.common import SKILL_FILENAME, SKILL_LIBRARY_DIR
-from orchestra.init import _find_source_root
+from orchestra.context import AppContext
 from orchestra.roles import format_roles
-
-if TYPE_CHECKING:
-    pass
 
 __all__ = [
     "DISPATCH_TIMEOUT_ERROR",
@@ -23,8 +15,6 @@ __all__ = [
     "format_opencode_help",
     "format_progress_notification",
     "progress_notification_payload",
-    "render_orchestrator_skill_message",
-    "render_orchestrator_skill_text",
 ]
 
 CONTRACT_VERSION = 1
@@ -53,27 +43,51 @@ DISPATCH_TIMEOUT_ERROR = (
     "timeout is not accepted by orch_dispatch; configured default_timeout applies."
 )
 
-def _app_error(message: str) -> Exception:
-    return AppError(message)
-
-
-def format_dispatch_ack(run_id: str, *, role: str | None = None) -> str:
+def format_dispatch_ack(
+    run_id: str,
+    *,
+    role: str | None = None,
+    instruction: str,
+    concurrency_slots_remaining: int | None = None,
+    concurrency_limit: int | None = None,
+) -> str:
     role_text = f" {role}" if role else ""
-    return (
-        f"orchestra dispatched:{role_text} {run_id}\n"
-        "subagent will auto-return when finished. Do not poll while waiting."
-    )
+    text = f"orchestra dispatched:{role_text} {run_id}\n{instruction}"
+    if concurrency_slots_remaining is not None:
+        text += (
+            f"\ndispatch concurrency: "
+            f"{concurrency_slots_remaining}/{concurrency_limit} available"
+        )
+    return text
 
 
-def dispatch_ack_payload(run_id: str, *, role: str | None = None) -> dict[str, object]:
-    return {
+def dispatch_ack_payload(
+    run_id: str,
+    *,
+    role: str | None = None,
+    instruction: str,
+    concurrency_slots_remaining: int | None = None,
+    concurrency_limit: int | None = None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
         "contract_version": CONTRACT_VERSION,
         "kind": "dispatch_ack",
         "ok": True,
         "run_id": run_id,
         "role": role,
-        "message": format_dispatch_ack(run_id, role=role),
+        "message": format_dispatch_ack(
+            run_id,
+            role=role,
+            instruction=instruction,
+            concurrency_slots_remaining=concurrency_slots_remaining,
+            concurrency_limit=concurrency_limit,
+        ),
     }
+    if concurrency_slots_remaining is not None:
+        payload["concurrency_slots_remaining"] = concurrency_slots_remaining
+    if concurrency_limit is not None:
+        payload["concurrency_limit"] = concurrency_limit
+    return payload
 
 
 def format_progress_notification(
@@ -141,64 +155,4 @@ def format_command_echo(raw_command: str) -> str:
     if not raw:
         return "/orch"
     return f"/orch {raw}"
-
-
-
-def render_orchestrator_skill_text(
-    *,
-    cwd: str | Path | None = None,
-    source_root: str | Path | None = None,
-) -> str:
-    skill_path = _resolve_orchestrator_skill_path(cwd=cwd, source_root=source_root)
-    try:
-        return skill_path.read_text(encoding="utf-8").strip()
-    except FileNotFoundError as exc:
-        raise _app_error(f"orchestrator skill file not found: {skill_path}") from exc
-
-
-def render_orchestrator_skill_message(
-    *,
-    cwd: str | Path | None = None,
-    source_root: str | Path | None = None,
-) -> str:
-    skill_text = render_orchestrator_skill_text(cwd=cwd, source_root=source_root)
-    return f"Load this Orchestra main-session skill:\n\n{skill_text}"
-
-
-def _resolve_orchestrator_skill_path(
-    *,
-    cwd: str | Path | None = None,
-    source_root: str | Path | None = None,
-) -> Path:
-    candidates = _orchestrator_skill_candidates(cwd=cwd, source_root=source_root)
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    looked = ", ".join(str(candidate) for candidate in candidates)
-    raise _app_error(f"orchestrator skill file not found; looked for: {looked}")
-
-
-def _orchestrator_skill_candidates(
-    *,
-    cwd: str | Path | None = None,
-    source_root: str | Path | None = None,
-) -> list[Path]:
-    search_root = Path(cwd).resolve() if cwd is not None else Path.cwd().resolve()
-    candidates: list[Path] = []
-    seen: set[Path] = set()
-
-    def add_candidate(root: Path) -> None:
-        candidate = root / SKILL_LIBRARY_DIR / "orchestrator" / SKILL_FILENAME
-        if candidate not in seen:
-            candidates.append(candidate)
-            seen.add(candidate)
-
-    for root in (search_root, *search_root.parents):
-        add_candidate(root)
-
-    resolved_source_root = _find_source_root(source_root)
-    if resolved_source_root is not None:
-        add_candidate(resolved_source_root.resolve())
-
-    return candidates
 

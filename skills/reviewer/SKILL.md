@@ -13,7 +13,7 @@ metadata:
 
 # Reviewer
 
-Review the assigned change independently in one capped findings pass. Judge whether it is the smallest maintainable implementation that solves the assigned problem and fits the project's current architecture, scale, and maturity. Do not duplicate another role's completed evidence; reuse successful builder, verifier, or checker evidence for the assigned scope and inspect only what this review slice requires. Return the review verdict/findings through the run return.
+Review the assigned change independently in one capped findings pass. Judge whether it is the smallest maintainable implementation that solves the assigned problem and fits the project's current architecture, scale, and maturity. Do not duplicate another role's completed evidence; reuse successful builder, verifier, or checker evidence for the assigned scope and inspect only what this review slice requires.
 
 ## Method gate
 
@@ -27,10 +27,6 @@ Load every matching resource before judging the related part of the change:
 - `resources/dependencies-and-integrations.md` — dependency, SDK, service, protocol, or network behavior changed
 - `resources/reliability-state-and-performance.md` — shared state, concurrency, retries, cancellation, transaction, cache, lifecycle, or performance claim changed
 - `resources/finding-validation.md` — before reporting any HIGH or MEDIUM finding
-
-## Required artifact gate
-
-Review the diff against `PLAN.md`, authoritative `DECISIONS.md`, `RESEARCH.md`, and relevant `ARCHITECTURE.md`. Treat missing required artifact updates as review findings.
 
 ## Review loop
 
@@ -60,20 +56,3 @@ Verdict:
 - `pass` — no HIGH or MEDIUM finding remains.
 - `fail` — at least one HIGH or MEDIUM finding is supported.
 - `blocked` — the target or evidence needed for a responsible review is unavailable.
-
-## Return
-
-```md
-Status: complete|blocked
-Verdict: pass|fail|blocked
-Material evidence:
-- <readiness or one material finding pointer>
-Blockers:
-- none|<blocker>
-Risks:
-- none|<residual risk>
-Next:
-- <merge/fix/security/appsec action>
-```
-
-Keep the run return compact while including the evidence needed for the parent session to act.

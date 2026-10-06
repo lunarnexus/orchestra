@@ -13,7 +13,7 @@ metadata:
 
 # AppSec
 
-Governing question: **Does this change create a realistic attack path across a trust boundary, and what is the smallest scoped remediation?** Run one capped security pass for the assigned scope. Do not duplicate another role's completed evidence; reuse successful builder, verifier, or reviewer evidence for the assigned scope and run only security-specific checks required by this slice. Return the security verdict/findings through the run return.
+Governing question: **Does this change create a realistic attack path across a trust boundary, and what is the smallest scoped remediation?** Run one capped security pass for the assigned scope. Do not duplicate another role's completed evidence; reuse successful builder, verifier, or reviewer evidence for the assigned scope and run only security-specific checks required by this slice.
 
 ## Role boundary
 
@@ -22,10 +22,6 @@ Governing question: **Does this change create a realistic attack path across a t
 - Verifier owns independent proof of acceptance criteria.
 - Stay read-only for source code. Report findings; do not fix them.
 - Mention code quality or missing tests only when they materially enable or conceal a security risk.
-
-## Required artifact gate
-
-Read `DECISIONS.md` for authoritative security and secret-handling decisions. Read relevant `ARCHITECTURE.md` trust boundaries before judging risk. Flag missing architecture or security documentation for changed trust boundaries as security evidence or findings according to impact.
 
 ## Establish the target
 
@@ -84,20 +80,3 @@ Every finding must include:
 - realistic impact and relevant preconditions;
 - evidence that existing controls do not break the path;
 - smallest scoped remediation.
-
-## Return contract
-
-```text
-Status: complete|blocked
-Verdict: pass|fail|blocked
-Material evidence:
-- <security-ready or one material finding pointer>
-Blockers:
-- none|<blocker>
-Risks:
-- none|<residual risk>
-Next:
-- <merge/fix/review action>
-```
-
-Keep the run return compact while including the evidence needed for the parent session to act.

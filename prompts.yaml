@@ -1,7 +1,7 @@
 default_return_format: |-
   Return only this compact schema unless a blocker needs more detail:
   Status: complete|blocked|failed
-  Verdict: pass|fail|n/a
+  Verdict: pass|fail|blocked|n/a
   Artifacts updated:
   - <file or none>
   Files changed:
@@ -12,6 +12,8 @@ default_return_format: |-
   - <artifact path and exact command evidence, or none>
   Material evidence:
   - <one-line decisive evidence>
+  Findings:
+  - <severity; file:line or affected contract; finding, impact, and supporting evidence>
   Blockers:
   - none|<blocker>
   Risks:
@@ -19,48 +21,23 @@ default_return_format: |-
   Next:
   - <next dispatch/action>
 
+  Include Findings only for supported review or security findings. Preserve enough
+  location, impact, and evidence detail for each finding to be actionable.
   Keep the chat return under 1000 characters when possible. Put durable detail
   in the assigned artifact, not in the chat return. Omit empty fields. Do not
   include broad tables, history narratives, or lists of every file read unless
   material to a blocker or finding.
 tool_description: >-
-  For non-orchestration work, dispatch a subagent. The orchestrator session
-  decomposes requests, plans slices, sequences dispatches, handles user
-  decisions and approvals, resolves artifact conflicts, manages git boundaries,
-  and synthesizes compact returned results.
-
-  Inspect the whole request only to identify dispatch slices, dependencies,
-  blockers, and approval needs. Dispatch one subagent per slice. Dispatch every
-  currently unblocked independent slice in parallel before doing anything else.
-  Keep dependency order strict: research before dependent design,
-  implementation after approved plan/evidence, verification after implementation,
-  review after coherent change, and security review after a security-relevant
-  change exists.
-
-  Dispatch transfers ownership of the assigned scope to the subagent. While a
-  subagent owns a scope, the orchestrator must not read, grep, inspect, edit,
-  debug, test, verify, review, security-assess, install packages, update
-  dependencies, create virtualenvs, modify lockfiles, or mutate the tool
-  environment for that scope. The orchestrator must not run duplicate commands
-  or repeat checks that a subagent already ran.
-  Trust successful subagent returns for their assigned scope. Do not
-  double-test, re-read, or confirm successful subagent work. If evidence is
-  missing, failed, blocked, timed out, cancelled, or explicitly incomplete,
-  dispatch a smaller follow-up subagent or ask the user for the blocking
-  decision. Do not take over the work. Do not read source files, diffs, or
-  artifacts merely to confirm a successful return; read only for orchestration
-  decisions, conflicts, blockers, destructive/change-boundary approval, or
-  final git handoff.
-
-  Give each subagent a self-contained brief with one goal, exact scope,
-  boundaries, prior evidence to reuse, artifact write target, stop condition,
-  and compact return format.
-  Choose the enabled role matching the slice. Use distinct enabled roles for
-  each required gate when available; otherwise the workflow assigns that gate
-  to the main session.
-  Completed subagents wake you upon return automatically. Do not poll. Do not call
-  orch_status unless the user explicitly asks for status, history, roles, help,
-  doctor, activation, or stop. {roles}
+  Dispatch a focused subagent when useful or when the user asks. Choose an
+  enabled role and give it one clear goal, scope, boundaries, stop condition,
+  and expected return. Dispatch transfers ownership of that scope: do not
+  duplicate the subagent's work, commands, or checks; trust successful returns.
+  If a return is failed, blocked, or incomplete, use its evidence for a smaller
+  follow-up or ask the user for a decision. In structured orchestration mode,
+  delegation is the default: inspect the whole request for slices and dependencies,
+  dispatch each currently unblocked independent slice in parallel (one call per
+  slice), and follow dependency order. Completed subagents return automatically;
+  do not poll. {roles}
 tool_prompt_snippet: ""
 tool_prompt_guidelines: []
 tool_goal_description: >-
@@ -83,8 +60,7 @@ status_description: >-
   status/control/help action in the current session. Use status for active
   subagents, history for completed subagent results, roles for read-only role
   information, doctor for setup checks, help for usage, on to enable Orchestra
-  tools and SPSI guidance, and stop with a runId to cancel an owned active run.
-  Do not poll for completion. Completed subagent reports return automatically.
+  tools, and stop with a runId to cancel an owned active run.
 status_action_description: >-
   Action to perform: help, doctor, roles, status, history, on, or stop. Use stop
   only with a runId for an active run owned by the current host session.
@@ -98,10 +74,12 @@ soft_timeout_block_reason: Orchestra soft timeout reached; return budget handoff
 session_mode_off_message: Orchestra tools hidden for this session. Run /orch on to enable them again.
 session_mode_on_message: Orchestra tools enabled for this session.
 session_mode_orchestrate_message: Orchestra tools and orchestrator skill enabled for this session.
+dispatch_ack_instruction: Completed subagents wake you upon return automatically. Do not poll, do not re-dispatch the same task before it returns. 
 return_hint_done: advance the plan using this subagent return; do not repeat its work
 return_hint_incomplete: pass this return_path handoff artifact to the next dispatch and continue from it
 return_hint_failed: read the failed return artifact and decide how to proceed
 return_hint_builder_failed: pass this return_path handoff artifact to one bounded fix-only builder follow-up
+return_hint_budget_exceeded: pass this return_path handoff artifact to a smaller continuation dispatch; preserve completed work and do not repeat it
 budget_exceeded_prompt: |-
   [Orchestra subagent budget exceeded]
   Stop everything you're doing immediately.

@@ -17,6 +17,7 @@ Orchestra roadmap items are split into:
    - Tighten task/context/message artifacts into concise, stable shapes that are cheap to forward.
    - Allow those artifacts to be passed directly between subagents instead of round-tripping through the orchestrator session context.
    - Align artifact shape with multi-step dispatch (TODO 1) so a step's return feeds the next step's task input.
+   - Evaluate artifact ownership and single-pass security behavior through agent workflows rather than skill-wording assertions.
 
 4. [ ] Investigate verifier/reviewer run limits to prevent spiraling fix loops.
    - Specifically gpt-5.5/5.6 are bad about nitpicking everything to death.

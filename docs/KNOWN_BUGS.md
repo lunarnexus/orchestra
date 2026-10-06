@@ -23,6 +23,32 @@ returned.
 **Impact:** one-shot automation can grade or exit prematurely and report active
 subagents as unfinished even though the subagents may still complete later.
 
+## Return prompt can be lost when Pi reloads while subagents are running
+
+**Status:** open
+
+**Observed:** interactive Pi session after running `/reload` while Orchestra subagents were active.
+
+A Pi reload can stop the host-local Orchestra watchers that wait for subagent completion and inject the consolidated auto-return prompt. The backend subagents continue running and can finalize normally, but the reloaded Pi extension only refreshes status/footer state; it does not recover pending session reports or restart report watchers for already-running subagents.
+
+Typical symptoms:
+
+- `orch_status status` shows `active_runs: 0`, `global_active_runs: 0`, and `descendants_terminal: true`.
+- `session_report_available` may be true, or history may show completed/incomplete runs.
+- The expected auto-return prompt is not injected into the parent conversation.
+- The footer can appear stale until another explicit refresh occurs.
+
+**Suspected cause:** Pi `/reload` tears down in-memory watcher state (`_await-run`, `_await-session-report`, and pending local delivery state). On session start, the Pi adapter refreshes active status but does not query/deliver durable pending reports or resume watchers for active run IDs.
+
+**Expected behavior:** after Pi reload, Orchestra should recover the session delivery state. The adapter should either:
+
+- restart watchers for active run IDs returned by status,
+- fetch and inject durable pending reports when no active runs remain,
+- use a non-consuming pending-report endpoint plus the existing mark-delivered confirmation path, or
+- otherwise replay pending return prompts idempotently after reconnect.
+
+**Impact:** parent orchestration can miss completed subagent results after `/reload`. Manual recovery is possible through `orch_status history`, status JSON, return artifacts, or logs, but the normal auto-return workflow is broken.
+
 ## Return prompt can be lost when a subagent completes during session compaction
 
 **Status:** open

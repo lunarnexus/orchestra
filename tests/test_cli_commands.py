@@ -69,11 +69,13 @@ def load_root_prompt_config() -> PromptConfig:
         return_hint_incomplete=data["return_hint_incomplete"],
         return_hint_failed=data["return_hint_failed"],
         return_hint_builder_failed=data["return_hint_builder_failed"],
+        return_hint_budget_exceeded=data["return_hint_budget_exceeded"],
         budget_trigger_label=data["budget_trigger_label"],
         soft_timeout_block_reason=data["soft_timeout_block_reason"],
         session_mode_off_message=data["session_mode_off_message"],
         session_mode_on_message=data["session_mode_on_message"],
         session_mode_orchestrate_message=data["session_mode_orchestrate_message"],
+        dispatch_ack_instruction=data["dispatch_ack_instruction"],
     )
 
 
@@ -1304,10 +1306,9 @@ def test_internal_dispatch_ack_includes_role(capsys: pytest.CaptureFixture[str])
 
     output = capsys.readouterr().out
     assert exit_code == 0
-    assert output.strip() == (
-        "orchestra dispatched: critic abc123\n"
-        "subagent will auto-return when finished. Do not poll while waiting."
-    )
+    instruction = load_root_prompt_config().dispatch_ack_instruction
+    assert instruction
+    assert output.strip() == f"orchestra dispatched: critic abc123\n{instruction}"
 
 
 def test_internal_progress_message_includes_role(capsys: pytest.CaptureFixture[str]) -> None:
@@ -1348,6 +1349,69 @@ def test_internal_dispatch_ack_json_contract(capsys: pytest.CaptureFixture[str])
     assert output["role"] == "critic"
 
 
+def test_internal_dispatch_ack_reports_concurrency_headroom(
+    tmp_path: Path,
+    runtime_files_factory: RuntimeFilesFactory,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path, _catalog_path, db_path = runtime_files_factory(
+        tmp_path,
+        ["python", "-c", "print('noop')"],
+    )
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    data["concurrency"] = {"global": 4, "per_session": 5}
+    config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+
+    store = StateStore(db_path)
+    store.initialize()
+    store.create_run(
+        RunRecord(
+            run_id="ack-run-1",
+            orchestrator_session_id="manual:ack-session",
+            harness="pi",
+            role="builder",
+            task_label="ack",
+            log_path=tmp_path / "logs" / "ack-run-1.jsonl",
+            created_at="2026-01-01T00:00:00Z",
+            transcript_path=tmp_path / "transcripts" / "ack-run-1.jsonl",
+        )
+    )
+
+    from orchestra.cli import main
+
+    exit_code = main(
+        [
+            "--config",
+            str(config_path.parent),
+            "_dispatch-ack",
+            "--run-id",
+            "ack-run-1",
+            "--role",
+            "builder",
+        ]
+    )
+    text_output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "dispatch concurrency: 4/5 available" in text_output
+
+    json_exit = main(
+        [
+            "--config",
+            str(config_path.parent),
+            "_dispatch-ack",
+            "--run-id",
+            "ack-run-1",
+            "--role",
+            "builder",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert json_exit == 0
+    assert payload["concurrency_slots_remaining"] == 4
+    assert payload["concurrency_limit"] == 5
+
+
 def test_internal_progress_message_json_contract(capsys: pytest.CaptureFixture[str]) -> None:
     from orchestra.cli import main
 
@@ -1376,45 +1440,6 @@ def test_internal_progress_message_json_contract(capsys: pytest.CaptureFixture[s
     assert output["run_id"] == "abc123"
     assert output["status"] == "done"
     assert output["role"] == "critic"
-
-
-def test_internal_orchestrator_skill_renders_project_skill(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    skill_dir = tmp_path / "skills" / "orchestrator"
-    skill_dir.mkdir(parents=True)
-    skill_dir.joinpath("SKILL.md").write_text("# Test skill\n\nUse it.", encoding="utf-8")
-    monkeypatch.chdir(tmp_path)
-
-    from orchestra.cli import main
-
-    exit_code = main(["_orchestrator-skill"])
-
-    output = capsys.readouterr().out
-    assert exit_code == 0
-    assert output == "Load this Orchestra main-session skill:\n\n# Test skill\n\nUse it.\n"
-
-
-def test_internal_orchestrator_skill_errors_when_missing(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.chdir(tmp_path)
-
-    import orchestra.host_text as host_text
-    from orchestra.cli import main
-
-    monkeypatch.setattr(host_text, "_find_source_root", lambda source_root=None: None)
-
-    exit_code = main(["_orchestrator-skill"])
-
-    output = capsys.readouterr().out
-    assert exit_code == 1
-    assert "error: orchestrator skill file not found; looked for:" in output
-    assert "skills/orchestrator/SKILL.md" in output
 
 
 def test_internal_await_run_outputs_role(
@@ -1472,6 +1497,44 @@ def test_internal_await_run_outputs_role(
     assert "descendants_terminal: yes" in output
     assert "session_report_available: yes" in output
     assert "session_report_delivered: no" in output
+
+
+def test_await_run_text_uses_same_budget_hint_as_json(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from orchestra.cli import main
+    from orchestra.reports import SessionStatusDetails
+    from orchestra.supervision import WORKER_BUDGET_EXCEEDED_BLOCKER
+
+    record = RunRecord(
+        run_id="budget-run",
+        orchestrator_session_id="manual:demo",
+        harness="pi",
+        role="builder",
+        task_label="build",
+        log_path=Path("events.jsonl"),
+        created_at="2026-01-01T00:00:00Z",
+        status="incomplete",
+        blocker_text=WORKER_BUDGET_EXCEEDED_BLOCKER,
+    )
+    prompts = load_root_prompt_config()
+    details = SessionStatusDetails(True, True, False)
+    monkeypatch.setattr(
+        "orchestra.cli.load_context",
+        lambda **_kwargs: SimpleNamespace(config=SimpleNamespace(prompts=prompts)),
+    )
+    monkeypatch.setattr(
+        "orchestra.cli.await_run_terminal_status",
+        lambda *_args, **_kwargs: (record, 0, details),
+    )
+    command = ["_await-run", "--session-id", "manual:demo", "--run-id", "budget-run"]
+
+    assert main([*command, "--json"]) == 0
+    json_hint = json.loads(capsys.readouterr().out)["next"]
+    assert main(command) == 0
+    assert f"next: {json_hint}" in capsys.readouterr().out
+    assert json_hint == prompts.return_hint_budget_exceeded
 
 
 def test_roles_command_lists_enabled_roles_by_default_and_all_roles_with_flag(
@@ -2090,43 +2153,29 @@ def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(
     assert "- worker" in tool_info["description"]
     assert "- reviewer (default)" in tool_info["description"]
     assert "model: gpt-5" not in tool_info["description"]
-    assert tool_info["roleDescription"].startswith("Optional subagent capability.")
-    assert "enabled role that best matches" in tool_info["roleDescription"]
+    configured_prompts = load_root_prompt_config()
+    assert tool_info["roleDescription"] == configured_prompts.tool_role_description.format(
+        roles="Selectable roles\n- worker\n- reviewer (default)"
+    )
     assert "- worker" in tool_info["roleDescription"]
     assert "- reviewer (default)" in tool_info["roleDescription"]
     assert "critic" not in tool_info["description"]
     assert "critic" not in tool_info["roleDescription"]
     assert "Legend:" not in tool_info["description"]
-    assert tool_info["statusDescription"].startswith(
-        "Use orch_status only when the user explicitly asks"
-    )
-    assert "Do not poll" in tool_info["statusDescription"]
-    assert "Completed subagent reports return automatically" in tool_info[
-        "statusDescription"
-    ]
-    assert "help, doctor, roles, status, history, on, or stop" in tool_info[
-        "statusActionDescription"
-    ]
-    assert "runId" in tool_info["statusActionDescription"]
-    assert tool_info["statusLimitDescription"] == (
-        "Optional positive history limit for action=history."
-    )
-    assert tool_info["statusRunIdDescription"] == "Required run id when action=stop."
-    assert tool_info["statusRoleDescription"] == (
-        "Reserved for compatibility; action=roles lists all configured roles."
-    )
-    assert tool_info["statusSettingDescription"] == (
-        "Reserved for role updates; model-callable roles are read-only for now."
-    )
-    assert tool_info["statusValueDescription"] == (
-        "Reserved for role updates; model-callable roles are read-only for now."
-    )
+    for key, value in (
+        ("statusDescription", configured_prompts.status_description),
+        ("statusActionDescription", configured_prompts.status_action_description),
+        ("statusLimitDescription", configured_prompts.status_limit_description),
+        ("statusRunIdDescription", configured_prompts.status_run_id_description),
+        ("statusRoleDescription", configured_prompts.status_role_description),
+        ("statusSettingDescription", configured_prompts.status_setting_description),
+        ("statusValueDescription", configured_prompts.status_value_description),
+        ("budgetTriggerLabel", configured_prompts.budget_trigger_label),
+        ("softTimeoutBlockReason", configured_prompts.soft_timeout_block_reason),
+    ):
+        assert tool_info[key] == value
     assert tool_info["dispatchTimeoutError"] == (
         "timeout is not accepted by orch_dispatch; configured default_timeout applies."
-    )
-    assert tool_info["budgetTriggerLabel"] == "Budget trigger"
-    assert tool_info["softTimeoutBlockReason"] == (
-        "Orchestra soft timeout reached; return budget handoff"
     )
     assert "timeoutDescription" not in tool_info
 

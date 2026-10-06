@@ -17,6 +17,7 @@ from orchestra.artifacts import (
 from orchestra.config import PromptConfig
 from orchestra.context import CONTRACT_VERSION, AppContext, AppError
 from orchestra.reports import (
+    _return_hint,
     aggregate_completed_run_accounting,
     clean_result_summary,
     session_status_details,
@@ -537,18 +538,6 @@ def await_run_payload(
         "session_report_available": details.session_report_available,
         "session_report_delivered": details.session_report_delivered,
     }
-
-
-def _return_hint(run: RunRecord, *, prompts: PromptConfig) -> str | None:
-    from orchestra.state import STATUS_CANCELLED, STATUS_DONE
-
-    if run.status == STATUS_DONE:
-        return prompts.return_hint_done
-    if run.status == STATUS_INCOMPLETE:
-        return prompts.return_hint_incomplete
-    if run.status == STATUS_CANCELLED:
-        return None
-    return prompts.return_hint_failed
 
 
 def _format_run_summary(run: RunRecord) -> str:
