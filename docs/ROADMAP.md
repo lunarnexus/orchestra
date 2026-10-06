@@ -20,7 +20,7 @@ Orchestra roadmap items are split into:
    - Allow those artifacts to be passed directly between subagents instead of round-tripping through the orchestrator session context.
    - Align artifact shape with multi-step dispatch (TODO 1) so a step's return feeds the next step's task input.
 
-4. [ ] Investigate verifier/reviewer run limits to prevent spiraling fix loops.
+4. [ ] Investigate verifier/reviewer run limits to bound repeated finding and fix cycles.
    - Specifically gpt-5.5/5.6 are bad about nitpicking everything to death.
 
 5. [ ] Fix config paths, specifically state_dir, log_dir defaults.  There's nothing specifically wrong with them, but it's not as user-friendly as I'd like.  Everything should be as idiot-proof as possible.

@@ -8,4 +8,4 @@ retention_days: 90 # Retain terminal runs before prune planning reports them as 
 concurrency: # Concurrent dispatches
   global: 6
   per_session: 3
-auto_verify: true # Automatically runs a verifier after every sucessful builder return
+auto_verify: false # Automatically runs a verifier after every sucessful builder return
