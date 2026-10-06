@@ -7,6 +7,8 @@ Orchestra roadmap items are split into:
 
 ## TODO
 
+- [ ] Publish the benchmark methodology and model-specific results referenced in README.md in a dedicated research document.
+
 1. [ ] Expand chained dispatch beyond post-run auto-verification.
    - `auto_verify` already supports a follow-up dispatch after a selected run completes; generalize this into configurable dispatch chains.
    - Support pre-run dispatches that execute before the chosen dispatch, not only post-run follow-ups.
