@@ -6,13 +6,14 @@ import json
 import re
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from orchestra.artifacts import canonical_events_path, canonical_return_path
 from orchestra.config import PromptConfig
 from orchestra.context import CONTRACT_VERSION, AppContext, AppError
+from orchestra.errors import error_envelope
 from orchestra.state import (
     ACTIVE_STATUSES,
     STATUS_CANCELLED,
@@ -43,6 +44,7 @@ __all__ = [
 ]
 
 REPORT_HEADER = "Orchestra session report"
+ERROR_STATUSES = frozenset({STATUS_FAILED, STATUS_INCOMPLETE, STATUS_CANCELLED})
 SUCCESS_SEMANTIC_VERDICTS = frozenset(
     {"complete", "completed", "done", "pass", "passed", "success"}
 )
@@ -52,6 +54,7 @@ SUCCESS_SEMANTIC_VERDICTS = frozenset(
 class SessionReport:
     run_ids: list[str]
     text: str
+    errors: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -505,7 +508,20 @@ def pending_session_report(context: AppContext, session_id: str) -> SessionRepor
             state_dir=context.config.state_dir,
             prompts=context.config.prompts,
         ),
+        errors=_run_error_envelopes(runs),
     )
+
+
+def _run_error_envelopes(runs: list[RunRecord]) -> list[dict[str, object]]:
+    return [
+        error_envelope(
+            run.error_text or run.blocker_text or clean_result_summary(run.result_summary),
+            f"subagent:{run.role}",
+            run_id=run.run_id,
+        )
+        for run in runs
+        if run.status in ERROR_STATUSES
+    ]
 
 
 def mark_session_report_delivered(
@@ -614,13 +630,16 @@ def _is_transient_session_report_db_open_error(
 
 
 def session_report_payload(report: SessionReport) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "contract_version": CONTRACT_VERSION,
         "kind": "session_report",
         "ok": True,
         "runIds": report.run_ids,
         "report": report.text,
     }
+    if report.errors:
+        payload["errors"] = report.errors
+    return payload
 
 
 def await_session_report(

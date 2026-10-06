@@ -55,6 +55,10 @@ def test_pi_extension_registers_natural_language_dispatch_tool() -> None:
     assert '["_spsi-payload", "--session-id", sessionId, "--json"]' in extension_source
     assert 'pi.on("before_agent_start"' in extension_source
     assert 'return { systemPrompt:' in extension_source
+    assert 'fetchSpsiPayload(sessionId: string): Promise<SpsiPayload> {' in extension_source
+    assert 'orchestra _spsi-payload returned invalid JSON' in extension_source
+    assert 'Orchestra SPSI context failed' in extension_source
+    assert 'enabled SPSI payload missing content' in extension_source
     assert 'runId is required for orch_status stop.' in extension_source
     assert (
         'orch_status roles is read-only; use the host /orch roles command to change role settings.'
@@ -386,3 +390,47 @@ def test_pi_extension_parent_context_capture_handoff() -> None:
     assert "fs.rmSync" not in extension_source
     assert "os.tmpdir()" not in extension_source
     assert "randomUUID" not in extension_source
+
+
+def test_pi_extension_reuses_shared_error_envelope_parser() -> None:
+    extension_source = Path("extensions/pi/orchestra/index.ts").read_text(encoding="utf-8")
+
+    # One reusable core-envelope parser plus host render/throw helpers.
+    assert "function parseCoreErrorEnvelope(" in extension_source
+    assert 'envelope.kind !== "error"' in extension_source
+    assert 'envelope.ok !== false' in extension_source
+    assert "function commandErrorMessage(" in extension_source
+    assert "function throwSpsiContextFailure(" in extension_source
+
+    # Migrated command-failure sites reuse the shared result renderer.
+    assert extension_source.count("commandErrorMessage(") >= 4
+    assert (
+        "commandErrorMessage(result, `orchestra _spsi-payload exited with code"
+        in extension_source
+    )
+    assert 'commandErrorMessage(ack, "orchestra dispatch ack failed")' in extension_source
+    assert 'commandErrorMessage(result, "orchestra dispatch failed")' in extension_source
+    assert "commandErrorMessage({ stdout, stderr }, `exit ${code}`)" in extension_source
+
+    # Report-delivery-mark and status --json failures reuse the shared renderer.
+    assert (
+        'commandErrorMessage(markResult, "orchestra report delivery mark failed")'
+        in extension_source
+    )
+    assert 'commandErrorMessage(result, "orchestra status failed")' in extension_source
+    assert "mark failed: ${markResult.stderr || markResult.stdout}" not in extension_source
+    assert (
+        'throw new Error(result.stderr || result.stdout || "orchestra status failed")'
+        not in extension_source
+    )
+
+    # SPSI failures route through the host throw helper; disabled SPSI stays silent.
+    assert extension_source.count("throwSpsiContextFailure(") >= 3
+    assert "if (payload.enabled !== true) return;" in extension_source
+
+    # No site renders the raw envelope; fallbacks stay for process/non-JSON text.
+    assert (
+        "return { code: result.code, runId: null, "
+        "output: (dispatch?.message || result.stdout || result.stderr) };"
+        not in extension_source
+    )

@@ -335,6 +335,42 @@ async function runOrchestra(command: string[]): Promise<SessionReportRunnerResul
   }
 }
 
+type CoreErrorEnvelope = {
+  kind?: unknown;
+  ok?: unknown;
+  error?: { message?: unknown };
+};
+
+function parseOrchestraErrorDetail(stdout: string): string | null {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  let payload: CoreErrorEnvelope;
+  try {
+    payload = JSON.parse(trimmed) as CoreErrorEnvelope;
+  } catch {
+    return null;
+  }
+
+  if (payload.kind !== "error" || payload.ok !== false) {
+    return null;
+  }
+
+  const message = typeof payload.error?.message === "string" ? payload.error.message.trim() : "";
+  return message ? message : null;
+}
+
+function orchestraFailureDetail(result: SessionReportRunnerResult): string {
+  const detail = parseOrchestraErrorDetail(result.stdout);
+  if (detail) {
+    return detail;
+  }
+  // Process/invalid/non-JSON failures keep the raw stream fallback.
+  return result.stdout.trim() || result.stderr.trim();
+}
+
 function buildAwaitSessionReportCommand(
   ownerId: string,
   runId: string,
@@ -488,7 +524,7 @@ async function promptSessionReport(
     }
     const markResult = await runOrchestra(buildMarkSessionReportDeliveredCommand(ownerId, envelope.runIds));
     if (markResult.returncode !== 0) {
-      throw new Error(markResult.stderr || "failed to mark Orchestra report delivered.");
+      throw new Error(orchestraFailureDetail(markResult) || "failed to mark Orchestra report delivered.");
     }
     markSessionReportDelivered(ownerId, envelope.runIds);
     return true;
@@ -700,7 +736,7 @@ async function deliverRunProgressNotification(
       return;
     }
     if (awaitRunResult.returncode !== 0) {
-      throw new Error(awaitRunResult.stderr || "orchestra await-run failed.");
+      throw new Error(orchestraFailureDetail(awaitRunResult) || "orchestra await-run failed.");
     }
 
     const { status, role, blocker, activeRemaining } = parseAwaitRunOutput(awaitRunResult.stdout);
@@ -711,7 +747,7 @@ async function deliverRunProgressNotification(
       buildProgressMessageCommand(completedCount, totalCount, runId, status ?? "done", role),
     );
     if (progressResult.returncode !== 0) {
-      throw new Error(progressResult.stderr || "failed to format Orchestra progress message.");
+      throw new Error(orchestraFailureDetail(progressResult) || "failed to format Orchestra progress message.");
     }
 
     const fallbackMessage = `orchestra:${role ? ` ${role}` : ""} ${runId} returned ${status ?? "done"} (${completedCount}/${totalCount})${blocker ? ` :: ${blocker}` : ""}`;
@@ -777,10 +813,10 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
 
       const command = buildOrchStatusCommand(ownerId, statusArgs);
       const result = await runOrchestra(command);
-      const output = result.stdout.trim() || result.stderr.trim();
       if (result.returncode !== 0) {
-        throw new Error(output || `orch_status ${statusArgs.action} failed.`);
+        throw new Error(orchestraFailureDetail(result) || `orch_status ${statusArgs.action} failed.`);
       }
+      const output = result.stdout.trim();
       if (!output) {
         throw new Error(`orch_status ${statusArgs.action} returned no output.`);
       }
@@ -833,7 +869,7 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
             command.push("--json");
             const result = await runOrchestra(command);
             if (result.returncode !== 0) {
-              throw new Error(result.stderr || "orchestra dispatch failed.");
+              throw new Error(orchestraFailureDetail(result) || "orchestra dispatch failed.");
             }
 
             const dispatch = parseDispatchPayload(result.stdout);
@@ -850,7 +886,7 @@ export const OrchestraPlugin: Plugin = async ({ client }) => {
             const role = typeof dispatch.role === "string" && dispatch.role.trim() ? dispatch.role : (args.role?.trim() || "worker");
             const ack = await runOrchestra(["orchestra", "_dispatch-ack", "--run-id", runId, "--role", role]);
             if (ack.returncode !== 0 || !ack.stdout.trim()) {
-              throw new Error(ack.stderr || "orchestra dispatch ack failed.");
+              throw new Error(orchestraFailureDetail(ack) || "orchestra dispatch ack failed.");
             }
             return ack.stdout.trim();
           } catch (error) {

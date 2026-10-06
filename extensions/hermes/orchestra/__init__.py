@@ -77,31 +77,103 @@ def _parse_budget_env(name: str) -> int:
     return budget if budget >= 0 else 1
 
 
+class _CoreCommandError(RuntimeError):
+    """Raised when a core Orchestra command fails; carries the surfaced detail."""
+
+
+def _parse_core_error_envelope(source: str) -> tuple[str, str, str | None] | None:
+    """Parse the core shared error envelope (D-RETURN-018).
+
+    Returns ``(message, operation, run_id)`` for a well-formed v1 error
+    envelope, or None so callers fall back to raw process text (native spawn
+    or commands without --json).
+    """
+    trimmed = source.strip()
+    if not trimmed:
+        return None
+    try:
+        payload = json.loads(trimmed)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("contract_version") != 1:
+        return None
+    if payload.get("kind") != "error" or payload.get("ok") is not False:
+        return None
+    detail = payload.get("error")
+    if not isinstance(detail, dict):
+        return None
+    message = detail.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return None
+    operation = detail.get("operation")
+    if not isinstance(operation, str) or not operation.strip():
+        return None
+    raw_run_id = detail.get("run_id")
+    run_id = raw_run_id if isinstance(raw_run_id, str) and raw_run_id else None
+    return message.strip(), operation.strip(), run_id
+
+
+def _command_error_message(result: subprocess.CompletedProcess[str], fallback: str) -> str:
+    """Render a host-facing error message for a core command result.
+
+    Prefers the core error envelope message (stdout, then stderr), then raw
+    stderr or stdout text, then a fixed fallback. Never returns raw envelope
+    JSON when a well-formed envelope is present.
+    """
+    for source in (result.stdout or "", result.stderr or ""):
+        envelope = _parse_core_error_envelope(source)
+        if envelope is not None:
+            return envelope[0]
+    stderr_text = (result.stderr or "").strip()
+    if stderr_text:
+        return stderr_text
+    stdout_text = (result.stdout or "").strip()
+    if stdout_text:
+        return stdout_text
+    return fallback
+
+
+def _log_host_error(operation: str, message: str) -> None:
+    sys.stderr.write(f"orchestra {operation} failed: {message}\n")
+
+
 def _spsi_context(runtime_session_id: str) -> str | None:
     """Fetch non-persistent Orchestra SPSI context for a session.
 
     Uses the core `_spsi-payload` helper so prompt text is generated once in
-    core and never duplicated here. Any failure falls closed to no injection.
+    core and never duplicated here. A legitimately disabled state returns
+    None; any core failure or invalid payload raises _CoreCommandError with
+    the surfaced core detail so the caller can render it visibly.
     """
     try:
         result = _run_orchestra(
             ["_spsi-payload", "--session-id", runtime_session_id, "--json"]
         )
-    except Exception:  # noqa: BLE001 - plugin must not crash the pre-LLM hook
-        return None
-    if result.returncode != 0 or not result.stdout.strip():
-        return None
+    except Exception as exc:  # noqa: BLE001 - converted so the hook can log, not crash
+        raise _CoreCommandError(f"core call failed: {exc}") from exc
+    if result.returncode != 0:
+        raise _CoreCommandError(
+            _command_error_message(result, f"core exited with code {result.returncode}")
+        )
+    if not result.stdout.strip():
+        raise _CoreCommandError("core returned an empty response")
     try:
         payload = json.loads(result.stdout)
-    except (TypeError, ValueError):
-        return None
+    except (TypeError, ValueError) as exc:
+        raise _CoreCommandError(
+            f"core returned invalid JSON: {result.stdout.strip()[:200]}"
+        ) from exc
     if not isinstance(payload, dict):
-        return None
-    if payload.get("ok") is not True or payload.get("enabled") is not True:
+        raise _CoreCommandError("core returned an invalid payload")
+    if payload.get("ok") is not True:
+        raise _CoreCommandError("core reported an unsuccessful SPSI payload")
+    if payload.get("enabled") is not True:
         return None
     content = payload.get("content")
     if not isinstance(content, str) or not content.strip():
-        return None
+        raise _CoreCommandError("enabled SPSI payload missing content")
     return content.strip()
 
 
@@ -587,7 +659,7 @@ def _error(message: str) -> str:
 
 
 def _log_watcher_error(message: str) -> None:
-    sys.stderr.write(f"orchestra auto-return watcher failed: {message}\n")
+    _log_host_error("auto-return watcher", message)
 
 
 def _current_session_watcher_generation(runtime_session_id: str) -> int:
@@ -642,9 +714,7 @@ def _mark_session_report_delivered(runtime_session_id: str, run_ids: list[str]) 
         ]
     )
     if result.returncode != 0:
-        _log_watcher_error(
-            (result.stdout or result.stderr).strip() or "report delivery mark failed"
-        )
+        _log_watcher_error(_command_error_message(result, "report delivery mark failed"))
         return False
     return True
 
@@ -787,9 +857,7 @@ def _handle_session_report_result(
     if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
         return
     if result.returncode != 0:
-        error_text = (result.stdout or result.stderr).strip()
-        if error_text:
-            _log_watcher_error(error_text)
+        _log_watcher_error(_command_error_message(result, f"exit {result.returncode}"))
         return
 
     if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
@@ -981,7 +1049,7 @@ def _dispatch_orchestra_run(
     command.append("--json")
     result = _run_orchestra(command, input=parent_context_content)
     if result.returncode != 0:
-        return _error((result.stdout or result.stderr).strip() or "orchestra dispatch failed")
+        return _error(_command_error_message(result, "orchestra dispatch failed"))
 
     run_id = _extract_run_id(result.stdout)
     if not run_id:
@@ -1007,7 +1075,7 @@ def _dispatch_orchestra_run(
     ).strip() or "worker"
     ack = _run_orchestra(["_dispatch-ack", "--run-id", run_id, "--role", effective_role])
     if ack.returncode != 0:
-        return _error((ack.stdout or ack.stderr).strip() or "orchestra dispatch ack failed")
+        return _error(_command_error_message(ack, "orchestra dispatch ack failed"))
     if not ack.stdout.strip():
         return _error("orchestra dispatch ack failed")
     return ack.stdout.strip()
@@ -1242,7 +1310,13 @@ def register(ctx: Any) -> None:
         if runtime_session_id is None:
             return None
         _cache_parent_context(runtime_session_id, _kwargs.get("conversation_history"))
-        spsi_context = _spsi_context(runtime_session_id)
+        spsi_context: str | None = None
+        try:
+            spsi_context = _spsi_context(runtime_session_id)
+        except _CoreCommandError as exc:
+            # Hermes hook exceptions only reach host logs, so log the exact
+            # core error here and continue the turn without SPSI injection.
+            _log_host_error("SPSI context", str(exc))
         budget_message: str | None = None
         with _BUDGET_STATES_LOCK:
             state = _budget_state(runtime_session_id)

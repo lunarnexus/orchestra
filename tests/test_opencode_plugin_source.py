@@ -241,7 +241,14 @@ def test_opencode_plugin_executes_tokenized_dispatch_with_execfile_and_wires_del
     assert ack_call in source
     assert 'timeout_seconds: timeoutSeconds,' not in source
     assert 'return ack.stdout.trim();' in source
-    assert 'throw new Error(ack.stderr || "orchestra dispatch ack failed.");' in source
+    assert (
+        'throw new Error(orchestraFailureDetail(result) || "orchestra dispatch failed.");'
+        in source
+    )
+    assert (
+        'throw new Error(orchestraFailureDetail(ack) || "orchestra dispatch ack failed.");'
+        in source
+    )
     assert '`orchestra dispatched: ${role} ${runId}`' not in source
     assert 'command.join(" ")' not in source
     assert 'shell: true' not in source
@@ -273,7 +280,10 @@ def test_opencode_plugin_fails_when_dispatch_ack_fails() -> None:
 
     assert ack_call in source
     assert 'if (ack.returncode !== 0 || !ack.stdout.trim()) {' in source
-    assert 'throw new Error(ack.stderr || "orchestra dispatch ack failed.");' in source
+    assert (
+        'throw new Error(orchestraFailureDetail(ack) || "orchestra dispatch ack failed.");'
+        in source
+    )
     assert '`orchestra dispatched: ${role} ${runId}`' not in source
 
 

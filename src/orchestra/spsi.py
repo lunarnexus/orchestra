@@ -8,7 +8,7 @@ from html import escape
 from pathlib import Path
 
 from orchestra.config import ORCHESTRATOR_ROLE_NAME, RoleConfig
-from orchestra.context import CONTRACT_VERSION, AppContext
+from orchestra.context import CONTRACT_VERSION, AppContext, AppError
 from orchestra.harnesses.common import SKILL_FILENAME, SKILL_LIBRARY_DIR
 from orchestra.session_mode import resolve_main_session_mode
 from orchestra.state import MAIN_SESSION_MODE_ORCHESTRATE, StateError
@@ -58,9 +58,7 @@ def spsi_payload(context: AppContext, session_id: str) -> SpsiPayload:
     if not enabled or role is None or not role.skills:
         return SpsiPayload(session_id=session_id, enabled=False)
 
-    skill_sections = _skill_sections(role.skills, _skill_roots(context))
-    if not skill_sections:
-        return SpsiPayload(session_id=session_id, enabled=False)
+    skill_sections = _skill_sections(role_name, role.skills, _skill_roots())
 
     revision_source = "\n\n".join(skill_sections)
     revision = "sha256:" + hashlib.sha256(revision_source.encode("utf-8")).hexdigest()
@@ -109,26 +107,66 @@ def _worker_run_id(session_id: str) -> str | None:
     return run_id or None
 
 
-def _skill_roots(context: AppContext) -> tuple[Path, ...]:
-    roots = (
-        Path.cwd() / SKILL_LIBRARY_DIR,
-        context.paths.catalog_path.resolve().parent / SKILL_LIBRARY_DIR,
-    )
-    return tuple(dict.fromkeys(root.resolve() for root in roots))
+def _source_home() -> Path | None:
+    """Return the canonical Orchestra package source home, if available.
+
+    The source home is the nearest ancestor of this module that contains both
+    ``pyproject.toml`` and a ``skills/`` directory. This works for editable and
+    source-tree installs where the packaged skill library ships alongside the
+    package. It is intentionally the only skill source; there is no working
+    directory, catalog, or environment override.
+    """
+
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "pyproject.toml").is_file() and (parent / SKILL_LIBRARY_DIR).is_dir():
+            return parent
+    return None
 
 
-def _skill_sections(skill_names: tuple[str, ...], skill_roots: tuple[Path, ...]) -> list[str]:
+def _skill_roots() -> tuple[Path, ...]:
+    home = _source_home()
+    if home is None:
+        raise AppError(
+            "orchestra canonical skill library is unavailable: no package source home with "
+            f"pyproject.toml and {SKILL_LIBRARY_DIR}/ was found above {Path(__file__).resolve()}"
+        )
+    return (home / SKILL_LIBRARY_DIR,)
+
+
+def _skill_sections(
+    role_name: str,
+    skill_names: tuple[str, ...],
+    skill_roots: tuple[Path, ...],
+) -> list[str]:
     sections: list[str] = []
     for skill_name in skill_names:
         skill_path = _find_project_skill(skill_name, skill_roots)
-        if skill_path is not None:
-            sections.append(
-                f'<orchestra_spsi_skill name="{escape(skill_name, quote=True)}">\n'
-                f"Skill directory: {skill_path.parent.resolve()}\n"
-                "Resolve relative resource paths against this directory.\n\n"
-                f"{skill_path.read_text(encoding='utf-8').strip()}\n"
-                "</orchestra_spsi_skill>"
+        if skill_path is None:
+            searched = ", ".join(
+                str((root / skill_name / SKILL_FILENAME).resolve()) for root in skill_roots
             )
+            raise AppError(
+                f"role '{role_name}' skill '{skill_name}' was not found in the canonical "
+                f"Orchestra skill library; searched: {searched}"
+            )
+        try:
+            text = skill_path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise AppError(
+                f"role '{role_name}' skill '{skill_name}' could not be read at "
+                f"{skill_path.resolve()}: {exc}"
+            ) from exc
+        if not text:
+            raise AppError(
+                f"role '{role_name}' skill '{skill_name}' is empty at {skill_path.resolve()}"
+            )
+        sections.append(
+            f'<orchestra_spsi_skill name="{escape(skill_name, quote=True)}">\n'
+            f"Skill directory: {skill_path.parent.resolve()}\n"
+            "Resolve relative resource paths against this directory.\n\n"
+            f"{text}\n"
+            "</orchestra_spsi_skill>"
+        )
     return sections
 
 

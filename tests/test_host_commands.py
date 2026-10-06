@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from orchestra.config import RoleConfig
-from orchestra.context import AppContext, load_context
+from orchestra.context import AppContext, AppError, load_context
 from orchestra.host_commands import (
     HostActionEffect,
     dispatch_command_payload,
@@ -17,7 +17,7 @@ from orchestra.host_commands import (
     tool_info_payload,
 )
 from orchestra.roles import format_tool_roles
-from orchestra.spsi import SPSI_NAME, spsi_payload
+from orchestra.spsi import SPSI_NAME, _source_home, spsi_payload
 from orchestra.state import RunRecord, StateError
 from tests.helpers import write_runtime_files
 
@@ -316,29 +316,82 @@ def test_spsi_payload_orchestrate_uses_stable_content_and_revision(tmp_path: Pat
     assert "Role: intern" not in content
 
 
-def test_spsi_payload_omits_missing_skill_sections(
+def test_spsi_payload_uses_canonical_skill_root_from_foreign_cwd(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context = make_context(tmp_path / "rt", mode="on")
-    empty_cwd = tmp_path / "empty-cwd"
-    empty_cwd.mkdir()
-    monkeypatch.chdir(empty_cwd)
+    context = make_context(tmp_path / "rt", mode="orchestrate")
+    foreign_cwd = tmp_path / "foreign-cwd"
+    decoy = foreign_cwd / "skills" / "orchestrator"
+    decoy.mkdir(parents=True)
+    decoy.joinpath("SKILL.md").write_text("# CWD DECOY\n", encoding="utf-8")
+    monkeypatch.chdir(foreign_cwd)
 
     payload = spsi_payload(context, "pi:session-a").to_payload()
 
-    assert payload["enabled"] is False
-    assert "content" not in payload
-    assert "revision" not in payload
+    assert payload["enabled"] is True
+    assert payload["role"] == "orchestrator"
+    content = payload["content"]
+    assert isinstance(content, str)
+    assert "CWD DECOY" not in content
+    assert '<orchestra_spsi_skill name="orchestrator">' in content
+    assert '<orchestra_spsi_skill name="planner">' in content
 
 
-def test_spsi_payload_uses_worker_role_skills_for_worker_sessions(tmp_path: Path) -> None:
-    context = make_context(tmp_path / "rt", mode="on")
-    skill_dir = context.paths.catalog_path.parent / "skills" / "worker"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text(
-        "# Worker Skill\n\nReturn WORKER_SKILL_OK when asked.",
-        encoding="utf-8",
+def test_spsi_payload_missing_skill_raises_app_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = make_context(tmp_path / "rt", mode="orchestrate")
+    monkeypatch.setattr(
+        "orchestra.spsi._skill_roots",
+        lambda: (tmp_path / "empty-home" / "skills",),
+    )
+
+    with pytest.raises(AppError) as excinfo:
+        spsi_payload(context, "pi:session-a")
+
+    message = str(excinfo.value)
+    assert "role 'orchestrator'" in message
+    assert "skill 'orchestrator'" in message
+    assert "empty-home" in message
+
+
+def test_spsi_payload_empty_skill_raises_app_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = make_context(tmp_path / "rt", mode="orchestrate")
+    home = tmp_path / "home"
+    (home / "skills" / "orchestrator").mkdir(parents=True)
+    (home / "skills" / "orchestrator" / "SKILL.md").write_text("   \n", encoding="utf-8")
+    monkeypatch.setattr("orchestra.spsi._skill_roots", lambda: (home / "skills",))
+
+    with pytest.raises(AppError, match="empty") as excinfo:
+        spsi_payload(context, "pi:session-a")
+
+    assert "orchestrator" in str(excinfo.value)
+
+
+def test_spsi_payload_unavailable_canonical_root_raises(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = make_context(tmp_path / "rt", mode="orchestrate")
+    monkeypatch.setattr("orchestra.spsi._source_home", lambda: None)
+
+    with pytest.raises(AppError, match="canonical"):
+        spsi_payload(context, "pi:session-a")
+
+
+def test_spsi_payload_empty_role_skills_stays_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = make_context(tmp_path / "rt", mode="orchestrate")
+    monkeypatch.setattr(
+        "orchestra.spsi._skill_roots",
+        lambda: (_ for _ in ()).throw(AssertionError("must not resolve roots")),
     )
     context = replace(
         context,
@@ -346,7 +399,34 @@ def test_spsi_payload_uses_worker_role_skills_for_worker_sessions(tmp_path: Path
             context.catalog,
             roles={
                 **context.catalog.roles,
-                "worker": replace(context.catalog.roles["worker"], skills=("worker",)),
+                "orchestrator": RoleConfig(skills=()),
+            },
+        ),
+    )
+
+    payload = spsi_payload(context, "pi:session-a").to_payload()
+
+    assert payload["enabled"] is False
+    assert "content" not in payload
+
+
+def test_source_home_finds_canonical_repo_root() -> None:
+    home = _source_home()
+
+    assert home is not None
+    assert (home / "pyproject.toml").is_file()
+    assert (home / "skills").is_dir()
+
+
+def test_spsi_payload_uses_worker_role_skills_for_worker_sessions(tmp_path: Path) -> None:
+    context = make_context(tmp_path / "rt", mode="on")
+    context = replace(
+        context,
+        catalog=replace(
+            context.catalog,
+            roles={
+                **context.catalog.roles,
+                "worker": replace(context.catalog.roles["worker"], skills=("planner",)),
             },
         ),
     )
@@ -366,13 +446,12 @@ def test_spsi_payload_uses_worker_role_skills_for_worker_sessions(tmp_path: Path
 
     assert payload["enabled"] is True
     assert payload["role"] == "worker"
-    assert payload["skills"] == ["worker"]
+    assert payload["skills"] == ["planner"]
     content = payload["content"]
     assert isinstance(content, str)
     assert 'role="worker"' in content
-    assert 'skills="worker"' in content
-    assert "# Worker Skill" in content
-    assert "Return WORKER_SKILL_OK when asked." in content
+    assert 'skills="planner"' in content
+    assert '<orchestra_spsi_skill name="planner">' in content
     assert Path("skills/orchestrator/SKILL.md").read_text(encoding="utf-8").strip() not in content
 
 

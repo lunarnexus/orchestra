@@ -185,6 +185,8 @@ def make_hermes_fake_run(
     *,
     tool_info: dict[str, Any] | None = None,
     spsi_code: int = 0,
+    spsi_stderr: str = "",
+    spsi_stdout: str | None = None,
     raise_on_spsi: bool = False,
 ) -> tuple[Any, list[list[str]]]:
     calls: list[list[str]] = []
@@ -201,7 +203,9 @@ def make_hermes_fake_run(
             if raise_on_spsi:
                 raise RuntimeError("core call exploded")
             stdout = "" if spsi_payload is None else json.dumps(spsi_payload)
-            return completed(args, stdout, code=spsi_code)
+            if spsi_stdout is not None:
+                stdout = spsi_stdout
+            return completed(args, stdout, stderr=spsi_stderr, code=spsi_code)
         if args[0] == "_role-metadata":
             return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
         raise AssertionError(f"unexpected command: {args}")
@@ -834,17 +838,31 @@ def test_hermes_pre_llm_combines_spsi_and_budget_in_context_without_injection(
 
 
 @pytest.mark.parametrize(
-    "spsi_kwargs",
+    ("spsi_kwargs", "expected_error"),
     [
-        {"spsi_payload": {"ok": True, "enabled": False}},
-        {"spsi_payload": {"ok": True, "enabled": True}},
-        {"spsi_payload": make_spsi_payload(), "spsi_code": 1},
-        {"raise_on_spsi": True},
+        # Legitimate disabled state stays silent.
+        ({"spsi_payload": {"ok": True, "enabled": False}}, None),
+        # Nonzero core exit surfaces the exact core error on stderr.
+        (
+            {"spsi_payload": None, "spsi_code": 1, "spsi_stderr": "error: spsi boom"},
+            "error: spsi boom",
+        ),
+        # A raised core call failure surfaces its message.
+        ({"raise_on_spsi": True}, "core call exploded"),
+        # Enabled payloads without content are invalid, not silently skipped.
+        (
+            {"spsi_payload": make_spsi_payload(enabled=True, content=None)},
+            "missing content",
+        ),
+        # Non-JSON stdout is invalid, not silently skipped.
+        ({"spsi_payload": None, "spsi_stdout": "{not json"}, "invalid JSON"),
     ],
 )
-def test_hermes_plugin_pre_llm_call_falls_closed_when_spsi_unavailable(
+def test_hermes_plugin_pre_llm_call_spsi_failures_are_visible(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
     spsi_kwargs: dict[str, Any],
+    expected_error: str | None,
 ) -> None:
     plugin = load_plugin()
     fake_run, _ = make_hermes_fake_run(**spsi_kwargs)
@@ -854,7 +872,195 @@ def test_hermes_plugin_pre_llm_call_falls_closed_when_spsi_unavailable(
     plugin.register(ctx)
     pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
 
+    # The hook never injects context or persists errors on failure.
     assert pre_llm_call() is None
+    assert ctx.injected == []
+    err = capsys.readouterr().err
+    if expected_error is None:
+        assert err == ""
+    else:
+        assert "orchestra SPSI context failed" in err
+        assert expected_error in err
+
+
+def _core_error_envelope(
+    message: str = "core exploded",
+    operation: str = "do",
+    run_id: str | None = None,
+    *,
+    contract_version: int = 1,
+) -> str:
+    error: dict[str, Any] = {"message": message, "operation": operation}
+    if run_id is not None:
+        error["run_id"] = run_id
+    return json.dumps(
+        {"contract_version": contract_version, "kind": "error", "ok": False, "error": error}
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (_core_error_envelope(), ("core exploded", "do", None)),
+        (_core_error_envelope(run_id="run-9"), ("core exploded", "do", "run-9")),
+        ("   ", None),
+        ("{not json", None),
+        (
+            json.dumps(
+                {"kind": "error", "ok": False, "error": {"message": "m", "operation": "do"}}
+            ),
+            None,
+        ),
+        (_core_error_envelope(contract_version=2), None),
+        (
+            json.dumps(
+                {"contract_version": 1, "kind": "other", "ok": False,
+                 "error": {"message": "m", "operation": "do"}}
+            ),
+            None,
+        ),
+        (
+            json.dumps(
+                {"contract_version": 1, "kind": "error", "ok": True,
+                 "error": {"message": "m", "operation": "do"}}
+            ),
+            None,
+        ),
+        (
+            json.dumps(
+                {"contract_version": 1, "kind": "error", "ok": False,
+                 "error": {"message": "  ", "operation": "do"}}
+            ),
+            None,
+        ),
+        (
+            json.dumps(
+                {"contract_version": 1, "kind": "error", "ok": False,
+                 "error": {"message": "m"}}
+            ),
+            None,
+        ),
+    ],
+)
+def test_hermes_parse_core_error_envelope(
+    monkeypatch: pytest.MonkeyPatch, source: str, expected: tuple[str, str, str | None] | None
+) -> None:
+    plugin = load_plugin()
+    assert plugin._parse_core_error_envelope(source) == expected
+
+
+@pytest.mark.parametrize(
+    ("stdout", "stderr", "expected"),
+    [
+        # stdout envelope wins over everything.
+        (_core_error_envelope("from stdout"), "raw stderr", "from stdout"),
+        # stderr envelope wins over raw stdout text.
+        ("raw stdout", _core_error_envelope("from stderr"), "from stderr"),
+        # Raw stderr text before raw stdout text.
+        ("raw stdout", "raw stderr", "raw stderr"),
+        # Raw stdout text when no stderr.
+        ("raw stdout", "", "raw stdout"),
+        # Fallback when nothing usable, never raw JSON.
+        (json.dumps({"unrelated": True}), "", json.dumps({"unrelated": True})),
+        ("", "", "fallback text"),
+    ],
+)
+def test_hermes_command_error_message_precedence(
+    monkeypatch: pytest.MonkeyPatch,
+    stdout: str,
+    stderr: str,
+    expected: str,
+) -> None:
+    plugin = load_plugin()
+    result = completed(["do"], stdout, stderr=stderr, code=1)
+    assert plugin._command_error_message(result, "fallback text") == expected
+
+
+def test_hermes_spsi_prefers_core_envelope_message_over_raw_text(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plugin = load_plugin()
+    fake_run, _ = make_hermes_fake_run(
+        None,
+        spsi_code=1,
+        spsi_stdout=_core_error_envelope("spsi envelope message"),
+    )
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    ctx = FakeHermesPluginContext(session_id="runtime-a")
+
+    plugin.register(ctx)
+    pre_llm_call = dict(ctx.hooks)["pre_llm_call"]
+    assert pre_llm_call() is None
+    err = capsys.readouterr().err
+    assert "spsi envelope message" in err
+    assert "contract_version" not in err
+
+
+def test_hermes_dispatch_failure_surfaces_core_envelope_not_raw_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args[0] == "do":
+            return completed(args, _core_error_envelope("dispatch envelope"), code=1)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    payload = json.loads(plugin._dispatch_orchestra_run({"goal": "ship it"}, "runtime"))
+    assert payload == {"error": "dispatch envelope"}
+
+
+def test_hermes_dispatch_ack_failure_surfaces_core_envelope_not_raw_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args[0] == "do":
+            return completed(
+                args,
+                "run_id: abc123\ntimeout_seconds: 600\nrole: worker\nstatus: queued\n",
+            )
+        if args[0] == "_dispatch-ack":
+            return completed(args, _core_error_envelope("ack envelope"), code=1)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(plugin, "_start_session_report_watcher", lambda *a, **k: None)
+    payload = json.loads(plugin._dispatch_orchestra_run({"goal": "ship it"}, "runtime"))
+    assert payload == {"error": "ack envelope"}
+
+
+def test_hermes_watcher_final_failure_surfaces_core_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plugin = load_plugin()
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args[0] == "_await-session-report":
+            return completed(args, stderr=_core_error_envelope("watcher envelope"), code=1)
+        if args[0] == "_role-metadata":
+            return completed(args, ROLE_METADATA_NO_OPT_IN_JSON)
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+    monkeypatch.setattr(plugin.time, "sleep", lambda _seconds: None)
+    ctx = FakeHermesPluginContext()
+
+    plugin._watch_session_report(ctx, "hermes:runtime", "abc123", 630)
+
+    assert ctx.injected == []
+    err = capsys.readouterr().err
+    assert "orchestra auto-return watcher failed" in err
+    assert "watcher envelope" in err
+    assert "contract_version" not in err
 
 
 def test_hermes_plugin_session_start_resets_only_requested_budget_state(

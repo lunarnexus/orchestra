@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -9,8 +10,11 @@ import select
 import shutil
 import sqlite3
 import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
+from typing import Any, NoReturn, cast
 
 try:
     import yaml
@@ -19,6 +23,13 @@ except ModuleNotFoundError as exc:  # pragma: no cover - environment issue
 
 DEFAULT_TASK = "return exactly: pi smoke done"
 RUN_ID_RE = re.compile(r"\borchestra dispatched:\s+\S+\s+([A-Za-z0-9._:-]+)\b")
+PREFLIGHT_MAIN_SESSION_ID = "orch-spsi-preflight-main"
+PREFLIGHT_SKILL_FILENAME = "SKILL.md"
+PREFLIGHT_MISSING_SKILL = "orch-spsi-preflight-missing-skill"
+PREFLIGHT_ROLES = ("orchestrator", "builder")
+SPSI_SKILL_BLOCK_RE = re.compile(
+    r'<orchestra_spsi_skill name="([^"]+)">\nSkill directory: (.+)\n'
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -74,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("missing prerequisite: orchestra CLI not found in PATH")
     if pi is None:
         raise SystemExit("missing prerequisite: pi CLI not found in PATH")
+
+    _spsi_preflight(orchestra)
 
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
@@ -232,18 +245,259 @@ def _poll_history(
 
 
 def _resolve_config_path(repo_root: Path) -> Path:
-    for candidate in (
-        Path(os.environ["ORCHESTRA_CONFIG"]) if os.environ.get("ORCHESTRA_CONFIG") else None,
-        repo_root / "config.yaml",
-        (
-            Path(os.environ.get("PI_CODING_AGENT_DIR", Path.home() / ".pi" / "agent"))
-            / "orchestra"
-            / "config.yaml"
-        ),
-    ):
-        if candidate and candidate.exists():
-            return candidate
-    raise SystemExit("could not locate config.yaml for the smoke run")
+    # Match how the orchestra CLI itself resolves the runtime config so the smoke
+    # reads the same config the live dispatch uses. ``ORCHESTRA_CONFIG`` is treated
+    # as a directory by core (its ``config.yaml`` is the config file).
+    from orchestra.config import resolve_config_path as core_resolve_config_path
+
+    resolved = core_resolve_config_path(None)
+    if not resolved.exists():
+        raise SystemExit(f"could not locate config.yaml via core resolver: {resolved}")
+    return resolved
+
+
+def _preflight_fail(message: str) -> NoReturn:
+    raise SystemExit(message)
+
+
+def _spsi_preflight(orchestra: str) -> None:
+    """Deterministic core SPSI preflight from an unrelated cwd with copied config.
+
+    Exercises the real core ``_spsi-payload`` through the same resolved ``orchestra``
+    console entrypoint the live Pi host invokes, for every preflight role, and proves
+    the payload embeds each catalog-listed skill's actual content and absolute
+    resource directory, not just ``enabled: true``. Also proves a configured skill
+    that does not resolve fails clearly. No dispatch, LLM, providers, or global init.
+    """
+
+    _spsi_preflight_check_install(orchestra)
+    base = Path(tempfile.mkdtemp(prefix="orch-spsi-preflight-"))
+    try:
+        work = base / "work"
+        work.mkdir()
+        state = base / "state"
+        config_dir = base / "config"
+        catalog = _spsi_preflight_copy_config(config_dir, state)
+
+        proc = _spsi_preflight_payload(orchestra, work, config_dir, PREFLIGHT_MAIN_SESSION_ID)
+        _spsi_preflight_assert_role(proc, catalog, "orchestrator")
+
+        run_id = _spsi_preflight_seed_worker_run(state, "builder", PREFLIGHT_MAIN_SESSION_ID)
+        proc = _spsi_preflight_payload(orchestra, work, config_dir, f"orchestra-worker-{run_id}")
+        _spsi_preflight_assert_role(proc, catalog, "builder")
+
+        _spsi_preflight_assert_missing_skill(base, work, config_dir, catalog, orchestra)
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def _spsi_preflight_check_install(orchestra: str) -> None:
+    """Fail fast when the live console entrypoint is a different core install.
+
+    The preflight seeds copied config/state and asserts skill content from this
+    script's in-process ``orchestra`` import while the payload runs through the
+    resolved ``orchestra`` console entrypoint the live host invokes. If those two
+    installs differ, the preflight would validate a core the live host never runs,
+    so detect the mismatch and fail loudly rather than silently proving another
+    install.
+    """
+
+    import orchestra as live_orchestra
+
+    entry = Path(orchestra)
+    try:
+        first_line = entry.read_text(encoding="utf-8").splitlines()[0]
+    except (OSError, IndexError):
+        first_line = ""
+    tokens = first_line[2:].split() if first_line.startswith("#!") else []
+    if tokens and tokens[0].endswith("/env"):
+        tokens = tokens[1:]
+    if not tokens:
+        tokens = [sys.executable]
+    result = subprocess.run(
+        [*tokens, "-c", "import orchestra; print(orchestra.__file__)"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        _preflight_fail(
+            f"could not resolve core install for orchestra entrypoint {orchestra!r}:\n"
+            f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+    entry_module = Path(result.stdout.strip()).resolve()
+    script_module = Path(live_orchestra.__file__).resolve()
+    if entry_module != script_module:
+        _preflight_fail(
+            "orchestra console entrypoint runs a different core install than this "
+            f"script would validate against: entrypoint={entry_module} "
+            f"script={script_module}"
+        )
+
+
+def _spsi_preflight_copy_config(config_dir: Path, state_dir: Path) -> dict[str, Any]:
+    from orchestra.config import (
+        resolve_agent_catalog_path,
+        resolve_config_path,
+        resolve_prompts_path,
+    )
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+    data = yaml.safe_load(resolve_config_path(None).read_text(encoding="utf-8"))
+    data["state_dir"] = str(state_dir)
+    data["mode"] = "orchestrate"
+    data["auto_verify"] = False
+    (config_dir / "config.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
+    shutil.copy(resolve_prompts_path(None), config_dir / "prompts.yaml")
+    shutil.copy(resolve_agent_catalog_path(None), config_dir / "agent-catalog.yaml")
+    catalog = yaml.safe_load((config_dir / "agent-catalog.yaml").read_text(encoding="utf-8"))
+    return cast(dict[str, Any], catalog)
+
+
+def _spsi_preflight_seed_worker_run(
+    state_dir: Path,
+    role: str,
+    orchestrator_session_id: str,
+) -> str:
+    from orchestra.state import RunRecord, StateStore
+
+    run_id = f"preflight{role}{os.getpid()}"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    store = StateStore(state_dir / "orchestra.db")
+    store.initialize()
+    store.create_run(
+        RunRecord(
+            run_id=run_id,
+            orchestrator_session_id=orchestrator_session_id,
+            harness="pi",
+            role=role,
+            task_label="spsi-preflight",
+            log_path=state_dir / f"{run_id}.log",
+            created_at=datetime.datetime.now().isoformat(),
+        )
+    )
+    return run_id
+
+
+def _spsi_preflight_payload(
+    orchestra: str,
+    work_dir: Path,
+    config_dir: Path,
+    session_id: str,
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["ORCHESTRA_CONFIG"] = str(config_dir)
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    env.pop("ORCHESTRA_DISPATCH_BUDGET", None)
+    return subprocess.run(
+        [
+            orchestra,
+            "_spsi-payload",
+            "--session-id",
+            session_id,
+            "--json",
+        ],
+        env=env,
+        cwd=work_dir,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _spsi_preflight_assert_role(
+    proc: subprocess.CompletedProcess[str],
+    catalog: dict[str, Any],
+    role_name: str,
+) -> None:
+    if proc.returncode != 0:
+        _preflight_fail(
+            f"spsi preflight failed for role '{role_name}' (exit {proc.returncode}):\n"
+            f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+        )
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        _preflight_fail(f"spsi preflight returned non-json for role '{role_name}': {exc}")
+    _spsi_preflight_assert_coverage(payload, catalog, role_name)
+
+
+def _spsi_preflight_assert_coverage(
+    payload: object,
+    catalog: dict[str, Any],
+    role_name: str,
+) -> None:
+    if not isinstance(payload, dict):
+        _preflight_fail(f"spsi preflight payload for role '{role_name}' is not an object")
+    if not payload.get("enabled"):
+        _preflight_fail(f"spsi preflight disabled for role '{role_name}'")
+    if payload.get("role") != role_name:
+        _preflight_fail(
+            f"spsi preflight role mismatch: expected '{role_name}', got {payload.get('role')!r}"
+        )
+    content = payload.get("content")
+    if not isinstance(content, str) or not content.strip():
+        _preflight_fail(f"spsi preflight payload for role '{role_name}' has no content")
+    skills = list(_spsi_preflight_role_skills(catalog, role_name))
+    directories = dict(SPSI_SKILL_BLOCK_RE.findall(content))
+    if set(directories) != set(skills):
+        _preflight_fail(
+            f"spsi preflight skill set for role '{role_name}' does not match the catalog: "
+            f"payload={sorted(directories)} catalog={sorted(skills)}"
+        )
+    for skill in skills:
+        skill_dir = Path(directories[skill])
+        if not skill_dir.is_absolute():
+            _preflight_fail(
+                f"spsi preflight resource directory for skill '{skill}' "
+                f"is not absolute: {skill_dir}"
+            )
+        skill_md = skill_dir / PREFLIGHT_SKILL_FILENAME
+        if not skill_md.is_file():
+            _preflight_fail(
+                f"spsi preflight skill '{skill}' resource directory has no readable "
+                f"{PREFLIGHT_SKILL_FILENAME}: {skill_dir}"
+            )
+        text = skill_md.read_text(encoding="utf-8").strip()
+        if not text or text not in content:
+            _preflight_fail(
+                f"spsi preflight payload for role '{role_name}' is missing actual content for "
+                f"skill '{skill}'"
+            )
+
+
+def _spsi_preflight_role_skills(catalog: dict[str, Any], role_name: str) -> tuple[str, ...]:
+    roles = catalog.get("roles")
+    role = roles.get(role_name) if isinstance(roles, dict) else None
+    skills = role.get("skills") if isinstance(role, dict) else None
+    if not isinstance(skills, list) or not skills:
+        _preflight_fail(f"catalog role '{role_name}' has no configured skills for preflight")
+    return tuple(str(name) for name in skills)
+
+
+def _spsi_preflight_assert_missing_skill(
+    base: Path,
+    work: Path,
+    config_dir: Path,
+    catalog: dict[str, Any],
+    orchestra: str,
+) -> None:
+    check_dir = base / "check-config"
+    check_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy(config_dir / "config.yaml", check_dir / "config.yaml")
+    shutil.copy(config_dir / "prompts.yaml", check_dir / "prompts.yaml")
+    check_catalog = yaml.safe_load((config_dir / "agent-catalog.yaml").read_text(encoding="utf-8"))
+    orchestrator = check_catalog.setdefault("roles", {}).setdefault("orchestrator", {})
+    existing = list(orchestrator.get("skills") or [])
+    orchestrator["skills"] = [*existing, PREFLIGHT_MISSING_SKILL]
+    (check_dir / "agent-catalog.yaml").write_text(yaml.safe_dump(check_catalog), encoding="utf-8")
+
+    proc = _spsi_preflight_payload(orchestra, work, check_dir, PREFLIGHT_MAIN_SESSION_ID)
+    combined = proc.stdout + proc.stderr
+    if proc.returncode == 0:
+        _preflight_fail("spsi preflight expected a missing configured skill to fail but it passed")
+    if PREFLIGHT_MISSING_SKILL not in combined:
+        _preflight_fail(
+            "spsi preflight missing-skill failure did not name the missing skill:\n" + combined
+        )
 
 
 def _resolve_configured_path(repo_root: Path, value: str) -> Path:

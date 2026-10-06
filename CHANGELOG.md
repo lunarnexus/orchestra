@@ -9,12 +9,15 @@ Notable user-facing changes to Orchestra are recorded here.
 - Simplify role skills and clarify artifact ownership.
 - Separate automatic verification from review and security checks.
 - Reduce spike and research handoffs.
+- Unify core and subagent error reporting across hosts.
+- Add smoke-test preflight checks for SPSI.
 
 ### Fixes
 
 - Make automatic completion delivery mandatory. Removed auto_return config.
 - Improve budget-exceeded handoffs.
 - Make dispatch acknowledgement instructions configurable in `prompts.yaml`.
+- Load skills from the canonical Orchestra installation and surface load errors.
 
 ## v0.5.2 - 2026-09-29
 

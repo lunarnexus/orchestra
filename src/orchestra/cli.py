@@ -18,6 +18,7 @@ from orchestra.config import (
 )
 from orchestra.context import AppError, load_context
 from orchestra.dispatch import format_started_run, start_run, started_run_payload
+from orchestra.errors import error_envelope
 from orchestra.host_commands import (
     dispatch_command_payload,
     session_mode_transition_payload,
@@ -410,8 +411,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(effective_argv)
     config_arg = getattr(args, "config", None)
     if config_arg is not None and Path(config_arg).expanduser().is_file():
-        print(f"error: --config must be a directory: {config_arg}")
-        return 1
+        return _fail(args, "config", f"--config must be a directory: {config_arg}")
     handler = getattr(args, "handler", None)
     if handler is None:
         parser.print_help()
@@ -419,12 +419,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return int(handler(args))
     except (AppError, ConfigError, StateError) as exc:
-        print(f"error: {exc}")
-        return 1
+        return _fail(args, _error_operation(args), str(exc))
     except KeyError as exc:
         detail = exc.args[0] if exc.args else str(exc)
-        print(f"error: {detail}")
-        return 1
+        return _fail(args, _error_operation(args), str(detail))
+
+
+def _error_operation(args: argparse.Namespace) -> str:
+    command = getattr(args, "command", None)
+    if not command:
+        return "cli"
+    for dest in ("init_target", "session_mode_action"):
+        part = getattr(args, dest, None)
+        if part:
+            return f"{command} {part}"
+    return str(command)
+
+
+def _fail(args: argparse.Namespace, operation: str, message: str) -> int:
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                error_envelope(
+                    message,
+                    operation,
+                    run_id=getattr(args, "run_id", None),
+                )
+            )
+        )
+    else:
+        print(f"error: {message}")
+    return 1
 
 
 def _uses_internal_command(argv: Sequence[str]) -> bool:

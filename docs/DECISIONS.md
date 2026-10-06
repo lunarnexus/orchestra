@@ -605,6 +605,21 @@ without duplicating builder/verifier-specific control flow.
 
 **Source:** Owner correction during auto-verification lifecycle repair.
 
+### D-RETURN-018 — Shared error transport
+
+**Decision:** Core owns a reusable machine-readable error envelope using
+`contract_version`, `kind: error`, `ok: false`, and an `error` object containing
+`message` and `operation`, with `run_id` when applicable. JSON-command failures
+emit this envelope and a nonzero exit status; human CLI output remains text.
+Each host adapter reuses one error parser and its host-specific rendering path
+for core, dispatch, watcher, and SPSI failures. Subagent errors use the same
+core-generated envelope within owner-scoped consolidated reports, preserving
+run status, report routing, and delivery bookkeeping. Subagents are not required
+to emit error JSON. Transport errors do not create a second notification loop or
+imply host hooks can abort a model turn.
+
+**Source:** Owner approval of shared core/subagent error transport and host rendering.
+
 ## State, logs, and artifacts
 
 ### D-STATE-001 — SQLite plus JSONL and artifacts
@@ -760,11 +775,20 @@ from verifier-owned skill methodology.
 
 ### D-CONFIG-010 — Skill lookup and injection
 
-**Decision:** For configured role skills, Orchestra searches recursively under
-`skills/` for `<skill-name>/SKILL.md`. If found, it injects the local content. If
-not found, it tells the subagent to load the named native skill. An omitted or
-empty skill list disables role skill injection; configured skill names must be
-non-empty.
+**Decision:** Orchestra resolves its canonical installation/source home independently
+of the working directory and runtime catalog location. Configured role skills
+load exclusively from `orchestra_home/skills`, searching recursively for
+`<skill-name>/SKILL.md`, and are injected through SPSI with their resource directory.
+Every listed skill must load; missing, unreadable, or empty skills produce a clear
+error identifying the role, skill, and attempted path. Failure to resolve Orchestra
+home also produces a clear error. Host adapters surface SPSI failures visibly.
+An omitted or empty skill list disables role skill injection; configured skill
+names must be non-empty.
+
+**Supersedes:** Catalog/cwd-associated skill lookup and the previous instruction
+to load a missing skill natively. Harness-native discovery is deferred.
+
+**Source:** Owner approval of canonical-only skill lookup and explicit load errors.
 
 ### D-CONFIG-011 — Role environment boundaries
 

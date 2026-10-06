@@ -393,6 +393,58 @@ function parseDispatchPayload(output: string): DispatchPayload {
   return JSON.parse(output) as DispatchPayload;
 }
 
+interface CoreErrorEnvelope {
+  kind?: unknown;
+  ok?: unknown;
+  error?: { message?: unknown; operation?: unknown; run_id?: unknown };
+}
+
+// Reusable parser for the core shared error envelope (D-RETURN-018). Returns
+// the core message/operation/run_id for a well-formed envelope, or null so
+// callers fall back to raw process text (native spawn or non-JSON commands).
+function parseCoreErrorEnvelope(source: string): { message: string; operation: string; runId: string | null } | null {
+  const trimmed = source.trim();
+  if (!trimmed) return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  if (!payload || typeof payload !== "object") return null;
+  const envelope = payload as CoreErrorEnvelope;
+  if (envelope.kind !== "error" || envelope.ok !== false) return null;
+  const detail = envelope.error;
+  if (!detail || typeof detail !== "object") return null;
+  const message = typeof detail.message === "string" ? detail.message.trim() : "";
+  if (!message) return null;
+  const operation = typeof detail.operation === "string" ? detail.operation : "";
+  const runId = typeof detail.run_id === "string" && detail.run_id ? detail.run_id : null;
+  return { message, operation, runId };
+}
+
+// Host result renderer: prefer the core envelope message, then raw stderr or
+// stdout (process/native spawn failures and commands without --json), then a
+// fixed fallback. Returns the extracted core message, never the raw envelope.
+function commandErrorMessage(
+  result: { stdout: string; stderr: string },
+  fallback: string,
+): string {
+  return (
+    parseCoreErrorEnvelope(result.stdout)?.message
+    || parseCoreErrorEnvelope(result.stderr)?.message
+    || result.stderr.trim()
+    || result.stdout.trim()
+    || fallback
+  );
+}
+
+// Host throw helper for SPSI context failures so the host shows one visible
+// extension error without claiming hook-abort semantics.
+function throwSpsiContextFailure(detail: string): never {
+  throw new Error(`Orchestra SPSI context failed: ${detail}`);
+}
+
 interface OrchestraCommandEntry {
   text: string;
 }
@@ -1002,11 +1054,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId, "--role", role]);
       await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true });
       if (ack.code !== 0 || !ack.stdout) {
-        return { code: ack.code || 1, runId: null, output: ack.stderr || "orchestra dispatch ack failed" };
+        return { code: ack.code || 1, runId: null, output: commandErrorMessage(ack, "orchestra dispatch ack failed") };
       }
       return { code: 0, runId, output: ack.stdout };
     }
-    return { code: result.code, runId: null, output: (dispatch?.message || result.stdout || result.stderr) };
+    return { code: result.code, runId: null, output: dispatch?.message || commandErrorMessage(result, "orchestra dispatch failed") };
   }
 
   function reportRunIdArgs(runIds: string[]): string[] {
@@ -1081,7 +1133,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
       const rawReport = stdout.trim();
       if (code !== 0) {
-        process.stderr.write(`orchestra auto-return watcher failed: ${stderr.trim() || `exit ${code}`}\n`);
+        process.stderr.write(`orchestra auto-return watcher failed: ${commandErrorMessage({ stdout, stderr }, `exit ${code}`)}\n`);
         scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
         return;
       }
@@ -1152,7 +1204,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         if (markResult.code !== 0) {
           // Runs stay unreported; the session watcher can retry delivery.
           scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);
-          process.stderr.write(`orchestra report delivery mark failed: ${markResult.stderr || markResult.stdout}\n`);
+          process.stderr.write(`orchestra report delivery mark failed: ${commandErrorMessage(markResult, "orchestra report delivery mark failed")}\n`);
         }
         await refreshOrchestraWorkerStatus(sessionId, pending.updateStatus, {
           fresh: true,
@@ -1243,7 +1295,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       return cachedActiveStatus.status;
     }
     const result = await runOrchestra(["status", "--session-id", sessionId, "--json"]);
-    if (result.code !== 0) throw new Error(result.stderr || result.stdout || "orchestra status failed");
+    if (result.code !== 0) throw new Error(commandErrorMessage(result, "orchestra status failed"));
     const status = parseActiveSessionStatus(result.stdout);
     cachedActiveStatus = { expiresAt: now + 2_000, sessionId, status };
     return status;
@@ -1253,13 +1305,19 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     return (await getActiveSessionStatus(sessionId)).runIds;
   }
 
-  async function fetchSpsiPayload(sessionId: string): Promise<SpsiPayload | null> {
+  async function fetchSpsiPayload(sessionId: string): Promise<SpsiPayload> {
     const result = await runOrchestra(["_spsi-payload", "--session-id", sessionId, "--json"]);
-    if (result.code !== 0 || !result.stdout.trim()) return null;
+    const detail = (result.stderr || "").trim() || (result.stdout || "").trim();
+    if (result.code !== 0) {
+      throw new Error(commandErrorMessage(result, `orchestra _spsi-payload exited with code ${result.code}`));
+    }
+    if (!detail) {
+      throw new Error("orchestra _spsi-payload returned an empty response");
+    }
     try {
       return JSON.parse(result.stdout) as SpsiPayload;
     } catch {
-      return null;
+      throw new Error(`orchestra _spsi-payload returned invalid JSON: ${detail.slice(0, 200)}`);
     }
   }
 
@@ -1271,8 +1329,23 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       // Fall back to the last session_start id when host context cannot provide one.
     }
     if (!sessionId) return;
-    const payload = await fetchSpsiPayload(sessionId);
-    if (payload?.ok !== true || payload.enabled !== true || !payload.content?.trim()) return;
+    // Core SPSI failures throw so the host shows an extension error in every
+    // mode (print stderr, RPC extension_error event, TUI error banner). Pi
+    // catches handler errors and continues the turn; this hook cannot abort
+    // the run, so the error is surfaced visibly without claiming abort semantics.
+    let payload: SpsiPayload;
+    try {
+      payload = await fetchSpsiPayload(sessionId);
+    } catch (error) {
+      throwSpsiContextFailure(error instanceof Error ? error.message : String(error));
+    }
+    if (payload.ok !== true) {
+      throwSpsiContextFailure("core reported an unsuccessful SPSI payload");
+    }
+    if (payload.enabled !== true) return;
+    if (!payload.content?.trim()) {
+      throwSpsiContextFailure("enabled SPSI payload missing content");
+    }
     return { systemPrompt: `${event.systemPrompt}\n\n${payload.content.trim()}` };
   });
 
