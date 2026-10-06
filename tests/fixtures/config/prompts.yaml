@@ -140,4 +140,3 @@ host_help: |-
 
   Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, ask a subagent,
   or ask another agent.
-  auto_return: prompt orchestrator upon return of subagents

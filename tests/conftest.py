@@ -37,14 +37,11 @@ def runtime_files_factory(
     def factory(
         tmp_path: Path,
         command: list[str],
-        *,
-        auto_return: bool = True,
     ) -> tuple[Path, Path, Path]:
         paths = write_runtime_files(
             tmp_path,
             python_executable,
             command,
-            auto_return=auto_return,
         )
         monkeypatch.setenv("ORCHESTRA_CONFIG", str(paths[0].parent))
         return paths

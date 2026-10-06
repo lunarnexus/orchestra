@@ -21,7 +21,6 @@ ORCHESTRA_CONFIG_ENV = "ORCHESTRA_CONFIG"
 PI_CODING_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
 DEFAULT_GLOBAL_CONCURRENCY = 4
 DEFAULT_PER_SESSION_CONCURRENCY = 3
-DEFAULT_AUTO_RETURN = True
 DEFAULT_AUTO_VERIFY = False
 DEFAULT_MAIN_SESSION_MODE = "on"
 DEFAULT_ROLE_NAME = "builder"
@@ -84,7 +83,6 @@ class AppConfig:
     state_dir: Path = DEFAULT_STATE_DIR
     log_dir: Path = DEFAULT_LOG_DIR
     concurrency: ConcurrencyConfig = ConcurrencyConfig()
-    auto_return: bool = DEFAULT_AUTO_RETURN
     auto_verify: bool = DEFAULT_AUTO_VERIFY
     mode: str = DEFAULT_MAIN_SESSION_MODE
 
@@ -194,6 +192,7 @@ def resolve_agent_catalog_path(path: str | Path | None = None) -> Path:
 
 def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None) -> AppConfig:
     raw = _load_yaml_mapping(path)
+    _validate_app_config_keys(raw)
 
     state_dir = Path(
         _get_optional_string(raw, "state_dir") or DEFAULT_STATE_DIR
@@ -206,7 +205,6 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
     soft_timeout = _get_optional_positive_int_or_none(raw, "soft_timeout")
     if soft_timeout is not None and soft_timeout >= default_timeout:
         raise ConfigError("'soft_timeout' must be less than 'default_timeout'")
-    auto_return = _get_optional_bool(raw, "auto_return", DEFAULT_AUTO_RETURN)
     auto_verify = _get_optional_bool(raw, "auto_verify", DEFAULT_AUTO_VERIFY)
     mode = _get_required_main_session_mode(raw, "mode")
     retention_days = _get_optional_positive_int(raw, "retention_days", 90)
@@ -308,7 +306,6 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
         turn_limit=turn_limit,
         soft_timeout=soft_timeout,
         concurrency=concurrency,
-        auto_return=auto_return,
         auto_verify=auto_verify,
         mode=mode,
         retention_days=retention_days,
@@ -318,7 +315,6 @@ def load_app_config(path: str | Path, *, prompts_path: str | Path | None = None)
 
 CONFIG_MUTABLE_FIELDS = {
     "auto_verify",
-    "auto_return",
     "mode",
     "default_timeout",
     "retention_days",
@@ -335,7 +331,6 @@ def load_app_config_values(
     config = load_app_config(path, prompts_path=prompts_path)
     return {
         "auto_verify": config.auto_verify,
-        "auto_return": config.auto_return,
         "mode": config.mode,
         "default_timeout": config.default_timeout,
         "retention_days": config.retention_days,
@@ -374,7 +369,7 @@ def list_config_values(
 
 
 def _apply_config_value(data: dict[str, Any], key: str, raw_value: str) -> None:
-    if key == "auto_verify" or key == "auto_return":
+    if key == "auto_verify":
         data[key] = _parse_bool(raw_value, key)
         return
     if key == "mode":
@@ -402,6 +397,7 @@ def _validate_config_mutation(data: dict[str, Any], source: Path) -> None:
 
 
 def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> AppConfig:
+    _validate_app_config_keys(raw)
     state_dir = Path(
         _get_optional_string(raw, "state_dir") or DEFAULT_STATE_DIR
     ).expanduser()
@@ -413,7 +409,6 @@ def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> App
     soft_timeout = _get_optional_positive_int_or_none(raw, "soft_timeout")
     if soft_timeout is not None and soft_timeout >= default_timeout:
         raise ConfigError("'soft_timeout' must be less than 'default_timeout'")
-    auto_return = _get_optional_bool(raw, "auto_return", DEFAULT_AUTO_RETURN)
     auto_verify = _get_optional_bool(raw, "auto_verify", DEFAULT_AUTO_VERIFY)
     mode = _get_required_main_session_mode(raw, "mode")
     retention_days = _get_optional_positive_int(raw, "retention_days", 90)
@@ -509,12 +504,32 @@ def load_app_config_from_mapping(raw: dict[str, Any], source: str | Path) -> App
         turn_limit=turn_limit,
         soft_timeout=soft_timeout,
         concurrency=concurrency,
-        auto_return=auto_return,
         auto_verify=auto_verify,
         mode=mode,
         retention_days=retention_days,
         prompts=prompts,
     )
+
+
+def _validate_app_config_keys(raw: dict[str, Any]) -> None:
+    allowed_keys = {
+        "state_dir",
+        "log_dir",
+        "default_timeout",
+        "turn_limit",
+        "soft_timeout",
+        "auto_verify",
+        "mode",
+        "retention_days",
+        "concurrency",
+    }
+    unknown_keys = sorted(set(raw) - allowed_keys)
+    if unknown_keys:
+        joined = ", ".join(unknown_keys)
+        raise ConfigError(
+            f"config uses unsupported key: {joined}; "
+            f"allowed keys are {', '.join(sorted(allowed_keys))}"
+        )
 
 
 def _parse_main_session_mode(raw_value: str, key: str) -> str:

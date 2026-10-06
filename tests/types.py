@@ -9,6 +9,4 @@ class RuntimeFilesFactory(Protocol):
         self,
         tmp_path: Path,
         command: list[str],
-        *,
-        auto_return: bool = True,
     ) -> tuple[Path, Path, Path]: ...

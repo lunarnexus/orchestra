@@ -6,4 +6,3 @@ mode: 'on'
 concurrency:
   global: 4
   per_session: 3
-auto_return: true

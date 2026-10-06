@@ -107,7 +107,6 @@ def test_auto_return_enabled_exposes_one_pending_report(
     config_path, catalog_path, db_path = runtime_files_factory(
         tmp_path,
         [python_executable, str(fake_worker_script), "success", "--output", "done"],
-        auto_return=True,
     )
 
     result = run_cli(
@@ -140,7 +139,6 @@ def test_pending_session_report_repeats_until_marked_delivered(
     config_path, catalog_path, db_path = runtime_files_factory(
         tmp_path,
         [python_executable, str(fake_worker_script), "success", "--output", "done"],
-        auto_return=True,
     )
 
     result = run_cli(
@@ -179,7 +177,6 @@ def test_await_session_report_returns_once_final_run_completes(
     config_path, catalog_path, db_path = runtime_files_factory(
         tmp_path,
         [python_executable, str(fake_worker_script), "sleep", "--sleep", "0.3", "--output", "done"],
-        auto_return=True,
     )
 
     result = run_cli(
@@ -224,7 +221,6 @@ def test_await_session_report_retries_transient_database_open_failure(
     config_path, catalog_path, db_path = runtime_files_factory(
         tmp_path,
         [python_executable, str(fake_worker_script), "success", "--output", "done"],
-        auto_return=True,
     )
     store = StateStore(db_path)
     store.initialize()
@@ -258,7 +254,6 @@ def test_await_session_report_surfaces_non_transient_database_error(
     config_path, catalog_path, db_path = runtime_files_factory(
         tmp_path,
         [python_executable, str(fake_worker_script), "success", "--output", "done"],
-        auto_return=True,
     )
     store = StateStore(db_path)
     store.initialize()
@@ -296,7 +291,6 @@ def test_await_session_report_reraises_persistent_database_open_failure(
     config_path, catalog_path, db_path = runtime_files_factory(
         tmp_path,
         [python_executable, str(fake_worker_script), "success", "--output", "done"],
-        auto_return=True,
     )
     store = StateStore(db_path)
     store.initialize()
@@ -320,7 +314,7 @@ def test_await_session_report_reraises_persistent_database_open_failure(
     assert flaky_store.get_run_calls == expected_get_run_calls
 
 
-def test_auto_return_disabled_stays_quiet(
+def test_unconditional_report_delivers_after_completion(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
@@ -329,7 +323,6 @@ def test_auto_return_disabled_stays_quiet(
     config_path, catalog_path, db_path = runtime_files_factory(
         tmp_path,
         [python_executable, str(fake_worker_script), "success", "--output", "done"],
-        auto_return=False,
     )
 
     result = run_cli(
@@ -337,9 +330,9 @@ def test_auto_return_disabled_stays_quiet(
         str(config_path.parent),
         "do",
         "--session-id",
-        "manual:no-auto",
+        "manual:unconditional",
         "--goal",
-        "no auto-return",
+        "unconditional report",
     )
     run_id = extract_run_id(result.stdout)
 
@@ -347,7 +340,10 @@ def test_auto_return_disabled_stays_quiet(
     assert wait_for_condition(lambda: store.get_run(run_id).status == STATUS_DONE, timeout=5)
 
     context = load_context(config_path=config_path, catalog_path=catalog_path)
-    assert consume_pending_session_report(context, "manual:no-auto") is None
+    report = consume_pending_session_report(context, "manual:unconditional")
+    assert report is not None
+    assert run_id in report
+    assert consume_pending_session_report(context, "manual:unconditional") is None
 
 
 def test_auto_return_includes_linked_builder_and_verifier_cycle(

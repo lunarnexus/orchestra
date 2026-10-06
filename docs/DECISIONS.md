@@ -487,11 +487,15 @@ Orchestra creates one minimal consolidated report containing per-subagent status
 compact results or blockers, and artifact references. It does not send one
 model prompt per subagent or per batch.
 
-### D-RETURN-005 — Auto-return is enabled by default
+### D-RETURN-005 — Auto-return is mandatory
 
-**Decision:** Auto-return is enabled by default and configurable. When supported,
-it re-enters only the owning session after all of that session's active
-subagents have returned.
+**Decision:** Auto-return is the mandatory completion flow, not a configuration
+option. When supported, it re-enters only the owning session after all of that
+session's active subagents have returned.
+
+**Supersedes:** The previous default-enabled, configurable auto-return behavior.
+
+**Source:** Owner approval to remove the `auto_return` setting.
 
 ### D-RETURN-006 — Dispatch remains asynchronous
 

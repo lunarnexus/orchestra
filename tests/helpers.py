@@ -15,8 +15,6 @@ def write_runtime_files(
     tmp_path: Path,
     python_executable: str,
     command: list[str],
-    *,
-    auto_return: bool = True,
 ) -> tuple[Path, Path, Path]:
     state_dir = tmp_path / "state"
     log_dir = tmp_path / "logs"
@@ -32,7 +30,6 @@ def write_runtime_files(
                 "default_timeout": 30,
                 "mode": "on",
                 "concurrency": {"global": 4, "per_session": 3},
-                "auto_return": auto_return,
             },
             sort_keys=False,
         ),

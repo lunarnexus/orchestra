@@ -28,7 +28,7 @@ Main agent session / CLI
         -> subagent CLI process
       -> SQLite state
       -> per-run request, event, and return artifacts
-  -> optional consolidated auto-return to the owning session
+  -> consolidated auto-return to the owning session where supported
 ```
 
 The main-session host, subagent harness, configured role, and role model are
@@ -217,7 +217,7 @@ fail-fast rather than queueing.
     reports stay compact and do not load or inject full return artifact content.
     Linked auto-verification cycles are presented coherently with builder and
     verifier run ids.
-15. If auto-return is enabled and supported, the host adapter delivers that
+15. Where supported, the host adapter automatically delivers that
     report to the exact owning session and records successful delivery.
 
 Dispatch remains asynchronous. The immediate model-visible result acknowledges
@@ -326,7 +326,6 @@ Artifact-first handoff is preferred: `additionalContext` should usually be a com
 Runtime settings, including:
 
 - state and log locations
-- auto-return behavior
 - global and per-session limits
 - per-model limits where configured
 - required default timeout
@@ -391,7 +390,8 @@ Generic CLI/core configuration resolution is:
 3. current-working-directory fallback for local development
 
 A config directory may contain any subset of `config.yaml`, `agent-catalog.yaml`,
-and `prompts.yaml`; present files override the corresponding defaults. Catalog
+and `prompts.yaml`; present files override the corresponding defaults. Runtime
+config keys must be supported; unknown keys produce a configuration error. Catalog
 file overrides live in the selected configuration directory.
 
 ## Roles and skills
@@ -543,8 +543,8 @@ return marks the relationship and includes both run ids. A verifier failure,
 timeout, or crash is reported as part of the cycle and does not change a
 successful builder run into a failed builder run.
 
-Auto-return is enabled by default and configurable. Each owning session has one
-report watcher. Core returns its unreported consolidated runs without claiming
+Auto-return is the mandatory completion flow. Each owning session has one
+report watcher where supported. Core returns its unreported consolidated runs without claiming
 them, and the host adapter marks them delivered after successful delivery. If
 delivery does not complete, the runs remain unreported for the session's next
 watcher.

@@ -495,8 +495,6 @@ def build_session_report(session_id: str, runs: list[RunRecord], *, active_remai
 
 def pending_session_report(context: AppContext, session_id: str) -> SessionReport | None:
     _require_session_id(session_id)
-    if not context.config.auto_return:
-        return None
     runs = context.store.list_pending_report_runs(session_id)
     if not runs:
         return None
@@ -521,8 +519,6 @@ def mark_session_report_delivered(
 
 def consume_pending_session_report(context: AppContext, session_id: str) -> str | None:
     _require_session_id(session_id)
-    if not context.config.auto_return:
-        return None
     runs = context.store.consume_pending_report_runs(session_id)
     if not runs:
         return None
@@ -661,15 +657,11 @@ def session_status_details(
             session_report_available=False,
             session_report_delivered=False,
         )
-    pending_report_runs = (
-        [
-            run
-            for lineage_session_id in lineage_session_ids
-            for run in context.store.list_pending_report_runs(lineage_session_id)
-        ]
-        if context.config.auto_return
-        else []
-    )
+    pending_report_runs = [
+        run
+        for lineage_session_id in lineage_session_ids
+        for run in context.store.list_pending_report_runs(lineage_session_id)
+    ]
     historical_runs = _list_runs_for_session_ids(
         context,
         lineage_session_ids,

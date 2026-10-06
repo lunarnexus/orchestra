@@ -8,7 +8,6 @@ import pytest
 import yaml
 
 from orchestra.config import (
-    DEFAULT_AUTO_RETURN,
     DEFAULT_GLOBAL_CONCURRENCY,
     DEFAULT_LOG_DIR,
     DEFAULT_PER_SESSION_CONCURRENCY,
@@ -94,7 +93,6 @@ def test_load_app_config_reads_values_from_fixture(fixture_dir: Path) -> None:
     assert config.soft_timeout is None
     assert config.concurrency.global_limit == 4
     assert config.concurrency.per_session_limit == 3
-    assert config.auto_return is True
     assert config.auto_verify is False
 
 
@@ -110,7 +108,6 @@ def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
     assert config.log_dir == DEFAULT_LOG_DIR
     assert config.concurrency.global_limit == DEFAULT_GLOBAL_CONCURRENCY
     assert config.concurrency.per_session_limit == DEFAULT_PER_SESSION_CONCURRENCY
-    assert config.auto_return is DEFAULT_AUTO_RETURN
     assert config.auto_verify is False
     assert config.mode == "on"
     assert config.turn_limit is None
@@ -166,35 +163,6 @@ def test_root_prompt_guidance_loads_from_config() -> None:
         assert getattr(prompts, field) == configured[field]
     assert prompts.tool_prompt_snippet == configured["tool_prompt_snippet"]
     assert prompts.tool_prompt_guidelines == tuple(configured["tool_prompt_guidelines"])
-
-
-@pytest.mark.parametrize(
-    ("raw_value", "expected"),
-    [
-        ("true", True),
-        ("yes", True),
-        ("on", True),
-        ("false", False),
-        ("no", False),
-        ("off", False),
-    ],
-)
-def test_load_app_config_keeps_yaml_native_boolean_parsing(
-    tmp_path: Path,
-    raw_value: str,
-    expected: bool,
-) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text(
-        f"default_timeout: 30\nmode: 'on'\nauto_return: {raw_value}\n",
-        encoding="utf-8",
-    )
-    write_root_prompts(prompts_path)
-
-    config = load_app_config(path)
-
-    assert config.auto_return is expected
 
 
 @pytest.mark.parametrize(
@@ -337,7 +305,6 @@ def test_list_read_and_write_supported_config_values(tmp_path: Path) -> None:
     [
         ("default_timeout: 0\n", "'default_timeout' must be a positive integer"),
         ("default_timeout: 30\nconcurrency: 3\n", "'concurrency' must be a mapping"),
-        ("default_timeout: 30\nauto_return: maybe\n", "'auto_return' must be a boolean"),
         ("default_timeout: 30\nauto_verify: maybe\n", "'auto_verify' must be a boolean"),
         ("default_timeout: 30\nretention_days: 0\n", "'retention_days' must be a positive integer"),
         ("default_timeout: 30\nmode: maybe\n", "'mode' must be one of"),
@@ -350,6 +317,10 @@ def test_list_read_and_write_supported_config_values(tmp_path: Path) -> None:
         (
             "default_timeout: 30\nstate_dir: ''\n",
             "'state_dir' must be a non-empty string when provided",
+        ),
+        (
+            "default_timeout: 30\nunknown_key: 1\n",
+            "config uses unsupported key: unknown_key",
         ),
     ],
 )
@@ -1389,3 +1360,13 @@ def test_load_app_config_from_mapping_requires_all_prompt_keys(
         load_app_config_from_mapping(
             yaml.safe_load(path.read_text(encoding="utf-8")), path
         )
+
+
+def test_load_app_config_from_mapping_rejects_unknown_key(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    prompts_path = tmp_path / "prompts.yaml"
+    path.write_text("default_timeout: 30\nmode: 'on'\nunknown_key: 1\n", encoding="utf-8")
+    write_root_prompts(prompts_path)
+
+    with pytest.raises(ConfigError, match="config uses unsupported key: unknown_key"):
+        load_app_config_from_mapping(yaml.safe_load(path.read_text(encoding="utf-8")), path)

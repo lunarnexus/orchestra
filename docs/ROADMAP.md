@@ -37,6 +37,7 @@ Orchestra roadmap items are split into:
    - Don't make the workflow so reliant on the orchestrator skill.
    - Take better advantage of hints to prod the orchestrator along.
    - Track workflow steps in Orchestra rather than primarily in the orchestrator session.
+   - Expand live-host coverage of mandatory completion delivery across session cleanup and failed-delivery recovery.
 
 
 ## Wishlist

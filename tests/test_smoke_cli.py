@@ -16,7 +16,6 @@ def _write_cli_runtime(
     tmp_path: Path,
     *,
     catalog: dict[str, object],
-    auto_return: bool = True,
 ) -> tuple[Path, Path, Path]:
     config_path = tmp_path / "config.yaml"
     prompts_path = tmp_path / "prompts.yaml"
@@ -30,7 +29,6 @@ def _write_cli_runtime(
                 "default_timeout": 30,
                 "mode": "on",
                 "concurrency": {"global": 4, "per_session": 3},
-                "auto_return": auto_return,
             },
             sort_keys=False,
         ),
