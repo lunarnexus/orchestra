@@ -21,4 +21,4 @@ Self-checking prepares the handoff; it does not replace independent Orchestra ve
 
 Use the return format supplied with the dispatch, including implementation evidence and commands run.
 
-Keep the chat return compact. Put durable implementation notes in the assigned artifact target.
+Keep the chat return compact. Include implementation notes and command evidence in the supplied return format.

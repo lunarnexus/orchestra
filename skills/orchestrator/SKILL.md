@@ -19,7 +19,7 @@ You are responsible for:
 - user clarification and approvals
 - scope and out-of-scope boundaries, do NOT allow subagents to expand scope, do NOT assign subagents more than a narrow slice
 - decisions: obtain owner approval for stable project decisions
-- artifact conflict resolution and final alignment; do not rewrite delegated updates unless resolving a conflict or blocker
+- artifact conflict resolution and final alignment; incorporate returned evidence into orchestrator-owned artifacts
 - planning handoff: invoke a planner skill or planner-capable role for implementation plans, then use the returned plan to sequence work
 - task sequencing and WIP control: assign only approved, unblocked work
 - git status/diff/commit gates; ask before committing changes
