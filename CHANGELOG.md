@@ -4,6 +4,18 @@ Notable user-facing changes to Orchestra are recorded here.
 
 ## Recent changes
 
+### Improvements
+
+- Simplify role skills and clarify artifact ownership.
+- Separate automatic verification from review and security checks.
+- Reduce spike and research handoffs.
+
+### Fixes
+
+- Make automatic completion delivery mandatory. Removed auto_return config.
+- Improve budget-exceeded handoffs.
+- Make dispatch acknowledgement instructions configurable in `prompts.yaml`.
+
 ## v0.5.2 - 2026-09-29
 
 ### Features

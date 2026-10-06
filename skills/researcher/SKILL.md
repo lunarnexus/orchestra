@@ -26,7 +26,7 @@ Before researching, confirm the assignment provides:
 - expected answer type;
 - enough-evidence target or stop condition.
 
-A bounded evidence unit may include a tight call path, one behavior, one code/test conflict, one missing source, one docs page, or one tightly coupled file cluster. It is not a request to choose architecture, decompose implementation, decide product behavior, or find every knowledge gap.
+A bounded evidence unit may include a tight call path, one behavior, one code/test conflict, one missing source, one docs page, or tightly coupled sources. It may contain related questions that jointly supply evidence for one unresolved implementation decision; require an explicit enough-evidence target for that decision. Return the evidence to the orchestrator, who owns the decision. It is not a request to choose architecture, decompose implementation, decide product behavior, or find every knowledge gap.
 
 If the assignment is too broad, contains multiple independent evidence units, is missing required fields, or asks you to plan/design/decompose, return `blocked` immediately. Do not inspect sources first.
 

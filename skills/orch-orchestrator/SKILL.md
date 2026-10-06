@@ -66,14 +66,14 @@ Use artifact-first handoff for implementation, review, and security slices. `PLA
 
 Research dispatch:
 - source read-only; write only researcher-created research artifacts
-- one small question with one expected answer
-- one source page, one file, or one tight file cluster
+- one bounded evidence unit answering an unresolved implementation decision
+- exact source scope, including tightly coupled sources needed for that evidence unit
 - ask for exact fact needed: path, method, signature, yes/no, behavior, or limit
 - do not dispatch broad topics like API support, install behavior, or notification APIs
 - ask for answer, sources, confidence, gaps, blockers, risks
 - If a research subagent times out, shrink to one source and one exact question, then re-dispatch once. If the retry times out, record the missing fact as a blocker and stop.
 
-Split research by independent subject. Give each researcher one bounded question; do not bundle questions into one researcher. Dispatch independent research questions in parallel when one answer cannot change another question, scope, or source target. Run dependent research sequentially. Separate subjects include APIs, install paths, command surfaces, return injection, and docs.
+Bound research by the unresolved implementation decision. One researcher may inspect tightly coupled sources and answer related questions needed to resolve that decision. Split genuinely independent evidence units and dispatch them in parallel only when one answer cannot change another's scope or source target. Run dependent research sequentially. Reuse existing findings and stop when the decision has sufficient evidence.
 
 Do not absorb failed subagent work. If a tool-using subagent fails, times out, or returns incomplete work, do not perform that work yourself. Shrink scope and re-dispatch a smaller slice.
 

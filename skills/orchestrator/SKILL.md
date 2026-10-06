@@ -95,7 +95,7 @@ Use:
 - **TDD/build** when behavior or bug-fix work is approved
 - **systematic debugging/RCA** when a failure or bug needs root cause
 
-Spike dispatch is sequential: build fixture, run one test command, interpret result. Do not combine build, execution, and interpretation in one subagent. Before dispatching spike build work, provide exact scratch path, file contents or pseudocode, and the check command.
+Assign one bounded spike to one builder: create the fixture, run the proving command, and return observations against the feasibility question. Before dispatch, provide the exact question, scratch path, fixture contents or pseudocode, proving command, and stop condition. The orchestrator uses the returned evidence to resolve the planning decision.
 
 If a spike slice times out, shrink to one file or one command and re-dispatch once. If the retry times out, record the feasibility question as blocked and stop.
 

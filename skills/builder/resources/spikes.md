@@ -7,5 +7,5 @@ Use only for an assigned disposable experiment.
 - Create only the requested fixture; do not redesign the experiment or production system.
 - Keep production files unchanged.
 - Run commands only when assigned to the slice.
-- Return observed output, limitations, and blocker; leave interpretation to the assigned planner.
+- Return observed output, the answer to the feasibility question, limitations, and blockers; the orchestrator owns the resulting planning decision.
 - Treat the fixture as disposable. Promotion requires an approved production plan.
