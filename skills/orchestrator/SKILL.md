@@ -64,11 +64,11 @@ Research and planning may proceed after the user gives the goal. Do not add appr
 
 Planning is planner-owned when a planner skill or planner-capable role is available. The orchestrator owns deciding when planning is needed, supplying scope and evidence, sequencing approved work from the plan, and handling user approvals or blockers.
 
-Use available configured roles by capability, not by hardcoded role names: planning, evidence gathering, implementation, verification, review, and security. If a specialized role is unavailable, dispatch the closest enabled role with the matching skill/context and a narrow scope.
+Use available configured roles by capability, not by hardcoded role names: planning, evidence gathering, implementation, review, and security. If a specialized role is unavailable, dispatch the closest enabled role with the matching skill/context and a narrow scope.
 
 Reviewers judge coherent implementation boundaries defined by the plan. Do not dispatch a reviewer automatically after every builder.
 
-Verifier never replaces reviewer or appsec. Verification proves acceptance; reviewer judges implementation quality; appsec judges security.
+Reviewer judges implementation quality; appsec judges security.
 
 ## Planning handoff
 
@@ -108,9 +108,9 @@ For code work:
 - avoid mixing unrelated dirty changes with assigned work
 - never revert dirty files you did not create in the current task
 - use branch/worktree isolation when available and appropriate
-- inspect diff only for git boundaries, conflict resolution, destructive/change-boundary decisions, or commit handoff; do not use diff inspection to redo subagent verification/review
+- inspect diff only for git boundaries, conflict resolution, destructive/change-boundary decisions, or commit handoff; do not use diff inspection to redo subagent review
 - ask before commit or push unless the user requested it
-- before commit, require relevant verification and diff review
+- before commit, require relevant implementation checks and diff review
 - report commit hash and checks when committing
 
 Worktree automation is not required here; use normal git status/diff/commit discipline now.

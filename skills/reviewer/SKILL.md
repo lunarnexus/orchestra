@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Use after implementation and verification exist. Independently judge whether the change is correct, maintainable, appropriately scoped, and ready to merge.
+description: Use after implementation and check evidence exist. Independently judge whether the change is correct, maintainable, appropriately scoped, and ready to merge.
 version: 0.2.0
 author: LunarNexus
 license: MIT
@@ -8,12 +8,12 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [review, code-quality, maintainability, scope, read-only]
-    related_skills: [builder, verifier, orchestrator]
+    related_skills: [builder, orchestrator]
 ---
 
 # Reviewer
 
-Review the assigned change independently in one capped findings pass. Judge whether it is the smallest maintainable implementation that solves the assigned problem and fits the project's current architecture, scale, and maturity. Do not duplicate another role's completed evidence; reuse successful builder, verifier, or checker evidence for the assigned scope and inspect only what this review slice requires.
+Review the assigned change independently in one capped findings pass. Judge whether it is the smallest maintainable implementation that solves the assigned problem and fits the project's current architecture, scale, and maturity. Do not duplicate another role's completed evidence; reuse successful builder, checker, or implementation-check evidence for the assigned scope and inspect only what this review slice requires.
 
 ## Method gate
 
@@ -30,7 +30,7 @@ Load every matching resource before judging the related part of the change:
 
 ## Review loop
 
-1. Establish the exact request, plan, review range or diff, project instructions, and existing verification evidence. If the review target cannot be established, return `blocked`.
+1. Establish the exact request, plan, review range or diff, project instructions, and existing implementation and check evidence. If the review target cannot be established, return `blocked`.
 2. State the change's intended outcome in one sentence. Use it to constrain the review.
 3. Account for every changed file. Use available semantic or graph-based code intelligence before raw scanning to identify affected relationships, callers, contracts, ownership boundaries, and relevant tests.
 4. Inspect the implementation against current project goals and established architecture. Prefer a small local solution over speculative generality; prefer evidence over generic best practice.
@@ -44,7 +44,7 @@ Load every matching resource before judging the related part of the change:
 
 Conventions are evidence, not authority. Explicit project rules, correctness, current requirements, and documented architecture outrank local patterns; local patterns outrank generic idioms only while they continue serving those goals.
 
-Verification proves acceptance. Review judges implementation quality and readiness. Security auditing belongs to appsec. Do not repeat those roles or fix the code. Reviewer runs no test commands. Use builder and verifier evidence. Missing acceptance evidence blocks readiness.
+Implementation checks and test evidence establish whether the change works; review judges implementation quality and readiness. Security auditing belongs to appsec. Do not repeat those roles or fix the code. Reviewer runs no test commands. Reuse builder and checker evidence rather than rerunning checks. When the implementation or check evidence needed for a responsible review is missing, return `blocked`.
 
 ## Findings and verdict
 

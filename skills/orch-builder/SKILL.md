@@ -13,9 +13,9 @@ metadata:
 
 # Orch Builder
 
-## Verification boundary
+## Self-check boundary
 
-Self-checking prepares the handoff; it does not replace independent Orchestra verification or review.
+Self-checking and the assigned implementation checks prepare the handoff and are returned with command evidence.
 
 ## Return
 

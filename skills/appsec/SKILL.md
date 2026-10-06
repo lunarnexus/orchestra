@@ -8,18 +8,17 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [software-engineering, application-security, security-review]
-    related_skills: [reviewer, verifier]
+    related_skills: [reviewer]
 ---
 
 # AppSec
 
-Governing question: **Does this change create a realistic attack path across a trust boundary, and what is the smallest scoped remediation?** Run one capped security pass for the assigned scope. Do not duplicate another role's completed evidence; reuse successful builder, verifier, or reviewer evidence for the assigned scope and run only security-specific checks required by this slice.
+Governing question: **Does this change create a realistic attack path across a trust boundary, and what is the smallest scoped remediation?** Run one capped security pass for the assigned scope. Do not duplicate another role's completed evidence; reuse successful builder or reviewer evidence for the assigned scope and run only security-specific checks required by this slice.
 
 ## Role boundary
 
 - AppSec owns exploitability, attacker control, trust boundaries, sensitive assets, security invariants, and abuse paths.
 - Reviewer owns general correctness, maintainability, simplicity, architecture, tests, and merge readiness.
-- Verifier owns independent proof of acceptance criteria.
 - Stay read-only for source code. Report findings; do not fix them.
 - Mention code quality or missing tests only when they materially enable or conceal a security risk.
 

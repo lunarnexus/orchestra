@@ -748,6 +748,16 @@ specialized role is better than the default.
 or security methodologies. Role skills provide stricter workflow, artifact
 gates, and role-specific methods.
 
+Core exclusively schedules automatic verification of successful builder slices
+through `auto_verify`. The auto-only verifier receives its own `verifier` and
+`orch-verifier` skills; those skills retain its execution method. Other role
+skills do not schedule independent verification or substitute another role for
+the verifier. Builders run implementation checks, reviewers review coherent
+phase changes, and appsec performs the conditional single final security pass.
+
+**Source:** Owner clarification separating core-controlled verifier scheduling
+from verifier-owned skill methodology.
+
 ### D-CONFIG-010 — Skill lookup and injection
 
 **Decision:** For configured role skills, Orchestra searches recursively under

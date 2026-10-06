@@ -104,10 +104,16 @@ review, or security work. Project-documentation changes remain main-session
 work. Subagents inspect documentation and return evidence, implications, or
 proposed wording.
 
-When `auto_verify` is enabled, a completed `builder` run starts an automatic
+Builders run implementation checks and return command evidence. Planning defines
+one review per coherent phase and a conditional single appsec pass at plan end.
+Reviewers use existing implementation and check evidence for their reviews.
+
+When `auto_verify` is enabled, each successful `builder` run starts an automatic
 verification cycle. Core dispatches a normal `verifier` run for the same scope,
 tracks the relationship between the runs, and returns a coherent grouped report
-while keeping each run independently visible.
+while keeping each run independently visible. When disabled, the workflow proceeds
+from builder evidence to phase review and the conditional final security pass.
+Core owns this scheduling; the verifier's role skills own its execution method.
 
 ## Major components
 

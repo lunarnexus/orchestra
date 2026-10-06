@@ -10,7 +10,7 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [planning, implementation-plan, slicing]
-    related_skills: [orchestrator, researcher, builder, verifier, reviewer, apps
+    related_skills: [orchestrator, researcher, builder, reviewer, apps
 ec]
 ---
 
@@ -25,7 +25,7 @@ PLAN.md is where you will write the plan.  The PLAN.md is not a place to track i
 Load matching resources before planning that concern:
 - `resources/scope-and-decisions.md` — ambiguous requirements, user decisions, non-goals, assumptions
 - `resources/slices-and-dependencies.md` — vertical slices, parallel work, interfaces, dependency markers
-- `resources/tests-and-verification.md` — behavior changes, bug fixes, risk tiers, TDD, verification gates
+- `resources/tests-and-verification.md` — behavior changes, bug fixes, risk tiers, TDD, implementation checks, and gates
 - `resources/architecture-and-integrations.md` — architecture, external APIs, data flow, failure modes, tradeoffs
 - `resources/refactors-migrations-and-rollbacks.md` — refactors, migrations, schemas, public contracts, compatibility, rollback/recovery
 - `resources/plan-validation.md` — before marking a production plan `ready` or `partially ready`
@@ -114,14 +114,13 @@ fe` only when files/modules are separate, no output dependency exists, and no sh
 ared schema, config, public API, migration, or global behavior changes. Mark sha
 red abstractions, schemas, migrations, public APIs, and broad refactors as `sequ
 ential`. Dispatch reviewers only at coherent boundaries defined by the plan. Dis
-patch appsec, when required, after all implementation, automatic verification,
+patch appsec, when required, after all implementation,
 review, and fixes are complete, before final live end-to-end testing when live
 E2E is part of the plan.
 
 For behavior changes and bug fixes, plan TDD-first when practical: failing test
-or exact repro, minimal green implementation, safe refactor, and focused verific
-ation. Account for core automatic verification after acceptance-relevant builder
- runs, add reviewer gates at coherent plan boundaries when reviewer is enabled,
+or exact repro, minimal green implementation, safe refactor, and focused verification.
+Add reviewer gates at coherent plan boundaries when reviewer is enabled,
  and add the conditional single appsec gate described above.
 
 Before treating a production plan as ready, validate requirement coverage, inter
@@ -162,7 +161,7 @@ Slice template:
   Stop when: <observable acceptance point>
   Verify: <command or inspection>
   Risk: P0|P1|P2|P3 — <why>
-  Gates: <verification/review/security gate or none>
+  Gates: <review/security gate or none>
 ```
 
 ## Return Contract

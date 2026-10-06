@@ -7,7 +7,7 @@ Before reporting a HIGH or MEDIUM finding:
 3. Trace the relevant execution path, data flow, dependency, or ownership relationship.
 4. Inspect callers, upstream validation, error handling, tests, and project rules that could refute the concern.
 5. Establish a realistic trigger at the project's current scale and the resulting user, operational, or maintenance impact.
-6. Distinguish behavior introduced by the change from a verified baseline condition.
+6. Distinguish behavior introduced by the change from a known baseline condition.
 7. Identify the smallest fix within the assigned change.
 8. Try once to disprove the finding. If the evidence is ambiguous, lower confidence by omitting it or return `blocked` when it prevents a responsible verdict.
 

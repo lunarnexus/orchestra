@@ -83,7 +83,7 @@ After dispatching a subagent, the orchestrator stops working on that subagent's 
 
 Avoid duplicate work across roles. Before assigning review or appsec for the same files, commands, or acceptance target, use existing subagent evidence to narrow the next slice. Do not dispatch equivalent follow-ups when a returned subagent already completed the target. Do not ask multiple roles to run the same command unless the plan explicitly requires distinct evidence.
 
-Use returned findings and command evidence for downstream handoffs. Core persists subagent output in run return artifacts; do not require another report file. Give downstream roles existing return and event paths and assign only unresolved work. Automatic verification uses a verifier-specific return format. The orchestrator updates parent-owned artifacts from returned evidence.
+Use returned findings and command evidence for downstream handoffs. Core persists subagent output in run return artifacts; do not require another report file. Give downstream roles existing return and event paths and assign only unresolved work. The orchestrator updates parent-owned artifacts from returned evidence.
 
 Nested dispatch:
 - The orchestrator may dispatch researchers directly for planning evidence.
@@ -92,10 +92,10 @@ Nested dispatch:
 
 Inspect the whole request only to identify dispatch slices, dependencies,
 blockers, and approval needs. Keep dependency order strict: research before
-dependent design, implementation after approved plan/evidence, verification
-after implementation, review after coherent change, and security review according
-to Checker timing below. Use distinct enabled roles for each required
-gate when available; otherwise the workflow assigns that gate to the main session.
+dependent design, implementation after approved plan/evidence, review after
+coherent change, and security review according to Checker timing below. Review
+runs once per coherent phase; appsec runs at most once per plan under Checker
+timing.
 
 Use the approved `PLAN.md` as the source of implementation order. A partially
 ready plan permits only individually approved, unblocked slices; resolve blocked
@@ -123,10 +123,8 @@ Ask to commit Orchestra-owned changes after each successful, tested phase.
 ## Checker timing
 
 - builders run assigned implementation checks and return command evidence
-- core automatic verification returns acceptance evidence through the linked verifier run
-- Verifier, Reviewer, and Appsec have distinct responsibilities that are not interchangable
 - reviewers judge coherent implementation boundaries defined by the plan, not every builder return
-- Dispatch appsec once after implementation, verification, review, and fixes when security concerns are possible. Skip when the user waives security review, or the task is short and has no security concerns. Do not dispatch another security scan within the plan, including after fixes or a failed, blocked, or timed-out scan. Report unresolved security blockers to the user.
+- Dispatch appsec once after implementation, review, and fixes when security concerns are possible. Skip when the user waives security review, or the task is short and has no security concerns. Do not dispatch another security scan within the plan, including after fixes or a failed, blocked, or timed-out scan. Report unresolved security blockers to the user.
 - Before dispatching a follow-up role for the same assigned files, commands, or acceptance target, use existing active/returned subagent information. Do not dispatch an equivalent follow-up when an active subagent already owns that target or a returned subagent already completed it. Redispatch only for failed, blocked, timed out, cancelled, or explicitly incomplete results.
 - if a check is red, route through debugging: reproduce -> isolate -> RCA -> fix -> re-check
 - When a returned role reports a specific bug or failing command, dispatch one narrow fixer rather than an open-ended builder. The fixer brief must include the exact failing evidence, exact file/symbol scope, allowed patch boundary, and this stop condition: run the failing check once if needed, patch minimally, run the exact focused check once, run the required final check once if specified, then stop and return. If the same focused check fails twice without new diagnostic evidence, return a blocker/handoff instead of continuing.

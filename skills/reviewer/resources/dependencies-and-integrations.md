@@ -12,7 +12,7 @@ For dependencies, check:
 
 For external services, SDKs, and protocols, check:
 
-- verified request, response, authentication, pagination, and version contracts
+- confirmed request, response, authentication, pagination, and version contracts
 - bounded timeouts
 - retries limited to safe transient operations with appropriate idempotency
 - boundary validation of remote data
