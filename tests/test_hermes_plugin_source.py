@@ -78,6 +78,22 @@ class InjectOnlyContext:
         return True
 
 
+class GatewayShapedInjectContext:
+    """Mirrors the live Hermes PluginContext.inject_message signature: CLI-shaped calls
+    without a session_key fail closed exactly like hermes_cli.plugins_injection does."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None]] = []
+
+    def inject_message(
+        self, content: str, role: str = "user", *, session_key: str | None = None
+    ) -> bool:
+        if session_key is None:
+            return False  # "gateway mode requires an existing session_key or an origin"
+        self.calls.append((content, session_key))
+        return True
+
+
 class NoInjectHermesPluginContext:
     def __init__(self, session_id: str | None = None) -> None:
         self.tools: list[dict[str, Any]] = []
@@ -1951,12 +1967,158 @@ def test_orch_slash_cli_private_session_fallback_dispatches_do_and_steers_when_b
     assert list(ctx.pending_input.queue) == []
 
 
+def test_parent_context_uses_resumed_live_history_before_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    messages = [{"role": "user", "content": "resumed conversation"}]
+    looked_up: list[str] = []
+
+    def live(session_id: str) -> dict[str, Any]:
+        looked_up.append(session_id)
+        return {"history": messages, "history_lock": threading.Lock()}
+
+    monkeypatch.setattr(plugin, "_tui_live_session", live)
+    content, error = plugin._render_parent_context_payload("hermes:resumed", "intern")
+    assert error is None
+    assert content is not None
+    assert json.loads(content) == messages[0]
+    assert looked_up == ["hermes:resumed"]
+
+
 def test_orch_slash_fails_closed_without_hook_session_context() -> None:
     plugin = load_plugin()
 
     output = plugin._orch_command("status")
 
     assert "runtime session context" in output
+
+
+def fake_session_context_module(plugin: ModuleType, value: Any) -> SimpleNamespace:
+    bound = SimpleNamespace(get=lambda: value)
+    return SimpleNamespace(session_context=SimpleNamespace(_SESSION_ID=bound))
+
+
+def test_slash_session_id_uses_bound_gateway_context_without_cli_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    fake = fake_session_context_module(plugin, "desktop-chat-1")
+    monkeypatch.setitem(sys.modules, "gateway", fake)
+    ctx = FakeHermesPluginContext()
+    ctx._manager._cli_ref = None
+
+    assert plugin._slash_session_id(ctx) == "hermes:desktop-chat-1"
+
+
+def test_slash_session_id_prefers_bound_context_over_cli_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A gateway worker thread bound the current command's task-local session; concurrent
+    # chats share the process, so the ContextVar must win over any CLI-shaped object.
+    plugin = load_plugin()
+    fake = fake_session_context_module(plugin, "desktop-chat-2")
+    monkeypatch.setitem(sys.modules, "gateway", fake)
+    ctx = FakeHermesPluginContext(session_id="stale-cli-session")
+
+    assert plugin._slash_session_id(ctx) == "hermes:desktop-chat-2"
+
+
+def test_slash_session_id_falls_back_to_cli_ref_when_context_unbound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    _UNSET_SENTINEL = object()
+    monkeypatch.setitem(
+        sys.modules, "gateway", fake_session_context_module(plugin, _UNSET_SENTINEL)
+    )
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+
+    assert plugin._slash_session_id(ctx) == "hermes:cli-session"
+
+
+def test_slash_session_id_ignores_environment_when_context_unbound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A process-inherited HERMES_SESSION_ID must never be read as this command's identity.
+    plugin = load_plugin()
+    monkeypatch.setenv("HERMES_SESSION_ID", "inherited-other-session")
+    monkeypatch.delitem(sys.modules, "gateway", raising=False)
+
+    assert plugin._slash_session_id(None) is None
+
+
+def test_slash_session_id_treats_empty_bound_context_as_unbound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    monkeypatch.setitem(sys.modules, "gateway", fake_session_context_module(plugin, ""))
+    ctx = FakeHermesPluginContext(session_id="cli-session")
+
+    assert plugin._slash_session_id(ctx) == "hermes:cli-session"
+
+
+def test_report_delivery_passes_durable_session_key_to_gateway_inject(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    ctx = GatewayShapedInjectContext()
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return completed(args)
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+
+    plugin._handle_session_report_result(
+        ctx,
+        "hermes:20261009_072052_fe398f",
+        completed(
+            ["_await-session-report"],
+            json.dumps({"runIds": ["41b5c12dbd26"], "report": "intern done"}),
+        ),
+    )
+
+    assert ctx.calls == [("intern done", "20261009_072052_fe398f")]
+    assert calls == [
+        [
+            "_mark-session-report-delivered",
+            "--session-id",
+            "hermes:20261009_072052_fe398f",
+            "--run-id",
+            "41b5c12dbd26",
+        ]
+    ]
+
+
+def test_inject_report_falls_back_when_context_lacks_session_key_kwarg() -> None:
+    # CLI-shaped hosts (older inject_message signature) must still receive the report.
+    plugin = load_plugin()
+    ctx = FakeHermesPluginContext()
+
+    assert plugin._inject_report(ctx, "hermes:runtime", "report text") is True
+    assert ctx.injected == [("report text", "user")]
+
+
+def test_orch_status_uses_gateway_bound_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plugin = load_plugin()
+    fake = fake_session_context_module(plugin, "desktop-chat-9")
+    monkeypatch.setitem(sys.modules, "gateway", fake)
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return completed(args, "status for desktop-chat-9")
+
+    monkeypatch.setattr(plugin, "_run_orchestra", fake_run)
+
+    output = plugin._orch_command("status")
+
+    assert output == "status for desktop-chat-9"
+    assert calls == [["status", "--session-id", "hermes:desktop-chat-9"]]
 
 
 @pytest.mark.parametrize(

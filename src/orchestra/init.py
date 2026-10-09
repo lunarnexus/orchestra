@@ -509,6 +509,22 @@ def init_hermes(
         detail = stderr or stdout or f"hermes exited with status {result.returncode}"
         raise _app_error(f"Hermes plugin enable failed: {detail}")
 
+    # Installation owns tool exposure and addressed desktop return permission.
+    for setup_args in (
+        ["tools", "enable", "orchestra", "--platform", "cli"],
+        ["config", "set", "plugins.entries.orchestra.allow_gateway_injection", "true"],
+    ):
+        setup_command = command[:command.index("plugins")] + setup_args
+        try:
+            setup_result = runner(
+                setup_command, check=False, capture_output=True, text=True, timeout=120
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            raise _app_error(f"Hermes integration setup failed: {exc}") from exc
+        if setup_result.returncode != 0:
+            detail = setup_result.stderr or setup_result.stdout
+            raise _app_error(f"Hermes integration setup failed: {detail}")
+
     files = [plugin_file, *_materialize_runtime_config(
         config_source_paths,
         _runtime_config_targets(default_hermes_orchestra_dir(hermes_profile)),

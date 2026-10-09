@@ -536,7 +536,7 @@ roles:
     assert [item.action for item in result.opencode.files] == ["created", "created"]
     assert result.opencode.files[0].target == opencode_config / "plugins" / "orchestra.ts"
     assert result.opencode.files[1].target == opencode_config / "commands" / "orch.md"
-    assert calls == [
+    assert calls[::3] == [
         [
             "hermes",
             "plugins",

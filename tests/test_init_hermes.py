@@ -64,7 +64,7 @@ def test_init_hermes_copies_plugin_with_default_profile_and_materializes_config(
 
     result = init_hermes(source_root=source, runner=fake_runner)
 
-    assert calls == [
+    assert calls[:1] == [
         {
             "args": [
                 "hermes",
@@ -77,6 +77,10 @@ def test_init_hermes_copies_plugin_with_default_profile_and_materializes_config(
             "text": True,
             "timeout": 120,
         }
+    ]
+    assert [call["args"] for call in calls[1:]] == [
+        ["hermes", "tools", "enable", "orchestra", "--platform", "cli"],
+        ["hermes", "config", "set", "plugins.entries.orchestra.allow_gateway_injection", "true"],
     ]
     assert result.stdout == "installed"
     assert result.stderr == ""
@@ -104,7 +108,7 @@ def test_init_hermes_explicit_profile_override_still_works(
 
     result = init_hermes(profile="tori", source_root=source, runner=fake_runner)
 
-    assert calls == [
+    assert calls[:1] == [
         [
             "hermes",
             "-p",
@@ -135,7 +139,7 @@ def test_init_hermes_passes_force_to_local_plugin_copy(
 
     init_hermes(profile="tori", force=True, source_root=source, runner=fake_runner)
 
-    assert calls == [
+    assert calls[:1] == [
         [
             "hermes",
             "-p",
@@ -285,7 +289,7 @@ def test_real_hermes_plugin_integration_skips_without_isolated_runtime_credentia
         check=False,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=300,
     )
     if plugin_help.returncode != 0:
         pytest.skip("hermes plugins list help unavailable")
@@ -305,7 +309,7 @@ def test_real_hermes_plugin_integration_skips_without_isolated_runtime_credentia
         check=False,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=300,
         env=env,
     )
     assert plugins_list.returncode == 0
@@ -321,10 +325,13 @@ def test_real_hermes_plugin_integration_skips_without_isolated_runtime_credentia
         check=False,
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=300,
         env=env,
     )
-    if "No inference provider configured" in (oneshot.stderr or ""):
+    oneshot_stderr = oneshot.stderr or ""
+    if "No inference provider configured" in oneshot_stderr or (
+        "not connected to any AI provider" in oneshot_stderr
+    ):
         pytest.skip(
             "real Hermes plugin automation requires a configured inference provider even for "
             "isolated one-shot /orch help; test stays manual to avoid depending on user "

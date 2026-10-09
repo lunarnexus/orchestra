@@ -1,11 +1,11 @@
 # AI Agent Rules
 
-These rules apply to all AI coding agents working on this project.
+These rules apply to all AI coding agents working on this project. Keep this file focused on agent instructions, commands, safety, and verification. Put implementation descriptions in `docs/ARCHITECTURE.md` and owner-approved decisions in `docs/DECISIONS.md`.
 
 ## Core Principles
 
-- Keep the implementation aligned with `DECISIONS.md`, `ARCHITECTURE.md`, and any active operational artifacts.
-- Treat `DECISIONS.md` as the authoritative record of owner-approved project decisions. Do not remove, weaken, reinterpret, or supersede a recorded decision without explicit owner approval. Treat `ARCHITECTURE.md` as the current implementation map. Treat `PLAN.md` and `RESEARCH.md` as Orchestra operational artifacts for the current orchestrator session, not casual edit targets. `PLAN.md` is temporary local planning state and should stay ignored by git.
+- Keep the implementation aligned with `docs/DECISIONS.md`, `docs/ARCHITECTURE.md`, and any active operational artifacts.
+- Treat `docs/DECISIONS.md` as the authoritative record of owner-approved project decisions. Do not remove, weaken, reinterpret, or supersede a recorded decision without explicit owner approval. Treat `docs/ARCHITECTURE.md` as the current implementation map. Treat `PLAN.md` and `RESEARCH.md` as Orchestra operational artifacts for the current orchestrator session, not casual edit targets. `PLAN.md` is temporary local planning state and should stay ignored by git.
 - Favor simple MVP work over speculative framework building.
 - Prefer small, reviewable changes with clear verification.
 - Be explicit about what is implemented now versus only planned.
@@ -14,7 +14,7 @@ These rules apply to all AI coding agents working on this project.
 
 ## Schema & Data Changes
 
-- Record owner-approved schema decisions in `DECISIONS.md` and document the current schema design in `ARCHITECTURE.md` or relevant technical docs before applying changes.
+- Record owner-approved schema decisions in `docs/DECISIONS.md` and document the current schema design in `docs/ARCHITECTURE.md` or relevant technical docs before applying changes.
 - Run migrations/validations immediately after data structure changes.
 
 ## Destructive Work
@@ -31,10 +31,10 @@ These rules apply to all AI coding agents working on this project.
 
 ## Changelog
 
-- `ROADMAP.md` is a living document and should be committed on every commit even when its updates are not directly related to the code change.
-- `ROADMAP.md` is for future work only.
-- Completed roadmap items belong in `CHANGELOG.md`, not `ROADMAP.md`.
-- When asked to update the changelog, check both git commits since the latest `vX.Y.Z` tag and `ROADMAP.md`.
+- `docs/ROADMAP.md` is a living document and should be committed on every commit even when its updates are not directly related to the code change.
+- `docs/ROADMAP.md` is for future work only.
+- Completed roadmap items belong in `CHANGELOG.md`, not `docs/ROADMAP.md`.
+- When asked to update the changelog, check both git commits since the latest `vX.Y.Z` tag and `docs/ROADMAP.md`.
 - Draft the changelog update, show it for owner approval, then edit `CHANGELOG.md`.
 - Do not tag or push a release until the owner approves.
 
@@ -47,7 +47,7 @@ python3 -m mypy src tests
 python3 -m build
 ```
 
-CLI verification targets:
+CLI verification targets (manual-mode checks only; these do not verify runtime host identity or automatic return to a live host chat):
 
 ```bash
 orchestra --help
@@ -66,7 +66,21 @@ pi --no-approve --session-id orch-demo -p "/orch do smoke test from host"
 pi --no-approve --session-id orch-demo -p "/orch history 10"
 ```
 
-Hermes host-plugin verification targets (live checks; unit/source tests never depend on them):
+Hermes plugin installation and updates:
+
+- Use `orchestra init hermes --profile <name>` for the intended profile. Let the installer configure the integration; fix installer defects rather than replacing it with manual file copies or separate setup instructions.
+- When running inside a Hermes profile, the current installer expects `HERMES_HOME` to name the root Hermes home when `--profile` is supplied. For the local mina profile:
+
+```bash
+HERMES_HOME=/Users/james/.hermes orchestra init hermes --profile mina
+```
+
+- Verify the installed plugin with `hermes -p <name> plugins list`. Reload the host after updating plugin code, then verify tool exposure in the live chat.
+- Test desktop dispatch using that chat's native `orch_dispatch` tool or `/orch do` command. Do not substitute a separate `hermes -z` model session or manual CLI dispatch.
+- Verify the run belongs to the originating `hermes:` session and that its automatic return reaches that same chat. A successful dispatch alone does not prove delivery.
+- Verify orchestrator SPSI from the live orchestrator hook output; subagent returns do not prove orchestrator injection.
+
+Hermes isolated smoke checks (unit/source tests never depend on them):
 
 ```bash
 python3 scripts/smoke-hermes-live        # isolated HERMES_HOME plugin check; no credentials needed

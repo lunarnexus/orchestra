@@ -14,6 +14,10 @@ Notable user-facing changes to Orchestra are recorded here.
 
 ### Fixes
 
+- Fixed `/orch` on the Hermes desktop app: slash commands now resolve session identity from gateway runtime context.
+- Auto-returns now reach the originating desktop session via its durable session key.
+- Parent context now recovers from resumed session history when dispatched before the first LLM turn.
+- `orchestra init hermes` now fully configures the Hermes integration: install/enable, toolset exposure, and desktop return-delivery permission.
 - Make automatic completion delivery mandatory. Removed auto_return config.
 - Improve budget-exceeded handoffs.
 - Make dispatch acknowledgement instructions configurable in `prompts.yaml`.

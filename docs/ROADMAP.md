@@ -25,6 +25,16 @@ Orchestra roadmap items are split into:
 
 5. [ ] Fix config paths, specifically state_dir, log_dir defaults.  There's nothing specifically wrong with them, but it's not as user-friendly as I'd like.  Everything should be as idiot-proof as possible.
 
+6. [ ] Automate Hermes desktop regression checks.
+   - Background: three desktop defects shipped undetected and were only caught by hand in a live chat — (a) `/orch` slash commands could not resolve session identity outside the interactive CLI, (b) auto-returns addressed the wrong host slot and failed closed on desktop, (c) `pass_parent_context` dispatch failed after restart when no LLM turn had populated the hook cache yet.
+   - Goal: an automated check, isolated from the user's Hermes home, that launches a headless gateway/desktop session and asserts each fix end-to-end, so a regression fails a check instead of a user's workflow.
+   - Suggested coverage:
+     - Slash dispatch from a gateway-bound session records the run under the originating `hermes:` session id (guards the ContextVar identity resolution).
+     - A completed run's report is delivered to the originating live chat and marked delivered (guards session-key-addressed injection and the `allow_gateway_injection` permission).
+     - Dispatch immediately after restart, before any LLM turn, succeeds for a `pass_parent_context` role (guards the resumed-history fallback).
+     - Two concurrent sessions dispatch without cross-attributing runs or reports (guards task-local context isolation).
+   - Support work: a reusable warm Hermes data root would keep these checks (and `scripts/smoke-hermes-live`) from paying cold PM dependency prep on every run.
+
 9. [ ] More formal ToDo tool.
    - Create a task list through the orch tool as tasks are marked complete.
    - Include hints that propose the next step.

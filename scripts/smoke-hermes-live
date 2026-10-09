@@ -63,7 +63,9 @@ def check_plugins_enabled(env: dict[str, str]) -> None:
         ["hermes", "plugins", "list", "--json"],
         capture_output=True,
         text=True,
-        timeout=60,
+        # First launch against a fresh HERMES_HOME runs Hermes's cold PM
+        # dependency prep for that data root (~2 min measured); keep generous.
+        timeout=300,
         env=env,
     )
     if result.returncode != 0:
@@ -83,10 +85,15 @@ def check_oneshot_help(env: dict[str, str]) -> None:
         ["hermes", "--ignore-user-config", "--ignore-rules", "-z", "/orch help"],
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=300,
         env=env,
     )
-    if "No inference provider configured" in (result.stderr or ""):
+    stderr_text = result.stderr or ""
+    # Match both historical and current Hermes no-provider wordings so the
+    # documented skip path fires instead of a hard failure when unconfigured.
+    if "No inference provider configured" in stderr_text or (
+        "not connected to any AI provider" in stderr_text
+    ):
         print(
             "SKIP: one-shot /orch help requires a configured Hermes inference "
             "provider. Manual command:\n"

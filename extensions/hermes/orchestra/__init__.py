@@ -400,6 +400,17 @@ def _render_parent_context_payload(
     with _PARENT_CONTEXT_CACHE_LOCK:
         messages = list(_PARENT_CONTEXT_CACHE.get(runtime_session_id, ()))
     if not messages:
+        # Slash commands can run immediately after resume, before a pre-LLM hook.
+        live_session = _tui_live_session(runtime_session_id)
+        if live_session is not None:
+            lock = live_session.get("history_lock")
+            if lock is not None:
+                with lock:
+                    history = list(live_session.get("history") or [])
+            else:
+                history = list(live_session.get("history") or [])
+            messages = [message for message in history if isinstance(message, dict)]
+    if not messages:
         return None, (
             f"no cached parent context for this Hermes session; role '{role}' sets "
             "pass_parent_context but no conversation history has been captured from the "
@@ -679,11 +690,36 @@ def _session_watcher_generation_is_current(runtime_session_id: str, generation: 
         return _SESSION_WATCHER_GENERATIONS.get(runtime_session_id, 0) == generation
 
 
+def _bound_session_context_id() -> str | None:
+    """Resolve the task-local session id the Hermes gateway bound for this command.
+
+    Desktop/gateway slash dispatch binds the live session's ContextVar before invoking the
+    plugin command handler. Read the ContextVar directly instead of ``get_session_env()`` or
+    ``os.environ``: an unbound or cleared context must resolve to None, never to a stale
+    process-inherited ``HERMES_SESSION_ID`` belonging to another session.
+    """
+    try:
+        from gateway import session_context  # type: ignore
+
+        value = session_context._SESSION_ID.get()
+    except Exception:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return normalize_hermes_session_id(value)
+    except ValueError:
+        return None
+
+
 def _slash_session_id(ctx: Any | None) -> str | None:
-    # Hermes slash handlers currently receive only raw user text. Public Hermes does
-    # not expose a runtime per-command session id here yet, but interactive CLI keeps
-    # the active session id on the private CLI ref. Trust only that in-process CLI
-    # runtime object; never read identity from slash args, tool args, or globals.
+    # Hermes slash handlers receive only raw user text. Identity comes only from trusted
+    # in-process runtime context: the task-local session ContextVar bound by the
+    # desktop/gateway command dispatch first, then the interactive CLI's private CLI ref.
+    # Never read identity from slash args, tool args, or globals.
+    bound = _bound_session_context_id()
+    if bound is not None:
+        return bound
     manager = getattr(ctx, "_manager", None)
     cli_ref = getattr(manager, "_cli_ref", None)
     raw_session_id = getattr(cli_ref, "session_id", None)
@@ -828,12 +864,23 @@ def _steer_report(ctx: Any, message: str, runtime_session_id: str | None = None)
         return False
 
 
-def _inject_report(ctx: Any, message: str) -> bool:
+def _inject_report(ctx: Any, runtime_session_id: str, message: str) -> bool:
     inject_message = getattr(ctx, "inject_message", None)
     if not callable(inject_message):
         return False
+    # Desktop/gateway hosts are a session_key-addressed slot: injection without the durable
+    # session key fails closed ("gateway mode requires an existing session_key"). Pass it.
+    session_key = _runtime_session_key(runtime_session_id)
     try:
+        if session_key is not None:
+            return bool(inject_message(message, role="user", session_key=session_key))
         return bool(inject_message(message, role="user"))
+    except TypeError:
+        # Older Hermes contexts without the session_key kwarg keep the CLI-shaped call.
+        try:
+            return bool(inject_message(message, role="user"))
+        except Exception:
+            return False
     except Exception:
         return False
 
@@ -841,7 +888,7 @@ def _inject_report(ctx: Any, message: str) -> bool:
 def _deliver_report(ctx: Any, runtime_session_id: str, message: str) -> bool:
     if _session_is_busy(ctx, runtime_session_id):
         return _steer_report(ctx, message, runtime_session_id) or _queue_report(ctx, message)
-    return _inject_report(ctx, message)
+    return _inject_report(ctx, runtime_session_id, message)
 
 
 def _handle_session_report_result(
