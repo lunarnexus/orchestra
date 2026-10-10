@@ -2,6 +2,13 @@
 
 Notable user-facing changes to Orchestra are recorded here.
 
+## v0.5.5
+
+### Improvements
+
+- Improved behavioral coverage for dispatch, execution recovery, automatic verification, and Pi/Hermes completion delivery.
+- Improved regression coverage for configuration validation, retention boundaries, and diagnostic paths.
+
 ## Recent changes
 
 ### Improvements

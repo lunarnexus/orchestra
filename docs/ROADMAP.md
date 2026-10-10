@@ -7,6 +7,11 @@ Orchestra roadmap items are split into:
 
 ## TODO
 
+- [ ] Add `orchestra do --wait` for manual CLI completion.
+  - Keep the terminal attached until the dispatched work and its automatic verification complete, then print the final report.
+  - Preserve asynchronous dispatch as the default for existing callers and host adapters.
+  - Define outcome-based exit statuses, interruption behavior, wait scope, and report-delivery bookkeeping before implementation; cover the complete CLI journey with behavioral tests.
+
 - [ ] Publish the benchmark methodology and model-specific results referenced in README.md in a dedicated research document.
 
 1. [ ] Expand chained dispatch beyond post-run auto-verification.

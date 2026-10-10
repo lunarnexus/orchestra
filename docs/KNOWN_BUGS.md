@@ -1,5 +1,107 @@
 # Known Bugs
 
+## Pi debug transcript lookup ignores the configured agent directory
+
+**Status:** open; confirmed by source inspection, not execution
+
+Supervision resolves Pi transcripts from `PI_CODING_AGENT_SESSION_DIR`, then
+`${PI_CODING_AGENT_DIR:-~/.pi/agent}/sessions`. The debug fallback in
+`src/orchestra/status.py` instead defaults directly to `~/.pi/agent/sessions`,
+ignoring `PI_CODING_AGENT_DIR`.
+
+**Impact:** when only `PI_CODING_AGENT_DIR` names a custom directory, supervision
+can find the transcript for accounting while `orchestra debug` cannot find the
+same transcript and displays an incorrect default-directory search hint. This
+applies when a transcript path has not already been recorded.
+
+**Expected behavior:** accounting, timeout recovery, and debug lookup use the
+same configured Pi session-directory resolution.
+
+**Evidence:** `src/orchestra/supervision.py` (`_find_pi_worker_transcript`) and
+`src/orchestra/status.py` (`_find_pi_transcript`, `_debug_transcript_section`).
+Existing supervision accounting tests exercise the custom agent directory;
+the corresponding debug fallback case is not covered.
+
+## Generic core contains host and harness storage-format knowledge
+
+**Status:** open architectural boundary issue; source-confirmed coupling,
+not a reproduced general execution failure
+
+Generic supervision discovers and parses Pi JSONL transcripts for accounting
+and timeout-output recovery. Generic status reads Hermes profile-selection
+files and its session database schema to resolve compression lineage. These
+capabilities are required, but their runtime-specific storage knowledge resides
+in the shared execution and reporting modules rather than dedicated connectors.
+
+**Impact:** host storage-format or path changes require changes to generic core;
+duplicate Pi lookup logic already causes the debug-directory defect above.
+Hermes lineage discovery depends directly on `HERMES_HOME`, the `active_profile`
+file, and the native `sessions` table. Read failures fall back to exact-session
+views, so lineage information can be lost without a visible diagnostic.
+
+**Expected boundary:** dedicated host/harness connectors own native paths,
+transcript formats, accounting extraction, and lineage discovery. Shared core
+consumes normalized results while preserving existing accounting, timeout
+handoffs, read-only lineage views, and exact ownership for control and delivery.
+Harness-specific launch code and host-specific message injection are legitimate
+connector responsibilities and are not defects by themselves.
+
+**Evidence:** `src/orchestra/supervision.py` (`_find_pi_worker_transcript`,
+`_pi_worker_last_assistant_text`, `_pi_worker_accounting`);
+`src/orchestra/status.py` (`_read_hermes_compression_lineage`,
+`_hermes_state_db_path`). Boundary audit:
+`state/runs/840e91cb29d8/findings-boundary-audit.md`.
+
+## Cancellation skips the full return artifact
+
+**Status:** open; confirmed by source inspection during connected cancellation testing
+
+`stop_run` marks a run `cancelled` before terminating its subagent. When the
+supervisor subsequently collects the process output, `_finalize_run` sees an
+already-terminal run and returns before writing `state/runs/<run-id>/return.md`.
+The collected stdout/stderr therefore is not persisted to the return artifact.
+
+**Impact:** cancellation retains its status, cancellation reason, lifecycle
+events, and consolidated report, but the report's return-artifact pointer can
+refer to a missing file. Partial subagent output is unavailable through that
+artifact for diagnosis or continuation.
+
+**Expected behavior:** preserve collected output in the return artifact when a
+running subagent is cancelled, while keeping its terminal status `cancelled`.
+
+**Evidence:** `src/orchestra/supervision.py` (`stop_run` and `_finalize_run`);
+`tests/test_failure_timeout_cancel_flow.py` covers the connected cancellation
+journey and surviving diagnostic evidence. That test does not assert artifact
+existence or pin its absence as desired behavior. Independent review confirmed
+the cancellation-path finding and passed the journey tests.
+
+## Failed dispatch preparation can strand concurrency capacity
+
+**Status:** open; parent-context write failure reproduced by automated test
+
+Core reserves a queued run before writing its parent-context and request
+artifacts. If the parent-context write fails, dispatch returns an error without
+terminalizing the reserved run. No supervisor starts, but the queued record still
+counts toward global, per-session, and per-model concurrency limits.
+
+**Impact:** an immediate retry can fail with `per-session concurrency limit
+exceeded` even though no subagent was launched. Repeated failures can exhaust
+available capacity.
+
+**Recovery:** a later operation that invokes stale-run reconciliation can mark
+the abandoned run failed after the 30-second startup grace period. Recovery is
+operation-triggered, not an automatic timer.
+
+**Expected behavior:** preparation failure after reservation and before supervisor
+launch immediately marks the run failed, preserving diagnostic evidence and
+releasing capacity so the caller can retry.
+
+**Evidence:** `src/orchestra/dispatch.py` reserves before artifact writes;
+`tests/test_dispatch_acceptance_flow.py` contains the strict expected-failure test
+`test_dispatch_post_reservation_write_failure_releases_session_slot`. Running it
+with `--runxfail` reproduced the rejected immediate retry. Request-artifact write
+failure has the same ordering risk but has not yet been reproduced.
+
 ## One-shot host sessions can exit before async subagents return
 
 **Status:** open
