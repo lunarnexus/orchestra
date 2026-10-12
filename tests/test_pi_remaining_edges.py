@@ -1,13 +1,7 @@
-"""Remaining deterministic Pi edges: dispatch transport corruption, transcript
-timeout recovery, and reload recovery.
+"""Pi dispatch transport, transcript timeout, reload, and compaction recovery.
 
-These tests cover Pi-specific failure edges not covered by the 7 existing
-delivery-flow tests. They reuse the pi_driver.mjs infrastructure (real
-extension + fake host + real core) and the real supervisor for timeout
-recovery.
-
-Limitations: compaction race and live Pi delivery are blocked (see test
-docstrings for precise prerequisites).
+Tests use the real extension/core with a simulated host boundary and real
+supervision for timeout recovery. Live-host verification is separate.
 """
 
 from __future__ import annotations
@@ -156,34 +150,20 @@ class _BoundedDriverReader:
 
 
 # ---------------------------------------------------------------------------
-# Test 1: Malformed dispatch transport response (strict xfail)
+# Test 1: Malformed dispatch transport response
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Pi extension loses the accepted run when the dispatch transport "
-        "response is malformed. After core accepts the dispatch (run "
-        "created, supervisor spawned), corrupted stdout makes the "
-        "extension's dispatch path throw (parseDispatchPayload JSON.parse) "
-        "or return an error with no run_id, so the tool result carries no "
-        "recoverable run reference while the run continues silently. Desired "
-        "behavior: the extension should fall back to querying _dispatch-ack "
-        "or status to recover the accepted run."
-    ),
-)
 def test_pi_malformed_dispatch_response_run_continues(
     tmp_path: Path,
     runtime_files_factory: Any,
     python_executable: str,
     fake_worker_script: Path,
 ) -> None:
-    """Corrupted dispatch response: run is accepted by core but extension cannot recover it.
+    """Corrupted dispatch response: run is accepted by core but extension cannot parse it.
 
-    The desired outcome (recoverability) is that the tool result contains a
-    run_id or a recoverable reference. The actual outcome is an error with
-    no run_id, while the run continues in the background.
+    The extension reports acceptance with an unknown run id, does not redispatch,
+    and recovers the session report through actual chat confirmation.
     """
     pi_pkg = _find_pi_package()
     if pi_pkg is None:
@@ -252,17 +232,23 @@ def test_pi_malformed_dispatch_response_run_continues(
         assert "worker ok" in (final.result_summary or "")
 
         # The tool result text (either the ack payload or the error message)
-        # carries no recoverable run reference in the actual (buggy) behavior.
+        # carries a recoverable run reference.
         if result["kind"] == "ack":
             result_text = result["result"]["text"]
         else:
             result_text = result.get("message", "")
 
-        # DESIRED (xfail): the tool result should contain a recoverable run_id
-        # or reference so the model can discover the accepted run.
-        assert "run_id" in result_text.lower() or run_id in result_text, (
-            f"tool result does not contain recoverable run reference: {result_text}"
-        )
+        assert result["kind"] == "ack"
+        assert result["result"]["isError"] is False
+        assert "accepted" in result_text and "do not redispatch" in result_text
+        assert len(store.list_runs(session_key)) == 1
+        followup = reader.wait_for_event("followup", timeout=15.0)
+        assert followup is not None, "accepted run's report was not recovered"
+        assert run_id in followup["message"] and "worker ok" in followup["message"]
+        assert store.get_run(run_id).reported_at is None
+        reader.send({"cmd": "message_end", "text": followup["message"]})
+        assert wait_for_condition(lambda: store.get_run(run_id).reported_at is not None, timeout=15)
+        assert not store.list_pending_report_runs(session_key)
     finally:
         if reader is not None:
             # Graceful shutdown: session_shutdown (kills watchers) then quit.
@@ -402,22 +388,10 @@ def test_pi_transcript_timeout_incomplete_recovery(
 
 
 # ---------------------------------------------------------------------------
-# Test 3: Reload pending/active recovery (strict xfail)
+# Test 3: Reload pending report recovery
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Pi session_start handler does not query _pending-report or restart "
-        "report watchers for active/pending runs. After a reload "
-        "(session_shutdown + session_start), unconfirmed pending reports are "
-        "lost: the local pendingSessionReports map is cleared on shutdown, "
-        "and session_start only refreshes status/tool-info. The run remains "
-        "unreported in the durable store, but no watcher is restarted to "
-        "redeliver it. KNOWN_BUG #2."
-    ),
-)
 def test_pi_reload_recovery_pending_report_redelivered(
     tmp_path: Path,
     runtime_files_factory: Any,
@@ -428,8 +402,7 @@ def test_pi_reload_recovery_pending_report_redelivered(
 
     Phase 1: dispatch → run completes → report delivered (followUp) → not confirmed → shutdown.
     Phase 2: fresh session_start (simulating /reload).
-    Desired: the pending report is redelivered to the new session.
-    Actual: no redelivery occurs (session_start has no _pending-report query).
+    The pending report is redelivered without marking it before chat confirmation.
     """
     pi_pkg = _find_pi_package()
     if pi_pkg is None:
@@ -483,15 +456,105 @@ def test_pi_reload_recovery_pending_report_redelivered(
         driver.send_command({"cmd": "session_start", "id": sid}, wait_kind=None)
         time.sleep(0.5)
 
-        # DESIRED (xfail): the pending report should be redelivered.
-        # The session_start handler should query _pending-report and restart
-        # the report watcher for the unreported run.
+        # Recovery reads the report without consuming it.
         redelivery = driver._wait_for_event("followup", timeout=5.0)
         assert redelivery is not None, (
-            "pending report was not redelivered after reload; "
-            "session_start does not query _pending-report (KNOWN_BUG #2)"
+            "pending report was not redelivered after reload"
         )
         assert run_id in redelivery["message"]
+        assert store.get_run(run_id).reported_at is None
+        driver.send({"cmd": "message_end", "text": redelivery["message"]})
+        assert wait_for_condition(lambda: store.get_run(run_id).reported_at is not None, timeout=15)
+        assert not store.list_pending_report_runs(session_key)
+    finally:
+        driver.stop()
+        _cleanup_active_runs(db_path, session_key, config_path.parent, python_executable)
+
+
+# ---------------------------------------------------------------------------
+# Test 4: Compaction lifecycle — deferred report and confirmation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("finish_command", ["compaction_end", "compaction_failed"])
+def test_pi_compaction_retry_delivers_report(
+    finish_command: str,
+    tmp_path: Path,
+    runtime_files_factory: Any,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    """A report ready during compaction waits for the real lifecycle completion.
+
+    Success and failure both resume delivery; an accepted report is not resent
+    while its matching message_end confirmation is outstanding.
+    """
+    pi_pkg = _find_pi_package()
+    if pi_pkg is None:
+        pytest.skip("Pi coding-agent package not found at ~/.pi/agent/install")
+
+    config_path, _, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "compaction retry ok"],
+    )
+    store = StateStore(db_path)
+    sid = _session_id()
+    session_key = f"pi:{sid}"
+    driver = DriverClient(tmp_path, config_path, python_executable, pi_pkg)
+    run_id: str | None = None
+    try:
+        driver.start()
+        driver.send_command({"cmd": "session_start", "id": sid}, wait_kind=None)
+        time.sleep(0.5)
+
+        # Inject compaction: session_before_compact fires, sendUserMessage rejected.
+        driver.send_command({"cmd": "compaction_reject", "count": 1}, wait_kind="ack")
+
+        ack = driver.send_command(
+            {"cmd": "dispatch", "goal": "compaction retry test"},
+            wait_kind="ack",
+            timeout=30.0,
+        )
+        assert ack is not None, f"no ack; stderr: {driver.stderr_content()}"
+        assert not ack["result"]["isError"]
+
+        runs = store.list_runs(session_key)
+        assert len(runs) == 1
+        run_id = runs[0].run_id
+
+        # Wait for run to complete.
+        assert wait_for_condition(
+            lambda: store.get_run(run_id).status in TERMINAL_STATUSES, timeout=30
+        )
+
+        # Delivery must not be attempted while compaction is active.
+        assert driver._wait_for_event("followup", timeout=1.0) is None
+        assert driver._wait_for_event("rejected", timeout=0.2) is None
+        assert store.get_run(run_id).reported_at is None
+
+        driver.send_command({"cmd": finish_command}, wait_kind="ack")
+
+        # The retry succeeds: followup event emitted.
+        followup = driver._wait_for_event("followup", timeout=10.0)
+        assert followup is not None, (
+            f"no followup after compaction retry; stderr: {driver.stderr_content()}"
+        )
+        report_text = followup["message"]
+        assert run_id in report_text
+
+        # A second compaction before the chat echo must not resend accepted text.
+        driver.send_command({"cmd": "compaction_reject", "count": 1}, wait_kind="ack")
+        driver.send_command({"cmd": finish_command}, wait_kind="ack")
+        count = driver.send_command({"cmd": "delivery_count"}, wait_kind="delivery_count")
+        assert count is not None and count["count"] == 1
+        assert store.get_run(run_id).reported_at is None
+
+        # Matching echo marks delivered.
+        driver.send({"cmd": "message_end", "text": report_text})
+        assert wait_for_condition(
+            lambda: store.get_run(run_id).reported_at is not None, timeout=15
+        )
+        assert not store.list_pending_report_runs(session_key)
     finally:
         driver.stop()
         _cleanup_active_runs(db_path, session_key, config_path.parent, python_executable)

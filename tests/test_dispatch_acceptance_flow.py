@@ -402,30 +402,19 @@ def test_dispatch_post_reservation_write_failure_reports_error(
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Known defect (dispatch-acceptance audit F1): a post-reservation parent-context "
-        "write failure raises without releasing the capacity reservation. The orphaned "
-        "queued run has no supervisor_pid, so reconcile_stale_queued_runs skips it until "
-        "the 30s startup grace period elapses; an immediate re-dispatch - the action the "
-        "error guidance recommends - spuriously fails the per-session limit. Desired "
-        "invariant: the failed acceptance releases the session slot so the re-dispatch "
-        "succeeds."
-    ),
-)
 def test_dispatch_post_reservation_write_failure_releases_session_slot(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
     python_executable: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_path, _, _ = runtime_files_factory(
+    config_path, _, db_path = runtime_files_factory(
         tmp_path,
         [python_executable, "-c", "print('never')"],
     )
     _set_config(config_path, default_timeout=60, global_limit=4, per_session=1)
     context = load_context(config_path=str(config_path.parent))
+    store = StateStore(db_path)
 
     source = tmp_path / "parent-context.jsonl"
     source.write_text('{"role": "user", "content": "captured"}\n', encoding="utf-8")
@@ -451,7 +440,7 @@ def test_dispatch_post_reservation_write_failure_releases_session_slot(
             parent_context_artifact=str(source),
         )
 
-    # Desired invariant: the failed acceptance releases the session's capacity, so the
+    # The failed acceptance releases the session's capacity, so the
     # immediate re-dispatch the error guidance recommends can succeed.
     retry = start_run(
         context,
@@ -467,6 +456,29 @@ def test_dispatch_post_reservation_write_failure_releases_session_slot(
         batch_id=None,
     )
     assert retry.record.status == STATUS_QUEUED
+    retry_run_id = retry.record.run_id
+
+    try:
+        # Bounded cleanup: the retry spawns a real supervisor; wait for terminal.
+        assert wait_for_condition(
+            lambda: store.get_run(retry_run_id).supervisor_pid is not None, timeout=5
+        )
+        assert _wait_terminal(store, retry_run_id)
+        record = store.get_run(retry_run_id)
+        # Worker was reaped by the supervisor; verify it's gone.
+        # (Supervisor PID itself is a zombie child of the test process; not checkable.)
+        if record.process_id is not None:
+            assert wait_for_condition(
+                lambda: not _process_alive(store.get_run(retry_run_id).process_id), timeout=10
+            )
+    finally:
+        # Safety: if terminal wasn't reached, kill the supervisor (bounded, not global).
+        rec = store.get_run(retry_run_id)
+        if rec.status not in TERMINAL_STATUSES and rec.supervisor_pid is not None:
+            try:
+                os.kill(rec.supervisor_pid, 9)
+            except (ProcessLookupError, PermissionError):
+                pass
 
 
 def test_hermes_dispatch_starts_watcher_before_ack(

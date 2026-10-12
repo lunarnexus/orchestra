@@ -141,10 +141,6 @@ def test_stale_queued_run_at_grace_boundary_reconciled(
     )
 
 
-@pytest.mark.xfail(
-    reason="desired: post-reservation request-write failure should release slot immediately",
-    strict=True,
-)
 def test_post_reservation_request_write_failure_releases_slot_immediately(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
@@ -152,11 +148,10 @@ def test_post_reservation_request_write_failure_releases_slot_immediately(
     fake_worker_script: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If the request file write fails after reserve_run, the slot must be released.
+    """If the request file write fails after reserve_run, the slot is released immediately.
 
-    Current behavior: the OSError propagates out of start_run and the run stays
-    in QUEUED state (slot occupied) until reconciliation after the grace period.
-    Desired: the run is marked FAILED immediately, releasing the capacity slot.
+    Post-reservation failure terminalizes the run to FAILED, freeing the capacity
+    slot so the caller can retry without waiting for reconciliation.
     """
     config_path, catalog_path, db_path = runtime_files_factory(
         tmp_path,

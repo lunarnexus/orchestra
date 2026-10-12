@@ -317,7 +317,7 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
 
         wait_parser = subparsers.add_parser("_await-session-report", help=argparse.SUPPRESS)
         wait_parser.add_argument("--session-id", required=True)
-        wait_parser.add_argument("--run-id", required=True)
+        wait_parser.add_argument("--run-id")
         wait_parser.add_argument("--timeout", type=float, default=None)
         wait_parser.add_argument("--json", action="store_true")
         wait_parser.set_defaults(handler=_handle_await_session_report)

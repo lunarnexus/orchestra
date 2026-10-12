@@ -11,10 +11,8 @@ state/runs/9aa442b91271/return.md coverage matrix):
    candidate. Existing tests (tests/test_state.py:173,
    tests/test_cli_commands.py:457/526) use clearly old/recent timestamps
    and never the boundary itself.
-3. Pi debug transcript lookup honoring a custom ``PI_CODING_AGENT_DIR``
-   (docs/KNOWN_BUGS.md: debug fallback ignores the configured agent
-   directory while supervision accounting honors it). Pinned as a strict
-   expected failure of the desired behavior.
+3. Pi debug transcript lookup honors a custom ``PI_CODING_AGENT_DIR``
+   consistently with supervision accounting.
 """
 
 from __future__ import annotations
@@ -146,17 +144,6 @@ def test_prune_retention_boundary_exact_cutoff_retained_one_second_older_deleted
     assert at_cutoff_request.exists()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "KNOWN_BUGS.md: Pi debug transcript lookup ignores PI_CODING_AGENT_DIR "
-        "(src/orchestra/status.py _find_pi_transcript defaults to "
-        "~/.pi/agent/sessions) while supervision accounting "
-        "(src/orchestra/supervision.py _find_pi_worker_transcript) resolves "
-        "${PI_CODING_AGENT_DIR:-~/.pi/agent}/sessions. Desired: both lookups "
-        "use the same configured Pi session-directory resolution."
-    ),
-)
 def test_debug_transcript_lookup_honors_custom_pi_coding_agent_dir(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

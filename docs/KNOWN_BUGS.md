@@ -1,27 +1,5 @@
 # Known Bugs
 
-## Pi debug transcript lookup ignores the configured agent directory
-
-**Status:** open; confirmed by source inspection, not execution
-
-Supervision resolves Pi transcripts from `PI_CODING_AGENT_SESSION_DIR`, then
-`${PI_CODING_AGENT_DIR:-~/.pi/agent}/sessions`. The debug fallback in
-`src/orchestra/status.py` instead defaults directly to `~/.pi/agent/sessions`,
-ignoring `PI_CODING_AGENT_DIR`.
-
-**Impact:** when only `PI_CODING_AGENT_DIR` names a custom directory, supervision
-can find the transcript for accounting while `orchestra debug` cannot find the
-same transcript and displays an incorrect default-directory search hint. This
-applies when a transcript path has not already been recorded.
-
-**Expected behavior:** accounting, timeout recovery, and debug lookup use the
-same configured Pi session-directory resolution.
-
-**Evidence:** `src/orchestra/supervision.py` (`_find_pi_worker_transcript`) and
-`src/orchestra/status.py` (`_find_pi_transcript`, `_debug_transcript_section`).
-Existing supervision accounting tests exercise the custom agent directory;
-the corresponding debug fallback case is not covered.
-
 ## Generic core contains host and harness storage-format knowledge
 
 **Status:** open architectural boundary issue; source-confirmed coupling,
@@ -34,7 +12,7 @@ capabilities are required, but their runtime-specific storage knowledge resides
 in the shared execution and reporting modules rather than dedicated connectors.
 
 **Impact:** host storage-format or path changes require changes to generic core;
-duplicate Pi lookup logic already causes the debug-directory defect above.
+Pi transcript-directory resolution is duplicated across supervision and debug.
 Hermes lineage discovery depends directly on `HERMES_HOME`, the `active_profile`
 file, and the native `sessions` table. Read failures fall back to exact-session
 views, so lineage information can be lost without a visible diagnostic.
@@ -51,56 +29,6 @@ connector responsibilities and are not defects by themselves.
 `src/orchestra/status.py` (`_read_hermes_compression_lineage`,
 `_hermes_state_db_path`). Boundary audit:
 `state/runs/840e91cb29d8/findings-boundary-audit.md`.
-
-## Cancellation skips the full return artifact
-
-**Status:** open; confirmed by source inspection during connected cancellation testing
-
-`stop_run` marks a run `cancelled` before terminating its subagent. When the
-supervisor subsequently collects the process output, `_finalize_run` sees an
-already-terminal run and returns before writing `state/runs/<run-id>/return.md`.
-The collected stdout/stderr therefore is not persisted to the return artifact.
-
-**Impact:** cancellation retains its status, cancellation reason, lifecycle
-events, and consolidated report, but the report's return-artifact pointer can
-refer to a missing file. Partial subagent output is unavailable through that
-artifact for diagnosis or continuation.
-
-**Expected behavior:** preserve collected output in the return artifact when a
-running subagent is cancelled, while keeping its terminal status `cancelled`.
-
-**Evidence:** `src/orchestra/supervision.py` (`stop_run` and `_finalize_run`);
-`tests/test_failure_timeout_cancel_flow.py` covers the connected cancellation
-journey and surviving diagnostic evidence. That test does not assert artifact
-existence or pin its absence as desired behavior. Independent review confirmed
-the cancellation-path finding and passed the journey tests.
-
-## Failed dispatch preparation can strand concurrency capacity
-
-**Status:** open; parent-context write failure reproduced by automated test
-
-Core reserves a queued run before writing its parent-context and request
-artifacts. If the parent-context write fails, dispatch returns an error without
-terminalizing the reserved run. No supervisor starts, but the queued record still
-counts toward global, per-session, and per-model concurrency limits.
-
-**Impact:** an immediate retry can fail with `per-session concurrency limit
-exceeded` even though no subagent was launched. Repeated failures can exhaust
-available capacity.
-
-**Recovery:** a later operation that invokes stale-run reconciliation can mark
-the abandoned run failed after the 30-second startup grace period. Recovery is
-operation-triggered, not an automatic timer.
-
-**Expected behavior:** preparation failure after reservation and before supervisor
-launch immediately marks the run failed, preserving diagnostic evidence and
-releasing capacity so the caller can retry.
-
-**Evidence:** `src/orchestra/dispatch.py` reserves before artifact writes;
-`tests/test_dispatch_acceptance_flow.py` contains the strict expected-failure test
-`test_dispatch_post_reservation_write_failure_releases_session_slot`. Running it
-with `--runxfail` reproduced the rejected immediate retry. Request-artifact write
-failure has the same ordering risk but has not yet been reproduced.
 
 ## One-shot host sessions can exit before async subagents return
 
@@ -125,59 +53,61 @@ returned.
 **Impact:** one-shot automation can grade or exit prematurely and report active
 subagents as unfinished even though the subagents may still complete later.
 
-## Return prompt can be lost when Pi reloads while subagents are running
+## Resolved regressions
 
-**Status:** open
+### Pi debug transcript directory
 
-**Observed:** interactive Pi session after running `/reload` while Orchestra subagents were active.
+**Status:** resolved in v0.5.6
 
-A Pi reload can stop the host-local Orchestra watchers that wait for subagent completion and inject the consolidated auto-return prompt. The backend subagents continue running and can finalize normally, but the reloaded Pi extension only refreshes status/footer state; it does not recover pending session reports or restart report watchers for already-running subagents.
+Debug and supervision both resolve transcripts from `PI_CODING_AGENT_SESSION_DIR`,
+then `${PI_CODING_AGENT_DIR:-~/.pi/agent}/sessions`.
 
-Typical symptoms:
+**Verification:** `tests/test_operator_remaining_contracts.py` checks that debug
+finds the same transcript as supervision in a custom Pi agent directory.
 
-- `orch_status status` shows `active_runs: 0`, `global_active_runs: 0`, and `descendants_terminal: true`.
-- `session_report_available` may be true, or history may show completed/incomplete runs.
-- The expected auto-return prompt is not injected into the parent conversation.
-- The footer can appear stale until another explicit refresh occurs.
+### Cancellation return artifact
 
-**Suspected cause:** Pi `/reload` tears down in-memory watcher state (`_await-run`, `_await-session-report`, and pending local delivery state). On session start, the Pi adapter refreshes active status but does not query/deliver durable pending reports or resume watchers for active run IDs.
+**Status:** resolved in v0.5.6
 
-**Expected behavior:** after Pi reload, Orchestra should recover the session delivery state. The adapter should either:
+The supervisor persists collected partial stdout/stderr to
+`state/runs/<run-id>/return.md` after cancellation while preserving the cancelled
+status and reason. The artifact becomes available when process output collection
+finishes; cancellation acknowledgement does not wait for artifact creation.
 
-- restart watchers for active run IDs returned by status,
-- fetch and inject durable pending reports when no active runs remain,
-- use a non-consuming pending-report endpoint plus the existing mark-delivered confirmation path, or
-- otherwise replay pending return prompts idempotently after reconnect.
+**Verification:** `tests/test_crash_cancel_artifact_flow.py` exercises a running
+subagent, cancellation, and captured output in the durable return artifact.
 
-**Impact:** parent orchestration can miss completed subagent results after `/reload`. Manual recovery is possible through `orch_status history`, status JSON, return artifacts, or logs, but the normal auto-return workflow is broken.
+### Dispatch preparation capacity
 
-## Return prompt can be lost when a subagent completes during session compaction
+**Status:** resolved in v0.5.6
 
-**Status:** open
+Preparation failure after reservation terminalizes the run as failed and releases
+capacity immediately, preserving the original error for the caller.
 
-**Observed:** 2026-08-10, run `43ee3592922c` (`verify slice4g appsec rubrics`).
+**Verification:** `tests/test_dispatch_acceptance_flow.py` and
+`tests/test_execution_recovery_flow.py` exercise parent-context and request-artifact
+write failures and subsequent admission.
 
-A subagent completed successfully while the parent Pi session was compacting or immediately around a compaction boundary. Orchestra core recorded normal completion:
+### Pi reload recovery
 
-- `worker.exited` with `exit_code=0`
-- `artifact.written` for `state/return-artifacts/43ee3592922c.md`
-- `run.updated` with `status="done"` and a populated `result_summary`
+**Status:** resolved in v0.5.6
 
-However, the parent Pi conversation did not receive the usual injected return prompt:
+Session startup resumes a non-consuming report watcher when the originating
+session has active work or an available report. Delivery is marked only after a
+matching chat message confirms receipt.
 
-```text
-[orchestra: verifier 43ee3592922c success]
-```
+**Verification:** `tests/test_pi_remaining_edges.py` exercises shutdown, startup,
+redelivery, and persisted acknowledgement using a simulated Pi host boundary.
 
-The artifact existed and could be read manually, but the orchestrator would not have known the subagent completed without checking state/logs directly.
+### Pi compaction delivery
 
-**Suspected cause:** the return-prompt delivery logic likely races with Pi session compaction. It appears to write/inject the worker completion message without waiting for any active compaction to finish or without retrying against the newly compacted/resumed session. If the injection targets the pre-compaction session state, the prompt can be dropped.
+**Status:** resolved in v0.5.6
 
-**Expected behavior:** subagent completion prompts should be delivered exactly once to the active parent session, even if completion occurs during compaction. Return-prompt logic should either:
+Reports ready during compaction wait for `session_compact` or
+`session_compact_failed`. Delivery resumes on the next event-loop task, and a
+submitted report waits for matching chat confirmation before being marked.
 
-- wait until compaction is complete before injecting,
-- re-resolve the active session after compaction,
-- queue pending return prompts durably and replay them after compaction, or
-- make prompt injection idempotent and retry until the parent session records the message.
-
-**Impact:** parent orchestration can stall or proceed incorrectly because completed subagent results are invisible in the conversation. Manual recovery is possible by inspecting `state/return-artifacts/<run-id>.md` and `logs/<run-id>.jsonl`, but this defeats the normal workflow.
+**Verification:** `tests/test_pi_remaining_edges.py` covers compaction success,
+failure, and delayed confirmation. Live Pi SDK verification using `vllm/LOADED`
+confirmed worker completion during compaction, report arrival afterward, and
+persisted delivery acknowledgement (`state/runs/bd50387dcde5/return.md`).

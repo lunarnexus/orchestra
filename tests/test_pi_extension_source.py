@@ -247,9 +247,9 @@ def test_pi_extension_refreshes_footer_and_confirms_report_delivery() -> None:
     )
     assert "REPORT_WATCHER_MAX_ATTEMPTS" in extension_source
 
-    send_idx = report_block.index("pi.sendUserMessage(message")
     message_handler_idx = report_block.index('pi.on("message_end"')
-    assert "_mark-session-report-delivered" not in report_block[send_idx:message_handler_idx]
+    assert "_mark-session-report-delivered" not in report_block[:message_handler_idx]
+    # Delivery and acknowledgement are exercised by the connected Pi journeys.
     assert 'pi.on("message_end"' in extension_source
     assert "pendingSessionReports.set(sessionId" in report_block
     assert "REPORT_DELIVERY_CONFIRMATION_MS" not in extension_source
@@ -304,10 +304,6 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
     )
     assert '["_dispatch-ack", "--run-id", runId, "--role", role]' in extension_source
     assert 'command.push("--role", role)' in extension_source
-    assert (
-        'const dispatch = result.code === 0 ? parseDispatchPayload(result.stdout) : null;'
-        in extension_source
-    )
     assert "help-host" in extension_source
     assert 'rest.length > 0 ? ["roles", ...rest] : ["roles", "--all"]' in extension_source
     adapter_description = (
@@ -315,10 +311,6 @@ def test_clean_return_templates_live_in_core_not_extension() -> None:
         '/orch help|on|orchestrate|off|do|roles|config|status|stop|doctor|history"'
     )
     assert adapter_description in extension_source
-    assert (
-        'pi.sendUserMessage(message, { deliverAs: "followUp" });'
-        in extension_source
-    )
     assert (
         'pi.setActiveTools(enabled ? [...withoutOrchestra, ...orchestraTools] : withoutOrchestra);'
         in extension_source

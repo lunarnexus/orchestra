@@ -2,6 +2,16 @@
 
 Notable user-facing changes to Orchestra are recorded here.
 
+## v0.5.6
+
+### Fixes
+
+- Prevent failed dispatch setup from blocking subsequent subagent launches.
+- Preserve partial subagent output when cancelled.
+- Recover Pi reports after reload and defer delivery during compaction.
+- Preserve accepted work and automatic reporting when dispatch metadata is malformed.
+- Honor the configured Pi agent directory in debug transcript lookup.
+
 ## v0.5.5
 
 ### Improvements

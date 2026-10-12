@@ -581,7 +581,7 @@ def await_session_report_payload(
     context: AppContext,
     session_id: str,
     *,
-    run_id: str,
+    run_id: str | None,
     poll_interval: float = 0.1,
     timeout_seconds: float | None = None,
 ) -> SessionReport | None:
@@ -593,13 +593,16 @@ def await_session_report_payload(
     while True:
         try:
             _reconcile_stale_queued_runs(context)
-            record = context.store.get_run(run_id)
-            if record.orchestrator_session_id != session_id:
-                raise _require_app_error("run does not belong to the provided session_id")
+            if run_id is not None:
+                record = context.store.get_run(run_id)
+                if record.orchestrator_session_id != session_id:
+                    raise _require_app_error("run does not belong to the provided session_id")
+                anchor_terminal = record.status not in ACTIVE_STATUSES
+            else:
+                anchor_terminal = True
 
-            if record.status not in ACTIVE_STATUSES:
-                if context.store.count_active_runs(session_id) == 0:
-                    return pending_session_report(context, session_id)
+            if anchor_terminal and context.store.count_active_runs(session_id) == 0:
+                return pending_session_report(context, session_id)
             db_open_failures = 0
             last_db_open_error = None
         except sqlite3.OperationalError as exc:
@@ -646,7 +649,7 @@ def await_session_report(
     context: AppContext,
     session_id: str,
     *,
-    run_id: str,
+    run_id: str | None,
     poll_interval: float = 0.1,
     timeout_seconds: float | None = None,
 ) -> str | None:

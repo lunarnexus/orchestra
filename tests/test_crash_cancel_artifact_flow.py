@@ -13,8 +13,6 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pytest
-
 from orchestra.artifacts import canonical_return_path
 from orchestra.context import load_context
 from orchestra.dispatch import start_run
@@ -206,18 +204,6 @@ def test_supervisor_crash_reconciles_to_failed_with_report(
         _cleanup_pids(supervisor_pid, worker_pid)
 
 
-class MissingReturnArtifactError(AssertionError):
-    """Raised when the expected return.md artifact is absent after cancellation."""
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=MissingReturnArtifactError,
-    reason=(
-        "known defect: cancellation skips return artifact; "
-        "return.md not written for cancelled runs"
-    ),
-)
 def test_cancel_preserves_partial_output_in_return(
     tmp_path: Path,
     runtime_files_factory: RuntimeFilesFactory,
@@ -314,12 +300,12 @@ def test_cancel_preserves_partial_output_in_return(
         assert f"run_id: {run_id}" in report.stdout
 
         # Check return.md for partial output preservation.
+        # The supervisor writes return.md asynchronously after the worker exits.
         return_path = canonical_return_path(context.config.state_dir, run_id)
-        if not return_path.exists():
-            raise MissingReturnArtifactError(
-                "return.md not written for cancelled run; "
-                "cancellation skips return artifact"
-            )
+        assert wait_for_condition(return_path.exists, timeout=10), (
+            "return.md not written for cancelled run; "
+            "cancellation skips return artifact"
+        )
         content = return_path.read_text(encoding="utf-8")
         assert "UNIQUE_PARTIAL_STDOUT_MARKER" in content, (
             "partial stdout not preserved in return.md"

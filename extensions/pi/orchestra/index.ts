@@ -14,6 +14,7 @@ const WATCHER_TIMEOUT_MARGIN_SECONDS = 30;
 const REPORT_WATCHER_MAX_ATTEMPTS = 3;
 const REPORT_WATCHER_RETRY_MS = 500;
 
+
 interface OrchestraFooterTheme {
   bold(text: string): string;
   fg(color: string, text: string): string;
@@ -67,6 +68,7 @@ interface PendingSessionReport {
   updateStatus?: (status: ActiveSessionStatus | null) => void;
   sessionGeneration: number;
   confirmed: boolean;
+  submitted: boolean;
 }
 
 interface AwaitRunPayload {
@@ -719,6 +721,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   const sessionRefreshRequests = new Map<string, number>();
   const reportWatcherRetries = new Map<string, ReturnType<typeof setTimeout>>();
   const pendingSessionReports = new Map<string, PendingSessionReport>();
+  const compactingSessions = new Set<string>();
+  const compactionDeliveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   let cachedRoleNames: ({ expiresAt: number } & RoleMetadata) | null = null;
   let cachedActiveStatus: { expiresAt: number; sessionId: string; status: ActiveSessionStatus } | null = null;
   let turnBudget = parseBudgetEnv(ORCHESTRA_TURN_BUDGET_ENV);
@@ -754,6 +758,30 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       injectBudgetExceededPrompt("soft_timeout");
     }
   });
+
+  pi.on("session_before_compact", async () => {
+    if (currentSessionId) compactingSessions.add(currentSessionId);
+  });
+
+  function finishCompaction(): void {
+    if (!currentSessionId) return;
+    const sessionId = currentSessionId;
+    const generation = ensureSessionGeneration(sessionId);
+    const previous = compactionDeliveryTimers.get(sessionId);
+    if (previous) clearTimeout(previous);
+    // Pi emits session_compact before clearing its compaction controller.
+    // Deliver on the next task, after the lifecycle callback has returned.
+    const timer = setTimeout(() => {
+      compactionDeliveryTimers.delete(sessionId);
+      if (!isCurrentSessionGeneration(sessionId, generation)) return;
+      compactingSessions.delete(sessionId);
+      submitPendingReport(sessionId);
+    }, 0);
+    compactionDeliveryTimers.set(sessionId, timer);
+  }
+
+  pi.on("session_compact", finishCompaction);
+  pi.on("session_compact_failed", finishCompaction);
 
   pi.on("tool_call", async () => {
     if (budgetPromptInjected || !softTimeoutExceeded()) return;
@@ -862,6 +890,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     const retry = reportWatcherRetries.get(sessionId);
     if (retry) clearTimeout(retry);
     reportWatcherRetries.delete(sessionId);
+    const deliveryTimer = compactionDeliveryTimers.get(sessionId);
+    if (deliveryTimer) clearTimeout(deliveryTimer);
+    compactionDeliveryTimers.delete(sessionId);
+    compactingSessions.delete(sessionId);
     // Unconfirmed reports are dropped locally; their runs stay unreported so
     // the next watcher can deliver them.
     pendingSessionReports.delete(sessionId);
@@ -1041,7 +1073,14 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
 
     const result = await runOrchestra(command, parentContextInput ?? undefined);
-    const dispatch = result.code === 0 ? parseDispatchPayload(result.stdout) : null;
+    let dispatch: DispatchPayload | null = null;
+    if (result.code === 0) {
+      try {
+        dispatch = parseDispatchPayload(result.stdout);
+      } catch {
+        dispatch = null;
+      }
+    }
     const runId = typeof dispatch?.run_id === "string" ? dispatch.run_id : null;
     if (runId) {
       trackRun(sessionId, runId);
@@ -1057,6 +1096,15 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         return { code: ack.code || 1, runId: null, output: commandErrorMessage(ack, "orchestra dispatch ack failed") };
       }
       return { code: 0, runId, output: ack.stdout };
+    }
+    if (result.code === 0 && !runId) {
+      // Recover the exact session's report without guessing a run id or redispatching.
+      watchSessionReport(sessionId, "", updateStatus);
+      return {
+        code: 0,
+        runId: null,
+        output: "orchestra dispatch was accepted but the response was malformed; the run_id is not recoverable from this response. Automatic session report recovery is active; do not redispatch. Check `orchestra status` to identify the accepted run.",
+      };
     }
     return { code: result.code, runId: null, output: dispatch?.message || commandErrorMessage(result, "orchestra dispatch failed") };
   }
@@ -1081,9 +1129,24 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     reportWatcherRetries.set(sessionId, retry);
   }
 
+  function submitPendingReport(sessionId: string): void {
+    const pending = pendingSessionReports.get(sessionId);
+    if (!pending || pending.confirmed || pending.submitted || compactingSessions.has(sessionId)) return;
+    if (currentSessionId !== sessionId || !isCurrentSessionGeneration(sessionId, pending.sessionGeneration)) return;
+    pending.submitted = true;
+    try {
+      pi.sendUserMessage(pending.message, { deliverAs: "followUp" });
+    } catch (error) {
+      pendingSessionReports.delete(sessionId);
+      scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);
+      const err = error as { message?: string };
+      process.stderr.write(`orchestra auto-return reinjection failed: ${err.message ?? String(error)}\n`);
+    }
+  }
+
   function watchSessionReport(
     sessionId: string,
-    runId: string,
+    runId: string = "",
     updateStatus?: (status: ActiveSessionStatus | null) => void,
     attempt = 0,
   ): void {
@@ -1099,8 +1162,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           "_await-session-report",
           "--session-id",
           sessionId,
-          "--run-id",
-          runId,
+          ...(runId ? ["--run-id", runId] : []),
           "--json",
         ],
         { stdio: ["ignore", "pipe", "pipe"] },
@@ -1160,8 +1222,9 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           updateStatus,
           sessionGeneration,
           confirmed: false,
+          submitted: false,
         });
-        pi.sendUserMessage(message, { deliverAs: "followUp" });
+        submitPendingReport(sessionId);
       } catch (error) {
         scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
         const err = error as { message?: string };
@@ -1195,16 +1258,17 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       void (async () => {
         if (pendingSessionReports.get(sessionId) !== pending) return;
         pendingSessionReports.delete(sessionId);
-        const markResult = await runOrchestra([
-          "_mark-session-report-delivered",
-          "--session-id",
-          sessionId,
-          ...reportRunIdArgs(pending.runIds),
-        ]);
-        if (markResult.code !== 0) {
-          // Runs stay unreported; the session watcher can retry delivery.
-          scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);
-          process.stderr.write(`orchestra report delivery mark failed: ${commandErrorMessage(markResult, "orchestra report delivery mark failed")}\n`);
+        if (pending.runIds.length > 0) {
+          const markResult = await runOrchestra([
+            "_mark-session-report-delivered",
+            "--session-id",
+            sessionId,
+            ...reportRunIdArgs(pending.runIds),
+          ]);
+          if (markResult.code !== 0) {
+            scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);
+            process.stderr.write(`orchestra report delivery mark failed: ${commandErrorMessage(markResult, "orchestra report delivery mark failed")}\n`);
+          }
         }
         await refreshOrchestraWorkerStatus(sessionId, pending.updateStatus, {
           fresh: true,
@@ -1219,6 +1283,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     softTimeoutSeconds = parseBudgetEnv(ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV);
     sessionStartedAt = Date.now();
     budgetPromptInjected = false;
+    stopSessionWatchers(currentSessionId);
     currentSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
     bumpSessionGeneration(currentSessionId);
     mainSessionMode = null;
@@ -1237,6 +1302,23 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       setOrchestraToolsActive(false);
     }
     await refreshOrchestraWorkerStatus(currentSessionId, (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode), { fresh: true });
+    const sessionId = currentSessionId;
+    const generation = ensureSessionGeneration(sessionId);
+    const statusResult = await runOrchestra(["status", "--session-id", sessionId, "--json"]);
+    if (statusResult.code === 0 && isCurrentSessionGeneration(sessionId, generation)) {
+      try {
+        const status = JSON.parse(statusResult.stdout) as {
+          session_report_available?: boolean;
+          active_runs?: { count?: number };
+        };
+        if (status.session_report_available || (status.active_runs?.count ?? 0) > 0) {
+          // This watcher reads without consuming; only a matching chat echo marks delivery.
+          watchSessionReport(sessionId, "", (value) => setOrchestraWorkerStatus(ctx, value, mainSessionMode));
+        }
+      } catch {
+        // Leave reports durable when status cannot be read.
+      }
+    }
   });
 
   pi.on("session_shutdown", async (_event, ctx) => {

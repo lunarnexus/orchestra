@@ -21,6 +21,7 @@ Orchestra roadmap items are split into:
    - Pass return artifacts from one step to the next seamlessly so downstream steps receive upstream evidence without manual re-attachment by the orchestrator session.
 
 2. [ ] Strong review and refactor of artifact discipline.
+   - Preserve dispatch, cancellation, and host delivery outcomes with the connected behavioral regression suite.
    - Tighten task/context/message artifacts into concise, stable shapes that are cheap to forward.
    - Allow those artifacts to be passed directly between subagents instead of round-tripping through the orchestrator session context.
    - Align artifact shape with multi-step dispatch (TODO 1) so a step's return feeds the next step's task input.

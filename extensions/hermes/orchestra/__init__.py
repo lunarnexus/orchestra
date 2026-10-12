@@ -604,6 +604,43 @@ def _extract_dispatch_timeout_seconds(output: str) -> int:
     return int(timeout_text)
 
 
+def _configured_default_timeout_seconds() -> int:
+    """Read the configured core ``default_timeout`` from core.
+
+    The value is authoritative for a run whose per-run timeout metadata was lost
+    after acceptance: the effective subagent timeout falls back to the configured
+    default, so reading it from core keeps the host from duplicating a shipped
+    default. Uses the existing ``config`` command rather than a new protocol.
+    """
+    result = _run_orchestra(["config", "default_timeout"])
+    if result.returncode == 0:
+        text = result.stdout.strip()
+        if text.isdigit():
+            value = int(text)
+            if value > 0:
+                return value
+    raise ValueError("orchestra configured default timeout is unavailable")
+
+
+def _resolve_dispatch_timeout_seconds(output: str) -> int | None:
+    """Return the authoritative worker timeout for an accepted run.
+
+    Prefers the timeout reported by the ``do`` response. If that metadata is
+    missing or malformed after acceptance, falls back to the configured core
+    default so the report watcher still starts with a real budget and the
+    accepted run id is never lost to a timeout-metadata failure. Returns
+    ``None`` only if no authoritative timeout can be determined at all; the
+    watcher then polls until the report is available.
+    """
+    try:
+        return _extract_dispatch_timeout_seconds(output)
+    except ValueError:
+        try:
+            return _configured_default_timeout_seconds()
+        except ValueError:
+            return None
+
+
 def _extract_run_id(output: str) -> str | None:
     try:
         payload = _parse_dispatch_payload(output)
@@ -941,7 +978,7 @@ def _watch_session_report(
     ctx: Any,
     runtime_session_id: str,
     run_id: str,
-    wait_budget_seconds: int,
+    wait_budget_seconds: int | None,
     session_generation: int | None = None,
 ) -> None:
     try:
@@ -949,20 +986,23 @@ def _watch_session_report(
             session_generation = _current_session_watcher_generation(runtime_session_id)
         if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
             return
+        await_args = [
+            "_await-session-report",
+            "--session-id",
+            runtime_session_id,
+            "--run-id",
+            run_id,
+        ]
+        if wait_budget_seconds is not None:
+            await_args.extend(["--timeout", str(wait_budget_seconds)])
+        await_args.append("--json")
+        subprocess_timeout = (
+            _watcher_subprocess_timeout_seconds(wait_budget_seconds)
+            if wait_budget_seconds is not None
+            else _SUBPROCESS_TIMEOUT_SECONDS
+        )
         for attempt in range(_REPORT_WATCHER_ATTEMPTS):
-            result = _run_orchestra(
-                [
-                    "_await-session-report",
-                    "--session-id",
-                    runtime_session_id,
-                    "--run-id",
-                    run_id,
-                    "--timeout",
-                    str(wait_budget_seconds),
-                    "--json",
-                ],
-                timeout_seconds=_watcher_subprocess_timeout_seconds(wait_budget_seconds),
-            )
+            result = _run_orchestra(await_args, timeout_seconds=subprocess_timeout)
             if not _session_watcher_generation_is_current(runtime_session_id, session_generation):
                 return
             if result.returncode == 0:
@@ -1006,7 +1046,7 @@ def _start_session_report_watcher(
     ctx: Any | None,
     runtime_session_id: str,
     run_id: str,
-    wait_budget_seconds: int,
+    wait_budget_seconds: int | None,
 ) -> None:
     if ctx is None:
         return
@@ -1107,11 +1147,10 @@ def _dispatch_orchestra_run(
     except (ValueError, json.JSONDecodeError):
         dispatch = {}
 
-    try:
-        dispatch_timeout = _extract_dispatch_timeout_seconds(result.stdout)
-    except ValueError as exc:
-        return _error(str(exc))
-    wait_budget_seconds = _watcher_wait_budget_seconds(dispatch_timeout)
+    dispatch_timeout = _resolve_dispatch_timeout_seconds(result.stdout)
+    wait_budget_seconds = (
+        _watcher_wait_budget_seconds(dispatch_timeout) if dispatch_timeout is not None else None
+    )
     _start_session_report_watcher(ctx, runtime_session_id, run_id, wait_budget_seconds)
 
     effective_role = str(

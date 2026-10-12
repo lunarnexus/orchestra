@@ -560,6 +560,14 @@ subagent's status, compact result or blocker, and next action when relevant.
 Successful returns stay compact and do not load or inject the full per-run
 return content.
 
+The internal `_await-session-report` command reads reports without marking delivery.
+Its optional `--run-id` anchors the wait to an owned run; without an anchor, it
+waits for the exact session's active work to finish and returns its pending report.
+Pi uses this session-level wait for reload and malformed accepted-dispatch recovery.
+Pi defers report submission during compaction until the completion or failure
+lifecycle event, then submits on the next event-loop task. Matching chat-message
+confirmation marks delivery; submitted reports remain pending until confirmed.
+
 For an auto-verification cycle, the builder and verifier remain separate normal
 runs with separate return artifacts and history entries. The consolidated
 return marks the relationship and includes both run ids. A verifier failure,

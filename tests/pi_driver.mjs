@@ -42,7 +42,13 @@ const { createEventBus } = await import(
 const runtime = createExtensionRuntime();
 
 const followups = [];
+let compactionRejects = 0;
 runtime.sendUserMessage = (msg, opts) => {
+  if (compactionRejects > 0) {
+    compactionRejects -= 1;
+    emit({ kind: "rejected", message: msg });
+    return; // simulate rejection during compaction
+  }
   followups.push([msg, opts]);
   emit({ kind: "followup", message: msg, options: opts });
 };
@@ -171,6 +177,30 @@ async function handleCommand(line) {
           type: "message_end",
           message: { role: "user", content: cmd.text },
         });
+        break;
+      }
+      case "compaction_reject": {
+        compactionRejects = cmd.count ?? 1;
+        // Fire session_before_compact to signal compaction is starting.
+        const compactHandlers = ext.handlers.get("session_before_compact");
+        if (compactHandlers?.length) {
+          await compactHandlers[0]({ type: "session_before_compact" }, currentCtx);
+        }
+        emit({ kind: "ack", result: { text: `compaction_reject set to ${compactionRejects}`, isError: false } });
+        break;
+      }
+      case "compaction_end":
+      case "compaction_failed": {
+        const eventType = cmd.cmd === "compaction_failed" ? "session_compact_failed" : "session_compact";
+        const handlers = ext.handlers.get(eventType);
+        if (!handlers?.length) throw new Error(`${eventType} handler not registered`);
+        for (const h of handlers) await h({ type: eventType }, currentCtx);
+        compactionRejects = 0;
+        emit({ kind: "ack", result: { text: `${eventType} fired`, isError: false } });
+        break;
+      }
+      case "delivery_count": {
+        emit({ kind: "delivery_count", count: followups.length });
         break;
       }
       case "quit": {

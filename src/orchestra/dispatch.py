@@ -21,7 +21,7 @@ from orchestra.harnesses.common import orchestra_can_dispatch
 from orchestra.logs import utc_now
 from orchestra.reports import format_run_report
 from orchestra.roles import _select_role
-from orchestra.state import ConcurrencyLimitError, RunRecord
+from orchestra.state import STATUS_FAILED, ConcurrencyLimitError, RunRecord, RunUpdate
 from orchestra.status import format_status
 
 if TYPE_CHECKING:
@@ -315,24 +315,41 @@ def start_run(
             _format_concurrency_limit_error(str(exc), context=context, session_id=session_id)
         ) from exc
 
-    if parent_context_path is not None:
-        if parent_context_content is not None:
-            try:
-                write_private_text(parent_context_path, parent_context_content)
-            except OSError as exc:
-                raise _app_error(
-                    f"parent context artifact could not be written: {exc}"
-                ) from exc
-        else:
-            try:
-                copy_private_file(parent_context_source, parent_context_path)
-            except OSError as exc:
-                raise _app_error(
-                    f"parent context artifact could not be read: {parent_context_source}: {exc}"
-                ) from exc
+    try:
+        if parent_context_path is not None:
+            if parent_context_content is not None:
+                try:
+                    write_private_text(parent_context_path, parent_context_content)
+                except OSError as exc:
+                    raise _app_error(
+                        f"parent context artifact could not be written: {exc}"
+                    ) from exc
+            else:
+                try:
+                    copy_private_file(parent_context_source, parent_context_path)
+                except OSError as exc:
+                    raise _app_error(
+                        f"parent context artifact could not be read: {parent_context_source}: {exc}"
+                    ) from exc
 
-    _write_pending_request(pending_request)
-    _spawn_supervisor(context, request_file, run_id)
+        _write_pending_request(pending_request)
+        _spawn_supervisor(context, request_file, run_id)
+    except Exception as exc:
+        # Post-reservation failure: immediately terminalize the run to release
+        # the capacity slot so the caller can retry without waiting for
+        # reconciliation grace periods.
+        try:
+            context.store.update_run(
+                run_id,
+                RunUpdate(
+                    status=STATUS_FAILED,
+                    error_text=str(exc),
+                    blocker_text="Post-reservation setup failure",
+                ),
+            )
+        except Exception:
+            pass  # best effort; reconciliation will clean up if this fails
+        raise
     return StartedRun(
         record=record,
         request_file=request_file,

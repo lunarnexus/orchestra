@@ -548,12 +548,8 @@ def _format_run_summary(run: RunRecord) -> str:
 
 
 def _find_pi_transcript(worker_session_id: str) -> Path | None:
-    session_root = Path(
-        os.environ.get(
-            "PI_CODING_AGENT_SESSION_DIR",
-            str(Path.home() / ".pi" / "agent" / "sessions"),
-        )
-    )
+    agent_dir = Path(os.environ.get("PI_CODING_AGENT_DIR", str(Path.home() / ".pi" / "agent")))
+    session_root = Path(os.environ.get("PI_CODING_AGENT_SESSION_DIR", str(agent_dir / "sessions")))
     if not session_root.is_dir():
         return None
     matches = list(session_root.rglob(f"*_{worker_session_id}.jsonl"))
@@ -635,7 +631,8 @@ def _debug_transcript_section(record: RunRecord) -> str:
             return "\n".join(lines)
         lines.append("transcript_path: not recorded")
         lines.append(
-            "fallback_search: find \"${PI_CODING_AGENT_SESSION_DIR:-$HOME/.pi/agent/sessions}\" "
+            "fallback_search: find "
+            '"${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/sessions}" '
             f"-type f -name '*_{record.worker_session_id}.jsonl'"
         )
     else:

@@ -1162,6 +1162,15 @@ def _result_from_completed_worker(
 def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> RunRecord:
     current = context.store.get_run(run_id)
     if current.status not in ACTIVE_STATUSES:
+        # The run was already terminalized (e.g., cancelled via stop_run).
+        # Write the return artifact with captured output so partial
+        # stdout/stderr is preserved, but do not overwrite the terminal state.
+        if current.status == STATUS_CANCELLED:
+            result_output = _format_return_output(run_id, result)
+            write_text_atomically(
+                canonical_return_path(context.config.state_dir, run_id),
+                result_output,
+            )
         return current
 
     terminal_status = (

@@ -9,12 +9,12 @@ corruption journey, a post-acceptance transport loss on the accepted ``do``
 response only. Dispatch, terminal state, report generation, and the mark are
 never stubbed.
 
-The corruption journey is a strict xfail documenting a reproduced defect: when
-the accepted ``do`` response loses its timeout after acceptance, the plugin
-returns an error ack without the accepted run id and starts no watcher, so the
-accepted run's report stays pending with no delivery path. The xfail target is
-the desired behavior: the accepted run id is recoverable from the tool response
-so the host can track the run and its completion.
+The corruption journey proves recovery: when the accepted ``do`` response loses
+its timeout after acceptance, the plugin keeps the accepted run id in the tool
+response, starts the report watcher on the configured core default timeout,
+and delivers+marks the completion report. The corruption seam only touches the
+``do`` response, so a missing fallback would leave the report undelivered and
+the test would fail.
 
 Limitations: this proves delivery into the simulated Hermes context, not
 live-chat delivery or model consumption, and it does not promise exactly-once
@@ -109,18 +109,7 @@ def _await_fault_seam(
     return seam, faulted
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "defect: a post-acceptance transport corruption of the real `do` response "
-        "(timeout_seconds lost) makes the plugin return an error ack without the "
-        "accepted run_id and start no report watcher; the accepted run then "
-        "completes and its report stays pending with no delivery path. Desired: "
-        "the accepted run id is recoverable from the tool response so the host "
-        "can track the run and its completion."
-    ),
-)
-def test_post_acceptance_corrupted_do_response_missing_timeout(
+def test_post_acceptance_corrupted_do_response_missing_timeout_recovers(
     tmp_path: Path,
     runtime_files_factory: Any,
     python_executable: str,
@@ -128,11 +117,11 @@ def test_post_acceptance_corrupted_do_response_missing_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Post-acceptance transport corruption drops only the accepted ``do``
-    response's timeout. The run is already accepted by the real core; the
-    defect evidence is that the host gets an error ack without the run id and
-    no watcher, so the completion report stays pending. The xfail target is
-    the desired behavior: the accepted run id is recoverable from the
-    response."""
+    response's timeout. The run is already accepted by the real core; the fix
+    keeps the accepted run id in the tool response, starts the report watcher on
+    the configured core default timeout, and delivers+marks the completion
+    report. The corruption seam only touches the ``do`` response, so a missing
+    fallback would leave the report undelivered and this test would fail."""
     config_path, _, db_path = runtime_files_factory(
         tmp_path,
         [python_executable, str(fake_worker_script), "success", "--output", "worker ok"],
@@ -143,6 +132,10 @@ def test_post_acceptance_corrupted_do_response_missing_timeout(
 
     seam = _corrupt_do_timeout_seam(config_dir)
     plugin = load_plugin()
+    # Narrow test-time retry delays only; the retry count and delivery outcome are
+    # unchanged and no actual timing is asserted.
+    monkeypatch.setattr(plugin, "_REPORT_WATCHER_RETRY_BASE_DELAY_SECONDS", 0.01)
+    monkeypatch.setattr(plugin, "_REPORT_WATCHER_RETRY_MAX_DELAY_SECONDS", 0.02)
     monkeypatch.setattr(plugin, "_run_orchestra", seam)
 
     ctx = FakeHermesPluginContext(session_id=_ORIGIN)
@@ -152,20 +145,20 @@ def test_post_acceptance_corrupted_do_response_missing_timeout(
             {"goal": "ship the corruption slice"}, _ORIGIN, ctx=ctx
         )
 
-        # Defect evidence 1: the host receives an error ack naming the lost field.
-        payload = json.loads(ack)
-        assert isinstance(payload, dict) and "error" in payload
-        assert "timeout_seconds" in str(payload["error"])
+        # The ack reflects acceptance (real _dispatch-ack text, not an error ack)
+        # and the accepted run id is recoverable from the tool response.
+        assert isinstance(ack, str) and ack
+        assert "orchestra dispatched" in ack
 
-        # Defect evidence 2: the run was accepted by the real core under the origin.
+        # The run was accepted by the real core under the origin.
         runs = store.list_runs(_ORIGIN)
         assert len(runs) == 1
         run_id = runs[0].run_id
         assert store.get_run(run_id).orchestrator_session_id == _ORIGIN
         assert store.get_run(run_id).role == "worker"
 
-        # Defect evidence 3: no report watcher was started for the accepted run.
-        assert _ORIGIN not in plugin._REPORT_WATCHERS
+        # The accepted run id is recoverable from the tool response.
+        assert run_id in ack
 
         # The accepted run completes normally (real supervisor, controlled worker).
         assert wait_for_condition(
@@ -173,13 +166,18 @@ def test_post_acceptance_corrupted_do_response_missing_timeout(
         )
         assert store.get_run(run_id).status == STATUS_DONE
 
-        # Defect evidence 4: the completion report stays pending; nothing delivers it.
-        assert store.get_run(run_id).reported_at is None
-        assert any(run.run_id == run_id for run in store.list_pending_report_runs(_ORIGIN))
+        # The report watcher ran to completion and exited.
+        assert _watcher_finished(plugin, _ORIGIN)
 
-        # Desired behavior (xfail target): the accepted run id is recoverable from
-        # the tool response so the host can track the run and its completion.
-        assert run_id in ack
+        # The completion report was delivered to the host context and the real core
+        # mark persisted: nothing remains pending.
+        offered = [content for content, _ in ctx.injected if run_id in content]
+        assert len(offered) == 1
+        assert "worker ok" in offered[0]
+        assert f"{run_id} success]" in offered[0]
+        assert store.get_run(run_id).reported_at is not None
+        assert store.list_pending_report_runs(_ORIGIN) == []
+        assert store.count_active_runs(_ORIGIN) == 0
     finally:
         if run_id is not None:
             _stop_run_and_wait(seam, store, session_id=_ORIGIN, run_id=run_id)
