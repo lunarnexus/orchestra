@@ -8,7 +8,6 @@ SOURCE_FILES = [
     Path("src/orchestra/supervision.py"),
     Path("extensions/pi/orchestra/index.ts"),
     Path("extensions/hermes/orchestra/__init__.py"),
-    Path("extensions/opencode/orchestra/index.ts"),
 ]
 
 

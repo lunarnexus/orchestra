@@ -26,22 +26,17 @@ __all__ = [
     "InitCodexResult",
     "InitFileResult",
     "InitHermesResult",
-    "InitOpencodeResult",
     "InitPiResult",
     "default_codex_personal_marketplace_file",
     "default_codex_plugin_source_dir",
     "default_hermes_home",
     "default_hermes_orchestra_dir",
     "default_hermes_plugins_dir",
-    "default_opencode_home",
-    "default_opencode_orch_command_file",
-    "default_opencode_orchestra_file",
     "doctor_checks_pass",
     "format_doctor_checks",
     "init_all",
     "init_codex",
     "init_hermes",
-    "init_opencode",
     "init_pi",
     "run_doctor",
 ]
@@ -78,12 +73,6 @@ class InitHermesResult:
 
 
 @dataclass(frozen=True)
-class InitOpencodeResult:
-    files: list[InitFileResult]
-    verification_command: str
-
-
-@dataclass(frozen=True)
 class InitCodexResult:
     files: list[InitFileResult]
     marketplace: InitFileResult
@@ -97,7 +86,6 @@ class InitCodexResult:
 class InitAllResult:
     pi: InitPiResult | None
     hermes: list[InitHermesResult]
-    opencode: InitOpencodeResult | None
 
 
 def _app_error(message: str) -> Exception:
@@ -131,23 +119,6 @@ def _root_config_source_paths(root: Path) -> dict[str, Path]:
         "prompts": root / "prompts.yaml",
         "catalog": root / "agent-catalog.yaml",
     }
-
-
-def _opencode_init_source_paths(
-    source_root: str | Path | None,
-    *,
-    copy: bool,
-) -> dict[str, Path]:
-    root = _find_source_root(source_root)
-    if root is not None:
-        base = root / "extensions" / "opencode" / "orchestra"
-        return {
-            "extension": base / "index.ts",
-            "command": base / "commands" / "orch.md",
-        }
-    if copy:
-        raise _app_error("canonical opencode source root not found")
-    raise _app_error("opencode init source root not found; rerun from a source checkout")
 
 
 def _codex_plugin_source_path(source_root: str | Path | None, *, copy: bool) -> Path:
@@ -404,21 +375,6 @@ def default_hermes_plugins_dir(profile: str | None = None) -> Path:
     return _default_hermes_profile_dir(profile) / "plugins"
 
 
-def default_opencode_home() -> Path:
-    explicit_home = os.environ.get("OPENCODE_CONFIG_DIR", "").strip()
-    if explicit_home:
-        return Path(explicit_home).expanduser()
-    return Path.home() / ".config" / "opencode"
-
-
-def default_opencode_orchestra_file() -> Path:
-    return default_opencode_home() / "plugins" / "orchestra.ts"
-
-
-def default_opencode_orch_command_file() -> Path:
-    return default_opencode_home() / "commands" / "orch.md"
-
-
 def default_codex_plugin_source_dir() -> Path:
     return Path.home() / "plugins" / "orchestra"
 
@@ -546,28 +502,6 @@ def init_hermes(
     )
 
 
-def init_opencode(
-    *,
-    force: bool = False,
-    copy: bool = False,
-    source_root: str | Path | None = None,
-) -> InitOpencodeResult:
-    source_paths = _opencode_init_source_paths(source_root, copy=copy)
-    files = [
-        _copy_init_file(
-            source_paths["extension"],
-            default_opencode_orchestra_file(),
-            force=force,
-        ),
-        _copy_init_file(
-            source_paths["command"],
-            default_opencode_orch_command_file(),
-            force=force,
-        ),
-    ]
-    return InitOpencodeResult(files=files, verification_command="opencode --help")
-
-
 def init_codex(
     *,
     force: bool = False,
@@ -664,12 +598,7 @@ def init_all(
         for hermes_profile in hermes_profiles
     )
 
-    opencode_result = (
-        init_opencode(force=force, copy=copy, source_root=source_root)
-        if "opencode" in harnesses
-        else None
-    )
-    return InitAllResult(pi=pi_result, hermes=hermes_results, opencode=opencode_result)
+    return InitAllResult(pi=pi_result, hermes=hermes_results)
 
 
 def run_doctor(

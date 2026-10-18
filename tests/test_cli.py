@@ -66,6 +66,27 @@ def test_public_help_hides_internal_subcommands() -> None:
         assert command not in help_text
 
 
+def test_removed_opencode_host_targets_are_rejected() -> None:
+    parser = build_parser(include_internal=True)
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["init", "opencode"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["help-opencode"])
+
+
+def test_init_help_excludes_removed_opencode_target(capsys: pytest.CaptureFixture[str]) -> None:
+    parser = build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["init", "--help"])
+    help_text = capsys.readouterr().out
+
+    assert "opencode" not in help_text
+    for target in ("pi", "hermes", "codex", "all"):
+        assert target in help_text
+
+
 def test_legacy_orchestrator_skill_command_is_removed() -> None:
     parser = build_parser(include_internal=True)
 

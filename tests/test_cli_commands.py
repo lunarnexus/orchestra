@@ -2053,19 +2053,17 @@ def test_role_metadata_lists_unused_harness_configs(
     }
 
 
-def test_opencode_help_describes_supported_open_code_template_commands(
+def test_removed_opencode_help_command_is_rejected(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from orchestra.cli import main
 
-    exit_code = main(["help-opencode"])
-    output = capsys.readouterr().out
+    with pytest.raises(SystemExit) as raised:
+        main(["help-opencode"])
 
-    assert exit_code == 0
-    assert "OpenCode /orch commands:" in output
-    assert "/orch do [--role ROLE] <request>" in output
-    assert "/orch stop" not in output
-    assert "/orch do --timeout" not in output
+    captured = capsys.readouterr()
+    assert raised.value.code != 0
+    assert "OpenCode /orch commands:" not in captured.out
 
 
 def test_host_help_and_tool_info_reflect_current_enabled_and_default_roles(

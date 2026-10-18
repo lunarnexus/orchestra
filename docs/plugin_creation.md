@@ -22,10 +22,8 @@ These features already live in Orchestra core or core CLI helpers. New plugins s
 - `orchestra doctor` — check local setup.
 - `orchestra roles` — list or update configured roles.
 - `orchestra history` — show prior run summaries.
-- OpenCode host support should expose `orch_dispatch` plus `orch_status`; `orch_status` handles `on`, `status`, `history`, `help`, `doctor`, `roles`, and `stop`.
 - Role edits go through `orchestra roles ROLE SETTING VALUE`, not by hand-editing config files. Supported settings are `harness`, `enabled`, `model`, `profile`, and `agent`.
 - `orch_status roles` is model-callable and read-only for now; it shows configured role env values.
-- OpenCode `/orch roles ROLE SETTING VALUE` is not executable yet; it routes through the model-callable `orch_status` tool.
 - Pi and Hermes native `/orch roles` commands remain mutable.
 
 ### Orchestration behavior
@@ -49,7 +47,6 @@ These features already live in Orchestra core or core CLI helpers. New plugins s
 ### Host helper commands
 
 - `help-host` — core-formatted Pi-equivalent `/orch` help.
-- `help-opencode` — core-formatted OpenCode prompt-template `/orch` help.
 - `_command-echo` — core-formatted command echo.
 - `_tool-info` — tool description, prompt snippet, guidelines, and parameter descriptions loaded from `prompts.yaml`.
 - `_role-metadata` — role and harness-config metadata for completions and tool refresh.
@@ -198,23 +195,6 @@ The Pi plugin is the reference implementation for host-side behavior. Its Pi-spe
 - Session-generation and refresh-request guards around watcher/status callbacks.
 - Brief in-memory caching for role metadata and active status.
 - Global Pi extension installation under `${PI_CODING_AGENT_DIR:-~/.pi/agent}/extensions/orchestra/index.ts`.
-
-## OpenCode implementation mapping
-
-OpenCode should follow best host-supported parity rather than copying Pi APIs directly:
-
-- Use `context.sessionID` as the runtime identity source and normalize it as `opencode:<sessionID>`.
-- Register `orch_dispatch(goal, role?, taskLabel?)` through the OpenCode plugin tool API. Keep `timeout` out of the tool contract.
-- Register `orch_status(action, limit?, runId?, role?, setting?, value?)` for OpenCode `/orch on|status|history|help|doctor|roles|stop`; ignore irrelevant optional fields outside their action to tolerate host/model-filled optional tool fields.
-- Use tokenized process execution for `orchestra` commands and reuse core helpers for tool info, acknowledgements, progress messages, reports, and role metadata from `_tool-info`.
-- Use `client.session.prompt(...)` or `client.session.promptAsync(...)` with target `path.id` and text `parts` for session-targeted delivery. Prefer synchronous `prompt(...)` for auto-return wake delivery; use `promptAsync(...)` only as fallback unless a host version is proven to schedule async prompts reliably.
-- Use OpenCode TUI notification APIs for dispatch/progress/failure notifications when available.
-- Use OpenCode lifecycle disposal hooks to clean up watchers when using TUI plugin surfaces.
-- Treat OpenCode `commands/` files as prompt-template macros. Keep templates concise because OpenCode displays template text in the conversation. Executable `/orch` slash-command parity should use a proven plugin command API, not prompt macros.
-- TUI status/footer slots can provide host UX parity when a TUI plugin is available.
-- Transcript-entry rendering, stable dynamic completions, and Pi-style turn-budget hooks require new host evidence before implementation.
-- Global installation should target OpenCode's global plugin location, for example `~/.config/opencode/plugins/`, unless a project-local install is explicitly requested.
-- `orchestra init opencode` installs there from a source checkout, and `--copy` falls back to the packaged plugin asset when a wheel install has no checkout to link against.
 
 ## Hermes implementation mapping
 

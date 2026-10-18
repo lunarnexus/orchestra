@@ -30,7 +30,6 @@ from orchestra.host_text import (
     format_command_echo,
     format_dispatch_ack,
     format_host_help,
-    format_opencode_help,
     format_progress_notification,
     progress_notification_payload,
 )
@@ -41,7 +40,6 @@ from orchestra.init import (
     init_all,
     init_codex,
     init_hermes,
-    init_opencode,
     init_pi,
     run_doctor,
 )
@@ -74,7 +72,6 @@ from orchestra.supervision import run_supervisor_guarded, stop_run
 INTERNAL_COMMANDS = frozenset(
     {
         "help-host",
-        "help-opencode",
         "_run-supervisor",
         "_pending-report",
         "_await-session-report",
@@ -198,9 +195,6 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         help_parser = subparsers.add_parser("help-host", help=argparse.SUPPRESS)
         help_parser.set_defaults(handler=_handle_help_host)
 
-        opencode_help_parser = subparsers.add_parser("help-opencode", help=argparse.SUPPRESS)
-        opencode_help_parser.set_defaults(handler=_handle_help_opencode)
-
     history_parser = subparsers.add_parser("history", help="show prior run summaries")
     history_parser.add_argument(
         "--session-id",
@@ -260,22 +254,6 @@ def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
         help="copy config files instead of linking",
     )
     init_hermes_parser.set_defaults(handler=_handle_init_hermes)
-
-    init_opencode_parser = init_subparsers.add_parser(
-        "opencode",
-        help="install OpenCode plugin",
-    )
-    init_opencode_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="overwrite existing plugin file",
-    )
-    init_opencode_parser.add_argument(
-        "--copy",
-        action="store_true",
-        help="copy plugin file from source checkout",
-    )
-    init_opencode_parser.set_defaults(handler=_handle_init_opencode)
 
     init_codex_parser = init_subparsers.add_parser(
         "codex",
@@ -592,12 +570,6 @@ def _handle_help_host(args: argparse.Namespace) -> int:
     return 0
 
 
-def _handle_help_opencode(args: argparse.Namespace) -> int:
-    del args
-    print(format_opencode_help())
-    return 0
-
-
 def _handle_history(args: argparse.Namespace) -> int:
     context = load_context(config_path=args.config, catalog_path=None)
     if args.limit < 1:
@@ -712,13 +684,6 @@ def _handle_init_hermes(args: argparse.Namespace) -> int:
     return 0
 
 
-def _handle_init_opencode(args: argparse.Namespace) -> int:
-    result = init_opencode(force=bool(args.force), copy=bool(args.copy))
-    _print_init_files(result.files)
-    print(f"verify: {result.verification_command}")
-    return 0
-
-
 def _handle_init_codex(args: argparse.Namespace) -> int:
     result = init_codex(
         force=bool(args.force),
@@ -753,10 +718,6 @@ def _handle_init_all(args: argparse.Namespace) -> int:
         if hermes_result.stderr:
             print(hermes_result.stderr)
         print(f"verify: {hermes_result.verification_command}")
-    if result.opencode is not None:
-        print("[opencode]")
-        _print_init_files(result.opencode.files)
-        print(f"verify: {result.opencode.verification_command}")
     return 0
 
 

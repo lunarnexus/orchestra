@@ -12,7 +12,6 @@ __all__ = [
     "format_command_echo",
     "format_dispatch_ack",
     "format_host_help",
-    "format_opencode_help",
     "format_progress_notification",
     "progress_notification_payload",
 ]
@@ -134,20 +133,6 @@ def format_host_help(context: AppContext) -> str:
         roles=format_roles(context),
         role_usage=ROLE_USAGE,
     )
-
-
-def format_opencode_help() -> str:
-    return """OpenCode /orch commands:
-- /orch on — load Orchestra mode
-- /orch status — show active subagents for this OpenCode session
-- /orch history [limit] — show recent subagent results for this OpenCode session
-- /orch roles — show roles
-- /orch roles ROLE SETTING VALUE — update harness|enabled|model|profile|agent
-- /orch config — show config values
-- /orch config KEY [VALUE] — read or update supported config values
-- /orch doctor — check setup
-- /orch do [--role ROLE] <request> — dispatch a worker
-""".strip()
 
 
 def format_command_echo(raw_command: str) -> str:

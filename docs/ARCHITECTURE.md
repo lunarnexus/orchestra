@@ -158,7 +158,6 @@ Current host surfaces are:
 - CLI entrypoint: `orchestra ...`
 - Pi extension: `extensions/pi/orchestra/index.ts`
 - Hermes plugin: `extensions/hermes/orchestra/__init__.py`
-- OpenCode plugin: `extensions/opencode/orchestra/index.ts`
 - Codex placeholder scaffold (manifest only): `extensions/codex/orchestra`
 
 ### Harness connectors
@@ -170,7 +169,7 @@ syntax. Current configured harness types include:
 
 - Pi
 - Hermes
-- OpenCode
+- OpenCode (subagent execution)
 - catalog-defined one-shot subprocess harness names such as Qwen
 
 Harness selection is explicit in `agent-catalog.yaml`; Orchestra does not scan
@@ -241,7 +240,6 @@ Current identity sources are:
 | --- | --- | --- |
 | Pi | `ctx.sessionManager.getSessionId()` | `pi:<session_id>` |
 | Hermes | plugin runtime `session_id` | `hermes:<session_id>` |
-| OpenCode | `context.sessionID` | `opencode:<sessionID>` |
 | CLI/manual | explicit `--session-id` | caller-supplied manual ID |
 | ACP adapter | protocol `sessionId` | adapter-normalized ID |
 
@@ -638,23 +636,6 @@ context has been cached for the session yet, dispatch fails with a clear error
 rather than silently omitting the requested context. Non-opted-in dispatch is
 unchanged.
 
-### OpenCode
-
-OpenCode provides plugin-registered `orch_dispatch` and `orch_status` tools,
-progress toasts where available, and session-targeted consolidated return.
-Runtime identity comes from `context.sessionID`.
-
-`client.session.prompt(...)` is the preferred wake path;
-`promptAsync(...)` is fallback-only. OpenCode command templates are convenience
-prompts over the same tools rather than an independent orchestration path.
-Model-callable role listing is read-only.
-
-The global plugin target is:
-
-```text
-~/.config/opencode/plugins/orchestra.ts
-```
-
 ### Codex
 
 Codex support is currently a placeholder scaffold with no working host
@@ -676,6 +657,10 @@ virtual-environment installs support development; `pipx` provides a stable
 user-facing command.
 
 Host init commands install or update adapters and runtime configuration. Canonical repository-root files are the source of truth. `--copy` copies from those canonical sources instead of linking them. If the canonical source checkout is unavailable, init fails clearly. `--force` replaces existing installed files or links.
+
+`orchestra init all` selects Pi and Hermes host installation from the role
+catalog. OpenCode roles select subagent execution only and do not trigger a host
+installation. The Codex scaffold uses its explicit init command.
 
 Repository-root editable defaults are:
 

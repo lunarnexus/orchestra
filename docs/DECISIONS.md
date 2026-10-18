@@ -200,6 +200,9 @@ causality metadata around related runs.
 
 ### D-ARCH-001 — Core plus adapters
 
+**Status:** OpenCode host applicability retired under D-HOST-014; the
+core-plus-adapters decision remains in force.
+
 **Decision:** Reusable orchestration logic belongs in a common core and is
 exposed through CLI, MCP, Hermes, Pi, OpenCode, and future host adapters.
 
@@ -387,6 +390,8 @@ Pi subagent sessions use deterministic `orchestra-worker-<run-id>` identifiers.
 compression even when read-only views resolve continuation lineage.
 
 ### D-SESSION-008 — OpenCode identity
+
+**Status:** Retired with the OpenCode host integration under D-HOST-014.
 
 **Decision:** OpenCode uses `context.sessionID` and normalizes it as
 `opencode:<sessionID>`.
@@ -893,6 +898,8 @@ native host commands or `orchestra roles ROLE SETTING VALUE` where supported.
 
 ### D-HOST-007 — OpenCode commands are wrappers
 
+**Status:** Retired with the OpenCode host integration under D-HOST-014.
+
 **Decision:** OpenCode prompt-template `/orch` commands are convenience wrappers
 over `orch_status` and `orch_dispatch`, not a separate orchestration path.
 
@@ -916,6 +923,8 @@ passes explicit config paths rather than relying on Pi defaults.
 
 ### D-HOST-011 — OpenCode delivery
 
+**Status:** Retired with the OpenCode host integration under D-HOST-014.
+
 **Decision:** OpenCode uses session-targeted prompt delivery for consolidated
 reports, preferring `client.session.prompt(...)` and using
 `promptAsync(...)` only as a fallback when synchronous prompt delivery is
@@ -937,6 +946,22 @@ are documented as Hermes host API limits rather than implementation gaps.
 
 **Source:** Owner approval during the Hermes plugin feature-parity plan before
 Slice 9 review.
+
+### D-HOST-014 — Retire the OpenCode host integration
+
+**Decision:** Remove the OpenCode parent-host plugin, its installation and help
+entry points, and host-only tests. OpenCode remains a supported subagent harness,
+with its registry entries, catalog configuration, process supervision, and
+execution contracts preserved. Selecting that harness does not install a parent
+host integration through `orchestra init all`.
+
+**Reconciliation:** This supersedes the OpenCode host applicability of
+D-ARCH-001, D-SESSION-008, D-HOST-007, and D-HOST-011. Their original text remains
+as provenance. Existing session/run ownership and user-installed OpenCode files
+are unchanged; this decision does not authorize a state migration or uninstaller.
+
+**Source:** Owner approval of the OpenCode host cleanup plan and instruction to
+dispatch and execute it.
 
 ## Installation and packaging
 
