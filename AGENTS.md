@@ -29,6 +29,17 @@ These rules apply to all AI coding agents working on this project. Keep this fil
 - Do not claim checks passed unless you ran them successfully.
 - If a check is skipped or blocked, say so clearly.
 
+## Testing Methodology
+
+- Protect critical workflows with connected behavioral tests through dispatch, execution, reporting, delivery, and persisted end-state. Use focused unit tests for additional branches, not as a substitute for the connected journey.
+- Exercise real core, SQLite, and supervision where practical; simulate external host/model boundaries with controlled inputs. Fault-injection tests must prove the injected failure occurred and verify recovery or durable pending state.
+- Assert observable behavior, ownership, artifacts, and outcomes. Treat configuration values as test inputs; avoid pinning editable defaults, internal retry mechanics, source strings, or refactorable implementation details.
+- Distinguish simulated-host coverage from live-host proof. Delivery verification requires the actual report in the originating runtime session and persisted acknowledgement; dispatch acceptance or subagent completion alone is insufficient.
+- Give process-based tests bounded waits and failure-safe, owner-scoped teardown. Verify lifecycle races by recording the required overlap, not by assuming timing.
+- For bug fixes, reproduce the desired-contract failure before changing production code, then make the regression pass without weakening its assertions. Confirmed unfixed defects may use narrowly targeted strict expected failures; remove that expectation when fixed. Blocked checks are not placeholder expected failures.
+- Use golden files only where deterministic user-facing output is an exact contract. Changes to approved golden output require human approval; never auto-accept snapshots to make tests pass.
+- Run focused checks while implementing, reuse valid returned verification evidence, and run combined tests, lint, and type checks before release. State precisely which checks cover the final diff and disclose skips or blocked live checks.
+
 ## Changelog
 
 - `docs/ROADMAP.md` is a living document and should be committed on every commit even when its updates are not directly related to the code change.
