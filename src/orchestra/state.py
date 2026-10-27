@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -138,6 +140,14 @@ class PruneResult:
     deleted_paths: tuple[Path, ...]
     skipped_paths: tuple[Path, ...]
     failed_paths: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class RunTransition:
+    """Previous and next records for one applied run update."""
+
+    previous: RunRecord
+    record: RunRecord
 
 
 @dataclass(frozen=True)
@@ -292,190 +302,60 @@ class StateStore:
             connection.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
             connection.commit()
 
-    def reserve_run(
-        self,
-        record: RunRecord,
-        *,
-        global_limit: int,
-        per_session_limit: int,
-        per_model_limits: dict[str, int] | None = None,
-    ) -> RunRecord:
+    @contextmanager
+    def transaction(self, *, operation: str = "transaction") -> Iterator[sqlite3.Connection]:
+        """Yield a connection inside one ``BEGIN IMMEDIATE`` transaction.
+
+        Used to compose a queue transition with its matching run-row write so
+        both commit or roll back together. Callers must not commit or roll back
+        the yielded connection themselves.
+        """
+        with self._connect() as connection:
+            self._begin_immediate(connection, operation=operation)
+            try:
+                yield connection
+            except BaseException:
+                connection.rollback()
+                raise
+            connection.commit()
+
+    def insert_run_record(self, connection: sqlite3.Connection, record: RunRecord) -> None:
+        """Insert one run row inside ``connection``'s transaction."""
         _validate_status(record.status)
-        if record.status != STATUS_QUEUED:
-            raise StateError("new runs must start in 'queued' status")
         if not record.run_id.strip():
             raise StateError("run_id must be a non-empty string")
         if not record.orchestrator_session_id.strip():
             raise StateError("orchestrator_session_id must be a non-empty string")
+        self._insert_record(connection, record)
 
+    def read_run_row(self, connection: sqlite3.Connection, run_id: str) -> sqlite3.Row | None:
+        """Read one run row inside ``connection``'s transaction."""
+        row = connection.execute(
+            "SELECT * FROM runs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+        return None if row is None else row
+
+    def insert_run(self, record: RunRecord) -> RunRecord:
+        """Insert one run row for a job the durable job queue already admitted.
+
+        Concurrency limits, dependency readiness, and capacity claims are owned
+        by :mod:`orchestra.jobs`; this store only persists execution records.
+        """
         with self._connect() as connection:
-            self._begin_immediate(connection, operation="reserve_run")
-            global_active = int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM runs WHERE status IN (?, ?)",
-                    (STATUS_QUEUED, STATUS_RUNNING),
-                ).fetchone()[0]
-            )
-            if global_active >= global_limit:
-                connection.rollback()
-                raise ConcurrencyLimitError("global concurrency limit exceeded")
-
-            session_active = int(
-                connection.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM runs
-                    WHERE orchestrator_session_id = ?
-                      AND status IN (?, ?)
-                    """,
-                    (record.orchestrator_session_id, STATUS_QUEUED, STATUS_RUNNING),
-                ).fetchone()[0]
-            )
-            if session_active >= per_session_limit:
-                connection.rollback()
-                raise ConcurrencyLimitError("per-session concurrency limit exceeded")
-
-            model = record.model
-            model_limit = (per_model_limits or {}).get(model or "")
-            if model and model_limit is not None:
-                model_active = int(
-                    connection.execute(
-                        """
-                        SELECT COUNT(*)
-                        FROM runs
-                        WHERE model = ?
-                          AND status IN (?, ?)
-                        """,
-                        (model, STATUS_QUEUED, STATUS_RUNNING),
-                    ).fetchone()[0]
-                )
-                if model_active >= model_limit:
-                    connection.rollback()
-                    raise ConcurrencyLimitError(
-                        f"model concurrency limit exceeded: {model} "
-                        f"active={model_active} limit={model_limit}"
-                    )
-
-            self._insert_record(connection, record)
+            self._begin_immediate(connection, operation="insert_run")
+            self.insert_run_record(connection, record)
             connection.commit()
 
-        self._log_run_created(record)
+        self.log_run_created(record)
         return record
 
-    def create_run(self, record: RunRecord) -> RunRecord:
-        return self.reserve_run(
-            record,
-            global_limit=10_000_000,
-            per_session_limit=10_000_000,
-        )
-
-    def finalize_and_reserve_child(
-        self,
-        run_id: str,
-        update: RunUpdate,
-        *,
-        child_record: RunRecord,
-        global_limit: int,
-        per_session_limit: int,
-        per_model_limits: dict[str, int] | None = None,
-    ) -> tuple[RunRecord, RunRecord | None]:
-        """Terminalize a run and reserve its queued child in one transaction.
-
-        Concurrency limits are evaluated after the parent leaves the active
-        count inside the same transaction. Returns the updated parent and the
-        reserved child; the child is ``None`` when the parent was already
-        terminal and no reservation happened.
-        """
-        _validate_status(update.status)
-        if update.status not in TERMINAL_STATUSES:
-            raise StateError("finalize_and_reserve_child requires a terminal status")
-        if child_record.status != STATUS_QUEUED:
-            raise StateError("child runs must start in 'queued' status")
-        if not child_record.run_id.strip():
-            raise StateError("run_id must be a non-empty string")
-        if not child_record.orchestrator_session_id.strip():
-            raise StateError("orchestrator_session_id must be a non-empty string")
-
+    def get_run(self, run_id: str) -> RunRecord:
         with self._connect() as connection:
-            self._begin_immediate(
-                connection, operation="finalize_and_reserve_child"
-            )
-            row = connection.execute(
-                "SELECT * FROM runs WHERE run_id = ?", (run_id,)
-            ).fetchone()
-            if row is None:
-                connection.rollback()
-                raise StateError(f"run not found: {run_id}")
-
-            current = self._row_to_record(row)
-            if current.status in TERMINAL_STATUSES:
-                connection.rollback()
-                return (current, None)
-            _validate_transition(current.status, update.status)
-            next_record = self._merge_record(current, update)
-            changed = self._write_record(
-                connection, next_record, expected_status=current.status
-            )
-            if not changed:
-                connection.rollback()
-                return (self.get_run(run_id), None)
-
-            global_active = int(
-                connection.execute(
-                    "SELECT COUNT(*) FROM runs WHERE status IN (?, ?)",
-                    (STATUS_QUEUED, STATUS_RUNNING),
-                ).fetchone()[0]
-            )
-            if global_active >= global_limit:
-                connection.rollback()
-                raise ConcurrencyLimitError("global concurrency limit exceeded")
-
-            session_active = int(
-                connection.execute(
-                    """
-                    SELECT COUNT(*)
-                    FROM runs
-                    WHERE orchestrator_session_id = ?
-                      AND status IN (?, ?)
-                    """,
-                    (
-                        child_record.orchestrator_session_id,
-                        STATUS_QUEUED,
-                        STATUS_RUNNING,
-                    ),
-                ).fetchone()[0]
-            )
-            if session_active >= per_session_limit:
-                connection.rollback()
-                raise ConcurrencyLimitError("per-session concurrency limit exceeded")
-
-            model = child_record.model
-            model_limit = (per_model_limits or {}).get(model or "")
-            if model and model_limit is not None:
-                model_active = int(
-                    connection.execute(
-                        """
-                        SELECT COUNT(*)
-                        FROM runs
-                        WHERE model = ?
-                          AND status IN (?, ?)
-                        """,
-                        (model, STATUS_QUEUED, STATUS_RUNNING),
-                    ).fetchone()[0]
-                )
-                if model_active >= model_limit:
-                    connection.rollback()
-                    raise ConcurrencyLimitError(
-                        f"model concurrency limit exceeded: {model} "
-                        f"active={model_active} limit={model_limit}"
-                    )
-
-            self._insert_record(connection, child_record)
-            connection.commit()
-
-        self._log_run_updated(current.status, next_record)
-        self._log_run_created(child_record)
-        return (next_record, child_record)
+            row = connection.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+        if row is None:
+            raise StateError(f"run not found: {run_id}")
+        return self._row_to_record(row)
 
     def set_main_session_mode(self, session_id: str, mode: str) -> MainSessionState:
         if not session_id.strip():
@@ -501,6 +381,7 @@ class StateStore:
             updated_at=updated_at,
         )
 
+
     def get_main_session_state(self, session_id: str) -> MainSessionState | None:
         with self._connect() as connection:
             row = connection.execute(
@@ -514,36 +395,45 @@ class StateStore:
             updated_at=_optional_text(row["updated_at"]),
         )
 
-    def get_run(self, run_id: str) -> RunRecord:
-        with self._connect() as connection:
-            row = connection.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
-        if row is None:
-            raise StateError(f"run not found: {run_id}")
-        return self._row_to_record(row)
-
     def update_run(self, run_id: str, update: RunUpdate) -> RunRecord:
         _validate_status(update.status)
         with self._connect() as connection:
             self._begin_immediate(connection, operation="update_run")
-            row = connection.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
-            if row is None:
+            if self.read_run_row(connection, run_id) is None:
                 connection.rollback()
                 raise StateError(f"run not found: {run_id}")
-
-            current = self._row_to_record(row)
-            if current.status in TERMINAL_STATUSES:
-                connection.rollback()
-                return current
-            _validate_transition(current.status, update.status)
-            next_record = self._merge_record(current, update)
-            changed = self._write_record(connection, next_record, expected_status=current.status)
-            if not changed:
+            transition = self.apply_run_update_on(connection, run_id, update)
+            if transition is None:
                 connection.rollback()
                 return self.get_run(run_id)
             connection.commit()
 
-        self._log_run_updated(current.status, next_record)
-        return next_record
+        self.log_run_updated(transition.previous.status, transition.record)
+        return transition.record
+
+    def apply_run_update_on(
+        self,
+        connection: sqlite3.Connection,
+        run_id: str,
+        update: RunUpdate,
+    ) -> RunTransition | None:
+        """Apply one update inside ``connection``'s transaction.
+
+        Returns the previous and next records, or ``None`` when the run is
+        absent or already terminal; terminal runs are never rewritten.
+        """
+        _validate_status(update.status)
+        row = self.read_run_row(connection, run_id)
+        if row is None:
+            return None
+        current = self._row_to_record(row)
+        if current.status in TERMINAL_STATUSES:
+            return None
+        _validate_transition(current.status, update.status)
+        next_record = self._merge_record(current, update)
+        if not self._write_record(connection, next_record, expected_status=current.status):
+            return None
+        return RunTransition(previous=current, record=next_record)
 
     def list_active_runs(self, orchestrator_session_id: str | None = None) -> list[RunRecord]:
         query = "SELECT * FROM runs WHERE status IN (?, ?)"
@@ -772,40 +662,6 @@ class StateStore:
             failed_paths=tuple(failed_paths),
         )
 
-    def _has_pending_automatic_continuation(
-        self,
-        connection: sqlite3.Connection,
-        row: sqlite3.Row,
-    ) -> bool:
-        from orchestra.supervision import AUTOMATIC_DISPATCH_CHAINS
-
-        run_id = str(row["run_id"])
-        for chain in AUTOMATIC_DISPATCH_CHAINS.values():
-            if not chain.child_hints_suppressed():
-                continue
-            child = connection.execute(
-                """
-                SELECT 1
-                FROM runs
-                WHERE triggered_by_run_id = ?
-                  AND trigger_reason = ?
-                  AND reported_at IS NULL
-                  AND status NOT IN (?, ?, ?, ?)
-                LIMIT 1
-                """,
-                (
-                    run_id,
-                    chain.auto_return_key(),
-                    STATUS_DONE,
-                    STATUS_FAILED,
-                    STATUS_CANCELLED,
-                    STATUS_INCOMPLETE,
-                ),
-            ).fetchone()
-            if child is not None:
-                return True
-        return False
-
     def list_pending_report_runs(self, orchestrator_session_id: str) -> list[RunRecord]:
         with self._connect() as connection:
             active = int(
@@ -839,12 +695,7 @@ class StateStore:
                     STATUS_INCOMPLETE,
                 ),
             ).fetchall()
-            filtered_rows = [
-                row
-                for row in rows
-                if not self._has_pending_automatic_continuation(connection, row)
-            ]
-        return [self._row_to_record(row) for row in filtered_rows]
+        return [self._row_to_record(row) for row in rows]
 
     def mark_report_runs_delivered(
         self,
@@ -1200,7 +1051,7 @@ class StateStore:
             self._serialize_record(record),
         )
 
-    def _log_run_created(self, record: RunRecord) -> None:
+    def log_run_created(self, record: RunRecord) -> None:
         self._log_event(
             record,
             event="run.created",
@@ -1212,7 +1063,7 @@ class StateStore:
             },
         )
 
-    def _log_run_updated(self, previous_status: str, next_record: RunRecord) -> None:
+    def log_run_updated(self, previous_status: str, next_record: RunRecord) -> None:
         self._log_event(
             next_record,
             event="run.updated",

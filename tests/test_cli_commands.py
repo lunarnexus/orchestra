@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -10,6 +8,7 @@ from typing import Any, cast
 import pytest
 import yaml
 
+from orchestra.admission import admit_run
 from orchestra.artifacts import canonical_return_path
 from orchestra.config import (
     AgentCatalog,
@@ -19,22 +18,18 @@ from orchestra.config import (
     PromptConfig,
     RoleConfig,
 )
-from orchestra.context import AppContext, AppError, OrchestraPaths
-from orchestra.dispatch import _expanded_model_limits, start_run
-from orchestra.harnesses.common import ORCHESTRA_DISPATCH_BUDGET_ENV
-from orchestra.reports import format_orchestrator_return
+from orchestra.context import AppContext, AppError, OrchestraPaths, queue_resource_limits
+from orchestra.dispatch import start_run
+from orchestra.jobs import JobQueue, Limits
+from orchestra.logs import utc_now
 from orchestra.state import (
     STATUS_DONE,
-    STATUS_FAILED,
-    STATUS_RUNNING,
-    ConcurrencyLimitError,
     RunRecord,
     RunUpdate,
-    StateError,
     StateStore,
 )
-from orchestra.status import _debug_transcript_section, format_status, status_payload
-from tests.helpers import extract_run_id, wait_for_condition
+from orchestra.status import format_status, status_payload
+from tests.helpers import extract_run_id, make_jobs, seed_run, wait_for_condition
 from tests.types import RuntimeFilesFactory
 
 ROOT_PROMPTS = Path(__file__).resolve().parents[1] / "prompts.yaml"
@@ -80,64 +75,72 @@ def load_root_prompt_config() -> PromptConfig:
 
 
 def test_model_limits_match_unprefixed_role_model_names() -> None:
-    expanded = _expanded_model_limits(
-        {"lmstudio/qwen3.6-27b": ModelLimitConfig(concurrency=1)}
+    catalog = AgentCatalog(
+        roles={},
+        model_limits={"lmstudio/qwen3.6-27b": ModelLimitConfig(concurrency=1)},
     )
+    expanded = queue_resource_limits(catalog)
 
     assert expanded["lmstudio/qwen3.6-27b"] == 1
     assert expanded["qwen3.6-27b"] == 1
 
 
 @pytest.mark.parametrize(
-    ("failure_message",),
+    ("limits", "blocker_session", "expected_message"),
     [
-        ("global concurrency limit exceeded",),
-        ("per-session concurrency limit exceeded",),
-        ("model concurrency limit exceeded: lmstudio/qwen active=1 limit=1",),
+        (
+            Limits(global_limit=1, per_owner_limit=4),
+            "manual:other-session",
+            "global concurrency limit exceeded",
+        ),
+        (
+            Limits(global_limit=4, per_owner_limit=1),
+            "manual:test-session",
+            "per-session concurrency limit exceeded",
+        ),
+        (
+            Limits(global_limit=4, per_owner_limit=4, resource_limits={"lmstudio/qwen": 1}),
+            "manual:test-session",
+            "model concurrency limit exceeded: lmstudio/qwen active=1 limit=1",
+        ),
     ],
 )
 def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    failure_message: str,
+    limits: Limits,
+    blocker_session: str,
+    expected_message: str,
 ) -> None:
-    def reserve_run(*args: object, **kwargs: object) -> None:
-        raise ConcurrencyLimitError(failure_message)
-
-    store = cast(
-        Any,
-        SimpleNamespace(
-            list_active_runs=lambda session_id=None: [
-                RunRecord(
-                    run_id="run-1",
-                    orchestrator_session_id="manual:test-session",
-                    harness="shell",
-                    role="builder",
-                    task_label="test task",
-                    log_path=Path("/tmp/run-1.jsonl"),
-                    created_at="2026-08-07T00:00:00Z",
-                    status="running",
-                    model="lmstudio/qwen",
-                )
-            ],
-            reserve_run=reserve_run,
-            get_main_session_state=lambda session_id=None: None,
+    store = StateStore(tmp_path / "state" / "orchestra.db")
+    store.initialize()
+    jobs = JobQueue(store.database_path)
+    jobs.initialize(limits)
+    config = AppConfig(
+        default_timeout=30,
+        prompts=load_root_prompt_config(),
+        state_dir=tmp_path / "state",
+        log_dir=tmp_path / "logs",
+        concurrency=ConcurrencyConfig(
+            global_limit=limits.global_limit,
+            per_session_limit=limits.per_owner_limit,
         ),
     )
     context = AppContext(
-        config=AppConfig(
-            default_timeout=30,
-            prompts=load_root_prompt_config(),
-            state_dir=tmp_path / "state",
-            log_dir=tmp_path / "logs",
-            concurrency=ConcurrencyConfig(global_limit=1, per_session_limit=1),
-        ),
+        config=config,
         catalog=AgentCatalog(
-            roles={"builder": RoleConfig(harness="shell", command=["echo"] )},
+            roles={
+                "builder": RoleConfig(
+                    harness="shell",
+                    command=["echo"],
+                    model="lmstudio/qwen",
+                )
+            },
             default_role="builder",
             model_limits={"lmstudio/qwen": ModelLimitConfig(concurrency=1)},
         ),
         store=store,
+        jobs=jobs,
         registry=cast(Any, SimpleNamespace()),
         paths=OrchestraPaths(
             config_path=tmp_path / "config.yaml",
@@ -146,13 +149,33 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
     )
     monkeypatch.setattr("orchestra.harnesses.common.orchestra_can_dispatch", lambda: True)
 
+    # Occupy the relevant limit with a real admitted run, exactly as a dispatch does.
+    admit_run(
+        jobs,
+        store,
+        RunRecord(
+            run_id="run-1",
+            orchestrator_session_id=blocker_session,
+            harness="shell",
+            role="builder",
+            model="lmstudio/qwen",
+            task_label="occupying run",
+            log_path=tmp_path / "logs" / "run-1.jsonl",
+            created_at=utc_now(),
+        ),
+    )
+    store.update_run("run-1", RunUpdate(status="running"))
+
+    session_active = 1 if blocker_session == "manual:test-session" else 0
     with pytest.raises(
         AppError,
         match=(
-            rf"{failure_message}; dispatch was not accepted; wait for current subagents to return, "
-            rf"then re-dispatch\. Do not poll while waiting\.\n"
+            rf"{expected_message}; dispatch was not accepted; wait for "
+            rf"current subagents to return, then re-dispatch\. Do not "
+            rf"poll while waiting\.\n"
             rf"orchestra_tools: on\nsession_id: manual:test-session\n"
-            rf"active_runs: 1/1\nglobal_active_runs: 1/1"
+            rf"active_runs: {session_active}/{limits.per_owner_limit}\n"
+            rf"global_active_runs: 1/{limits.global_limit}"
         ),
     ):
         start_run(
@@ -170,667 +193,57 @@ def test_start_run_appends_dispatch_retry_guidance_for_concurrency_limits(
         )
 
 
-def test_debug_transcript_section_inlines_pi_fallback_transcript(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    worker_session_id = "orchestra-worker-abc123"
-    transcript = tmp_path / "sessions" / "2026" / f"run_{worker_session_id}.jsonl"
-    transcript.parent.mkdir(parents=True)
-    transcript.write_text('{"message":"tool trace"}\n', encoding="utf-8")
-    monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(tmp_path / "sessions"))
-    record = RunRecord(
-        run_id="abc123",
-        orchestrator_session_id="manual:test-session",
-        harness="pi",
-        role="builder",
-        task_label="debug-test",
-        log_path=tmp_path / "abc123.jsonl",
-        created_at="2026-08-07T00:00:00Z",
-        status=STATUS_DONE,
-        worker_session_id=worker_session_id,
-    )
-
-    section = _debug_transcript_section(record)
-
-    assert "transcript_path: discovered by Pi fallback search" in section
-    assert str(transcript) in section
-    assert '{"message":"tool trace"}' in section
-
-
-def test_orchestrator_return_includes_worker_roles(tmp_path: Path) -> None:
-    first = RunRecord(
-        run_id="34f3a4324432",
-        orchestrator_session_id="manual:test-session",
-        harness="pi",
-        role="appsec",
-        task_label="appsec-eval:t3",
-        log_path=tmp_path / "34f3a4324432.jsonl",
-        created_at="2026-08-07T00:00:00Z",
-        status=STATUS_DONE,
-        result_summary="Mode: appsec Verdict: fail",
-    )
-    second = RunRecord(
-        run_id="2bfb63e7db3a",
-        orchestrator_session_id="manual:test-session",
-        harness="pi",
-        role="planner",
-        task_label="planner-eval:t1",
-        log_path=tmp_path / "2bfb63e7db3a.jsonl",
-        created_at="2026-08-07T00:00:00Z",
-        status=STATUS_FAILED,
-        error_text="worker failed",
-    )
-
-    report = format_orchestrator_return(
-        [first, second], prompts=load_root_prompt_config()
-    )
-
-    assert "[orchestra: 2 subagents returned]" in report
-    assert "[orchestra: appsec 34f3a4324432 success]" in report
-    assert "[orchestra: planner 2bfb63e7db3a fail]" in report
-
-
-def test_status_reports_session_lineage_details_for_active_run(
+def test_format_status_reports_capacity_notation_for_session_and_global_scopes(
     tmp_path: Path,
 ) -> None:
-    prompts = load_root_prompt_config()
-    store = StateStore(tmp_path / "orchestra.db")
+    store = StateStore(tmp_path / "state" / "orchestra.db")
     store.initialize()
-    context = AppContext(
-        config=AppConfig(
-            state_dir=tmp_path / "state",
-            log_dir=tmp_path / "logs",
-            default_timeout=30,
-            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
-            prompts=prompts,
-        ),
-        catalog=AgentCatalog(
-            roles={"worker": RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])},
-        ),
-        store=store,
-        registry=cast(Any, SimpleNamespace()),
-        paths=OrchestraPaths(
-            config_path=tmp_path / "config.yaml",
-            catalog_path=tmp_path / "catalog.yaml",
-        ),
-    )
-    store.create_run(
-        RunRecord(
-            run_id="active001",
-            orchestrator_session_id="manual:lineage",
-            harness="pi",
-            role="worker",
-            task_label="active",
-            log_path=tmp_path / "logs" / "active001.jsonl",
-            created_at="2026-01-01T00:00:00Z",
-        )
-    )
-    store.update_run("active001", RunUpdate(status=STATUS_RUNNING, process_id=1234))
-
-    output = format_status(context, "manual:lineage")
-
-    assert "active_runs: 1/2" in output
-    assert "global_active_runs: 1/4" in output
-    assert "descendants_terminal: no" in output
-    assert "session_report_available: no" in output
-    assert "session_report_delivered: no" in output
-
-
-def test_status_reports_pending_session_report_details(
-    tmp_path: Path,
-) -> None:
-    prompts = load_root_prompt_config()
-    store = StateStore(tmp_path / "orchestra.db")
-    store.initialize()
-    context = AppContext(
-        config=AppConfig(
-            state_dir=tmp_path / "state",
-            log_dir=tmp_path / "logs",
-            default_timeout=30,
-            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
-            prompts=prompts,
-        ),
-        catalog=AgentCatalog(
-            roles={"worker": RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])},
-        ),
-        store=store,
-        registry=cast(Any, SimpleNamespace()),
-        paths=OrchestraPaths(
-            config_path=tmp_path / "config.yaml",
-            catalog_path=tmp_path / "catalog.yaml",
-        ),
-    )
-    store.create_run(
-        RunRecord(
-            run_id="pending001",
-            orchestrator_session_id="manual:lineage",
-            harness="pi",
-            role="worker",
-            task_label="pending report",
-            log_path=tmp_path / "logs" / "pending001.jsonl",
-            created_at="2026-01-01T00:00:00Z",
-        )
-    )
-    store.update_run("pending001", RunUpdate(status=STATUS_RUNNING, process_id=1234))
-    store.update_run("pending001", RunUpdate(status=STATUS_DONE, result_summary="done"))
-
-    output = format_status(context, "manual:lineage")
-
-    assert "active_runs: 0/2" in output
-    assert "descendants_terminal: yes" in output
-    assert "session_report_available: yes" in output
-    assert "session_report_delivered: no" in output
-
-
-def test_status_reports_delivered_session_report_details(
-    tmp_path: Path,
-) -> None:
-    prompts = load_root_prompt_config()
-    store = StateStore(tmp_path / "orchestra.db")
-    store.initialize()
-    context = AppContext(
-        config=AppConfig(
-            state_dir=tmp_path / "state",
-            log_dir=tmp_path / "logs",
-            default_timeout=30,
-            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
-            prompts=prompts,
-        ),
-        catalog=AgentCatalog(
-            roles={"worker": RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])},
-        ),
-        store=store,
-        registry=cast(Any, SimpleNamespace()),
-        paths=OrchestraPaths(
-            config_path=tmp_path / "config.yaml",
-            catalog_path=tmp_path / "catalog.yaml",
-        ),
-    )
-    store.create_run(
-        RunRecord(
-            run_id="delivered01",
-            orchestrator_session_id="manual:lineage",
-            harness="pi",
-            role="worker",
-            task_label="delivered report",
-            log_path=tmp_path / "logs" / "delivered01.jsonl",
-            created_at="2026-01-01T00:00:00Z",
-        )
-    )
-    store.update_run("delivered01", RunUpdate(status=STATUS_RUNNING, process_id=1234))
-    store.update_run("delivered01", RunUpdate(status=STATUS_DONE, result_summary="done"))
-    store.mark_report_runs_delivered("manual:lineage", ["delivered01"])
-
-    output = format_status(context, "manual:lineage")
-
-    assert "descendants_terminal: yes" in output
-    assert "session_report_available: no" in output
-    assert "session_report_delivered: yes" in output
-
-
-def test_do_output_exposes_effective_timeout_seconds(
-    tmp_path: Path,
-    runtime_files_factory: RuntimeFilesFactory,
-    python_executable: str,
-    fake_worker_script: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config_path, catalog_path, _ = runtime_files_factory(
-        tmp_path,
-        [python_executable, str(fake_worker_script), "success", "--output", "worker done"],
-    )
-
-    from orchestra.cli import main
-
-    exit_code = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "do",
-            "--session-id",
-            "manual:test-session",
-            "--goal",
-            "Summarize repository status.",
-            "--timeout",
-            "17",
-        ]
-    )
-    do_output = capsys.readouterr().out
-
-    assert exit_code == 0
-    assert "timeout_seconds: 17" in do_output
-    assert "dispatch: queued for supervision" in do_output
-
-
-def test_do_status_history_flow(
-    tmp_path: Path,
-    runtime_files_factory: RuntimeFilesFactory,
-    python_executable: str,
-    fake_worker_script: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config_path, catalog_path, db_path = runtime_files_factory(
-        tmp_path,
-        [python_executable, str(fake_worker_script), "success", "--output", "worker done"],
-    )
-
-    from orchestra.cli import main
-
-    exit_code = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "do",
-            "--session-id",
-            "manual:test-session",
-            "--goal",
-            "Summarize repository status.",
-        ]
-    )
-    do_output = capsys.readouterr().out
-
-    assert exit_code == 0
-    assert "dispatch: queued for supervision" in do_output
-    run_id = extract_run_id(do_output)
-
-    assert wait_for_condition(
-        lambda: StateStore(db_path).get_run(run_id).status == STATUS_DONE,
-        timeout=5,
-    )
-
-    history_exit = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "history",
-            "--session-id",
-            "manual:test-session",
-        ]
-    )
-    history_output = capsys.readouterr().out
-
-    assert history_exit == 0
-    assert "history_count: 1" in history_output
-    assert "worker done" in history_output
-
-
-def test_prune_reports_dry_run_candidates_without_deleting(
-    tmp_path: Path,
-    runtime_files_factory: RuntimeFilesFactory,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config_path, catalog_path, db_path = runtime_files_factory(
-        tmp_path,
-        ["python", "-c", "print('noop')"],
-    )
-    store = StateStore(db_path)
-    store.initialize()
-    store.create_run(
-        RunRecord(
-            run_id="old-done",
-            orchestrator_session_id="manual:prune-session",
-            harness="pi",
-            role="builder",
-            task_label="old done",
-            log_path=tmp_path / "logs" / "old-done.jsonl",
-            created_at="2026-01-01T00:00:00Z",
-            transcript_path=tmp_path / "transcripts" / "old-done.jsonl",
-        )
-    )
-    store.update_run("old-done", RunUpdate(status=STATUS_RUNNING))
-    store.update_run(
-        "old-done",
-        RunUpdate(status=STATUS_DONE, ended_at="2026-01-01T00:00:00Z"),
-    )
-    store.create_run(
-        RunRecord(
-            run_id="running",
-            orchestrator_session_id="manual:prune-session",
-            harness="pi",
-            role="builder",
-            task_label="active",
-            log_path=tmp_path / "logs" / "running.jsonl",
-            created_at="2026-01-01T00:00:00Z",
-        )
-    )
-    store.update_run("running", RunUpdate(status=STATUS_RUNNING))
-    orphan_log = tmp_path / "logs" / "old-orphan.jsonl"
-    orphan_log.write_text("orphan", encoding="utf-8")
-    os.utime(orphan_log, (datetime(2026, 1, 1, tzinfo=UTC).timestamp(),) * 2)
-
-    from orchestra.cli import main
-
-    exit_code = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "prune",
-            "--retention-days",
-            "30",
-        ]
-    )
-    output = capsys.readouterr().out
-
-    assert exit_code == 0
-    assert "dry-run only; no deletion performed" in output
-    assert "retention_days: 30" in output
-    assert "candidate_count: 1" in output
-    assert "old-done" in output
-    assert "running" not in output
-    assert "orphan_candidates:" in output
-    assert "old-orphan.jsonl" in output
-    assert store.get_run("old-done").status == STATUS_DONE
-    assert store.get_run("running").status == STATUS_RUNNING
-
-
-def test_prune_delete_removes_old_runs_owned_files_and_orphans(
-    tmp_path: Path,
-    runtime_files_factory: RuntimeFilesFactory,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config_path, catalog_path, db_path = runtime_files_factory(
-        tmp_path,
-        ["python", "-c", "print('noop')"],
-    )
-    store = StateStore(db_path)
-    store.initialize()
-    old_log = tmp_path / "logs" / "old-done.jsonl"
-    old_request = tmp_path / "state" / "requests" / "old-done.json"
-    old_request.parent.mkdir(parents=True, exist_ok=True)
-    old_request.write_text("request", encoding="utf-8")
-    old_log.parent.mkdir(parents=True, exist_ok=True)
-    old_log.write_text("log", encoding="utf-8")
-    orphan_log = tmp_path / "logs" / "old-orphan.jsonl"
-    orphan_log.write_text("orphan", encoding="utf-8")
-    os.utime(orphan_log, (datetime(2000, 1, 1, tzinfo=UTC).timestamp(),) * 2)
-    store.create_run(
-        RunRecord(
-            run_id="old-done",
-            orchestrator_session_id="manual:prune-delete",
-            harness="pi",
-            role="builder",
-            task_label="old done",
-            log_path=old_log,
-            created_at="2000-01-01T00:00:00Z",
-        )
-    )
-    store.update_run("old-done", RunUpdate(status=STATUS_RUNNING))
-    store.update_run(
-        "old-done",
-        RunUpdate(status=STATUS_DONE, ended_at="2000-01-01T00:00:00Z"),
-    )
-
-    from orchestra.cli import main
-
-    exit_code = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "prune",
-            "--delete",
-        ]
-    )
-    output = capsys.readouterr().out
-
-    assert exit_code == 0
-    assert "prune: delete completed" in output
-    assert "deleted_runs: 1" in output
-    assert "deleted_paths:" in output
-    with pytest.raises(StateError, match="run not found: old-done"):
-        store.get_run("old-done")
-    assert not old_log.exists()
-    assert not old_request.exists()
-    assert not orphan_log.exists()
-
-
-def test_do_rejects_over_model_limit(
-    tmp_path: Path,
-    runtime_files_factory: RuntimeFilesFactory,
-    python_executable: str,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config_path, catalog_path, db_path = runtime_files_factory(
-        tmp_path,
-        [python_executable, "-c", "import time; time.sleep(2); print('done')"],
-    )
-    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
-    catalog["model_limits"] = {"lmstudio/qwen": {"concurrency": 1}}
-    catalog["roles"]["worker"]["model"] = "lmstudio/qwen"
-    catalog_path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
-
-    from orchestra.cli import main
-
-    first_exit = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "do",
-            "--session-id",
-            "manual:model-limit-a",
-            "--goal",
-            "hold model slot",
-        ]
-    )
-    first_output = capsys.readouterr().out
-    run_id = extract_run_id(first_output)
-    store = StateStore(db_path)
-    assert wait_for_condition(lambda: bool(store.list_active_runs()))
-
-    second_exit = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "do",
-            "--session-id",
-            "manual:model-limit-b",
-            "--goal",
-            "should fail fast",
-        ]
-    )
-    second_output = capsys.readouterr().out
-
-    assert first_exit == 0
-    assert second_exit == 1
-    assert "model concurrency limit exceeded: lmstudio/qwen" in second_output
-    assert "active=1 limit=1" in second_output
-    assert store.get_run(run_id).model == "lmstudio/qwen"
-
-
-def test_do_uses_role_nested_dispatch_depth_for_worker_env(
-    tmp_path: Path,
-    runtime_files_factory: RuntimeFilesFactory,
-    python_executable: str,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config_path, catalog_path, db_path = runtime_files_factory(
-        tmp_path,
-        [
-            python_executable,
-            "-c",
-            "import os; print(os.environ.get('ORCHESTRA_DISPATCH_BUDGET', 'missing'))",
-        ],
-    )
-    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
-    catalog["roles"]["worker"]["nested_dispatch_depth"] = 2
-    catalog_path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
-
-    from orchestra.cli import main
-
-    exit_code = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "do",
-            "--session-id",
-            "manual:nested-dispatch-depth-role",
-            "--goal",
-            "Print nested dispatch depth env.",
-        ]
-    )
-    output = capsys.readouterr().out
-
-    assert exit_code == 0
-    run_id = extract_run_id(output)
-    assert wait_for_condition(
-        lambda: StateStore(db_path).get_run(run_id).status == STATUS_DONE,
-        timeout=5,
-    )
-    assert StateStore(db_path).get_run(run_id).result_summary == "2"
-
-
-def test_do_rejects_when_orchestra_dispatch_budget_is_exhausted(
-    tmp_path: Path,
-    runtime_files_factory: RuntimeFilesFactory,
-    python_executable: str,
-    fake_worker_script: Path,
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_path, catalog_path, _ = runtime_files_factory(
-        tmp_path,
-        [python_executable, str(fake_worker_script), "success", "--output", "should not run"],
-    )
-    monkeypatch.setenv(ORCHESTRA_DISPATCH_BUDGET_ENV, "1")
-
-    from orchestra.cli import main
-
-    exit_code = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "do",
-            "--session-id",
-            "manual:worker-budget-exhausted",
-            "--goal",
-            "Should be rejected.",
-        ]
-    )
-    output = capsys.readouterr().out
-
-    assert exit_code == 1
-    assert "ORCHESTRA_DISPATCH_BUDGET dispatch budget exhausted" in output
-
-
-def test_roles_lists_configured_worker_roles(
-    tmp_path: Path,
-    runtime_files_factory: RuntimeFilesFactory,
-    python_executable: str,
-    fake_worker_script: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config_path, catalog_path, _ = runtime_files_factory(
-        tmp_path,
-        [python_executable, str(fake_worker_script), "success"],
-    )
-    catalog = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
-    catalog["default_role"] = "builder"
-    catalog["roles"] = {"builder": {"harness_config": "pi"}}
-    catalog_path.write_text(yaml.safe_dump(catalog, sort_keys=False), encoding="utf-8")
-
-    from orchestra.cli import main
-
-    exit_code = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "roles",
-        ]
-    )
-    output = capsys.readouterr().out
-
-    assert exit_code == 0
-    assert "Configured roles" in output
-    assert "Default: builder" not in output
-    assert "  D  builder [pi]" in output
-    assert "      harness: pi" in output
-
-
-def test_status_reports_active_run(
-    tmp_path: Path,
-    runtime_files_factory: RuntimeFilesFactory,
-    python_executable: str,
-    fake_worker_script: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    config_path, catalog_path, db_path = runtime_files_factory(
-        tmp_path,
-        [python_executable, str(fake_worker_script), "sleep", "--sleep", "2", "--output", "slept"],
-    )
-
-    from orchestra.cli import main
-
-    exit_code = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "do",
-            "--session-id",
-            "manual:test-session",
-            "--goal",
-            "Run a long worker.",
-        ]
-    )
-    do_output = capsys.readouterr().out
-    run_id = extract_run_id(do_output)
-
-    assert exit_code == 0
-    assert wait_for_condition(
-        lambda: StateStore(db_path).get_run(run_id).status == "running",
-        timeout=5,
-    )
-
-    status_exit = main(
-        [
-            "--config",
-            str(config_path.parent),
-            "status",
-            "--session-id",
-            "manual:test-session",
-        ]
-    )
-    status_output = capsys.readouterr().out
-
-    assert status_exit == 0
-    assert "session_id: manual:test-session" in status_output
-    assert "active_runs: 1" in status_output
-    assert run_id in status_output
-
-
-def test_format_status_reports_capacity_notation_for_session_and_global_scopes() -> None:
-    active_run = RunRecord(
-        run_id="run-1",
-        orchestrator_session_id="manual:test-session",
-        harness="shell",
-        role="builder",
-        task_label="test task",
-        log_path=Path("/tmp/run-1.jsonl"),
-        created_at="2026-08-07T00:00:00Z",
-        status="running",
-        model="lmstudio/qwen",
+    jobs = JobQueue(store.database_path)
+    jobs.initialize(
+        Limits(global_limit=4, per_owner_limit=2, resource_limits={"lmstudio/qwen": 1})
     )
     context = AppContext(
         config=AppConfig(
             default_timeout=30,
             prompts=load_root_prompt_config(),
+            state_dir=tmp_path / "state",
+            log_dir=tmp_path / "logs",
             concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
         ),
-        catalog=cast(
-            Any,
-            SimpleNamespace(model_limits={"lmstudio/qwen": ModelLimitConfig(concurrency=1)}),
+        catalog=AgentCatalog(
+            roles={
+                "builder": RoleConfig(
+                    harness="shell",
+                    command=["echo"],
+                    model="lmstudio/qwen",
+                )
+            },
+            default_role="builder",
+            model_limits={"lmstudio/qwen": ModelLimitConfig(concurrency=1)},
         ),
-        store=cast(
-            Any,
-            SimpleNamespace(
-                list_active_runs=lambda session_id=None: [active_run],
-                get_main_session_state=lambda session_id=None: None,
-            ),
-        ),
+        store=store,
+        jobs=jobs,
         registry=cast(Any, SimpleNamespace()),
         paths=OrchestraPaths(
-            config_path=Path("/tmp/config.yaml"),
-            catalog_path=Path("/tmp/catalog.yaml"),
+            config_path=tmp_path / "config.yaml",
+            catalog_path=tmp_path / "catalog.yaml",
         ),
     )
+    admit_run(
+        jobs,
+        store,
+        RunRecord(
+            run_id="run-1",
+            orchestrator_session_id="manual:test-session",
+            harness="shell",
+            role="builder",
+            model="lmstudio/qwen",
+            task_label="test task",
+            log_path=tmp_path / "logs" / "run-1.jsonl",
+            created_at=utc_now(),
+        ),
+    )
+    store.update_run("run-1", RunUpdate(status="running"))
 
     assert format_status(context, "manual:test-session").splitlines()[:11] == [
         "orchestra_tools: on",
@@ -862,17 +275,18 @@ def test_status_module_exports_match_direct_imports(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "orchestra.db")
     store.initialize()
     context = AppContext(
-        config=AppConfig(
+        config=(config := AppConfig(
             default_timeout=30,
             prompts=prompts,
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
             concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
-        ),
+        )),
         catalog=AgentCatalog(
             roles={"worker": RoleConfig(harness="pi", command=["pi", "-p", "{prompt}"])},
         ),
         store=store,
+        jobs=make_jobs(store, config),
         registry=cast(Any, SimpleNamespace()),
         paths=OrchestraPaths(
             config_path=tmp_path / "config.yaml",
@@ -891,13 +305,13 @@ def test_roles_module_exports_match_direct_imports(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "orchestra.db")
     store.initialize()
     context = AppContext(
-        config=AppConfig(
+        config=(config := AppConfig(
             default_timeout=30,
             prompts=prompts,
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
             concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=2),
-        ),
+        )),
         catalog=AgentCatalog(
             default_role="builder",
             roles={
@@ -910,6 +324,7 @@ def test_roles_module_exports_match_direct_imports(tmp_path: Path) -> None:
             },
         ),
         store=store,
+        jobs=make_jobs(store, config),
         registry=cast(Any, SimpleNamespace()),
         paths=OrchestraPaths(
             config_path=tmp_path / "config.yaml",
@@ -1364,7 +779,11 @@ def test_internal_dispatch_ack_reports_concurrency_headroom(
 
     store = StateStore(db_path)
     store.initialize()
-    store.create_run(
+    jobs = JobQueue(db_path)
+    jobs.initialize(Limits(global_limit=4, per_owner_limit=5))
+    seed_run(
+        jobs,
+        store,
         RunRecord(
             run_id="ack-run-1",
             orchestrator_session_id="manual:ack-session",
@@ -1374,7 +793,7 @@ def test_internal_dispatch_ack_reports_concurrency_headroom(
             log_path=tmp_path / "logs" / "ack-run-1.jsonl",
             created_at="2026-01-01T00:00:00Z",
             transcript_path=tmp_path / "transcripts" / "ack-run-1.jsonl",
-        )
+        ),
     )
 
     from orchestra.cli import main

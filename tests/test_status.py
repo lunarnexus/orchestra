@@ -8,6 +8,7 @@ from orchestra.config import AgentCatalog, AppConfig, ConcurrencyConfig, RoleCon
 from orchestra.context import AppContext, OrchestraPaths
 from orchestra.state import STATUS_DONE, STATUS_RUNNING, RunRecord, RunUpdate, StateStore
 from orchestra.status import format_debug_run, format_history, format_status, status_payload
+from tests.helpers import make_jobs
 from tests.test_cli_commands import load_root_prompt_config
 
 
@@ -15,13 +16,13 @@ def _make_context(tmp_path: Path) -> AppContext:
     store = StateStore(tmp_path / "orchestra.db")
     store.initialize()
     return AppContext(
-        config=AppConfig(
+        config=(config := AppConfig(
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
             default_timeout=30,
             concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=3),
             prompts=load_root_prompt_config(),
-        ),
+        )),
         catalog=AgentCatalog(
             roles={
                 "builder": RoleConfig(harness="shell", command=["echo"]),
@@ -30,6 +31,7 @@ def _make_context(tmp_path: Path) -> AppContext:
             default_role="builder",
         ),
         store=store,
+        jobs=make_jobs(store, config),
         registry=cast(Any, SimpleNamespace()),
         paths=OrchestraPaths(
             config_path=tmp_path / "config.yaml",
@@ -43,7 +45,7 @@ def test_format_status_shows_auto_verify_linkage_metadata_for_active_run(
 ) -> None:
     context = _make_context(tmp_path)
     store = context.store
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="builder-run",
             orchestrator_session_id="manual:cycle",
@@ -54,7 +56,7 @@ def test_format_status_shows_auto_verify_linkage_metadata_for_active_run(
             created_at="2026-01-01T00:00:00Z",
         )
     )
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="verifier-run",
             orchestrator_session_id="manual:cycle",
@@ -88,7 +90,7 @@ def test_format_status_shows_auto_verify_linkage_metadata_for_active_run(
 def test_format_history_shows_auto_verify_linkage_metadata(tmp_path: Path) -> None:
     context = _make_context(tmp_path)
     store = context.store
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="builder-run",
             orchestrator_session_id="manual:cycle",
@@ -99,7 +101,7 @@ def test_format_history_shows_auto_verify_linkage_metadata(tmp_path: Path) -> No
             created_at="2026-01-01T00:00:00Z",
         )
     )
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="verifier-run",
             orchestrator_session_id="manual:cycle",
@@ -149,7 +151,7 @@ def test_format_history_shows_auto_verify_linkage_metadata(tmp_path: Path) -> No
 def test_format_debug_run_includes_canonical_return_and_artifacts(tmp_path: Path) -> None:
     context = _make_context(tmp_path)
     store = context.store
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="debug-run",
             orchestrator_session_id="manual:cycle",
@@ -190,7 +192,7 @@ def test_format_debug_run_includes_canonical_return_and_artifacts(tmp_path: Path
 def test_format_debug_run_prefers_current_canonical_artifacts(tmp_path: Path) -> None:
     context = _make_context(tmp_path)
     store = context.store
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="legacy-run",
             orchestrator_session_id="manual:cycle",
@@ -233,7 +235,7 @@ def test_format_debug_run_prefers_current_canonical_artifacts(tmp_path: Path) ->
 def test_status_payload_includes_linkage_metadata_for_active_runs(tmp_path: Path) -> None:
     context = _make_context(tmp_path)
     store = context.store
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="verifier-run",
             orchestrator_session_id="manual:cycle",
@@ -288,7 +290,7 @@ def test_status_payload_aggregates_completed_run_accounting_with_reasoning_and_c
 ) -> None:
     context = _make_context(tmp_path)
     store = context.store
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="done-1",
             orchestrator_session_id="manual:cycle",
@@ -299,7 +301,7 @@ def test_status_payload_aggregates_completed_run_accounting_with_reasoning_and_c
             created_at="2026-01-01T00:00:00Z",
         )
     )
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="done-2",
             orchestrator_session_id="manual:cycle",
@@ -360,7 +362,7 @@ def test_status_payload_marks_tokens_incomplete_when_completed_run_lacks_cost(
 ) -> None:
     context = _make_context(tmp_path)
     store = context.store
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="done-1",
             orchestrator_session_id="manual:cycle",
@@ -396,7 +398,7 @@ def test_status_payload_marks_tokens_incomplete_when_completed_run_lacks_cost(
 def test_format_debug_run_shows_auto_verify_linkage_metadata(tmp_path: Path) -> None:
     context = _make_context(tmp_path)
     store = context.store
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="verifier-run",
             orchestrator_session_id="manual:cycle",

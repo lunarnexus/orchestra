@@ -31,6 +31,7 @@ from orchestra.supervision import (
     _load_pending_request,
     build_auto_verifier_assignment,
 )
+from tests.helpers import make_jobs
 from tests.test_cli_commands import load_root_prompt_config
 
 
@@ -43,7 +44,7 @@ def _make_context(
     store = StateStore(tmp_path / "state" / "orchestra.db")
     store.initialize()
     return AppContext(
-        config=AppConfig(
+        config=(config := AppConfig(
             default_timeout=30,
             prompts=load_root_prompt_config(),
             state_dir=tmp_path / "state",
@@ -54,7 +55,7 @@ def _make_context(
                 else ConcurrencyConfig(global_limit=4, per_session_limit=3)
             ),
             auto_verify=auto_verify,
-        ),
+        )),
         catalog=AgentCatalog(
             roles={
                 "builder": RoleConfig(harness="shell", command=["echo"]),
@@ -68,6 +69,7 @@ def _make_context(
             default_role="builder",
         ),
         store=store,
+        jobs=make_jobs(store, config),
         registry=HarnessRegistry(),
         paths=OrchestraPaths(
             config_path=tmp_path / "config.yaml",

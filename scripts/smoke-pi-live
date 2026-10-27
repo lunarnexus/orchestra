@@ -358,13 +358,26 @@ def _spsi_preflight_seed_worker_run(
     role: str,
     orchestrator_session_id: str,
 ) -> str:
+    from orchestra.admission import admit_run
+    from orchestra.jobs import JobQueue, Limits
     from orchestra.state import RunRecord, StateStore
 
     run_id = f"preflight{role}{os.getpid()}"
     state_dir.mkdir(parents=True, exist_ok=True)
     store = StateStore(state_dir / "orchestra.db")
     store.initialize()
-    store.create_run(
+    jobs = JobQueue(store.database_path)
+    if jobs.schema_initialized():
+        # The queue was already initialized by the orchestra runtime (which owns
+        # concurrency config). Use the stored policy instead of overriding it.
+        limits = jobs.get_limits()
+    else:
+        limits = jobs.initialize(
+            Limits(global_limit=4, per_owner_limit=4, resource_limits={})
+        )
+    admit_run(
+        jobs,
+        store,
         RunRecord(
             run_id=run_id,
             orchestrator_session_id=orchestrator_session_id,

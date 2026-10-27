@@ -21,25 +21,24 @@ def test_read_only_status_does_not_run_schema_writes_under_held_writer(
     )
     StateStore(db_path).initialize()
 
+    command = [
+        sys.executable,
+        "-m",
+        "orchestra",
+        "--config",
+        str(config_path.parent),
+        "status",
+        "--session-id",
+        "manual:read-lock",
+    ]
+    # First call initializes every store, exactly as any first command does.
+    initialized = subprocess.run(command, check=False, capture_output=True, text=True, timeout=15)
+    assert initialized.returncode == 0, initialized.stderr
+
     writer = sqlite3.connect(db_path, timeout=1)
     writer.execute("BEGIN IMMEDIATE")
     try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "orchestra",
-                "--config",
-                str(config_path.parent),
-                "status",
-                "--session-id",
-                "manual:read-lock",
-            ],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
+        result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=5)
     finally:
         writer.rollback()
         writer.close()

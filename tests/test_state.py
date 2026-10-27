@@ -33,7 +33,6 @@ from orchestra.state import (
     STATUS_INCOMPLETE,
     STATUS_QUEUED,
     STATUS_RUNNING,
-    ConcurrencyLimitError,
     RunRecord,
     RunUpdate,
     StateError,
@@ -236,7 +235,7 @@ def test_plan_prune_reports_old_terminal_runs_and_owned_paths(tmp_path: Path) ->
     )
     for record in (old_run, recent_run, old_created_recently_ended_run, active_run, incomplete_run):
         queued = replace(record, status=STATUS_QUEUED)
-        store.create_run(queued)
+        store.insert_run(queued)
         if record.status != STATUS_QUEUED:
             if record.status == STATUS_RUNNING:
                 store.update_run(record.run_id, RunUpdate(status=STATUS_RUNNING))
@@ -285,7 +284,7 @@ def test_list_pending_report_runs_holds_builder_until_auto_child_finishes(
         "manual:session-a",
         cycle_id="builder-run",
     )
-    store.create_run(builder)
+    store.insert_run(builder)
     store.update_run(builder.run_id, RunUpdate(status=STATUS_RUNNING))
     store.update_run(builder.run_id, RunUpdate(status=STATUS_DONE, result_output="builder ok"))
     verifier = make_run(
@@ -297,7 +296,7 @@ def test_list_pending_report_runs_holds_builder_until_auto_child_finishes(
         trigger_reason="auto_verify",
         sequence_index=1,
     )
-    store.create_run(verifier)
+    store.insert_run(verifier)
     store.update_run(verifier.run_id, RunUpdate(status=STATUS_RUNNING))
 
     assert store.list_pending_report_runs("manual:session-a") == []
@@ -349,7 +348,7 @@ def test_delete_prune_candidates_removes_runs_owned_files_and_empty_sessions(
         ),
     )
     for record in records:
-        store.create_run(replace(record, status=STATUS_QUEUED))
+        store.insert_run(replace(record, status=STATUS_QUEUED))
         store.update_run(record.run_id, RunUpdate(status=STATUS_RUNNING))
         store.update_run(record.run_id, RunUpdate(status=record.status, ended_at=record.ended_at))
 
@@ -389,7 +388,7 @@ def test_delete_prune_candidates_keeps_run_when_owned_file_delete_fails(
     old_log = tmp_path / "logs" / "old-done.jsonl"
     old_log.parent.mkdir(parents=True, exist_ok=True)
     old_log.write_text("log", encoding="utf-8")
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id="old-done",
             orchestrator_session_id="manual:old",
@@ -528,7 +527,7 @@ def test_new_run_uses_canonical_paths_and_semantic_verdict(tmp_path: Path) -> No
         log_path=canonical_events_path(tmp_path / "state", "run-new"),
         created_at="2026-07-27T00:00:00Z",
     )
-    store.create_run(record)
+    store.insert_run(record)
     store.update_run("run-new", RunUpdate(status=STATUS_RUNNING))
     updated = store.update_run(
         "run-new",
@@ -599,7 +598,7 @@ def test_reserve_and_get_run_round_trip(state_store: StateStore, tmp_path: Path)
         sequence_index=1,
     )
 
-    state_store.reserve_run(record, global_limit=4, per_session_limit=3)
+    state_store.insert_run(record)
     loaded = state_store.get_run("run-1")
 
     assert loaded == record
@@ -610,7 +609,7 @@ def test_update_run_tracks_state_transitions_and_metadata(
     tmp_path: Path,
 ) -> None:
     record = make_run(tmp_path, run_id="run-2", session_id="pi:session-a")
-    state_store.create_run(record)
+    state_store.insert_run(record)
 
     running = state_store.update_run(
         "run-2",
@@ -676,7 +675,7 @@ def test_update_run_tracks_state_transitions_and_metadata(
 
 def test_late_terminal_update_is_ignored(state_store: StateStore, tmp_path: Path) -> None:
     record = make_run(tmp_path, run_id="run-3", session_id="pi:session-a")
-    state_store.create_run(record)
+    state_store.insert_run(record)
     state_store.update_run("run-3", RunUpdate(status=STATUS_RUNNING, process_id=7))
     cancelled = state_store.update_run(
         "run-3",
@@ -697,7 +696,7 @@ def test_concurrent_terminal_updates_leave_one_terminal_winner(
     tmp_path: Path,
 ) -> None:
     record = make_run(tmp_path, run_id="run-race", session_id="pi:session-a")
-    state_store.create_run(record)
+    state_store.insert_run(record)
     state_store.update_run("run-race", RunUpdate(status=STATUS_RUNNING, process_id=7))
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -725,7 +724,7 @@ def test_concurrent_terminal_updates_leave_one_terminal_winner(
 
 def test_invalid_status_transition_raises(state_store: StateStore, tmp_path: Path) -> None:
     record = make_run(tmp_path, run_id="run-4", session_id="pi:session-a")
-    state_store.create_run(record)
+    state_store.insert_run(record)
 
     with pytest.raises(StateError, match="invalid status transition: queued -> done"):
         state_store.update_run("run-4", RunUpdate(status=STATUS_DONE))
@@ -739,9 +738,9 @@ def test_count_and_list_active_runs_are_session_scoped(
     run_b = make_run(tmp_path, run_id="run-b", session_id="pi:session-a")
     run_c = make_run(tmp_path, run_id="run-c", session_id="pi:session-b")
 
-    state_store.create_run(run_a)
-    state_store.create_run(run_b)
-    state_store.create_run(run_c)
+    state_store.insert_run(run_a)
+    state_store.insert_run(run_b)
+    state_store.insert_run(run_c)
     state_store.update_run("run-b", RunUpdate(status=STATUS_RUNNING, process_id=77))
     state_store.update_run("run-c", RunUpdate(status=STATUS_RUNNING, process_id=88))
     state_store.update_run("run-c", RunUpdate(status=STATUS_FAILED, error_text="boom"))
@@ -755,64 +754,12 @@ def test_count_and_list_active_runs_are_session_scoped(
     assert state_store.count_active_runs("pi:session-b") == 0
 
 
-def test_reserve_run_enforces_limits_atomically(state_store: StateStore, tmp_path: Path) -> None:
-    state_store.reserve_run(
-        make_run(tmp_path, "run-5", "pi:session-a"),
-        global_limit=1,
-        per_session_limit=1,
-    )
-
-    with pytest.raises(ConcurrencyLimitError, match="global concurrency limit exceeded"):
-        state_store.reserve_run(
-            make_run(tmp_path, "run-6", "pi:session-b"),
-            global_limit=1,
-            per_session_limit=1,
-        )
-
-
-def test_reserve_run_enforces_model_limit_atomically(
-    state_store: StateStore,
-    tmp_path: Path,
-) -> None:
-    first = make_run(tmp_path, "run-model-1", "pi:session-a")
-    second = make_run(tmp_path, "run-model-2", "pi:session-b")
-    unlimited = make_run(tmp_path, "run-model-3", "pi:session-c")
-    first = replace(first, model="lmstudio/qwen")
-    second = replace(second, model="lmstudio/qwen")
-    unlimited = replace(unlimited, model="openai/gpt")
-
-    state_store.reserve_run(
-        first,
-        global_limit=10,
-        per_session_limit=10,
-        per_model_limits={"lmstudio/qwen": 1},
-    )
-
-    with pytest.raises(
-        ConcurrencyLimitError,
-        match="model concurrency limit exceeded: lmstudio/qwen active=1 limit=1",
-    ):
-        state_store.reserve_run(
-            second,
-            global_limit=10,
-            per_session_limit=10,
-            per_model_limits={"lmstudio/qwen": 1},
-        )
-
-    state_store.reserve_run(
-        unlimited,
-        global_limit=10,
-        per_session_limit=10,
-        per_model_limits={"lmstudio/qwen": 1},
-    )
-
-
 def test_pending_report_runs_are_not_marked_until_delivered(
     state_store: StateStore,
     tmp_path: Path,
 ) -> None:
     run = make_run(tmp_path, "run-pending", "pi:session-r")
-    state_store.create_run(run)
+    state_store.insert_run(run)
     state_store.update_run("run-pending", RunUpdate(status=STATUS_RUNNING, process_id=1))
     state_store.update_run("run-pending", RunUpdate(status=STATUS_DONE, result_summary="ok"))
 
@@ -837,7 +784,7 @@ def test_list_pending_report_runs_ignores_report_claimed_at(
     tmp_path: Path,
 ) -> None:
     run = make_run(tmp_path, "run-unclaimed", "pi:session-r")
-    state_store.create_run(run)
+    state_store.insert_run(run)
     state_store.update_run("run-unclaimed", RunUpdate(status=STATUS_RUNNING, process_id=1))
     state_store.update_run(
         "run-unclaimed",
@@ -864,8 +811,8 @@ def test_list_pending_report_runs_stays_exact_session_scoped(
 ) -> None:
     session_a = make_run(tmp_path, "run-stale-a", "pi:session-a")
     session_b = make_run(tmp_path, "run-stale-b", "pi:session-b")
-    state_store.create_run(session_a)
-    state_store.create_run(session_b)
+    state_store.insert_run(session_a)
+    state_store.insert_run(session_b)
     for run_id in ("run-stale-a", "run-stale-b"):
         state_store.update_run(run_id, RunUpdate(status=STATUS_RUNNING, process_id=1))
         state_store.update_run(run_id, RunUpdate(status=STATUS_DONE, result_summary="ok"))
@@ -883,7 +830,7 @@ def test_delivered_report_runs_are_not_listed_again(
     tmp_path: Path,
 ) -> None:
     run = make_run(tmp_path, "run-delivered-report", "pi:session-r")
-    state_store.create_run(run)
+    state_store.insert_run(run)
     state_store.update_run("run-delivered-report", RunUpdate(status=STATUS_RUNNING, process_id=1))
     state_store.update_run(
         "run-delivered-report",
@@ -906,8 +853,8 @@ def test_consume_pending_report_runs_marks_rows_reported(
 ) -> None:
     first = make_run(tmp_path, "run-7", "pi:session-r")
     second = make_run(tmp_path, "run-8", "pi:session-r")
-    state_store.create_run(first)
-    state_store.create_run(second)
+    state_store.insert_run(first)
+    state_store.insert_run(second)
     state_store.update_run("run-7", RunUpdate(status=STATUS_RUNNING, process_id=1))
     state_store.update_run("run-7", RunUpdate(status=STATUS_DONE, result_summary="ok"))
     state_store.update_run("run-8", RunUpdate(status=STATUS_RUNNING, process_id=2))
@@ -944,7 +891,7 @@ def test_begin_immediate_logs_slow_transactions(
 def test_state_store_writes_jsonl_lifecycle_logs(state_store: StateStore, tmp_path: Path) -> None:
     record = make_run(tmp_path, run_id="run-9", session_id="pi:session-a")
 
-    state_store.create_run(record)
+    state_store.insert_run(record)
     state_store.update_run("run-9", RunUpdate(status=STATUS_RUNNING, process_id=100))
     state_store.update_run(
         "run-9",
@@ -972,7 +919,7 @@ def test_state_store_persists_accounting_fields(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "state" / "orchestra.db")
     store.initialize()
     record = make_run(tmp_path, run_id="run-10", session_id="pi:session-b")
-    store.create_run(record)
+    store.insert_run(record)
     updated = store.update_run(
         "run-10",
         RunUpdate(

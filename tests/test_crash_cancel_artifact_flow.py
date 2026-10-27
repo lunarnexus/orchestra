@@ -13,6 +13,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from orchestra.admission import admit_run
 from orchestra.artifacts import canonical_return_path
 from orchestra.context import load_context
 from orchestra.dispatch import start_run
@@ -186,7 +187,9 @@ def test_supervisor_crash_reconciles_to_failed_with_report(
 
         # Capacity released: a new run can be reserved in the same session.
         now = datetime.now(UTC)
-        store.reserve_run(
+        admit_run(
+            context.jobs,
+            context.store,
             RunRecord(
                 run_id="after-crash-retry",
                 orchestrator_session_id="manual:crash",
@@ -196,8 +199,6 @@ def test_supervisor_crash_reconciles_to_failed_with_report(
                 log_path=tmp_path / "logs" / "after-crash-retry.jsonl",
                 created_at=now.strftime("%Y-%m-%dT%H:%M:%S.") + "000000+00:00",
             ),
-            global_limit=4,
-            per_session_limit=3,
         )
 
     finally:

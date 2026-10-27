@@ -98,7 +98,7 @@ def test_prune_retention_boundary_exact_cutoff_retained_one_second_older_deleted
         ("at-cutoff", cutoff),
         ("before-cutoff", "2026-03-02T23:59:59Z"),
     ):
-        store.create_run(
+        store.insert_run(
             RunRecord(
                 run_id=run_id,
                 orchestrator_session_id="manual:prune-boundary",

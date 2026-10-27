@@ -430,7 +430,7 @@ def test_spsi_payload_uses_worker_role_skills_for_worker_sessions(tmp_path: Path
             },
         ),
     )
-    context.store.create_run(
+    context.store.insert_run(
         RunRecord(
             run_id="abc123",
             orchestrator_session_id="pi:parent-session",

@@ -20,6 +20,7 @@ from orchestra.roles import (
     set_role_setting,
 )
 from orchestra.state import StateStore
+from tests.helpers import make_jobs
 from tests.test_cli_commands import load_root_prompt_config
 
 
@@ -202,20 +203,23 @@ def test_set_role_setting_rejects_unsupported_valid_yaml_shape(
         "    - harness_config: pi\n",
         encoding="utf-8",
     )
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
     context = AppContext(
-        config=AppConfig(
+        config=(config := AppConfig(
             default_timeout=600,
             prompts=load_root_prompt_config(),
             concurrency=ConcurrencyConfig(),
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
-        ),
+        )),
         catalog=AgentCatalog(
             default_role="builder",
             harness_configs={"pi": HarnessConfig(harness="pi", command=["pi"])},
             roles={"builder": RoleConfig(harness_config="pi")},
         ),
-        store=StateStore(tmp_path / "orchestra.db"),
+        store=store,
+        jobs=make_jobs(store, config),
         registry=HarnessRegistry(),
         paths=OrchestraPaths(config_path=tmp_path / "config.yaml", catalog_path=catalog_path),
     )
@@ -251,20 +255,23 @@ def test_set_role_setting_rejects_invalid_value_without_changing_file(
         "    model: old-model\n",
         encoding="utf-8",
     )
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
     context = AppContext(
-        config=AppConfig(
+        config=(config := AppConfig(
             default_timeout=600,
             prompts=load_root_prompt_config(),
             concurrency=ConcurrencyConfig(),
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
-        ),
+        )),
         catalog=AgentCatalog(
             default_role="builder",
             harness_configs={"pi": HarnessConfig(harness="pi", command=["pi"])},
             roles={"builder": RoleConfig(harness_config="pi", model="old-model")},
         ),
-        store=StateStore(tmp_path / "orchestra.db"),
+        store=store,
+        jobs=make_jobs(store, config),
         registry=HarnessRegistry(),
         paths=OrchestraPaths(config_path=tmp_path / "config.yaml", catalog_path=catalog_path),
     )
@@ -336,6 +343,8 @@ def test_set_role_setting_uses_targeted_catalog_patch_and_preserves_comments(
         state_dir=tmp_path / "state",
         log_dir=tmp_path / "logs",
     )
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
     context = AppContext(
         config=config,
         catalog=AgentCatalog(
@@ -349,7 +358,8 @@ def test_set_role_setting_uses_targeted_catalog_patch_and_preserves_comments(
                 "reviewer": RoleConfig(harness_config="hermes"),
             },
         ),
-        store=StateStore(tmp_path / "orchestra.db"),
+        store=store,
+        jobs=make_jobs(store, config),
         registry=HarnessRegistry(),
         paths=OrchestraPaths(config_path=tmp_path / "config.yaml", catalog_path=catalog_path),
     )

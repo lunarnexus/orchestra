@@ -5,8 +5,14 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import yaml
+
+from orchestra.admission import admit_run
+from orchestra.config import AppConfig
+from orchestra.jobs import JobQueue, Limits
+from orchestra.state import RunRecord, StateStore
 
 ROOT_PROMPTS = Path(__file__).resolve().parents[1] / "prompts.yaml"
 
@@ -88,3 +94,29 @@ def extract_run_id(output: str) -> str:
         for line in output.splitlines()
         if line.startswith("run_id:")
     )
+
+
+def make_jobs(store: Any, config: AppConfig) -> JobQueue:
+    """Build the durable job queue sharing ``store``'s database with ``config`` limits.
+
+    Mirrors :func:`orchestra.context.load_context` so tests exercise the same
+    admission policy the runtime uses.
+    """
+    queue = JobQueue(store.database_path)
+    queue.initialize(
+        Limits(
+            global_limit=config.concurrency.global_limit,
+            per_owner_limit=config.concurrency.per_session_limit,
+        )
+    )
+    return queue
+
+
+def seed_run(jobs: JobQueue, store: StateStore, record: RunRecord) -> RunRecord:
+    """Create ``record`` together with its admitted queue job.
+
+    Run rows never exist without a claim after the job-queue cutover, so tests
+    that need a pre-existing run admit it the same way dispatch does.
+    """
+    admit_run(jobs, store, record)
+    return record

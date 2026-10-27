@@ -17,6 +17,7 @@ from orchestra.context import AppContext, AppError, OrchestraPaths
 from orchestra.dispatch import StartedRun, format_started_run, start_run, started_run_payload
 from orchestra.state import RunRecord, StateStore
 from orchestra.supervision import _load_pending_request
+from tests.helpers import make_jobs
 from tests.test_cli_commands import load_root_prompt_config
 
 
@@ -24,18 +25,19 @@ def _make_context(tmp_path: Path) -> AppContext:
     store = StateStore(tmp_path / "state" / "orchestra.db")
     store.initialize()
     return AppContext(
-        config=AppConfig(
+        config=(config := AppConfig(
             default_timeout=30,
             prompts=load_root_prompt_config(),
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
             concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=3),
-        ),
+        )),
         catalog=AgentCatalog(
             roles={"builder": RoleConfig(harness="shell", command=["echo"])},
             default_role="builder",
         ),
         store=store,
+        jobs=make_jobs(store, config),
         registry=cast(Any, SimpleNamespace()),
         paths=OrchestraPaths(
             config_path=tmp_path / "config.yaml",

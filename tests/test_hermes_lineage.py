@@ -10,6 +10,7 @@ from orchestra.context import AppContext, OrchestraPaths
 from orchestra.harnesses import HarnessRegistry
 from orchestra.state import STATUS_DONE, STATUS_RUNNING, RunRecord, RunUpdate, StateStore
 from orchestra.status import format_history, format_status
+from tests.helpers import make_jobs
 
 ROOT_PROMPTS = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml").prompts
 
@@ -18,14 +19,15 @@ def make_context(tmp_path: Path) -> AppContext:
     store = StateStore(tmp_path / "state" / "orchestra.db")
     store.initialize()
     return AppContext(
-        config=AppConfig(
+        config=(config := AppConfig(
             default_timeout=600,
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
             prompts=ROOT_PROMPTS,
-        ),
+        )),
         catalog=AgentCatalog(roles={"worker": RoleConfig(harness="pi")}),
         store=store,
+        jobs=make_jobs(store, config),
         registry=HarnessRegistry(),
         paths=OrchestraPaths(
             config_path=tmp_path / "config.yaml",
@@ -56,7 +58,7 @@ def add_run(
         task_label=task_label,
         log_path=tmp_path / "logs" / f"{run_id}.jsonl",
     )
-    context.store.create_run(record)
+    context.store.insert_run(record)
     if status == STATUS_RUNNING:
         context.store.update_run(run_id, RunUpdate(status=STATUS_RUNNING, process_id=1234))
     elif status == STATUS_DONE:

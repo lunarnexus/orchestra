@@ -21,7 +21,15 @@ Notable user-facing changes to Orchestra are recorded here.
 
 ## Recent changes
 
+### Recent changes
+
 ### Improvements
+
+- Durable job queue (`src/orchestra/jobs/`) owns eligibility, capacity claims, and dependency graph resolution; `StateStore` owns execution records only. Job ID and Execution Run ID are identical, with no mapping table.
+- Clean cutover: legacy admission and concurrency SQL removed from `StateStore`; no compatibility wrappers, backfill, or fallback schedulers.
+- New `src/orchestra/admission.py` composes queue transitions with run-row writes atomically so reports never observe a zero-active gap between a terminal parent and a linked child.
+- Read-only commands no longer take a write lock on the shared SQLite database.
+
 
 - Simplify role skills and clarify artifact ownership.
 - Separate automatic verification from review and security checks.

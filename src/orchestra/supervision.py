@@ -9,11 +9,13 @@ import subprocess
 import sys
 import time
 import traceback
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict
 
+from orchestra.admission import PlannedChild, terminalize_run
 from orchestra.artifacts import (
     canonical_events_path,
     canonical_parent_context_path,
@@ -32,6 +34,7 @@ from orchestra.harnesses.common import (
     summary_was_truncated,
 )
 from orchestra.harnesses.processes import process_group_id
+from orchestra.jobs import JobOutcome
 from orchestra.logs import append_run_event, utc_now
 from orchestra.reports import clean_result_summary
 from orchestra.roles import SelectedRole, _fallback_note, _fallback_roles_for, _select_role
@@ -43,7 +46,6 @@ from orchestra.state import (
     STATUS_INCOMPLETE,
     STATUS_QUEUED,
     STATUS_RUNNING,
-    ConcurrencyLimitError,
     RunRecord,
     RunUpdate,
 )
@@ -63,6 +65,42 @@ class WorkerAccounting(TypedDict):
 
 def _app_error(message: str) -> Exception:
     return AppError(message)
+
+
+def _terminal_update(
+    context: AppContext,
+    run_id: str,
+    update: RunUpdate,
+    *,
+    children: Sequence[PlannedChild] = (),
+) -> RunRecord:
+    """Apply one terminal run update and release its queue claim together.
+
+    Every terminal transition goes through here so a run never looks finished
+    while its capacity claim is still held, and never frees capacity while its
+    run row still looks live. Already-terminal runs return unchanged.
+    """
+    owner_id = context.store.get_run(run_id).orchestrator_session_id
+    result = terminalize_run(
+        context.jobs,
+        context.store,
+        run_id=run_id,
+        owner_id=owner_id,
+        update=update,
+        outcome=JobOutcome(
+            status=update.status,
+            verdict=update.semantic_verdict,
+            summary=update.result_summary,
+            error_text=update.error_text,
+            blocker_text=update.blocker_text,
+        ),
+        children=children,
+    )
+    for reason in result.reasons:
+        _append_run_event(context, run_id, "child.dispatch_skipped", {"reason": reason})
+    if result.record is None:
+        return context.store.get_run(run_id)
+    return result.record
 
 
 def _require_session_id(session_id: str) -> None:
@@ -370,8 +408,6 @@ def _finalize_builder_with_auto_verifier(
     """
     from orchestra.dispatch import (
         PendingRunRequest,
-        _expanded_model_limits,
-        _format_concurrency_limit_error,
         _launch_reserved_child,
         _prepare_auto_child_record,
         _write_pending_request,
@@ -380,13 +416,13 @@ def _finalize_builder_with_auto_verifier(
     terminal_view = replace(builder_run, status=builder_update.status)
     chain = _auto_dispatch_chain_for_run(terminal_view)
     if chain is None or _auto_verifier_run_exists(context, terminal_view, chain):
-        return context.store.update_run(run_id, builder_update)
+        return _terminal_update(context, run_id, builder_update)
 
     request_file = canonical_request_path(context.config.state_dir, run_id)
     if not request_file.exists():
         request_file = legacy_request_path(context.config.state_dir, run_id)
     if not request_file.exists():
-        return context.store.update_run(run_id, builder_update)
+        return _terminal_update(context, run_id, builder_update)
 
     builder_request = _load_pending_request(run_id, request_file)
     reconcile_stale_queued_runs(context)
@@ -451,27 +487,30 @@ def _finalize_builder_with_auto_verifier(
     )
     _write_pending_request(pending_child_request)
 
-    try:
-        updated_builder, reserved_child = context.store.finalize_and_reserve_child(
-            run_id,
-            builder_update,
-            child_record=child_record,
-            global_limit=context.config.concurrency.global_limit,
-            per_session_limit=context.config.concurrency.per_session_limit,
-            per_model_limits=_expanded_model_limits(context.catalog.model_limits),
-        )
-    except ConcurrencyLimitError as exc:
-        raise _app_error(
-            _format_concurrency_limit_error(
-                str(exc), context=context, session_id=builder_run.orchestrator_session_id
-            )
-        ) from exc
-
-    if reserved_child is None:
-        return updated_builder
-
-    _launch_reserved_child(context, pending_child_request)
-    return updated_builder
+    # The builder's terminal result and the verifier's admission commit in one
+    # transaction, so report lookup can never see a zero-active gap between them.
+    # When capacity is unavailable the verifier alone is skipped: the builder
+    # result still lands, with evidence of why verification did not start.
+    result = terminalize_run(
+        context.jobs,
+        context.store,
+        run_id=run_id,
+        owner_id=builder_run.orchestrator_session_id,
+        update=builder_update,
+        outcome=JobOutcome(
+            status=builder_update.status,
+            verdict=builder_update.semantic_verdict,
+            summary=builder_update.result_summary,
+            error_text=builder_update.error_text,
+            blocker_text=builder_update.blocker_text,
+        ),
+        children=(PlannedChild(child_record),),
+    )
+    if result.record is None:
+        return context.store.get_run(run_id)
+    for _ in result.children:
+        _launch_reserved_child(context, pending_child_request)
+    return result.record
 
 
 def _auto_verifier_run_exists(
@@ -510,7 +549,8 @@ def run_supervisor_guarded(
             },
         )
         try:
-            return context.store.update_run(
+            return _terminal_update(
+                context,
                 run_id,
                 RunUpdate(
                     status=STATUS_FAILED,
@@ -655,13 +695,16 @@ def stop_run(context: AppContext, session_id: str, run_id: str) -> RunRecord:
     if record.status not in ACTIVE_STATUSES:
         raise _app_error("run is not active")
 
-    cancelled = context.store.update_run(
+    # The cancel request is durable before termination: the capacity claim stays
+    # held until the process is gone and the terminal write commits.
+    context.jobs.cancel(run_id, session_id)
+    if record.process_id is not None:
+        _terminate_owned_process(record.process_id, record.process_group_id)
+    return _terminal_update(
+        context,
         run_id,
         RunUpdate(status=STATUS_CANCELLED, blocker_text="Cancelled by orchestra stop"),
     )
-    if record.process_id is not None:
-        _terminate_owned_process(record.process_id, record.process_group_id)
-    return cancelled
 
 
 def reconcile_stale_queued_runs(
@@ -755,7 +798,8 @@ def _reconcile_stale_running_run(context: AppContext, run: RunRecord) -> RunReco
             else None,
         },
     )
-    return context.store.update_run(
+    return _terminal_update(
+        context,
         run.run_id,
         RunUpdate(
             status=STATUS_FAILED,
@@ -787,7 +831,8 @@ def _reconcile_queued_run(
             else None,
         },
     )
-    return context.store.update_run(
+    return _terminal_update(
+        context,
         run.run_id,
         RunUpdate(status=STATUS_FAILED, error_text=error_text, blocker_text=blocker_text),
     )
@@ -838,7 +883,8 @@ def _spawn_supervisor(context: AppContext, request_file: Path, run_id: str) -> N
         )
     except OSError as exc:
         _append_run_event(context, run_id, "supervisor.failed", {"error": str(exc)})
-        context.store.update_run(
+        _terminal_update(
+            context,
             run_id,
             RunUpdate(
                 status=STATUS_FAILED,
@@ -907,7 +953,8 @@ def _finalize_supervisor_setup_failure(
     error_text: str,
     blocker_text: str,
 ) -> RunRecord:
-    return context.store.update_run(
+    return _terminal_update(
+        context,
         run_id,
         RunUpdate(
             status=STATUS_FAILED,
@@ -1173,12 +1220,20 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
             )
         return current
 
-    terminal_status = (
-        result.status
-        if result.status in {STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}
-        else STATUS_FAILED
-    )
-    blocker_text = result.blocker_text
+    # A stop request takes precedence over the worker outcome: if the run was
+    # cancelled, terminalize as CANCELLED regardless of how the worker exited.
+    job = context.jobs.get(run_id, current.orchestrator_session_id)
+    if job.cancel_requested:
+        terminal_status = STATUS_CANCELLED
+        blocker_text = "Cancelled by orchestra stop"
+    else:
+        terminal_status = (
+            result.status
+            if result.status in {STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}
+            else STATUS_FAILED
+        )
+        blocker_text = result.blocker_text or ""
+
     effective_blocker_text = current.blocker_text if blocker_text is None else blocker_text
     result_output = _format_return_output(run_id, result)
     write_text_atomically(canonical_return_path(context.config.state_dir, run_id), result_output)
@@ -1224,7 +1279,7 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
                 context, run_id, current, builder_update
             )
         except Exception as exc:
-            updated = context.store.update_run(run_id, builder_update)
+            updated = _terminal_update(context, run_id, builder_update)
             try:
                 _append_run_event(
                     context,
@@ -1235,7 +1290,7 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
             except Exception:
                 pass
             return updated
-    return context.store.update_run(run_id, builder_update)
+    return _terminal_update(context, run_id, builder_update)
 
 
 def _format_return_output(run_id: str, result: WorkerResult) -> str:

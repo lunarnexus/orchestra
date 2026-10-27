@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from orchestra.admission import admit_run, terminalize_run
 from orchestra.artifacts import (
     canonical_parent_context_path,
     canonical_request_path,
@@ -15,13 +16,19 @@ from orchestra.artifacts import (
     write_json_atomically,
     write_private_text,
 )
-from orchestra.config import ModelLimitConfig, PromptConfig
+from orchestra.config import PromptConfig
 from orchestra.context import CONTRACT_VERSION, AppContext, AppError
 from orchestra.harnesses.common import orchestra_can_dispatch
+from orchestra.jobs import (
+    CapacityUnavailableError,
+    DependencyUnresolvedError,
+    JobConflictError,
+    JobOutcome,
+)
 from orchestra.logs import utc_now
 from orchestra.reports import format_run_report
 from orchestra.roles import _select_role
-from orchestra.state import STATUS_FAILED, ConcurrencyLimitError, RunRecord, RunUpdate
+from orchestra.state import STATUS_FAILED, RunRecord, RunUpdate
 from orchestra.status import format_status
 
 if TYPE_CHECKING:
@@ -74,17 +81,6 @@ def _require_session_id(session_id: str) -> None:
 def _default_task_label(goal: str) -> str:
     compact = " ".join(goal.split())
     return compact[:77] + "..." if len(compact) > 80 else compact
-
-
-def _expanded_model_limits(
-    model_limits: dict[str, ModelLimitConfig],
-) -> dict[str, int]:
-    expanded: dict[str, int] = {}
-    for model, limit in model_limits.items():
-        expanded[model] = limit.concurrency
-        if "/" in model:
-            expanded.setdefault(model.rsplit("/", 1)[1], limit.concurrency)
-    return expanded
 
 
 def _request_payload(pending_request: PendingRunRequest) -> dict[str, object]:
@@ -164,6 +160,20 @@ def _launch_reserved_child(context: AppContext, pending_request: PendingRunReque
     from orchestra.supervision import _spawn_supervisor
 
     _spawn_supervisor(context, pending_request.request_file, pending_request.run_id)
+
+
+def _capacity_error_text(exc: CapacityUnavailableError) -> str:
+    """State a queue shortage in dispatch terms the orchestrator acts on."""
+    if exc.reason == "global":
+        return "global concurrency limit exceeded"
+    if exc.reason == "owner":
+        return "per-session concurrency limit exceeded"
+    if exc.reason == "resource":
+        return (
+            f"model concurrency limit exceeded: {exc.resource_key} "
+            f"active={exc.active} limit={exc.limit}"
+        )
+    return str(exc)
 
 
 def _format_concurrency_limit_error(
@@ -304,13 +314,14 @@ def start_run(
     reconcile_stale_queued_runs(context)
 
     try:
-        context.store.reserve_run(
-            record,
-            global_limit=context.config.concurrency.global_limit,
-            per_session_limit=context.config.concurrency.per_session_limit,
-            per_model_limits=_expanded_model_limits(context.catalog.model_limits),
-        )
-    except ConcurrencyLimitError as exc:
+        admit_run(context.jobs, context.store, record)
+    except CapacityUnavailableError as exc:
+        raise _app_error(
+            _format_concurrency_limit_error(
+                _capacity_error_text(exc), context=context, session_id=session_id
+            )
+        ) from exc
+    except (DependencyUnresolvedError, JobConflictError) as exc:
         raise _app_error(
             _format_concurrency_limit_error(str(exc), context=context, session_id=session_id)
         ) from exc
@@ -335,16 +346,23 @@ def start_run(
         _write_pending_request(pending_request)
         _spawn_supervisor(context, request_file, run_id)
     except Exception as exc:
-        # Post-reservation failure: immediately terminalize the run to release
-        # the capacity slot so the caller can retry without waiting for
-        # reconciliation grace periods.
+        # Post-admission failure: release the capacity claim and terminalize the
+        # run together so the caller can retry without waiting for reconciliation.
         try:
-            context.store.update_run(
-                run_id,
-                RunUpdate(
+            terminalize_run(
+                context.jobs,
+                context.store,
+                run_id=run_id,
+                owner_id=session_id,
+                update=RunUpdate(
                     status=STATUS_FAILED,
                     error_text=str(exc),
-                    blocker_text="Post-reservation setup failure",
+                    blocker_text="Post-admission setup failure",
+                ),
+                outcome=JobOutcome(
+                    status=STATUS_FAILED,
+                    error_text=str(exc),
+                    blocker_text="Post-admission setup failure",
                 ),
             )
         except Exception:

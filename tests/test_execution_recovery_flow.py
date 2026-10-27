@@ -4,25 +4,29 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+from orchestra.admission import admit_run
 from orchestra.artifacts import canonical_return_path
 from orchestra.context import load_context
-from orchestra.dispatch import start_run
+from orchestra.dispatch import PendingRunRequest, start_run
 from orchestra.state import (
     STATUS_FAILED,
     STATUS_QUEUED,
     STATUS_RUNNING,
     TERMINAL_STATUSES,
     RunRecord,
+    RunTransition,
     RunUpdate,
     StateStore,
 )
 from orchestra.supervision import reconcile_stale_queued_runs, run_supervisor_guarded
+from tests.helpers import seed_run
 from tests.types import RuntimeFilesFactory
 
 
@@ -103,7 +107,7 @@ def test_stale_queued_run_at_grace_boundary_reconciled(
     boundary = (now - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%S.")
     created_at_boundary = boundary + "000000+00:00"
 
-    context.store.create_run(
+    seed_run(context.jobs, context.store, 
         RunRecord(
             run_id="staleboundary1",
             orchestrator_session_id="manual:boundary",
@@ -126,7 +130,9 @@ def test_stale_queued_run_at_grace_boundary_reconciled(
     assert record.ended_at is not None
 
     # Retry slot available: a new run can be reserved in the same session.
-    context.store.reserve_run(
+    admit_run(
+        context.jobs,
+        context.store,
         RunRecord(
             run_id="retry-after-boundary",
             orchestrator_session_id="manual:boundary",
@@ -136,8 +142,6 @@ def test_stale_queued_run_at_grace_boundary_reconciled(
             log_path=tmp_path / "logs" / "retry.jsonl",
             created_at=now.strftime("%Y-%m-%dT%H:%M:%S.") + "000000+00:00",
         ),
-        global_limit=4,
-        per_session_limit=3,
     )
 
 
@@ -148,9 +152,9 @@ def test_post_reservation_request_write_failure_releases_slot_immediately(
     fake_worker_script: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If the request file write fails after reserve_run, the slot is released immediately.
+    """If the request file write fails after admission, the slot is released immediately.
 
-    Post-reservation failure terminalizes the run to FAILED, freeing the capacity
+    Post-admission failure terminalizes the run to FAILED, freeing the capacity
     slot so the caller can retry without waiting for reconciliation.
     """
     config_path, catalog_path, db_path = runtime_files_factory(
@@ -160,30 +164,19 @@ def test_post_reservation_request_write_failure_releases_slot_immediately(
     context = load_context(config_path=config_path, catalog_path=catalog_path)
     store = context.store
 
-    original_reserve_run = store.reserve_run
     captured_run_dirs: list[Path] = []
 
-    def _fault_reserve_run(
-        record: RunRecord,
-        *,
-        global_limit: int,
-        per_session_limit: int,
-        per_model_limits: dict[str, int] | None = None,
-    ) -> RunRecord:
-        result = original_reserve_run(
-            record,
-            global_limit=global_limit,
-            per_session_limit=per_session_limit,
-            per_model_limits=per_model_limits,
-        )
+    def _fault_write(pending_request: PendingRunRequest) -> None:
         # Make the run directory read-only to cause a real filesystem fault
-        # on the subsequent request file write.
-        run_dir = record.log_path.parent
+        # on the request file write, then fail.
+        run_dir = Path(pending_request.request_file).parent
         os.chmod(run_dir, 0o500)
         captured_run_dirs.append(run_dir)
-        return result
+        raise OSError("simulated request file write failure")
 
-    monkeypatch.setattr(store, "reserve_run", _fault_reserve_run)
+    monkeypatch.setattr(
+        "orchestra.dispatch._write_pending_request", _fault_write
+    )
 
     try:
         try:
@@ -250,7 +243,9 @@ def test_stale_running_run_dead_pids_reconciles_to_failed(
     now = datetime.now(UTC)
     created_at = now.strftime("%Y-%m-%dT%H:%M:%S.") + "000000+00:00"
 
-    store.create_run(
+    seed_run(
+        context.jobs,
+        context.store,
         RunRecord(
             run_id="crash-after-start",
             orchestrator_session_id="manual:crash",
@@ -262,7 +257,7 @@ def test_stale_running_run_dead_pids_reconciles_to_failed(
         )
     )
     # Transition to RUNNING with the dead PIDs.
-    store.update_run(
+    context.store.update_run(
         "crash-after-start",
         RunUpdate(
             status=STATUS_RUNNING,
@@ -284,7 +279,9 @@ def test_stale_running_run_dead_pids_reconciles_to_failed(
     assert record.ended_at is not None
 
     # Capacity released: a new run can be reserved in the same session.
-    store.reserve_run(
+    admit_run(
+        context.jobs,
+        context.store,
         RunRecord(
             run_id="after-crash",
             orchestrator_session_id="manual:crash",
@@ -294,8 +291,6 @@ def test_stale_running_run_dead_pids_reconciles_to_failed(
             log_path=tmp_path / "logs" / "after-crash.jsonl",
             created_at=now.strftime("%Y-%m-%dT%H:%M:%S.") + "000000+00:00",
         ),
-        global_limit=4,
-        per_session_limit=3,
     )
 
 
@@ -323,7 +318,9 @@ def test_artifact_write_then_terminal_db_update_failure_recovers(
     created_at = now.strftime("%Y-%m-%dT%H:%M:%S.") + "000000+00:00"
     run_id = "artifact-db-fault"
 
-    store.create_run(
+    seed_run(
+        context.jobs,
+        context.store,
         RunRecord(
             run_id=run_id,
             orchestrator_session_id="manual:artifact-fault",
@@ -332,7 +329,7 @@ def test_artifact_write_then_terminal_db_update_failure_recovers(
             task_label="artifact fault test",
             log_path=tmp_path / "logs" / f"{run_id}.jsonl",
             created_at=created_at,
-        )
+        ),
     )
 
     # Write a valid request file for the supervisor to load.
@@ -355,19 +352,26 @@ def test_artifact_write_then_terminal_db_update_failure_recovers(
         encoding="utf-8",
     )
 
-    # Patch update_run to fail on the first terminal update (from _finalize_run).
-    # The guarded handler's subsequent update will succeed.
+    # Patch apply_run_update_on to fail on the first terminal update
+    # (from _finalize_run). The guarded handler's subsequent update will succeed.
     first_terminal_update_failed = False
-    original_update_run = store.update_run
+    original_apply = store.apply_run_update_on
 
-    def _patched_update_run(rid: str, update: RunUpdate) -> RunRecord:
+    def _patched_apply(
+        connection: sqlite3.Connection,
+        rid: str,
+        update: RunUpdate,
+    ) -> RunTransition | None:
         nonlocal first_terminal_update_failed
-        if update.status in TERMINAL_STATUSES and not first_terminal_update_failed:
+        if (
+            update.status in TERMINAL_STATUSES
+            and not first_terminal_update_failed
+        ):
             first_terminal_update_failed = True
             raise OSError("simulated terminal DB update failure")
-        return original_update_run(rid, update)
+        return original_apply(connection, rid, update)
 
-    monkeypatch.setattr(store, "update_run", _patched_update_run)
+    monkeypatch.setattr(store, "apply_run_update_on", _patched_apply)
 
     # Call the guarded supervisor directly (in-process, no subprocess).
     record = run_supervisor_guarded(context, run_id=run_id, request_file=request_file)
@@ -383,17 +387,6 @@ def test_artifact_write_then_terminal_db_update_failure_recovers(
     assert return_path.exists()
     assert return_path.read_text(encoding="utf-8").strip() != ""
 
-    # Capacity released: a new run can be reserved in the same session.
-    store.reserve_run(
-        RunRecord(
-            run_id="after-artifact-fault",
-            orchestrator_session_id="manual:artifact-fault",
-            harness="pi",
-            role="worker",
-            task_label="after fault",
-            log_path=tmp_path / "logs" / "after-artifact-fault.jsonl",
-            created_at=now.strftime("%Y-%m-%dT%H:%M:%S.") + "000000+00:00",
-        ),
-        global_limit=4,
-        per_session_limit=3,
-    )
+    # Capacity released: the claim is no longer held.
+    job = context.jobs.get(run_id, "manual:artifact-fault")
+    assert job.state != "claimed"

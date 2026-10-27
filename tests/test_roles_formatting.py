@@ -7,18 +7,21 @@ from orchestra.context import AppContext, OrchestraPaths
 from orchestra.harnesses import HarnessRegistry
 from orchestra.roles import format_roles, format_tool_roles
 from orchestra.state import StateStore
+from tests.helpers import make_jobs
 from tests.test_cli_commands import load_root_prompt_config
 
 
 def _make_context(tmp_path: Path) -> AppContext:
+    store = StateStore(tmp_path / "orchestra.db")
+    store.initialize()
     return AppContext(
-        config=AppConfig(
+        config=(config := AppConfig(
             default_timeout=600,
             prompts=load_root_prompt_config(),
             concurrency=ConcurrencyConfig(),
             state_dir=tmp_path / "state",
             log_dir=tmp_path / "logs",
-        ),
+        )),
         catalog=AgentCatalog(
             default_role="reviewer",
             roles={
@@ -27,7 +30,8 @@ def _make_context(tmp_path: Path) -> AppContext:
                 "verifier": RoleConfig(harness="pi", enabled=True, enabled_mode="auto"),
             },
         ),
-        store=StateStore(tmp_path / "orchestra.db"),
+        store=store,
+        jobs=make_jobs(store, config),
         registry=HarnessRegistry(),
         paths=OrchestraPaths(
             config_path=tmp_path / "config.yaml",

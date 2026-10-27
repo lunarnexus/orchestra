@@ -27,7 +27,7 @@ from orchestra.supervision import (
     _result_from_timed_out_worker,
     reconcile_stale_queued_runs,
 )
-from tests.helpers import extract_run_id, run_cli, wait_for_condition
+from tests.helpers import extract_run_id, run_cli, seed_run, wait_for_condition
 from tests.types import RuntimeFilesFactory
 
 
@@ -297,7 +297,7 @@ def test_status_reconciles_stale_queued_run_without_supervisor_owner(
         [python_executable, str(fake_worker_script), "success", "--output", "unused"],
     )
     context = load_context(config_path=config_path, catalog_path=catalog_path)
-    context.store.create_run(
+    seed_run(context.jobs, context.store, 
         RunRecord(
             run_id="stalequeued1",
             orchestrator_session_id="manual:stale",
@@ -339,7 +339,7 @@ def test_reconcile_does_not_fail_queued_run_with_live_supervisor_after_startup_d
         [python_executable, str(fake_worker_script), "success", "--output", "unused"],
     )
     context = load_context(config_path=config_path, catalog_path=catalog_path)
-    context.store.create_run(
+    seed_run(context.jobs, context.store, 
         RunRecord(
             run_id="slowstart1",
             orchestrator_session_id="manual:slow-start",
@@ -374,7 +374,7 @@ def test_status_reconciles_stale_running_run_with_dead_worker_and_supervisor(
         [python_executable, str(fake_worker_script), "success", "--output", "unused"],
     )
     context = load_context(config_path=config_path, catalog_path=catalog_path)
-    context.store.create_run(
+    seed_run(context.jobs, context.store, 
         RunRecord(
             run_id="stalerunning1",
             orchestrator_session_id="manual:stale-running",
@@ -440,7 +440,7 @@ def test_start_run_reconciles_stale_running_model_slot_before_reserve(
         encoding="utf-8",
     )
     context = load_context(config_path=config_path, catalog_path=catalog_path)
-    context.store.create_run(
+    seed_run(context.jobs, context.store, 
         RunRecord(
             run_id="stalemodel1",
             orchestrator_session_id="manual:stale-model",

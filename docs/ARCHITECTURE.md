@@ -183,7 +183,6 @@ CLI subprocesses.
 
 The scheduler and detached supervisor own operational coordination:
 
-- atomic global, per-session, and configured per-model concurrency checks
 - process and process-group tracking
 - transition from queued to running
 - hard timeout enforcement
@@ -192,8 +191,19 @@ The scheduler and detached supervisor own operational coordination:
 - stale queued-run reconciliation
 - completion checks for consolidated session reports
 
-SQLite stores state but is not a task queue. Current over-limit behavior is
-fail-fast rather than queueing.
+Capacity and eligibility are owned by the durable job queue in
+`src/orchestra/jobs/`. The queue decides which runs are eligible, claims
+capacity durably (surviving process restart), and resolves dependency graphs
+with skip propagation. `StateStore` owns execution records only; both share
+the same SQLite database path. Job ID and Execution Run ID are identical, so
+no mapping table is needed. A run row is never written without a matching
+queue claim, and a claim is never released while its run still looks live.
+
+The admission layer in `src/orchestra/admission.py` composes a queue
+transition with its matching run-row write in one SQLite transaction, so
+reports can never observe a zero-active gap between a terminal parent and a
+linked child. Over-limit dispatch is fail-fast rather than queueing: the
+queue rejects admission and no run row is written.
 
 ## Runtime data flow
 
@@ -205,7 +215,7 @@ fail-fast rather than queueing.
 4. Core resolves the requested role or catalog default.
 5. The role resolves to a harness configuration, model/profile/agent fields,
    skills, environment, and fallback policy.
-6. The scheduler atomically checks applicable concurrency limits.
+6. The job queue admits the run: dependency eligibility is evaluated, capacity is claimed under the configured global, per-session, and per-model limits, and the run row is written in the same transaction.
 7. Core records the run and starts a detached supervisor.
 8. The selected harness renders a focused subagent prompt and starts its process.
 9. Orchestra records lifecycle events and process metadata while the harness

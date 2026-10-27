@@ -36,7 +36,7 @@ def _create_terminal_run(
     run_id: str,
     session_id: str,
 ) -> None:
-    store.create_run(
+    store.insert_run(
         RunRecord(
             run_id=run_id,
             orchestrator_session_id=session_id,
