@@ -14,7 +14,6 @@ const WATCHER_TIMEOUT_MARGIN_SECONDS = 30;
 const REPORT_WATCHER_MAX_ATTEMPTS = 3;
 const REPORT_WATCHER_RETRY_MS = 500;
 
-
 interface OrchestraFooterTheme {
   bold(text: string): string;
   fg(color: string, text: string): string;

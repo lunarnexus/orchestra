@@ -168,9 +168,25 @@ python3 -m pip install -e ".[dev]"
 Release versions come from Git tags through `setuptools-scm`. Release tags use
 `vMAJOR.MINOR.PATCH`; commits after a tag build as development versions.
 
-## Quick start
+## Quick Start
 
 Install Orchestra into the host you want to use:
+
+Check the installation:
+
+```bash
+orchestra doctor
+orchestra roles
+```
+
+Run a manual subagent task from the CLI:
+
+```bash
+orchestra do --session-id manual:demo --goal "Summarize the repository status"
+orchestra history --session-id manual:demo --limit 10
+```
+
+Install a host integration, then use Orchestra from inside that host:
 
 ```bash
 orchestra init pi

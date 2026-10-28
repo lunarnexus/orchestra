@@ -1232,7 +1232,7 @@ def _finalize_run(context: AppContext, run_id: str, result: WorkerResult) -> Run
             if result.status in {STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}
             else STATUS_FAILED
         )
-        blocker_text = result.blocker_text or ""
+        blocker_text = result.blocker_text
 
     effective_blocker_text = current.blocker_text if blocker_text is None else blocker_text
     result_output = _format_return_output(run_id, result)
