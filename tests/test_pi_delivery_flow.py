@@ -405,6 +405,65 @@ def test_pi_delivery_journey_a(
         _cleanup_active_runs(db_path, session_key, config_path.parent, python_executable)
 
 
+def test_dispatch_while_report_pending_keeps_next_report_watcher(
+    tmp_path: Path,
+    runtime_files_factory: Any,
+    python_executable: str,
+    fake_worker_script: Path,
+) -> None:
+    pi_pkg = _find_pi_package()
+    if pi_pkg is None:
+        pytest.skip("Pi coding-agent package not found at ~/.pi/agent/install")
+    config_path, _, db_path = runtime_files_factory(
+        tmp_path,
+        [python_executable, str(fake_worker_script), "success", "--output", "worker ok"],
+    )
+    store = StateStore(db_path)
+    sid = _session_id()
+    session_key = f"pi:{sid}"
+    driver = DriverClient(tmp_path, config_path, python_executable, pi_pkg)
+    try:
+        driver.start()
+        driver.send_command({"cmd": "session_start", "id": sid}, wait_kind=None)
+        time.sleep(0.5)
+        first_ack = driver.send_command(
+            {"cmd": "dispatch", "goal": "first worker"}, wait_kind="ack", timeout=30
+        )
+        assert first_ack is not None and not first_ack["result"]["isError"]
+        first_report = driver._wait_for_event("followup", timeout=30)
+        assert first_report is not None
+        first_id = store.list_runs(session_key)[0].run_id
+
+        # Accept and complete more work before acknowledging the first report.
+        second_ack = driver.send_command(
+            {"cmd": "dispatch", "goal": "second worker"}, wait_kind="ack", timeout=30
+        )
+        assert second_ack is not None and not second_ack["result"]["isError"]
+        second_id = next(r.run_id for r in store.list_runs(session_key) if r.run_id != first_id)
+        assert wait_for_condition(
+            lambda: store.get_run(second_id).status == STATUS_DONE, timeout=30
+        )
+        assert store.get_run(first_id).reported_at is None
+        assert store.get_run(second_id).reported_at is None
+
+        driver.send({"cmd": "message_end", "text": first_report["message"]})
+        assert wait_for_condition(
+            lambda: store.get_run(first_id).reported_at is not None, timeout=15
+        )
+        second_report = driver._wait_for_event("followup", timeout=15)
+        assert second_report is not None, "second worker finished without a report watcher"
+        assert second_id in second_report["message"]
+        assert first_id not in second_report["message"]
+        assert store.get_run(second_id).reported_at is None
+        driver.send({"cmd": "message_end", "text": second_report["message"]})
+        assert wait_for_condition(
+            lambda: store.get_run(second_id).reported_at is not None, timeout=15
+        )
+    finally:
+        driver.stop()
+        _cleanup_active_runs(db_path, session_key, config_path.parent, python_executable)
+
+
 def test_pi_delivery_journey_b(
     tmp_path: Path,
     runtime_files_factory: Any,

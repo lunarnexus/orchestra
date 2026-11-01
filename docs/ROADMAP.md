@@ -7,7 +7,7 @@ Orchestra roadmap items are split into:
 
 ## TODO
 
-- [ ] Add an actual Pi agent-loop replay regression for completion reports arriving while the parent continues tool calls, without live inference.
+- [ ] Add actual Pi agent-loop replay regressions for completion reports arriving while the parent continues tool calls and dispatches additional work before acknowledging a report, without live inference.
 
 - [ ] Refactor Orchestra into composable operations exposed as tools ("virtual buttons").
   - Organize capabilities into discrete modules with small, understandable core operations and clear inputs and results.

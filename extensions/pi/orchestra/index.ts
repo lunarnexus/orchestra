@@ -68,6 +68,7 @@ interface PendingSessionReport {
   sessionGeneration: number;
   confirmed: boolean;
   submitted: boolean;
+  watchAgain?: boolean;
 }
 
 interface AwaitRunPayload {
@@ -1149,7 +1150,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     updateStatus?: (status: ActiveSessionStatus | null) => void,
     attempt = 0,
   ): void {
-    if (reportWatchers.has(sessionId) || pendingSessionReports.has(sessionId)) return;
+    const pending = pendingSessionReports.get(sessionId);
+    if (pending) {
+      pending.watchAgain = true;
+      return;
+    }
+    if (reportWatchers.has(sessionId)) return;
 
     const sessionGeneration = ensureSessionGeneration(sessionId);
     let child: ChildProcessWithoutNullStreams;
@@ -1256,7 +1262,6 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     setImmediate(() => {
       void (async () => {
         if (pendingSessionReports.get(sessionId) !== pending) return;
-        pendingSessionReports.delete(sessionId);
         if (pending.runIds.length > 0) {
           const markResult = await runOrchestra([
             "_mark-session-report-delivered",
@@ -1265,9 +1270,17 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
             ...reportRunIdArgs(pending.runIds),
           ]);
           if (markResult.code !== 0) {
+            if (pendingSessionReports.get(sessionId) !== pending) return;
+            pendingSessionReports.delete(sessionId);
             scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);
             process.stderr.write(`orchestra report delivery mark failed: ${commandErrorMessage(markResult, "orchestra report delivery mark failed")}\n`);
+            return;
           }
+        }
+        if (pendingSessionReports.get(sessionId) !== pending) return;
+        pendingSessionReports.delete(sessionId);
+        if (pending.watchAgain && isCurrentSessionGeneration(sessionId, pending.sessionGeneration)) {
+          watchSessionReport(sessionId, "", pending.updateStatus);
         }
         await refreshOrchestraWorkerStatus(sessionId, pending.updateStatus, {
           fresh: true,
