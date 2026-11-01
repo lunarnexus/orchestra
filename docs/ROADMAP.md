@@ -9,6 +9,14 @@ Orchestra roadmap items are split into:
 
 - [ ] Add an actual Pi agent-loop replay regression for completion reports arriving while the parent continues tool calls, without live inference.
 
+- [ ] Refactor Orchestra into composable operations exposed as tools ("virtual buttons").
+  - Organize capabilities into discrete modules with small, understandable core operations and clear inputs and results.
+  - Make most user-facing capabilities individually callable through `orch_*` tools and corresponding `/orch` commands where appropriate; internal helpers remain implementation details.
+  - Have manual commands, automatic behaviors, and the future workflow/sequencer call the same core operations.
+  - For example, allow `/orch verify` to verify the last sequence/response in the originating session even when `auto_verify` is off. Support explicit target selection and define how the default target is resolved from durable state.
+  - Build workflows by composing these operations—pushing virtual buttons—with thin sequencing logic and shared behavior.
+  - Protect equivalent manual, automatic, and sequenced behavior with connected behavioral tests as these entry points are implemented.
+
 - [ ] Add `orchestra do --wait` for manual CLI completion.
   - Keep the terminal attached until the dispatched work and its automatic verification complete, then print the final report.
   - Preserve asynchronous dispatch as the default for existing callers and host adapters.
