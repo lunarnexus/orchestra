@@ -7,6 +7,8 @@ Orchestra roadmap items are split into:
 
 ## TODO
 
+- [ ] Add an actual Pi agent-loop replay regression for completion reports arriving while the parent continues tool calls, without live inference.
+
 - [ ] Add `orchestra do --wait` for manual CLI completion.
   - Keep the terminal attached until the dispatched work and its automatic verification complete, then print the final report.
   - Preserve asynchronous dispatch as the default for existing callers and host adapters.

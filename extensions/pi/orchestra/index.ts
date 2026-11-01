@@ -1134,7 +1134,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     if (currentSessionId !== sessionId || !isCurrentSessionGeneration(sessionId, pending.sessionGeneration)) return;
     pending.submitted = true;
     try {
-      pi.sendUserMessage(pending.message, { deliverAs: "followUp" });
+      pi.sendUserMessage(pending.message, { deliverAs: "steer" });
     } catch (error) {
       pendingSessionReports.delete(sessionId);
       scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);

@@ -315,7 +315,7 @@ def test_pi_delivery_journey_a(
     python_executable: str,
     fake_worker_script: Path,
 ) -> None:
-    """Journey A: dispatch → followUp → unrelated echo (no mark) → matching echo → mark."""
+    """Journey A: dispatch → steer → unrelated echo (no mark) → matching echo → mark."""
     pi_pkg = _find_pi_package()
     if pi_pkg is None:
         pytest.skip("Pi coding-agent package not found at ~/.pi/agent/install")
@@ -362,13 +362,15 @@ def test_pi_delivery_journey_a(
         assert record.status == STATUS_DONE
         assert "worker ok" in (record.result_summary or "")
 
-        # Wait for the followUp report injection.
+        # Wait for the completion report injection.
         followup = driver._wait_for_event("followup", timeout=30.0)
         assert followup is not None, f"no followup received; stderr: {driver.stderr_content()}"
         report_text = followup["message"]
         assert run_id in report_text
         assert "success" in report_text
-        assert followup["options"].get("deliverAs") == "followUp"
+        # Completion reports must interrupt continuing tool turns rather than
+        # wait for the parent to stop before becoming readable.
+        assert followup["options"].get("deliverAs") == "steer"
 
         # Report stays unreported before matching echo.
         assert store.get_run(run_id).reported_at is None
