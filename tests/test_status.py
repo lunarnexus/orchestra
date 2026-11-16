@@ -1,423 +1,183 @@
+"""Behavior tests for Orchestra 2 status data and rendering."""
+
 from __future__ import annotations
 
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, cast
 
-from orchestra.config import AgentCatalog, AppConfig, ConcurrencyConfig, RoleConfig
-from orchestra.context import AppContext, OrchestraPaths
-from orchestra.state import STATUS_DONE, STATUS_RUNNING, RunRecord, RunUpdate, StateStore
-from orchestra.status import format_debug_run, format_history, format_status, status_payload
-from tests.helpers import make_jobs
-from tests.test_cli_commands import load_root_prompt_config
+from orchestra.queue import Job, JobQueue
+from orchestra.status import (
+    LastCompleted,
+    StatusData,
+    StatusEntry,
+    StatusError,
+    render_status,
+    status,
+)
 
 
-def _make_context(tmp_path: Path) -> AppContext:
-    store = StateStore(tmp_path / "orchestra.db")
-    store.initialize()
-    return AppContext(
-        config=(config := AppConfig(
-            state_dir=tmp_path / "state",
-            log_dir=tmp_path / "logs",
-            default_timeout=30,
-            concurrency=ConcurrencyConfig(global_limit=4, per_session_limit=3),
-            prompts=load_root_prompt_config(),
-        )),
-        catalog=AgentCatalog(
-            roles={
-                "builder": RoleConfig(harness="shell", command=["echo"]),
-                "verifier": RoleConfig(harness="shell", command=["echo"]),
-            },
-            default_role="builder",
-        ),
-        store=store,
-        jobs=make_jobs(store, config),
-        registry=cast(Any, SimpleNamespace()),
-        paths=OrchestraPaths(
-            config_path=tmp_path / "config.yaml",
-            catalog_path=tmp_path / "catalog.yaml",
-        ),
+def make_queue(tmp_path: Path) -> JobQueue:
+    return JobQueue(tmp_path / "jobs.sqlite")
+
+
+def add(
+    queue: JobQueue,
+    run_id: str = "runA",
+    parent_session: str = "sess1",
+    role: str = "builder",
+    prerequisites: tuple[str, ...] = (),
+) -> Job:
+    return queue.add_job(
+        run_id=run_id,
+        parent_session=parent_session,
+        role=role,
+        model="m1",
+        prerequisites=prerequisites,
     )
 
 
-def test_format_status_shows_auto_verify_linkage_metadata_for_active_run(
-    tmp_path: Path,
-) -> None:
-    context = _make_context(tmp_path)
-    store = context.store
-    store.insert_run(
-        RunRecord(
-            run_id="builder-run",
-            orchestrator_session_id="manual:cycle",
-            harness="shell",
-            role="builder",
-            task_label="builder task",
-            log_path=tmp_path / "logs" / "builder-run.jsonl",
-            created_at="2026-01-01T00:00:00Z",
-        )
+def test_status_rejects_invalid_input_types(tmp_path: Path) -> None:
+    queue = make_queue(tmp_path)
+    try:
+        status("not-a-queue", "sess")  # type: ignore[arg-type]
+        raise AssertionError("expected StatusError")
+    except StatusError:
+        pass
+    try:
+        status(queue, 42)  # type: ignore[arg-type]
+        raise AssertionError("expected StatusError")
+    except StatusError:
+        pass
+    queue.close()
+
+
+def test_empty_session_and_queue(tmp_path: Path) -> None:
+    queue = make_queue(tmp_path)
+    data = status(queue, "sess1")
+    assert isinstance(data, StatusData)
+    assert data.session_jobs == ()
+    assert data.global_running == 0
+    assert data.global_pending == 0
+    assert data.last_completed is None
+    out = render_status(data, "on")
+    assert out == "Orchestra: on\n\nThis session: no active jobs.\n\nGlobal: 0 running, 0 pending\n"
+    assert "Last completed" not in out
+    queue.close()
+
+
+def test_running_and_pending_chain_with_waiting_on(tmp_path: Path) -> None:
+    queue = make_queue(tmp_path)
+    first = add(queue, role="builder")
+    queue.claim_next(global_limit=4, per_session_limit=4)
+    add(queue, role="verifier", prerequisites=(str(first.job_id),))
+    data = status(queue, "sess1")
+    assert data.global_running == 1
+    assert data.global_pending == 1
+    assert data.last_completed is None
+    assert len(data.session_jobs) == 2
+    running_entry = data.session_jobs[0]
+    assert isinstance(running_entry, StatusEntry)
+    assert (running_entry.sequence, running_entry.role, running_entry.status) == (
+        1,
+        "builder",
+        "running",
     )
-    store.insert_run(
-        RunRecord(
-            run_id="verifier-run",
-            orchestrator_session_id="manual:cycle",
-            harness="shell",
-            role="verifier",
-            task_label="verifier task",
-            log_path=tmp_path / "logs" / "verifier-run.jsonl",
-            created_at="2026-01-01T00:00:01Z",
-            cycle_id="builder-run",
-            triggered_by_run_id="builder-run",
-            trigger_reason="auto_verify",
-            sequence_index=1,
-        )
+    assert running_entry.waiting_on == ()
+    pending_entry = data.session_jobs[1]
+    assert (pending_entry.sequence, pending_entry.role, pending_entry.status) == (
+        2,
+        "verifier",
+        "pending",
     )
-    store.update_run("builder-run", RunUpdate(status=STATUS_RUNNING, process_id=1001))
-    store.update_run("builder-run", RunUpdate(status=STATUS_DONE, result_summary="done"))
-    store.update_run("verifier-run", RunUpdate(status=STATUS_RUNNING, process_id=1234))
-
-    output = format_status(context, "manual:cycle")
-
-    assert "- verifier-run verifier running task=\"verifier task\" cycle=builder-run" in output
-    assert "triggered_by=builder-run" in output
-    assert "trigger=auto_verify" in output
-    assert "seq=1" in output
-    assert "accounting_elapsed_seconds_complete: True" in output
-    assert "accounting_tokens_complete: False" in output
-    assert "accounting_completed_runs: 1" in output
-    assert "accounting_total_tokens: None" in output
+    assert pending_entry.waiting_on == (str(first.job_id),)
+    out = render_status(data, "on")
+    assert "Orchestra: on" in out
+    assert "#1" in out and "builder" in out and "running" in out
+    assert "#2" in out and "verifier" in out and "pending" in out
+    assert "(waiting on #1)" in out
+    assert "run runA" in out
+    queue.close()
 
 
-def test_format_history_shows_auto_verify_linkage_metadata(tmp_path: Path) -> None:
-    context = _make_context(tmp_path)
-    store = context.store
-    store.insert_run(
-        RunRecord(
-            run_id="builder-run",
-            orchestrator_session_id="manual:cycle",
-            harness="shell",
-            role="builder",
-            task_label="builder task",
-            log_path=tmp_path / "logs" / "builder-run.jsonl",
-            created_at="2026-01-01T00:00:00Z",
-        )
+def test_skipped_dependent_and_skipped_tally_in_last_completed(tmp_path: Path) -> None:
+    queue = make_queue(tmp_path)
+    first = add(queue, role="builder")
+    second = add(queue, role="verifier", prerequisites=(str(first.job_id),))
+    queue.claim_next(global_limit=4, per_session_limit=4)
+    queue.complete_job(str(first.job_id), "failed")
+    skipped = queue.get_job(str(second.job_id))
+    assert skipped.status == "skipped"
+    data = status(queue, "sess1")
+    assert data.session_jobs == ()
+    assert data.last_completed is not None
+    assert data.last_completed == LastCompleted(
+        run_id="runA", succeeded=0, failed=1, skipped=1
     )
-    store.insert_run(
-        RunRecord(
-            run_id="verifier-run",
-            orchestrator_session_id="manual:cycle",
-            harness="shell",
-            role="verifier",
-            task_label="verifier task",
-            log_path=tmp_path / "logs" / "verifier-run.jsonl",
-            created_at="2026-01-01T00:00:01Z",
-            cycle_id="builder-run",
-            triggered_by_run_id="builder-run",
-            trigger_reason="auto_verify",
-            sequence_index=1,
-        )
+    out = render_status(data, "on")
+    assert "Last completed: run runA — 0 succeeded, 1 failed, 1 skipped" in out
+    queue.close()
+
+
+def test_global_counts_include_other_sessions_without_detail(tmp_path: Path) -> None:
+    queue = make_queue(tmp_path)
+    add(queue, run_id="runA", parent_session="other1")
+    add(queue, run_id="runB", parent_session="other2")
+    queue.claim_next(global_limit=4, per_session_limit=4)  # claims one of the others
+    data = status(queue, "sess1")
+    assert data.session_jobs == ()
+    assert data.global_running == 1
+    assert data.global_pending == 1
+    out = render_status(data, "on")
+    assert "Global: 1 running, 1 pending" in out
+    assert "other" not in out
+    queue.close()
+
+
+def test_last_completed_picks_most_recent_finished_run(tmp_path: Path) -> None:
+    queue = make_queue(tmp_path)
+    old = add(queue, run_id="runOld")
+    queue.claim_next(global_limit=4, per_session_limit=4)
+    queue.complete_job(str(old.job_id), "succeeded")
+    newer = add(queue, run_id="runNew", role="reviewer")
+    queue.claim_next(global_limit=4, per_session_limit=4)
+    queue.complete_job(str(newer.job_id), "failed")
+    data = status(queue, "sess1")
+    assert data.last_completed is not None
+    assert data.last_completed.run_id == "runNew"
+    assert data.last_completed == LastCompleted(
+        run_id="runNew", succeeded=0, failed=1, skipped=0
     )
-    store.update_run("builder-run", RunUpdate(status=STATUS_RUNNING, process_id=1001))
-    store.update_run(
-        "builder-run",
-        RunUpdate(
-            status=STATUS_DONE,
-            result_summary="builder done",
-            result_output="builder full return",
-        ),
-    )
-    store.update_run("verifier-run", RunUpdate(status=STATUS_RUNNING, process_id=1234))
-    store.update_run(
-        "verifier-run",
-        RunUpdate(
-            status=STATUS_DONE,
-            result_summary="verifier done",
-            result_output="verifier full return",
-        ),
-    )
-
-    output = format_history(context, "manual:cycle", limit=10)
-
-    assert "- verifier-run [done] verifier :: verifier task :: verifier done" in output
-    assert "  return_path: " in output
-    assert "  delivery: pending" in output
-    assert "  cycle_id: builder-run" in output
-    assert "  triggered_by_run_id: builder-run" in output
-    assert "  trigger_reason: auto_verify" in output
-    assert "  sequence_index: 1" in output
-    assert "accounting_completed_runs: 2" in output
-    assert "accounting_total_tokens: None" in output
+    out = render_status(data, "on")
+    assert "run runNew" in out
+    assert "run runOld" not in out
+    queue.close()
 
 
-def test_format_debug_run_includes_canonical_return_and_artifacts(tmp_path: Path) -> None:
-    context = _make_context(tmp_path)
-    store = context.store
-    store.insert_run(
-        RunRecord(
-            run_id="debug-run",
-            orchestrator_session_id="manual:cycle",
-            harness="shell",
-            role="builder",
-            task_label="builder task",
-            log_path=tmp_path / "logs" / "debug-run.jsonl",
-            created_at="2026-01-01T00:00:01Z",
-        )
-    )
-    store.update_run("debug-run", RunUpdate(status=STATUS_RUNNING, process_id=1234))
-    store.update_run(
-        "debug-run",
-        RunUpdate(
-            status=STATUS_DONE,
-            result_summary="debug done",
-            result_output="full return evidence",
-        ),
-    )
-    debug_dir = tmp_path / "state" / "runs" / "debug-run"
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    (debug_dir / "request.json").write_text("request", encoding="utf-8")
-    (debug_dir / "events.jsonl").write_text("events", encoding="utf-8")
-    (debug_dir / "return.md").write_text("return", encoding="utf-8")
-
-    output = format_debug_run(context, "debug-run")
-
-    assert "## Run record" in output
-    assert "## Canonical request" in output
-    assert "## Canonical events" in output
-    assert "## Canonical return" in output
-    assert "return" in output
-    assert "full return evidence" not in output
-    assert "DB result_output" not in output
-    assert "path: " in output
+def test_render_status_is_deterministic_and_has_mode_line(tmp_path: Path) -> None:
+    queue = make_queue(tmp_path)
+    first = add(queue)
+    queue.claim_next(global_limit=4, per_session_limit=4)
+    add(queue, role="verifier", prerequisites=(str(first.job_id),))
+    data = status(queue, "sess1")
+    first_out = render_status(data, "manual")
+    assert render_status(data, "manual") == first_out
+    assert first_out.startswith("Orchestra: manual\n")
+    for token in ("sess1", "+00:00", "202"):
+        assert token not in first_out
+    queue.close()
 
 
-def test_format_debug_run_prefers_current_canonical_artifacts(tmp_path: Path) -> None:
-    context = _make_context(tmp_path)
-    store = context.store
-    store.insert_run(
-        RunRecord(
-            run_id="legacy-run",
-            orchestrator_session_id="manual:cycle",
-            harness="pi",
-            role="builder",
-            task_label="builder task",
-            log_path=tmp_path / "logs" / "legacy-run.jsonl",
-            created_at="2026-01-01T00:00:01Z",
-            transcript_path=tmp_path / "transcripts" / "legacy-run.jsonl",
-        )
-    )
-    store.update_run("legacy-run", RunUpdate(status=STATUS_RUNNING, process_id=1234))
-    store.update_run(
-        "legacy-run",
-        RunUpdate(
-            status=STATUS_DONE,
-            result_summary="legacy done",
-            result_output="legacy full return",
-        ),
-    )
-
-    legacy_request = tmp_path / "state" / "requests" / "legacy-run.json"
-    legacy_request.parent.mkdir(parents=True, exist_ok=True)
-    legacy_request.write_text("legacy request", encoding="utf-8")
-    legacy_log = tmp_path / "logs" / "legacy-run.jsonl"
-    legacy_log.write_text("legacy events", encoding="utf-8")
-    legacy_return = tmp_path / "state" / "runs" / "legacy-run" / "return.md"
-    legacy_return.parent.mkdir(parents=True, exist_ok=True)
-    legacy_return.write_text("legacy return", encoding="utf-8")
-
-    output = format_debug_run(context, "legacy-run")
-
-    assert "## Canonical request" in output
-    assert "## Canonical return" in output
-    assert "legacy return" in output
-    assert "DB result_output" not in output
-    assert "legacy full return" not in output
-
-
-def test_status_payload_includes_linkage_metadata_for_active_runs(tmp_path: Path) -> None:
-    context = _make_context(tmp_path)
-    store = context.store
-    store.insert_run(
-        RunRecord(
-            run_id="verifier-run",
-            orchestrator_session_id="manual:cycle",
-            harness="shell",
-            role="verifier",
-            task_label="verifier task",
-            log_path=tmp_path / "logs" / "verifier-run.jsonl",
-            created_at="2026-01-01T00:00:01Z",
-            cycle_id="builder-run",
-            triggered_by_run_id="builder-run",
-            trigger_reason="auto_verify",
-            sequence_index=1,
-        )
-    )
-    store.update_run(
-        "verifier-run",
-        RunUpdate(
-            status=STATUS_RUNNING,
-            process_id=1234,
-            input_tokens=12,
-            output_tokens=8,
-            reasoning_tokens=5,
-            cache_read_tokens=4,
-            cache_write_tokens=1,
-            cost_usd=0.25,
-        ),
-    )
-
-    payload = cast(dict[str, Any], status_payload(context, "manual:cycle"))
-
-    assert payload["active_runs"]["runs"][0]["cycle_id"] == "builder-run"
-    assert payload["active_runs"]["runs"][0]["input_tokens"] == 12
-    assert payload["active_runs"]["runs"][0]["output_tokens"] == 8
-    assert payload["active_runs"]["runs"][0]["reasoning_tokens"] == 5
-    assert payload["active_runs"]["runs"][0]["cache_read_tokens"] == 4
-    assert payload["active_runs"]["runs"][0]["cache_write_tokens"] == 1
-    assert payload["active_runs"]["runs"][0]["cost_usd"] == 0.25
-    assert payload["active_runs"]["runs"][0]["triggered_by_run_id"] == "builder-run"
-    assert payload["active_runs"]["runs"][0]["trigger_reason"] == "auto_verify"
-    assert payload["active_runs"]["runs"][0]["sequence_index"] == 1
-    assert payload["accounting"]["completed_runs"] == 0
-    assert payload["accounting"]["elapsed_seconds_complete"] is True
-    assert payload["accounting"]["tokens_complete"] is True
-    assert payload["accounting"]["input_tokens"] is None
-    assert payload["accounting"]["total_tokens"] is None
-    assert payload["accounting"]["reasoning_tokens"] is None
-    assert payload["accounting"]["cost_usd"] is None
-
-
-def test_status_payload_aggregates_completed_run_accounting_with_reasoning_and_cost(
-    tmp_path: Path,
-) -> None:
-    context = _make_context(tmp_path)
-    store = context.store
-    store.insert_run(
-        RunRecord(
-            run_id="done-1",
-            orchestrator_session_id="manual:cycle",
-            harness="shell",
-            role="builder",
-            task_label="builder task",
-            log_path=tmp_path / "logs" / "done-1.jsonl",
-            created_at="2026-01-01T00:00:00Z",
-        )
-    )
-    store.insert_run(
-        RunRecord(
-            run_id="done-2",
-            orchestrator_session_id="manual:cycle",
-            harness="shell",
-            role="verifier",
-            task_label="verifier task",
-            log_path=tmp_path / "logs" / "done-2.jsonl",
-            created_at="2026-01-01T00:00:02Z",
-        )
-    )
-    store.update_run("done-1", RunUpdate(status=STATUS_RUNNING, process_id=1001))
-    store.update_run("done-2", RunUpdate(status=STATUS_RUNNING, process_id=1002))
-    store.update_run(
-        "done-1",
-        RunUpdate(
-            status=STATUS_DONE,
-            started_at="2026-01-01T00:00:00Z",
-            ended_at="2026-01-01T00:00:01Z",
-            input_tokens=10,
-            output_tokens=4,
-            reasoning_tokens=3,
-            cache_read_tokens=2,
-            cache_write_tokens=1,
-            cost_usd=0.25,
-        ),
-    )
-    store.update_run(
-        "done-2",
-        RunUpdate(
-            status=STATUS_DONE,
-            started_at="2026-01-01T00:00:02Z",
-            ended_at="2026-01-01T00:00:04Z",
-            input_tokens=5,
-            output_tokens=6,
-            reasoning_tokens=7,
-            cache_read_tokens=0,
-            cache_write_tokens=4,
-            cost_usd=0.5,
-        ),
-    )
-
-    payload = cast(dict[str, Any], status_payload(context, "manual:cycle"))
-
-    assert payload["accounting"]["completed_runs"] == 2
-    assert payload["accounting"]["elapsed_seconds"] == 3
-    assert payload["accounting"]["input_tokens"] == 15
-    assert payload["accounting"]["output_tokens"] == 10
-    assert payload["accounting"]["reasoning_tokens"] == 10
-    assert payload["accounting"]["cache_read_tokens"] == 2
-    assert payload["accounting"]["cache_write_tokens"] == 5
-    assert payload["accounting"]["cost_usd"] == 0.75
-    assert payload["accounting"]["tokens_complete"] is True
-    assert payload["accounting"]["total_tokens"] == 42
-
-
-def test_status_payload_marks_tokens_incomplete_when_completed_run_lacks_cost(
-    tmp_path: Path,
-) -> None:
-    context = _make_context(tmp_path)
-    store = context.store
-    store.insert_run(
-        RunRecord(
-            run_id="done-1",
-            orchestrator_session_id="manual:cycle",
-            harness="shell",
-            role="builder",
-            task_label="builder task",
-            log_path=tmp_path / "logs" / "done-1.jsonl",
-            created_at="2026-01-01T00:00:00Z",
-        )
-    )
-    store.update_run("done-1", RunUpdate(status=STATUS_RUNNING, process_id=1001))
-    store.update_run(
-        "done-1",
-        RunUpdate(
-            status=STATUS_DONE,
-            started_at="2026-01-01T00:00:00Z",
-            ended_at="2026-01-01T00:00:01Z",
-            input_tokens=10,
-            output_tokens=4,
-            reasoning_tokens=3,
-            cache_read_tokens=2,
-            cache_write_tokens=1,
-        ),
-    )
-
-    payload = cast(dict[str, Any], status_payload(context, "manual:cycle"))
-
-    assert payload["accounting"]["completed_runs"] == 1
-    assert payload["accounting"]["tokens_complete"] is False
-    assert payload["accounting"]["cost_usd"] == 0.0
-
-
-def test_format_debug_run_shows_auto_verify_linkage_metadata(tmp_path: Path) -> None:
-    context = _make_context(tmp_path)
-    store = context.store
-    store.insert_run(
-        RunRecord(
-            run_id="verifier-run",
-            orchestrator_session_id="manual:cycle",
-            harness="shell",
-            role="verifier",
-            task_label="verifier task",
-            log_path=tmp_path / "logs" / "verifier-run.jsonl",
-            created_at="2026-01-01T00:00:01Z",
-            cycle_id="builder-run",
-            triggered_by_run_id="builder-run",
-            trigger_reason="auto_verify",
-            sequence_index=1,
-        )
-    )
-    store.update_run("verifier-run", RunUpdate(status=STATUS_RUNNING, process_id=1234))
-
-    output = format_debug_run(context, "verifier-run")
-
-    assert "cycle_id: builder-run" in output
-    assert "triggered_by_run_id: builder-run" in output
-    assert "trigger_reason: auto_verify" in output
-    assert "sequence_index: 1" in output
+def test_data_usable_without_render(tmp_path: Path) -> None:
+    queue = make_queue(tmp_path)
+    first = add(queue)
+    queue.claim_next(global_limit=4, per_session_limit=4)
+    second = add(queue, role="verifier", prerequisites=(str(first.job_id),))
+    add(queue, role="reviewer", prerequisites=(str(second.job_id),))
+    data = status(queue, "sess1")
+    assert [entry.sequence for entry in data.session_jobs] == [1, 2, 3]
+    assert data.session_jobs[1].waiting_on == (str(first.job_id),)
+    assert data.session_jobs[2].waiting_on == (str(second.job_id),)
+    assert data.session_jobs[0].run_id == "runA"
+    assert data.global_running == 1
+    assert data.global_pending == 2
+    assert data.last_completed is None
+    queue.close()

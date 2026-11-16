@@ -1,4 +1,0 @@
-include config.yaml
-include prompts.yaml
-include agent-catalog.yaml
-recursive-include extensions *.ts *.md *.py *.yaml *.json

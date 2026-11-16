@@ -1,59 +1,15 @@
-# Secrets & config
-.env
-test-config/
-
-# Local planning state
-PLAN.md
-HANDOFF.md
-
-# OS junk
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# Editor
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-docs/.$*.drawio.bkp
-
-# Qwen
-.qwen/
-
-# Local Python environments
-.venv/
-venv/
-
-# Build outputs
-build/
-dist/
-out/
-logs/
-state/
-*.egg-info/
-/src/orchestra/_version.py
-
-# Caches
 __pycache__/
+*.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-.coverage
-htmlcov/
-*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
 node_modules/
-*.tsbuildinfo
-
-# CodeGraph (regenerate, don't track)
-.codegraph/
-
-# Research source repositories
-/docs/research/orchestra-skills-research/repos/
-
-# Data (track if your project needs it — customize this rule)
-data/
-
-# Local live-test output
-tmp/
+state/
+logs/
+.env
+.env.*
+!.env.example

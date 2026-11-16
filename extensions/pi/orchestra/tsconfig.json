@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "typeRoots": ["/Users/james/.pi/agent/install/releases/1.5.0/node_modules/@types"],
+    "baseUrl": ".",
+    "paths": {
+      "@earendil-works/*": ["/Users/james/.pi/agent/install/releases/1.5.0/node_modules/@earendil-works/*"],
+      "typebox": ["/Users/james/.pi/agent/install/releases/1.5.0/node_modules/typebox"]
+    }
+  },
+  "include": ["index.ts"]
+}

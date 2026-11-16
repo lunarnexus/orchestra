@@ -1,1372 +1,340 @@
+"""Behavior tests for the config/catalog module."""
+
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import pytest
-import yaml
 
 from orchestra.config import (
-    DEFAULT_GLOBAL_CONCURRENCY,
-    DEFAULT_LOG_DIR,
-    DEFAULT_PER_SESSION_CONCURRENCY,
-    DEFAULT_STATE_DIR,
+    AgentCatalog,
     ConfigError,
-    list_config_values,
+    HarnessConfig,
+    RuntimeConfig,
     load_agent_catalog,
-    load_app_config,
-    load_app_config_from_mapping,
-    read_config_value,
-    resolve_agent_catalog_path,
-    resolve_config_path,
-    update_config_value,
+    load_harnesses,
+    load_orchestra_config,
+    load_prompts,
+    load_runtime_config,
+    resolve_config_dir,
 )
 
-ROOT_PROMPTS = Path(__file__).resolve().parents[1] / "prompts.yaml"
-
-
-def write_root_prompts(path: Path) -> None:
-    path.write_text(ROOT_PROMPTS.read_text(encoding="utf-8"), encoding="utf-8")
-
-
-def test_resolve_config_paths_prefer_explicit_then_env_then_pi_global_then_cwd(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cwd = tmp_path / "cwd"
-    pi_dir = tmp_path / "pi-agent"
-    cwd.mkdir()
-    (pi_dir / "orchestra").mkdir(parents=True)
-    cwd_config = cwd / "config.yaml"
-    cwd_catalog = cwd / "agent-catalog.yaml"
-    global_config = pi_dir / "orchestra" / "config.yaml"
-    global_catalog = pi_dir / "orchestra" / "agent-catalog.yaml"
-    explicit_dir = tmp_path / "explicit"
-    env_dir = tmp_path / "env"
-    explicit_dir.mkdir()
-    env_dir.mkdir()
-    explicit_config = explicit_dir / "config.yaml"
-    explicit_catalog = explicit_dir / "agent-catalog.yaml"
-    env_config = env_dir / "config.yaml"
-    env_catalog = env_dir / "agent-catalog.yaml"
-
-    for path in (
-        cwd_config,
-        cwd_catalog,
-        global_config,
-        global_catalog,
-        explicit_config,
-        explicit_catalog,
-        env_config,
-        env_catalog,
-    ):
-        path.write_text("mode: 'on'\n", encoding="utf-8")
-
-    monkeypatch.chdir(cwd)
-    monkeypatch.setenv("PI_CODING_AGENT_DIR", str(pi_dir))
-    monkeypatch.delenv("ORCHESTRA_CONFIG", raising=False)
-
-    assert resolve_config_path(explicit_dir) == explicit_config
-    assert resolve_agent_catalog_path(explicit_dir) == explicit_catalog
-    assert resolve_config_path() == global_config
-    assert resolve_agent_catalog_path() == global_catalog
-
-    monkeypatch.setenv("ORCHESTRA_CONFIG", str(env_dir))
-    assert resolve_config_path() == env_config
-    assert resolve_agent_catalog_path() == env_catalog
-
-    global_config.unlink()
-    global_catalog.unlink()
-    monkeypatch.delenv("ORCHESTRA_CONFIG")
-    assert resolve_config_path() == Path("config.yaml")
-    assert resolve_agent_catalog_path() == Path("agent-catalog.yaml")
-
-
-def test_load_app_config_reads_values_from_fixture(fixture_dir: Path) -> None:
-    config = load_app_config(fixture_dir / "config" / "basic_config.yaml")
-
-    assert config.state_dir == Path("state")
-    assert config.log_dir == Path("logs")
-    assert config.default_timeout == 600
-    assert config.turn_limit is None
-    assert config.soft_timeout is None
-    assert config.concurrency.global_limit == 4
-    assert config.concurrency.per_session_limit == 3
-    assert config.auto_verify is False
-
-
-def test_load_app_config_applies_defaults(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 600\nmode: 'on'\n", encoding="utf-8")
-    write_root_prompts(prompts_path)
-
-    config = load_app_config(path)
-
-    assert config.state_dir == DEFAULT_STATE_DIR
-    assert config.log_dir == DEFAULT_LOG_DIR
-    assert config.concurrency.global_limit == DEFAULT_GLOBAL_CONCURRENCY
-    assert config.concurrency.per_session_limit == DEFAULT_PER_SESSION_CONCURRENCY
-    assert config.auto_verify is False
-    assert config.mode == "on"
-    assert config.turn_limit is None
-    assert config.soft_timeout is None
-    assert config.prompts.tool_description
-    assert config.prompts.host_help
-
-
-def test_load_app_config_expands_tilde_paths(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text(
-        "default_timeout: 600\n"
-        "mode: 'on'\n"
-        "state_dir: ~/orchestra/state\n"
-        "log_dir: ~/orchestra/logs\n",
-        encoding="utf-8",
-    )
-    write_root_prompts(prompts_path)
-
-    config = load_app_config(path)
-
-    assert config.state_dir == home / "orchestra" / "state"
-    assert config.log_dir == home / "orchestra" / "logs"
-
-
-def test_root_host_help_loads_from_config() -> None:
-    config = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml")
-    configured = yaml.safe_load(ROOT_PROMPTS.read_text(encoding="utf-8"))
-
-    assert config.prompts.host_help == configured["host_help"]
-
-
-def test_root_prompt_guidance_loads_from_config() -> None:
-    prompts = load_app_config(Path(__file__).resolve().parents[1] / "config.yaml").prompts
-    configured = yaml.safe_load(ROOT_PROMPTS.read_text(encoding="utf-8"))
-
-    for field in (
-        "tool_description",
-        "main_session_ownership_guidance",
-        "return_hint_failed",
-        "default_return_format",
-        "status_description",
-        "dispatch_ack_instruction",
-    ):
-        assert getattr(prompts, field) == configured[field]
-    assert prompts.tool_prompt_snippet == configured["tool_prompt_snippet"]
-    assert prompts.tool_prompt_guidelines == tuple(configured["tool_prompt_guidelines"])
-
-
-@pytest.mark.parametrize(
-    ("raw_value", "expected"),
-    [
-        ("true", True),
-        ("yes", True),
-        ("on", True),
-        ("false", False),
-        ("no", False),
-        ("off", False),
-    ],
-)
-def test_load_app_config_reads_auto_verify(
-    tmp_path: Path,
-    raw_value: str,
-    expected: bool,
-) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text(
-        f"default_timeout: 30\nmode: 'on'\nauto_verify: {raw_value}\n",
-        encoding="utf-8",
-    )
-    write_root_prompts(prompts_path)
-
-    config = load_app_config(path)
-
-    assert config.auto_verify is expected
-
-
-@pytest.mark.parametrize(
-    ("raw_value", "expected"),
-    [
-        ("on", "on"),
-        ("off", "off"),
-        ("orchestrate", "orchestrate"),
-    ],
-)
-def test_load_app_config_reads_mode(
-    tmp_path: Path,
-    raw_value: str,
-    expected: str,
-) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text(
-        f"default_timeout: 30\nmode: '{raw_value}'\n",
-        encoding="utf-8",
-    )
-    write_root_prompts(prompts_path)
-
-    config = load_app_config(path)
-
-    assert config.mode == expected
-
-
-def test_load_app_config_missing_default_timeout_raises_config_error(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("mode: 'on'\n", encoding="utf-8")
-    write_root_prompts(prompts_path)
-
-    with pytest.raises(ConfigError, match="'default_timeout' is required"):
-        load_app_config(path)
-
-
-@pytest.mark.parametrize(
-    "raw_value",
-    [
-        0,
-        -1,
-        -100,
-    ],
-)
-def test_load_app_config_rejects_zero_and_negative_default_timeout(
-    tmp_path: Path,
-    raw_value: int,
-) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text(f"default_timeout: {raw_value}\nmode: 'on'\n", encoding="utf-8")
-    write_root_prompts(prompts_path)
-
-    with pytest.raises(ConfigError, match="'default_timeout' must be a positive integer"):
-        load_app_config(path)
-
-
-def test_load_app_config_accepts_valid_default_timeout(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 120\nmode: 'on'\n", encoding="utf-8")
-    write_root_prompts(prompts_path)
-
-    config = load_app_config(path)
-
-    assert config.default_timeout == 120
-
-
-def test_load_app_config_reads_retention_days(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 120\nmode: 'on'\nretention_days: 45\n", encoding="utf-8")
-    write_root_prompts(prompts_path)
-
-    config = load_app_config(path)
-
-    assert config.retention_days == 45
-
-
-def test_list_read_and_write_supported_config_values(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text(
-        "default_timeout: 120\n"
-        "mode: 'on'\n"
-        "auto_verify: false\n"
-        "concurrency:\n"
-        "  global: 4\n"
-        "  per_session: 3\n",
-        encoding="utf-8",
-    )
-    write_root_prompts(prompts_path)
-
-    values = list_config_values(path)
-    assert values["default_timeout"] == 120
-    assert values["auto_verify"] is False
-    assert read_config_value(path, "concurrency.global_limit") == 4
-
-    update_config_value(path, "auto_verify", "true")
-    update_config_value(path, "concurrency.per_session_limit", "6")
-    assert load_app_config(path).auto_verify is True
-    assert load_app_config(path).concurrency.per_session_limit == 6
-
-
-@pytest.mark.parametrize(
-    ("content", "expected_message"),
-    [
-        ("default_timeout: 0\n", "'default_timeout' must be a positive integer"),
-        ("default_timeout: 30\nconcurrency: 3\n", "'concurrency' must be a mapping"),
-        ("default_timeout: 30\nauto_verify: maybe\n", "'auto_verify' must be a boolean"),
-        ("default_timeout: 30\nretention_days: 0\n", "'retention_days' must be a positive integer"),
-        ("default_timeout: 30\nmode: maybe\n", "'mode' must be one of"),
-        ("default_timeout: 30\n", "'mode' is required"),
-        ("default_timeout: 30\nturn_limit: 0\n", "'turn_limit' must be a positive integer"),
-        (
-            "default_timeout: 30\nsoft_timeout: 30\n",
-            "'soft_timeout' must be less than 'default_timeout'",
-        ),
-        (
-            "default_timeout: 30\nstate_dir: ''\n",
-            "'state_dir' must be a non-empty string when provided",
-        ),
-        (
-            "default_timeout: 30\nunknown_key: 1\n",
-            "config uses unsupported key: unknown_key",
-        ),
-    ],
-)
-def test_load_app_config_rejects_invalid_values(
-    tmp_path: Path,
-    content: str,
-    expected_message: str,
-) -> None:
-    path = tmp_path / "config.yaml"
-    if "mode:" not in content and "'mode' is required" not in expected_message:
-        content = content.replace("\n", "\nmode: 'on'\n", 1)
-    path.write_text(content, encoding="utf-8")
-
-    with pytest.raises(ConfigError, match=expected_message):
-        load_app_config(path)
-
-
-@pytest.mark.parametrize(
-    ("key", "value", "expected_message"),
-    [
-        ("unknown", "1", "unknown config key: unknown"),
-        ("default_timeout", "0", "'default_timeout' must be a positive integer"),
-        ("auto_verify", "maybe", "'auto_verify' must be a boolean"),
-        ("concurrency.global_limit", "-1", "'concurrency.global_limit' must be a positive integer"),
-    ],
-)
-def test_update_config_value_rejects_invalid_values_without_writing(
-    tmp_path: Path,
-    key: str,
-    value: str,
-    expected_message: str,
-) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    original = (
-        "default_timeout: 120\nmode: 'on'\nauto_verify: false\nconcurrency:\n"
-        "  global: 4\n  per_session: 3\n"
-    )
-    path.write_text(original, encoding="utf-8")
-    write_root_prompts(prompts_path)
-
-    with pytest.raises(ConfigError, match=expected_message):
-        update_config_value(path, key, value)
-
-    assert path.read_text(encoding="utf-8") == original
-
-
-def test_load_agent_catalog_reads_fixture(fixture_dir: Path) -> None:
-    catalog = load_agent_catalog(fixture_dir / "config" / "agent_catalog.yaml")
-
-    assert catalog.default_role == "builder"
-    builder = catalog.roles["builder"]
-    assert builder.harness_config == "pi"
-    assert builder.harness == "pi"
-    assert builder.dispatch_hint == (
-        "Implement the assigned task only. Stay in scope. Return files changed, checks run, "
-        "results, blockers, and risks."
-    )
-    assert builder.model == "lmstudio/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved"
-    assert builder.profile is None
-    assert builder.command == ["pi", "--model", "{model}", "-p", "{prompt}"]
-    assert builder.skills == ()
-    assert builder.env == {}
-
-
-@pytest.mark.parametrize(
-    ("role_name", "expected_dispatch_hint"),
-    [
-        (
-            "builder",
-            (
-                "Implement the assigned task only. Stay in scope. Run focused implementation "
-                "commands. Update only assigned artifact sections. Return the compact schema "
-                "only."
-            ),
-        ),
-        (
-            "researcher",
-            (
-                "Gather evidence with sources from docs, web, or code. Do not change code. "
-                "Update only the explicitly assigned RESEARCH.md section when requested. "
-                "Return the compact schema only."
-            ),
-        ),
-        (
-            "planner",
-            (
-                "Plan the work. Ask numbered questions for unknowns. May dispatch "
-                "researchers for facts, docs, web, and code evidence. Return concise plan "
-                "findings and open questions."
-            ),
-        ),
-        (
-            "verifier",
-            (
-                "Independently prove whether the work satisfies its scope and acceptance "
-                "criteria using fresh evidence. Stay read-only. Return verdict, evidence, "
-                "missing checks, blockers, and risks. Do not write role-owned `.md` "
-                "artifacts by default."
-            ),
-        ),
-        (
-            "reviewer",
-            (
-                "Independently review whether the change is correct, maintainable, "
-                "appropriately scoped, and ready to merge. Stay read-only for source code. "
-                "Run no test commands. Return the compact schema only."
-            ),
-        ),
-        (
-            "appsec",
-            (
-                "Independently identify realistic vulnerabilities across changed trust "
-                "boundaries. Stay read-only for source code. Return the compact schema only."
-            ),
-        ),
-    ],
-)
-def test_root_agent_catalog_phase_1_role_dispatch_hints_match_plan(
-    role_name: str,
-    expected_dispatch_hint: str,
-) -> None:
-    catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
-
-    configured = yaml.safe_load(
-        (Path(__file__).resolve().parents[1] / "agent-catalog.yaml").read_text(encoding="utf-8")
-    )
-    assert catalog.roles[role_name].dispatch_hint == configured["roles"][role_name]["dispatch_hint"]
-
-
-def test_load_app_config_supports_prompt_configuration(tmp_path: Path) -> None:
-    path = tmp_path / "explicit-config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text(
-        "default_timeout: 30\nmode: 'on'\nturn_limit: 7\nsoft_timeout: 20\n",
-        encoding="utf-8",
-    )
-    prompts_path.write_text(
-        """
-default_return_format: Custom return.
-tool_description: Custom tool description.
-tool_prompt_snippet: Custom prompt snippet.
-tool_prompt_guidelines:
-  - Custom guideline.
-tool_goal_description: Custom goal.
-tool_additional_context_description: Custom additional context.
-tool_role_description: Custom role.
-tool_task_label_description: Custom label.
-main_session_ownership_guidance: Custom main-session guidance.
-status_description: Custom status description.
-status_action_description: Custom action description.
-status_limit_description: Custom limit description.
-status_run_id_description: Custom run id description.
-status_role_description: Custom role description.
-status_setting_description: Custom setting description.
-status_value_description: Custom value description.
-host_help: Custom help {roles}
-budget_exceeded_prompt: Custom budget handoff.
-return_hint_done: Custom done hint.
-return_hint_incomplete: Custom incomplete hint.
-return_hint_failed: Custom failed hint.
-return_hint_builder_failed: Custom builder failed hint.
-return_hint_budget_exceeded: Custom budget exceeded hint.
-budget_trigger_label: Custom budget label.
-soft_timeout_block_reason: Custom soft timeout reason.
-session_mode_off_message: Custom off message.
-session_mode_on_message: Custom on message.
-session_mode_orchestrate_message: Custom orchestrate message.
-dispatch_ack_instruction: Custom dispatch ack instruction.
-""".lstrip(),
-        encoding="utf-8",
-    )
-
-    config = load_app_config(path)
-
-    assert config.turn_limit == 7
-    assert config.soft_timeout == 20
-    assert config.prompts.default_return_format == "Custom return."
-    assert config.prompts.tool_description == "Custom tool description."
-    assert config.prompts.tool_prompt_snippet == "Custom prompt snippet."
-    assert config.prompts.tool_prompt_guidelines == ("Custom guideline.",)
-    assert config.prompts.tool_goal_description == "Custom goal."
-    assert config.prompts.tool_additional_context_description == "Custom additional context."
-    assert config.prompts.tool_role_description == "Custom role."
-    assert config.prompts.tool_task_label_description == "Custom label."
-    assert config.prompts.host_help == "Custom help {roles}"
-    assert config.prompts.budget_exceeded_prompt == "Custom budget handoff."
-    assert config.prompts.status_description == "Custom status description."
-    assert config.prompts.status_action_description == "Custom action description."
-    assert config.prompts.status_limit_description == "Custom limit description."
-    assert config.prompts.status_run_id_description == "Custom run id description."
-    assert config.prompts.status_role_description == "Custom role description."
-    assert config.prompts.status_setting_description == "Custom setting description."
-    assert config.prompts.status_value_description == "Custom value description."
-    assert config.prompts.return_hint_builder_failed == "Custom builder failed hint."
-    assert config.prompts.budget_trigger_label == "Custom budget label."
-    assert config.prompts.soft_timeout_block_reason == "Custom soft timeout reason."
-    assert config.prompts.session_mode_off_message == "Custom off message."
-    assert config.prompts.session_mode_on_message == "Custom on message."
-    assert config.prompts.session_mode_orchestrate_message == "Custom orchestrate message."
-
-
-def test_load_app_config_rejects_missing_prompt_values(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 30\nmode: 'on'\n", encoding="utf-8")
-    prompts_path.write_text(
-        """
-default_return_format: ok
-tool_description: ok
-tool_goal_description: ok
-tool_additional_context_description: ok
-tool_role_description: ok
-tool_task_label_description: ok
-main_session_ownership_guidance: ok
-status_description: ok
-status_action_description: ok
-status_limit_description: ok
-status_run_id_description: ok
-status_role_description: ok
-status_setting_description: ok
-status_value_description: ok
-host_help: ok
-budget_exceeded_prompt: ok
-return_hint_done: ok
-return_hint_incomplete: ok
-return_hint_failed: ok
-return_hint_builder_failed: ok
-return_hint_budget_exceeded: ok
-budget_trigger_label: ok
-soft_timeout_block_reason: ok
-session_mode_off_message: ok
-session_mode_on_message: ok
-session_mode_orchestrate_message: ok
-""".lstrip(),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(
-        ConfigError, match="prompts.yaml is missing required prompt 'tool_prompt_snippet'"
-    ):
-        load_app_config(path)
-
-
-def test_load_app_config_accepts_explicitly_empty_prompt_values(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 30\nmode: 'on'\n", encoding="utf-8")
-    prompts_path.write_text(
-        """
-default_return_format: ok
-tool_description: ok
-tool_prompt_snippet: ''
-tool_prompt_guidelines: []
-tool_goal_description: ok
-tool_additional_context_description: ok
-tool_role_description: ok
-tool_task_label_description: ok
-main_session_ownership_guidance: ok
-status_description: ok
-status_action_description: ok
-status_limit_description: ok
-status_run_id_description: ok
-status_role_description: ok
-status_setting_description: ok
-status_value_description: ok
-host_help: ok
-budget_exceeded_prompt: ok
-return_hint_done: ok
-return_hint_incomplete: ok
-return_hint_failed: ok
-return_hint_builder_failed: ok
-return_hint_budget_exceeded: ok
-budget_trigger_label: ok
-soft_timeout_block_reason: ok
-session_mode_off_message: ok
-session_mode_on_message: ok
-session_mode_orchestrate_message: ok
-dispatch_ack_instruction: ok
-""".lstrip(),
-        encoding="utf-8",
-    )
-
-    config = load_app_config(path)
-
-    assert config.prompts.tool_prompt_snippet == ""
-    assert config.prompts.tool_prompt_guidelines == ()
-
-
-def test_load_app_config_rejects_invalid_prompt_types(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 30\nmode: 'on'\n", encoding="utf-8")
-    prompts_path.write_text(
-        """
-default_return_format: ok
-tool_description: ok
-tool_prompt_snippet: 1
-tool_prompt_guidelines: ok
-tool_goal_description: ok
-tool_additional_context_description: ok
-tool_role_description: ok
-tool_task_label_description: ok
-main_session_ownership_guidance: ok
-status_description: ok
-status_action_description: ok
-status_limit_description: ok
-status_run_id_description: ok
-status_role_description: ok
-status_setting_description: ok
-status_value_description: ok
-host_help: ok
-budget_exceeded_prompt: ok
-""".lstrip(),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(
-        ConfigError, match="prompts.yaml requires 'tool_prompt_snippet' to be a string"
-    ):
-        load_app_config(path)
-
-    prompts_path.write_text(
-        """
-default_return_format: ok
-tool_description: ok
-tool_prompt_snippet: ok
-tool_prompt_guidelines: ok
-tool_goal_description: ok
-tool_additional_context_description: ok
-tool_role_description: ok
-tool_task_label_description: ok
-main_session_ownership_guidance: ok
-status_description: ok
-status_action_description: ok
-status_limit_description: ok
-status_run_id_description: ok
-status_role_description: ok
-status_setting_description: ok
-status_value_description: ok
-host_help: ok
-budget_exceeded_prompt: ok
-""".lstrip(),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(
-        ConfigError,
-        match="prompts.yaml requires 'tool_prompt_guidelines' to be a list of strings",
-    ):
-        load_app_config(path)
-
-
-def test_load_agent_catalog_supports_optional_fields(tmp_path: Path) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        """
-default_role: reviewer
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+CONFIG_YAML = """
+state_dir: {state_dir}
+log_dir: logs
+default_timeout: 1500
+soft_timeout: 1200
+turn_limit: 60
+concurrency:
+  global: 6
+  per_session: 3
+retention_days: 90
+default_mode: '{mode}'
+"""
+
+HARNESSES_YAML = """
+pi:
+  harness: pi
+  command:
+    - pi
+    - --model
+    - '{model}'
+    - -p
+    - '{prompt}'
+hermes:
+  harness: hermes
+  command:
+    - hermes
+    - -z
+    - '{prompt}'
+"""
+
+CATALOG_YAML = """
+default_role: builder
 model_limits:
-  gpt-5:
-    concurrency: 1
-harness_configs:
-  pi:
-    harness: pi
-    command:
-      - pi
-      - --model
-      - "{model}"
-      - -p
-      - "{prompt}"
-  hermes:
-    harness: hermes
-    command:
-      - hermes
-      - --profile
-      - "{profile}"
-      - -z
-      - "{prompt}"
-roles:
-  reviewer:
-    harness_config: hermes
-    harness_fallback:
-      - harness_config: pi
-        model: gpt-4.1-mini
-    dispatch_hint: Review only.
-    enabled_workflow_hint: Use reviewer when the change needs an independent quality check.
-    disabled_workflow_hint: Main session handles review recovery.
-    model: gpt-5
-    profile: reviewer
-    nested_dispatch_depth: 2
-    turn_limit: 30
-    soft_timeout: 840
-    skills:
-      - code-reviewer
-    env:
-      FEATURE_FLAG: "1"
-      EMPTY_OK: ""
-""".lstrip(),
-        encoding="utf-8",
-    )
-
-    catalog = load_agent_catalog(path)
-
-    assert catalog.default_role == "reviewer"
-    assert catalog.model_limits["gpt-5"].concurrency == 1
-    reviewer = catalog.roles["reviewer"]
-    assert reviewer.harness_config == "hermes"
-    assert reviewer.harness == "hermes"
-    assert reviewer.harness_fallback[0].harness_config == "pi"
-    assert reviewer.harness_fallback[0].model == "gpt-4.1-mini"
-    assert reviewer.harness_fallback[0].profile is None
-    assert reviewer.harness_fallback[0].agent is None
-    assert reviewer.model == "gpt-5"
-    assert reviewer.profile == "reviewer"
-    assert reviewer.enabled_workflow_hint.startswith("Use reviewer")
-    assert reviewer.disabled_workflow_hint == "Main session handles review recovery."
-    assert reviewer.nested_dispatch_depth == 2
-    assert reviewer.turn_limit == 30
-    assert reviewer.soft_timeout == 840
-    assert reviewer.command == ["hermes", "--profile", "{profile}", "-z", "{prompt}"]
-    assert reviewer.enabled is True
-    assert reviewer.enabled_mode == "manual"
-    assert reviewer.skills == ("code-reviewer",)
-    assert reviewer.env == {"FEATURE_FLAG": "1", "EMPTY_OK": ""}
-
-
-def test_load_agent_catalog_pass_parent_context_defaults_false(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        "default_role: builder\n"
-        "roles:\n"
-        "  orchestrator: {}\n"
-        "  builder:\n"
-        "    harness: pi\n"
-        "    command: [pi, -p, '{prompt}']\n",
-        encoding="utf-8",
-    )
-
-    catalog = load_agent_catalog(path)
-
-    assert catalog.roles["builder"].pass_parent_context is False
-
-
-@pytest.mark.parametrize("raw_value, expected", [("true", True), ("false", False)])
-def test_load_agent_catalog_reads_pass_parent_context(
-    tmp_path: Path, raw_value: str, expected: bool
-) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        "harness_configs:\n"
-        "  pi:\n"
-        "    harness: pi\n"
-        "    command: [pi, -p, '{prompt}']\n"
-        "roles:\n"
-        "  builder:\n"
-        "    harness_config: pi\n"
-        f"    pass_parent_context: {raw_value}\n",
-        encoding="utf-8",
-    )
-
-    catalog = load_agent_catalog(path)
-
-    assert catalog.roles["builder"].pass_parent_context is expected
-
-
-@pytest.mark.parametrize("raw_value", ["true", "false"])
-def test_load_agent_catalog_rejects_pass_parent_context_on_orchestrator(
-    tmp_path: Path, raw_value: str
-) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        "harness_configs:\n"
-        "  pi:\n"
-        "    harness: pi\n"
-        "    command: [pi, -p, '{prompt}']\n"
-        "roles:\n"
-        f"  orchestrator:\n"
-        f"    pass_parent_context: {raw_value}\n"
-        "  builder:\n"
-        "    harness_config: pi\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(
-        ConfigError, match="role 'orchestrator' does not support pass_parent_context"
-    ):
-        load_agent_catalog(path)
-
-
-def test_load_agent_catalog_accepts_explicit_empty_skills(tmp_path: Path) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        "harness_configs:\n"
-        "  pi:\n"
-        "    harness: pi\n"
-        "    command: [pi, -p, '{prompt}']\n"
-        "roles:\n"
-        "  builder:\n"
-        "    harness_config: pi\n"
-        "    skills: []\n",
-        encoding="utf-8",
-    )
-
-    catalog = load_agent_catalog(path)
-
-    assert catalog.roles["builder"].skills == ()
-
-
-def test_load_agent_catalog_accepts_skills_only_orchestrator_role(tmp_path: Path) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        "harness_configs:\n"
-        "  pi:\n"
-        "    harness: pi\n"
-        "    command: [pi, -p, '{prompt}']\n"
-        "roles:\n"
-        "  orchestrator:\n"
-        "    skills: [orchestrator, planner]\n"
-        "  builder:\n"
-        "    harness_config: pi\n",
-        encoding="utf-8",
-    )
-
-    catalog = load_agent_catalog(path)
-
-    orchestrator = catalog.roles["orchestrator"]
-    assert orchestrator.skills == ("orchestrator", "planner")
-    assert orchestrator.enabled is False
-    assert orchestrator.harness == ""
-    assert orchestrator.command is None
-
-
-def test_load_agent_catalog_rejects_operational_orchestrator_role_keys(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        "harness_configs:\n"
-        "  pi:\n"
-        "    harness: pi\n"
-        "    command: [pi, -p, '{prompt}']\n"
-        "roles:\n"
-        "  orchestrator:\n"
-        "    harness_config: pi\n"
-        "    skills: [orchestrator]\n"
-        "  builder:\n"
-        "    harness_config: pi\n",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(
-        ConfigError,
-        match="role 'orchestrator' uses unsupported keys: harness_config; "
-        "orchestrator role supports only skills",
-    ):
-        load_agent_catalog(path)
-
-
-def test_load_agent_catalog_rejects_legacy_worker_budget_key(tmp_path: Path) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        """
-default_role: worker
-roles:
-  worker:
-    harness: pi
-    command: [pi]
-    worker_budget: 2
-""".lstrip(),
-        encoding="utf-8",
-    )
-
-    match = (
-        r"role 'worker' uses unsupported keys: worker_budget; "
-        r"allowed keys are .*nested_dispatch_depth.*"
-    )
-    with pytest.raises(ConfigError, match=match):
-        load_agent_catalog(path)
-
-
-@pytest.mark.parametrize(
-    ("content", "expected_message"),
-    [
-        ("{}\n", "'roles' must be a non-empty mapping"),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker: nope\n",
-            "role 'worker' must be a mapping",
-        ),
-        (
-            "model_limits: nope\nroles:\n  worker:\n    harness: pi\n    command: [pi]\n",
-            "'model_limits' must be a mapping",
-        ),
-        (
-            "model_limits:\n  gpt: nope\nroles:\n  worker:\n    harness: pi\n    command: [pi]\n",
-            "model limit 'gpt' must be a mapping",
-        ),
-        (
-            "model_limits:\n"
-            "  gpt:\n"
-            "    concurrency: 0\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness: pi\n"
-            "    command: [pi]\n",
-            "'concurrency' must be a positive integer",
-        ),
-        (
-            "harness_configs:\n  pi: nope\nroles:\n  worker:\n    harness_config: pi\n",
-            "harness config 'pi' must be a mapping",
-        ),
-        (
-            "harness_configs:\n  pi:\n    harness: pi\nroles:\n  worker:\n    harness_config: pi\n",
-            "harness config 'pi' requires 'command' to be a non-empty list of strings",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: missing\n",
-            "role 'worker' must name a configured harness_config: missing",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    nested_dispatch_depth: 0\n",
-            "'nested_dispatch_depth' must be a positive integer",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    harness_fallback: nope\n",
-            "role 'worker' requires 'harness_fallback' to be a non-empty list of mappings",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    harness_fallback:\n"
-            "      - harness_config: missing\n",
-            "role 'worker' harness_fallback entry 1 must name a configured harness_config: missing",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    harness_fallback:\n"
-            "      - harness_config: pi\n"
-            "        command: nope\n",
-            (
-                "role 'worker' harness_fallback entry 1 uses unsupported keys: command; "
-                "allowed keys are harness_config, model, profile, agent"
-            ),
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    enabled_workflow_hint: 123\n",
-            "'enabled_workflow_hint' must be a non-empty string when provided",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    skills: code-reviewer\n",
-            "role 'worker' requires 'skills' to be a non-empty list of strings",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    skills:\n"
-            "      - ../secret\n",
-            "role 'worker' requires 'skills' to contain only skill names",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    env: nope\n",
-            "role 'worker' requires 'env' to be a mapping of strings",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    env:\n"
-            "      '': value\n",
-            "role 'worker' requires 'env' keys to be non-empty strings",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    env:\n"
-            "      BAD-NAME: value\n",
-            "role 'worker' requires 'env' keys to be valid environment variable names",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    env:\n"
-            "      ORCHESTRA_DISPATCH_BUDGET: '99'\n",
-            "role 'worker' requires 'env' keys not to use reserved ORCHESTRA_ names",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    env:\n"
-            "      FEATURE_FLAG: true\n",
-            "role 'worker' requires 'env' values to be strings",
-        ),
-        (
-            "default_role: reviewer\n"
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n",
-            "default_role must name a configured role: reviewer",
-        ),
-        (
-            "default_role: builder\n"
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  builder:\n"
-            "    harness_config: pi\n"
-            "    enabled: false\n",
-            "default_role must be enabled: builder",
-        ),
-        (
-            "harness_configs:\n"
-            "  pi:\n"
-            "    harness: pi\n"
-            "    command:\n"
-            "      - pi\n"
-            "roles:\n"
-            "  worker:\n"
-            "    harness_config: pi\n"
-            "    enabled: maybe\n",
-            "'enabled' must be a boolean or 'auto'",
-        ),
-    ],
-)
-def test_load_agent_catalog_rejects_invalid_values(
-    tmp_path: Path,
-    content: str,
-    expected_message: str,
-) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(content, encoding="utf-8")
-
-    with pytest.raises(ConfigError, match=expected_message):
-        load_agent_catalog(path)
-
-
-def test_load_agent_catalog_rejects_harness_fallback_for_inline_role_catalogs(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        """
-roles:
-  worker:
-    harness: pi
-    command: ["pi", "-p", "{prompt}"]
-    harness_fallback:
-      - harness_config: hermes
-        profile: tori
-""".lstrip(),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(
-        ConfigError,
-        match="role 'worker' requires top-level 'harness_configs' when using 'harness_fallback'",
-    ):
-        load_agent_catalog(path)
-
-
-def test_root_agent_catalog_assigns_dedicated_verifier_skill() -> None:
-    catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
-
-    assert catalog.roles["verifier"].skills == ("orch-verifier", "verifier")
-
-
-def test_root_agent_catalog_assigns_dedicated_reviewer_skill() -> None:
-    catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
-
-    assert catalog.roles["reviewer"].skills == ("reviewer",)
-
-
-def test_root_agent_catalog_assigns_dedicated_appsec_skill() -> None:
-    catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
-
-    assert catalog.roles["appsec"].skills == ("appsec",)
-
-
-def test_root_agent_catalog_does_not_include_builder_harness_fallback() -> None:
-    catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
-
-    builder = catalog.roles["builder"]
-    assert builder.harness_fallback == ()
-
-
-def test_root_agent_catalog_verifier_uses_auto_enabled_mode() -> None:
-    catalog = load_agent_catalog(Path(__file__).resolve().parents[1] / "agent-catalog.yaml")
-
-    verifier = catalog.roles["verifier"]
-    assert verifier.enabled is True
-    assert verifier.enabled_mode == "auto"
-
-
-def test_load_agent_catalog_supports_default_role_and_enabled_flags(tmp_path: Path) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        """
-default_role: reviewer
-harness_configs:
-  pi:
-    harness: pi
-    command: ["pi", "-p", "{prompt}"]
-  hermes:
-    harness: hermes
-    command: ["hermes", "-z", "{prompt}"]
-roles:
-  worker:
-    harness_config: pi
-    enabled: off
-  reviewer:
-    harness_config: hermes
-    enabled: on
-  observer:
-    harness_config: pi
-    enabled: auto
-""".lstrip(),
-        encoding="utf-8",
-    )
-
-    catalog = load_agent_catalog(path)
-
-    assert catalog.default_role == "reviewer"
-    assert catalog.roles["worker"].enabled is False
-    assert catalog.roles["worker"].enabled_mode == "manual"
-    assert catalog.roles["reviewer"].enabled is True
-    assert catalog.roles["reviewer"].enabled_mode == "manual"
-    assert catalog.roles["observer"].enabled is True
-    assert catalog.roles["observer"].enabled_mode == "auto"
-
-
-def test_load_agent_catalog_rejects_auto_only_default_role(tmp_path: Path) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        """
-default_role: reviewer
-roles:
-  reviewer:
-    harness: pi
-    command: ["pi", "-p", "{prompt}"]
-    enabled: auto
-""".lstrip(),
-        encoding="utf-8",
-    )
-
-    with pytest.raises(ConfigError, match="default_role must not be auto-only: reviewer"):
-        load_agent_catalog(path)
-
-
-def test_load_agent_catalog_defaults_to_builder_when_omitted(tmp_path: Path) -> None:
-    path = tmp_path / "agent-catalog.yaml"
-    path.write_text(
-        """
-harness_configs:
-  pi:
-    harness: pi
-    command: ["pi", "-p", "{prompt}"]
+  "example/model-a":
+    concurrency: 2
 roles:
   builder:
+    enabled: manual
     harness_config: pi
-""".lstrip(),
-        encoding="utf-8",
-    )
+    model: "example/model-a"
+    env:
+      EXAMPLE_FLAG: '1'
+    skills: []
+    auto_verify: true
+  verifier:
+    enabled: auto
+    harness_config: pi
+    model: "example/model-a"
+    env: {}
+    skills: []
+    auto_verify: false
+  planner:
+    enabled: disabled
+    harness_config: pi
+    model: "example/model-a"
+    env: {}
+    skills: []
+    auto_verify: false
+"""
 
-    catalog = load_agent_catalog(path)
+PROMPTS_YAML = """
+dispatch_ack: ack text
+default_return_format: format text
+budget_intervention: budget
+return_hint_all_succeeded: ok
+return_hint_verification_disagreement: disagree
+return_hint_budget_exhausted: budget
+return_hint_hard_failure: failed
+"""
 
+
+def write_fixture(
+    tmp_path: Path,
+    config_yaml: str | None = None,
+    catalog_yaml: str | None = None,
+    harnesses_yaml: str | None = None,
+    prompts_yaml: str | None = None,
+) -> Path:
+    if config_yaml is None:
+        config_yaml = CONFIG_YAML.format(state_dir=str(tmp_path / "state"), mode="off")
+    if catalog_yaml is None:
+        catalog_yaml = CATALOG_YAML
+    if harnesses_yaml is None:
+        harnesses_yaml = HARNESSES_YAML
+    if prompts_yaml is None:
+        prompts_yaml = PROMPTS_YAML
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config.yaml").write_text(config_yaml, encoding="utf-8")
+    (tmp_path / "agent-catalog.yaml").write_text(catalog_yaml, encoding="utf-8")
+    (tmp_path / "harnesses.yaml").write_text(harnesses_yaml, encoding="utf-8")
+    (tmp_path / "prompts.yaml").write_text(prompts_yaml, encoding="utf-8")
+    return tmp_path
+
+
+def test_valid_fixture_resolves_typed_values(tmp_path: Path) -> None:
+    directory = write_fixture(tmp_path)
+    loaded = load_orchestra_config(directory)
+    assert loaded.config_dir == directory
+    runtime = loaded.runtime
+    assert isinstance(runtime, RuntimeConfig)
+    assert runtime.state_dir == tmp_path / "state"
+    assert runtime.log_dir == Path("logs")
+    assert runtime.default_timeout == 1500
+    assert runtime.soft_timeout == 1200
+    assert runtime.turn_limit == 60
+    assert runtime.concurrency.global_limit == 6
+    assert runtime.concurrency.per_session_limit == 3
+    assert runtime.retention_days == 90
+    assert runtime.default_mode == "off"
+    catalog = loaded.catalog
+    assert isinstance(catalog, AgentCatalog)
     assert catalog.default_role == "builder"
+    assert catalog.roles["builder"].harness_config == "pi"
+    assert catalog.roles["builder"].env == {"EXAMPLE_FLAG": "1"}
+    assert catalog.roles["builder"].skills == ()
+    assert catalog.model_limits["example/model-a"].concurrency == 2
+    harness = loaded.harnesses["pi"]
+    assert isinstance(harness, HarnessConfig)
+    assert harness.harness == "pi"
+    assert "{model}" in harness.command
+    assert loaded.prompts["dispatch_ack"] == "ack text"
 
 
-def test_missing_prompts_file_raises_clear_error(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    path.write_text("default_timeout: 30\nmode: 'on'\n", encoding="utf-8")
+def test_unknown_config_key_rejected(tmp_path: Path) -> None:
+    directory = write_fixture(
+        tmp_path,
+        config_yaml=CONFIG_YAML.format(state_dir="state", mode="off")
+        + "auto_verify: true\n",
+    )
+    with pytest.raises(ConfigError, match="unsupported keys"):
+        load_runtime_config(directory / "config.yaml")
 
-    with pytest.raises(ConfigError, match="configuration file not found"):
-        load_app_config(path)
+
+def test_missing_required_key_rejected(tmp_path: Path) -> None:
+    directory = write_fixture(tmp_path)
+    text = (directory / "config.yaml").read_text(encoding="utf-8")
+    stripped = "\n".join(
+        line for line in text.splitlines() if not line.startswith("turn_limit")
+    )
+    (directory / "config.yaml").write_text(stripped + "\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_runtime_config(directory / "config.yaml")
 
 
-REQUIRED_PROMPT_KEYS = (
-    "return_hint_done",
-    "return_hint_incomplete",
-    "return_hint_failed",
-    "return_hint_builder_failed",
-    "return_hint_budget_exceeded",
-    "budget_trigger_label",
-    "soft_timeout_block_reason",
-    "session_mode_off_message",
-    "session_mode_on_message",
-    "session_mode_orchestrate_message",
+def test_soft_timeout_at_or_above_default_rejected(tmp_path: Path) -> None:
+    directory = write_fixture(
+        tmp_path,
+        config_yaml=CONFIG_YAML.format(state_dir="state", mode="off")
+        .replace("soft_timeout: 1200", "soft_timeout: 1500"),
+    )
+    with pytest.raises(ConfigError, match="soft_timeout"):
+        load_runtime_config(directory / "config.yaml")
+
+
+def test_path_precedence_explicit_over_env_over_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_dir = write_fixture(tmp_path / "env")
+    explicit_dir = write_fixture(tmp_path / "explicit")
+    monkeypatch.chdir(PROJECT_ROOT)
+    monkeypatch.setenv("ORCHESTRA_CONFIG", str(env_dir))
+    assert resolve_config_dir() == env_dir
+    assert resolve_config_dir(explicit_dir) == explicit_dir
+    monkeypatch.delenv("ORCHESTRA_CONFIG")
+    assert resolve_config_dir() == PROJECT_ROOT
+
+
+def test_missing_config_directory_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="not found"):
+        load_orchestra_config(tmp_path / "does-not-exist")
+
+
+@pytest.mark.parametrize(
+    ("catalog_yaml", "match"),
+    [
+        (CATALOG_YAML.replace("default_role: builder", "default_role: missing"), "configured role"),
+        (
+            CATALOG_YAML.replace(
+                "default_role: builder", "default_role: planner"
+            ),
+            "disabled",
+        ),
+        (
+            CATALOG_YAML.replace(
+                "default_role: builder", "default_role: verifier"
+            ),
+            "auto-only",
+        ),
+    ],
 )
-
-
-def _write_root_prompts_copy(
-    tmp_path: Path,
-    mutate: Callable[[dict[str, Any]], object],
-) -> tuple[Path, Path]:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 30\nmode: 'on'\n", encoding="utf-8")
-    data = yaml.safe_load(ROOT_PROMPTS.read_text(encoding="utf-8"))
-    mutate(data)
-    prompts_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    return path, prompts_path
-
-
-@pytest.mark.parametrize("key", REQUIRED_PROMPT_KEYS)
-def test_load_app_config_rejects_missing_required_prompt_keys(
-    tmp_path: Path,
-    key: str,
+def test_default_role_invariants_rejected(
+    tmp_path: Path, catalog_yaml: str, match: str
 ) -> None:
-    path, _ = _write_root_prompts_copy(tmp_path, lambda data: data.pop(key))
-
-    with pytest.raises(ConfigError, match=f"missing required prompt '{key}'"):
-        load_app_config(path)
-
-
-@pytest.mark.parametrize("key", REQUIRED_PROMPT_KEYS)
-def test_load_app_config_rejects_empty_required_prompt_values(
-    tmp_path: Path,
-    key: str,
-) -> None:
-    path, _ = _write_root_prompts_copy(tmp_path, lambda data: data.update({key: None}))
-
-    with pytest.raises(ConfigError, match=f"requires '{key}' to be a string"):
-        load_app_config(path)
-
-
-@pytest.mark.parametrize("key", REQUIRED_PROMPT_KEYS)
-def test_load_app_config_from_mapping_requires_all_prompt_keys(
-    tmp_path: Path,
-    key: str,
-) -> None:
-    path, _ = _write_root_prompts_copy(tmp_path, lambda data: data.pop(key))
-
-    with pytest.raises(ConfigError, match=f"missing required prompt '{key}'"):
-        load_app_config_from_mapping(
-            yaml.safe_load(path.read_text(encoding="utf-8")), path
+    directory = write_fixture(tmp_path, catalog_yaml=catalog_yaml)
+    with pytest.raises(ConfigError, match=match):
+        load_agent_catalog(
+            directory / "agent-catalog.yaml", directory / "harnesses.yaml"
         )
 
 
-def test_load_app_config_from_mapping_rejects_unknown_key(tmp_path: Path) -> None:
-    path = tmp_path / "config.yaml"
-    prompts_path = tmp_path / "prompts.yaml"
-    path.write_text("default_timeout: 30\nmode: 'on'\nunknown_key: 1\n", encoding="utf-8")
-    write_root_prompts(prompts_path)
+def test_role_tri_state_surfaced_distinctly(tmp_path: Path) -> None:
+    directory = write_fixture(tmp_path)
+    catalog = load_agent_catalog(
+        directory / "agent-catalog.yaml", directory / "harnesses.yaml"
+    )
+    assert catalog.roles["builder"].enabled == "manual"
+    assert catalog.roles["verifier"].enabled == "auto"
+    assert catalog.roles["planner"].enabled == "disabled"
 
-    with pytest.raises(ConfigError, match="config uses unsupported key: unknown_key"):
-        load_app_config_from_mapping(yaml.safe_load(path.read_text(encoding="utf-8")), path)
+
+def test_missing_harness_reference_rejected(tmp_path: Path) -> None:
+    directory = write_fixture(
+        tmp_path,
+        catalog_yaml=CATALOG_YAML.replace("harness_config: pi", "harness_config: opencode"),
+    )
+    with pytest.raises(ConfigError, match="opencode"):
+        load_agent_catalog(
+            directory / "agent-catalog.yaml", directory / "harnesses.yaml"
+        )
+
+
+def test_reserved_env_prefix_rejected(tmp_path: Path) -> None:
+    directory = write_fixture(
+        tmp_path,
+        catalog_yaml=CATALOG_YAML.replace(
+            "EXAMPLE_FLAG: '1'", "ORCHESTRA_FLAG: '1'"
+        ),
+    )
+    with pytest.raises(ConfigError, match="ORCHESTRA_"):
+        load_agent_catalog(
+            directory / "agent-catalog.yaml", directory / "harnesses.yaml"
+        )
+
+
+def test_builder_auto_verify_surfaced_on_role(tmp_path: Path) -> None:
+    directory = write_fixture(tmp_path)
+    catalog = load_agent_catalog(
+        directory / "agent-catalog.yaml", directory / "harnesses.yaml"
+    )
+    assert catalog.roles["builder"].auto_verify is True
+    assert catalog.roles["verifier"].auto_verify is False
+
+
+def test_mode_limited_to_on_off(tmp_path: Path) -> None:
+    on_dir = write_fixture(
+        tmp_path / "on",
+        config_yaml=CONFIG_YAML.format(state_dir="state", mode="on"),
+    )
+    assert load_runtime_config(on_dir / "config.yaml").default_mode == "on"
+    orchestrate_dir = write_fixture(
+        tmp_path / "orchestrate",
+        config_yaml=CONFIG_YAML.format(state_dir="state", mode="orchestrate"),
+    )
+    with pytest.raises(ConfigError, match="default_mode"):
+        load_runtime_config(orchestrate_dir / "config.yaml")
+
+
+def test_prompts_missing_required_key_rejected(tmp_path: Path) -> None:
+    directory = write_fixture(tmp_path)
+    path = directory / "prompts.yaml"
+    prompts = load_prompts(path)
+    assert prompts["dispatch_ack"] == "ack text"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    stripped = "\n".join(
+        line for line in lines if not line.startswith("return_hint_hard_failure")
+    )
+    path.write_text(stripped + "\n", encoding="utf-8")
+    with pytest.raises(
+        ConfigError, match="missing required prompt 'return_hint_hard_failure'"
+    ):
+        load_prompts(path)
+
+
+def test_prompts_unknown_key_rejected(tmp_path: Path) -> None:
+    directory = write_fixture(tmp_path)
+    path = directory / "prompts.yaml"
+    (path).write_text(
+        "dispatch_ack: ack\ndefault_return_format: fmt\nbudget_intervention: b\n"
+        "return_hint_all_succeeded: ok\n"
+        "return_hint_verification_disagreement: d\nreturn_hint_budget_exhausted: b\n"
+        "return_hint_hard_failure: h\nmystery_key: nope\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="unsupported prompt keys: mystery_key"):
+        load_prompts(path)
+
+
+def test_project_prompts_yaml_loads_with_all_sections(tmp_path: Path) -> None:
+    from orchestra.config import PROMPTS_FILENAME
+
+    prompts = load_prompts(PROJECT_ROOT / PROMPTS_FILENAME)
+    assert prompts["dispatch_ack"]
+    assert prompts["default_return_format"]
+    for category in (
+        "all_succeeded",
+        "verification_disagreement",
+        "budget_exhausted",
+        "hard_failure",
+    ):
+        assert prompts[f"return_hint_{category}"]
+
+
+def test_project_prompts_yaml_has_commented_sections() -> None:
+    from orchestra.config import PROMPTS_FILENAME
+
+    raw = (PROJECT_ROOT / PROMPTS_FILENAME).read_text(encoding="utf-8")
+    for section in ("formats", "tool_response", "return_hints"):
+        assert section in raw
+
+
+def test_harnesses_loader_rejects_invalid_command(tmp_path: Path) -> None:
+    directory = write_fixture(
+        tmp_path,
+        harnesses_yaml="pi:\n  harness: pi\n  command: []\n",
+    )
+    with pytest.raises(ConfigError, match="command"):
+        load_harnesses(directory / "harnesses.yaml")

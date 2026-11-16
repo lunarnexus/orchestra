@@ -1,84 +1,222 @@
-import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { promisify } from "node:util";
+/**
+ * Orchestra 2 Pi host adapter (thin).
+ *
+ * Owns only host-specific concerns; all wording and behavior come from the
+ * Orchestra 2 core CLI (`python3 -m orchestra`) with ORCHESTRA_CONFIG set to
+ * the Orchestra 2 project root:
+ *
+ * - `orch_dispatch` tool: submits an assignment and returns the dispatch
+ *   acknowledgement; the single session return is delivered later as a steer
+ *   user message (guarded against compaction).
+ * - `/orch help|on|off|doctor|status|history|do|stop` command.
+ * - belowEditor footer widget: token/cost, mode, and worker role meter.
+ * - Entry renderers for command echoes and Orchestra output; non-UI runs
+ *   fall back to stdout/stderr.
+ */
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-const execFileAsync = promisify(execFile);
-const ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET";
-const ORCHESTRA_TURN_BUDGET_ENV = "ORCHESTRA_TURN_BUDGET";
-const ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV = "ORCHESTRA_SOFT_TIMEOUT_SECONDS";
-const ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV = "ORCHESTRA_BUDGET_EXCEEDED_PROMPT";
-const WATCHER_TIMEOUT_MARGIN_SECONDS = 30;
-const REPORT_WATCHER_MAX_ATTEMPTS = 3;
-const REPORT_WATCHER_RETRY_MS = 500;
+const PI_MODULE_ARGV = ["-m", "orchestra"];
 
-interface OrchestraFooterTheme {
-  bold(text: string): string;
-  fg(color: string, text: string): string;
-}
+type Theme = { fg(color: string, text: string): string; bold(text: string): string };
 
-type MainSessionMode = "off" | "on" | "orchestrate";
-
-interface ActiveRoleCount {
-  role: string;
-  count: number;
-}
-
-interface ActiveSessionStatus {
-  activeCount: number;
-  roleCounts: ActiveRoleCount[];
-  runIds: string[];
-  accounting?: {
-    input_tokens?: number | null;
-    output_tokens?: number | null;
-    reasoning_tokens?: number | null;
-    cache_read_tokens?: number | null;
-    cache_write_tokens?: number | null;
-    cost_usd?: number | null;
+interface UiCtx {
+  hasUI: boolean;
+  ui: {
+    notify(msg: string, level: "info" | "warning" | "error"): void;
+    setWidget(key: string, content: string[] | undefined, options?: { placement?: string }): void;
+    theme: Theme;
   };
 }
 
-interface DispatchPayload {
+interface AckPayload {
   run_id?: string;
   role?: string;
-  timeout_seconds?: number;
-  message?: string;
+  ack?: string;
+  jobs?: Array<{ worker_session_id?: string }>;
+}
+
+interface JobReturnPayload {
+  role?: string;
+  status?: string;
+  summary?: string;
+}
+
+interface ReturnPayload {
+  run_id?: string;
+  category?: string;
+  hint?: string;
+  note?: string;
+  jobs?: JobReturnPayload[];
+  stopped?: boolean;
+  return?: ReturnPayload | null;
 }
 
 interface StatusPayload {
-  active_runs?: { count?: number; runs?: Array<{ run_id?: string; role?: string }> };
-  role_counts?: Array<{ role?: string; count?: number }>;
-  accounting?: {
-    input_tokens?: number | null;
-    output_tokens?: number | null;
-    reasoning_tokens?: number | null;
-    cache_read_tokens?: number | null;
-    cache_write_tokens?: number | null;
-    cost_usd?: number | null;
+  data?: {
+    session_jobs?: Array<{ role?: string }>;
   };
 }
 
-interface PendingSessionReport {
-  runIds: string[];
-  message: string;
-  anchorRunId: string;
-  updateStatus?: (status: ActiveSessionStatus | null) => void;
-  sessionGeneration: number;
-  confirmed: boolean;
-  submitted: boolean;
-  watchAgain?: boolean;
-}
-
-interface AwaitRunPayload {
-  status?: string;
+interface DispatchParams {
+  goal?: string;
+  additionalContext?: string;
   role?: string;
-  blocker?: string;
-  active_runs_remaining?: number;
+  taskLabel?: string;
 }
 
-function renderOrchestraWorkerStatus(theme: OrchestraFooterTheme, roleCounts: ActiveRoleCount[]): string | undefined {
+interface UsageSummary {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+function normalizePiSessionId(raw: string): string {
+  const normalized = raw.trim();
+  if (!normalized) throw new Error("pi session id is required");
+  return `pi:${normalized}`;
+}
+
+/** Environment for core CLI calls: Orchestra 2 config dir, and its src/ on
+ * PYTHONPATH so `python3 -m orchestra` resolves the Orchestra 2 package. */
+function orchestraEnv(): NodeJS.ProcessEnv {
+  const configDir = process.env.ORCHESTRA_CONFIG ?? "";
+  const pythonPath = [configDir ? join(configDir, "src") : "", process.env.PYTHONPATH ?? ""]
+    .filter((part) => part.length > 0)
+    .join(":");
+  return {
+    ...process.env,
+    ...(configDir ? { ORCHESTRA_CONFIG: configDir } : {}),
+    ...(pythonPath ? { PYTHONPATH: pythonPath } : {}),
+  };
+}
+
+function runOrchestra(args: string[], input?: string): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn("python3", [...PI_MODULE_ARGV, ...args], {
+      env: orchestraEnv(),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error: Error) => {
+      resolve({ code: 1, stdout: "", stderr: error.message });
+    });
+    child.on("close", (code: number | null) => {
+      resolve({ code: code ?? 0, stdout: stdout.trim(), stderr: stderr.trim() });
+    });
+    child.stdin.on("error", () => {
+      // Ignore EPIPE when the child exits before consuming all input.
+    });
+    child.stdin.end(input ?? "");
+  });
+}
+
+/** Spawn a long-running core dispatch; `onLine` receives each stdout JSONL line. */
+function spawnDispatch(
+  args: string[],
+  input: string,
+  onLine: (line: string) => void,
+  onClose: (code: number | null) => void,
+): void {
+  const child = spawn("python3", [...PI_MODULE_ARGV, ...args], {
+    env: orchestraEnv(),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdin.on("error", () => {
+    // Ignore EPIPE when the child exits before consuming all input.
+  });
+  child.stdin.end(input);
+  createInterface({ input: child.stdout }).on("line", onLine);
+  createInterface({ input: child.stderr }).on("line", (line: string) => process.stderr.write(`${line}\n`));
+  child.on("error", (error: Error) => process.stderr.write(`orchestra dispatch failed to launch: ${error.message}\n`));
+  child.on("close", onClose);
+}
+
+function parseJsonLine<T>(line: string): T | null {
+  try {
+    const value: unknown = JSON.parse(line);
+    return typeof value === "object" && value !== null ? (value as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function compactTokens(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  return String(value);
+}
+
+/** Sum token usage across the given workers' native Pi session transcripts. */
+function readWorkerUsage(workerSessionIds: ReadonlySet<string>): UsageSummary {
+  const total: UsageSummary = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  const agentDir = process.env.PI_CODING_AGENT_DIR ?? join(process.env.HOME ?? "~", ".pi", "agent");
+  const sessionRoot = process.env.PI_CODING_AGENT_SESSION_DIR ?? join(agentDir, "sessions");
+  let files: string[] = [];
+  try {
+    files = readdirSync(sessionRoot, { recursive: true }) as string[];
+  } catch {
+    return total;
+  }
+  for (const name of files) {
+    if (!workerSessionIds.has(sessionTranscriptId(name))) continue;
+    try {
+      for (const line of readFileSync(join(sessionRoot, name), "utf8").split("\n")) {
+        if (!line.trim()) continue;
+        const entry = parseJsonLine<{ message?: { usage?: Partial<Usage> } }>(line);
+        const usage = entry?.message?.usage;
+        if (!usage) continue;
+        total.input += usage.input ?? 0;
+        total.output += usage.output ?? 0;
+        total.cacheRead += usage.cacheRead ?? 0;
+        total.cacheWrite += usage.cacheWrite ?? 0;
+      }
+    } catch {
+      // A missing or unreadable transcript contributes nothing.
+    }
+  }
+  return total;
+}
+
+/** Worker session id embedded in a transcript file name: `..._<id>.jsonl`. */
+function sessionTranscriptId(fileName: string): string {
+  const base = fileName.split("/").pop() ?? fileName;
+  const withoutExt = base.replace(/\.jsonl$/, "");
+  return withoutExt.slice(withoutExt.indexOf("_") + 1);
+}
+
+function usageText(usage: UsageSummary, model: Model<Api> | undefined, theme: Theme): string {
+  const cost = model
+    ? calculateCost(model, {
+        input: usage.input,
+        output: usage.output,
+        cacheRead: usage.cacheRead,
+        cacheWrite: usage.cacheWrite,
+        totalTokens: usage.input + usage.output + usage.cacheRead + usage.cacheWrite,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      } satisfies Usage).total
+    : 0;
+  return theme.fg("dim", `↑${compactTokens(usage.input)} ↓${compactTokens(usage.output)} $${cost.toFixed(3)}`);
+}
+
+function renderRoleMeter(theme: Theme, roleCounts: Array<{ role: string; count: number }>): string | undefined {
   if (roleCounts.length === 0) return undefined;
   return roleCounts
     .slice()
@@ -92,1776 +230,214 @@ function renderOrchestraWorkerStatus(theme: OrchestraFooterTheme, roleCounts: Ac
     .join(" ");
 }
 
-function formatCompactTokenCount(value: number | null | undefined): string {
-  const numeric = value ?? 0;
-  const abs = Math.abs(numeric);
-  const compact = (divisor: number, suffix: string): string => {
-    const scaled = numeric / divisor;
-    const decimals = Math.abs(scaled) < 10 ? 1 : 0;
-    return `${scaled.toFixed(decimals).replace(/\.0$/, "")}${suffix}`;
-  };
-  if (abs >= 1_000_000) return compact(1_000_000, "M");
-  if (abs >= 1_000) return compact(1_000, "k");
-  return String(numeric);
-}
-
-function orchestraCostForMainModel(
-  accounting: NonNullable<ActiveSessionStatus["accounting"]>,
-  mainModel: Model<Api> | undefined,
-): number {
-  if (!mainModel) return accounting.cost_usd ?? 0;
-  const input = accounting.input_tokens ?? 0;
-  const output = accounting.output_tokens ?? 0;
-  const cacheRead = accounting.cache_read_tokens ?? 0;
-  const cacheWrite = accounting.cache_write_tokens ?? 0;
-  const usage: Usage = {
-    input,
-    output,
-    cacheRead,
-    cacheWrite,
-    totalTokens: input + output + cacheRead + cacheWrite,
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-  };
-  return calculateCost(mainModel, usage).total;
-}
-
-function renderOrchestraFooterStatus(
-  theme: OrchestraFooterTheme,
-  mode: string | null,
-  status: ActiveSessionStatus | null,
-  mainModel?: Model<Api>,
-): string | undefined {
-  if (!mode || mode === "off") return undefined;
-  const parts: string[] = [];
-  const accounting = status?.accounting;
-  if (accounting) {
-    const cacheRead = accounting.cache_read_tokens ?? 0;
-    const cacheWrite = accounting.cache_write_tokens ?? 0;
-    const cacheTotal = cacheRead + cacheWrite;
-    const cacheHit = cacheTotal > 0 ? Math.round((cacheRead / cacheTotal) * 100) : 0;
-    parts.push(theme.fg("dim", `↑${formatCompactTokenCount(accounting.input_tokens)}`));
-    parts.push(theme.fg("dim", `↓${formatCompactTokenCount(accounting.output_tokens)}`));
-    parts.push(theme.fg("dim", `R${formatCompactTokenCount(accounting.reasoning_tokens)}`));
-    parts.push(theme.fg("dim", `CH${cacheHit}%`));
-    parts.push(theme.fg("dim", `-$${orchestraCostForMainModel(accounting, mainModel).toFixed(3)}`));
-  }
-  parts.push(theme.fg("dim", `(Orchestra:${mode})`));
-  if (status && status.activeCount > 0) {
-    const roleText = renderOrchestraWorkerStatus(theme, status.roleCounts);
-    if (roleText) parts.push(roleText);
-  }
-  return parts.length > 0 ? parts.join(" ") : undefined;
-}
-
-function setOrchestraWorkerStatus(
-  ctx: {
-    model?: Model<Api>;
-    ui: {
-      setWidget: (key: string, widget: { text: string }, options?: { placement?: string }) => void;
-      theme: OrchestraFooterTheme;
-    };
-  },
-  status: ActiveSessionStatus | null,
-  mode?: string | null,
-): void {
-  const text = renderOrchestraFooterStatus(ctx.ui.theme, mode ?? null, status, ctx.model);
-  if (!text) {
-    ctx.ui.setWidget("orchestra", undefined, { placement: "belowEditor" });
-    return;
-  }
-  ctx.ui.setWidget("orchestra", () => new Text(text, 0, 0), { placement: "belowEditor" });
-}
-
-function orchestraDispatchBudget(): number {
-  const raw = process.env[ORCHESTRA_DISPATCH_BUDGET_ENV]?.trim();
-  if (!raw) return 0;
-  const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 1;
-}
-
-function canDispatchOrchestraWorker(): boolean {
-  return orchestraDispatchBudget() !== 1;
-}
-
-function parseBudgetEnv(name: string): number {
-  const raw = process.env[name]?.trim();
-  if (!raw) return 0;
-  const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed >= 0 ? parsed : 1;
-}
-
-function normalizePiSessionId(raw: string): string {
-  const normalized = raw.trim();
-  if (!normalized) throw new Error("pi session id is required");
-  return `pi:${normalized}`;
-}
-
-function emitOutput(ctx: { hasUI: boolean; ui: { notify: (msg: string, level: "info" | "warning" | "error") => void } }, output: string, level: "info" | "warning" | "error" = "info"): void {
-  if (ctx.hasUI) {
-    ctx.ui.notify(output, level);
-    return;
-  }
-  process.stdout.write(output.endsWith("\n") ? output : `${output}\n`);
-}
-
-function orchestraBaseArgs(): string[] {
-  const args: string[] = [];
-  if (process.env.ORCHESTRA_CONFIG) {
-    args.push("--config", process.env.ORCHESTRA_CONFIG);
-  }
-  return args;
-}
-
-function runOrchestraWithInput(
-  args: string[],
-  input: string,
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    const child = spawn("orchestra", [...orchestraBaseArgs(), ...args], { stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-    child.on("error", (error: Error) => {
-      resolve({ code: 1, stdout: "", stderr: error.message.trim() });
-    });
-    child.on("close", (code: number | null) => {
-      resolve({ code: code ?? 0, stdout: stdout.trim(), stderr: stderr.trim() });
-    });
-    // Writing then ending stdin signals EOF so the child's sys.stdin.read() returns.
-    child.stdin.on("error", () => {
-      // Ignore EPIPE when the child exits before consuming all input.
-    });
-    child.stdin.end(input);
-  });
-}
-
-async function runOrchestra(
-  args: string[],
-  input?: string,
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  if (input !== undefined) {
-    return runOrchestraWithInput(args, input);
-  }
-  try {
-    const options: Parameters<typeof execFileAsync>[2] = { encoding: "utf8" };
-    const { stdout, stderr } = await execFileAsync("orchestra", [...orchestraBaseArgs(), ...args], options);
-    return { code: 0, stdout: stdout.trim(), stderr: stderr.trim() };
-  } catch (error) {
-    const err = error as { code?: number; stdout?: string; stderr?: string; message: string };
-    return {
-      code: err.code ?? 1,
-      stdout: (err.stdout ?? "").trim(),
-      stderr: (err.stderr ?? err.message).trim(),
-    };
-  }
-}
-
-interface TokenizeArgsResult {
-  tokens: string[];
-  trailingSpace: boolean;
-  error: string | null;
-}
-
-interface ParsedDoArgs {
-  role: string | null;
-  timeout: string | null;
-  taskLabel: string | null;
-  goal: string;
-  error: string | null;
-}
-
-function tokenizeArgs(input: string): TokenizeArgsResult {
-  const tokens: string[] = [];
-  let current = "";
-  let quote: '"' | "'" | null = null;
-  let escaping = false;
-
-  for (const char of input) {
-    if (escaping) {
-      current += char;
-      escaping = false;
-      continue;
-    }
-
-    if (char === "\\") {
-      escaping = true;
-      continue;
-    }
-
-    if (quote) {
-      if (char === quote) {
-        quote = null;
-      } else {
-        current += char;
-      }
-      continue;
-    }
-
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-
-    if (/\s/.test(char)) {
-      if (current) {
-        tokens.push(current);
-        current = "";
-      }
-      continue;
-    }
-
-    current += char;
-  }
-
-  if (escaping) {
-    current += "\\";
-  }
-  if (quote) {
-    return { tokens: [], trailingSpace: /\s$/.test(input), error: "Malformed quoted string in /orch do arguments" };
-  }
-  if (current) {
-    tokens.push(current);
-  }
-
-  return {
-    tokens,
-    trailingSpace: /\s$/.test(input),
-    error: null,
-  };
-}
-
-function parseDoArgs(args: string): ParsedDoArgs {
-  const tokenized = tokenizeArgs(args);
-  if (tokenized.error) {
-    return {
-      role: null,
-      timeout: null,
-      taskLabel: null,
-      goal: "",
-      error: tokenized.error,
-    };
-  }
-
-  let role: string | null = null;
-  let timeout: string | null = null;
-  let taskLabel: string | null = null;
-  const goalParts: string[] = [];
-
-  for (let i = 0; i < tokenized.tokens.length; i += 1) {
-    const token = tokenized.tokens[i];
-    if (token === "--role" && tokenized.tokens[i + 1]) {
-      role = tokenized.tokens[i + 1];
-      i += 1;
-      continue;
-    }
-    if (token === "--timeout" && tokenized.tokens[i + 1]) {
-      timeout = tokenized.tokens[i + 1];
-      i += 1;
-      continue;
-    }
-    if (token === "--task-label" && tokenized.tokens[i + 1]) {
-      taskLabel = tokenized.tokens[i + 1];
-      i += 1;
-      continue;
-    }
-    goalParts.push(token);
-  }
-
-  return {
-    role,
-    timeout,
-    taskLabel,
-    goal: goalParts.join(" ").trim(),
-    error: null,
-  };
-}
-
-function extractField(output: string, field: string): string | null {
-  for (const line of output.split(/\r?\n/)) {
-    const match = new RegExp(`^${field}:\\s+(.+)$`).exec(line.trim());
-    if (match) return match[1].trim();
-  }
-  return null;
-}
-
-function parseDispatchPayload(output: string): DispatchPayload {
-  return JSON.parse(output) as DispatchPayload;
-}
-
-interface CoreErrorEnvelope {
-  kind?: unknown;
-  ok?: unknown;
-  error?: { message?: unknown; operation?: unknown; run_id?: unknown };
-}
-
-// Reusable parser for the core shared error envelope (D-RETURN-018). Returns
-// the core message/operation/run_id for a well-formed envelope, or null so
-// callers fall back to raw process text (native spawn or non-JSON commands).
-function parseCoreErrorEnvelope(source: string): { message: string; operation: string; runId: string | null } | null {
-  const trimmed = source.trim();
-  if (!trimmed) return null;
-  let payload: unknown;
-  try {
-    payload = JSON.parse(trimmed);
-  } catch {
-    return null;
-  }
-  if (!payload || typeof payload !== "object") return null;
-  const envelope = payload as CoreErrorEnvelope;
-  if (envelope.kind !== "error" || envelope.ok !== false) return null;
-  const detail = envelope.error;
-  if (!detail || typeof detail !== "object") return null;
-  const message = typeof detail.message === "string" ? detail.message.trim() : "";
-  if (!message) return null;
-  const operation = typeof detail.operation === "string" ? detail.operation : "";
-  const runId = typeof detail.run_id === "string" && detail.run_id ? detail.run_id : null;
-  return { message, operation, runId };
-}
-
-// Host result renderer: prefer the core envelope message, then raw stderr or
-// stdout (process/native spawn failures and commands without --json), then a
-// fixed fallback. Returns the extracted core message, never the raw envelope.
-function commandErrorMessage(
-  result: { stdout: string; stderr: string },
-  fallback: string,
-): string {
-  return (
-    parseCoreErrorEnvelope(result.stdout)?.message
-    || parseCoreErrorEnvelope(result.stderr)?.message
-    || result.stderr.trim()
-    || result.stdout.trim()
-    || fallback
-  );
-}
-
-// Host throw helper for SPSI context failures so the host shows one visible
-// extension error without claiming hook-abort semantics.
-function throwSpsiContextFailure(detail: string): never {
-  throw new Error(`Orchestra SPSI context failed: ${detail}`);
-}
-
-interface OrchestraCommandEntry {
-  text: string;
-}
-
-interface OrchestraOutputEntry {
-  text: string;
-}
-
-interface DispatchParams {
-  goal?: string;
-  additionalContext?: string;
-  role?: string;
-  timeout?: number;
-  taskLabel?: string;
-}
-
-interface DispatchResult {
-  code: number;
-  runId: string | null;
-  output: string;
-}
-
-interface ProgressNotifier {
-  notify(message: string): void;
-}
-
-type PiTextToolResult = {
-  content: Array<{ type: "text"; text: string }>;
-  isError: boolean;
-};
-
-function toolTextResult(text: string, isError = false): PiTextToolResult {
-  return {
-    content: [{ type: "text", text }],
-    isError,
-  };
-}
-
-interface ToolInfoPayload {
-  description: string;
-  goalDescription: string;
-  additionalContextDescription: string;
-  roleDescription: string;
-  taskLabelDescription: string;
-  statusDescription: string;
-  statusActionDescription: string;
-  statusLimitDescription: string;
-  statusRunIdDescription: string;
-  statusRoleDescription: string;
-  statusSettingDescription: string;
-  statusValueDescription: string;
-  dispatchTimeoutError: string;
-  budgetTriggerLabel: string;
-  softTimeoutBlockReason: string;
-  mainSessionMode?: string;
-}
-
-interface SessionModeTransitionEffect {
-  display_text?: string;
-  mode?: MainSessionMode;
-  tools_enabled?: boolean;
-  error?: string;
-}
-
-interface SessionModeTransitionPayload {
-  effect?: SessionModeTransitionEffect;
-  ok?: boolean;
-}
-
-interface SpsiPayload {
-  enabled?: boolean;
-  name?: string;
-  revision?: string;
-  content?: string;
-  ok?: boolean;
-}
-
-async function hostHelp(): Promise<string> {
-  const result = await runOrchestra(["help-host"]);
-  return result.stdout || result.stderr;
-}
-
-async function commandEchoText(trimmed: string): Promise<string> {
-  const result = await runOrchestra(["_command-echo", trimmed]);
-  return result.stdout || (trimmed ? `/orch ${trimmed}` : "/orch");
-}
-
-async function loadToolInfo(sessionId?: string): Promise<ToolInfoPayload> {
-  const args = sessionId ? ["_tool-info", "--session-id", sessionId] : ["_tool-info"];
-  const result = await runOrchestra(args);
-  if (result.code === 0 && result.stdout.trim()) {
-    return JSON.parse(result.stdout) as ToolInfoPayload;
-  }
-  throw new Error("failed to load orch_dispatch and orch_status metadata from orchestra _tool-info");
-}
-
-function parseSessionModeTransitionPayload(output: string): SessionModeTransitionPayload {
-  return JSON.parse(output) as SessionModeTransitionPayload;
-}
-
-interface RoleMetadata {
-  roles: string[];
-  harnessConfigs: string[];
-  passParentContext: string[];
-  defaultRole: string | null;
-}
-
-function parseRoleMetadata(output: string): RoleMetadata {
-  const payload = JSON.parse(output) as {
-    roles?: unknown;
-    harnessConfigs?: unknown;
-    passParentContext?: unknown;
-    defaultRole?: unknown;
-  };
-  const roles = Array.isArray(payload.roles)
-    ? payload.roles.filter((role): role is string => typeof role === "string" && role.trim().length > 0)
-    : [];
-  const harnessConfigs = Array.isArray(payload.harnessConfigs)
-    ? payload.harnessConfigs.filter((cfg): cfg is string => typeof cfg === "string" && cfg.trim().length > 0)
-    : [];
-  const passParentContext = Array.isArray(payload.passParentContext)
-    ? payload.passParentContext.filter((role): role is string => typeof role === "string" && role.trim().length > 0)
-    : [];
-  const defaultRole = typeof payload.defaultRole === "string" && payload.defaultRole.trim() ? payload.defaultRole : null;
-  return { roles, harnessConfigs, passParentContext, defaultRole };
-}
-
-function parseActiveSessionStatus(output: string): ActiveSessionStatus {
-  const payload = JSON.parse(output) as StatusPayload;
-  const runs = Array.isArray(payload.active_runs?.runs) ? payload.active_runs?.runs : [];
-  const roleCounts = Array.isArray(payload.role_counts)
-    ? payload.role_counts
-      .filter((entry): entry is { role: string; count: number } => typeof entry.role === "string" && typeof entry.count === "number")
-      .map(({ role, count }) => ({ role, count }))
-    : [];
-  const runIds = runs
-    .map((run) => (typeof run.run_id === "string" ? run.run_id : null))
-    .filter((runId): runId is string => runId !== null);
-
-  return {
-    activeCount: typeof payload.active_runs?.count === "number" ? payload.active_runs.count : runIds.length,
-    roleCounts,
-    runIds,
-    accounting: payload.accounting,
-  };
-}
-
-function replaceCurrentToken(rawPrefix: string, currentToken: string, replacement: string): string {
-  return rawPrefix.slice(0, rawPrefix.length - currentToken.length) + replacement;
-}
-
-function appendCompletion(rawPrefix: string, suffix: string): string {
-  return `${rawPrefix}${suffix}`;
-}
-
-function buildCompletionItem(value: string, label: string, description?: string): { value: string; label: string; description?: string } {
-  return description ? { value, label, description } : { value, label };
-}
-
-function filterStaticCompletions(
-  rawPrefix: string,
-  currentToken: string,
-  suggestions: Array<{ token: string; description?: string }>,
-): Array<{ value: string; label: string; description?: string }> | null {
-  const items = suggestions
-    .filter((suggestion) => suggestion.token.startsWith(currentToken))
-    .map((suggestion) => buildCompletionItem(
-      replaceCurrentToken(rawPrefix, currentToken, suggestion.token),
-      suggestion.token.trim(),
-      suggestion.description,
-    ));
-  return items.length > 0 ? items : null;
-}
-
-function doArgumentContext(tokens: string[]): { expecting: "role" | "timeout" | "taskLabel" | null; goalStarted: boolean } {
-  let expecting: "role" | "timeout" | "taskLabel" | null = null;
-  let goalStarted = false;
-
-  for (const token of tokens) {
-    if (expecting) {
-      expecting = null;
-      continue;
-    }
-    if (token === "--role") {
-      expecting = "role";
-      continue;
-    }
-    if (token === "--timeout") {
-      expecting = "timeout";
-      continue;
-    }
-    if (token === "--task-label") {
-      expecting = "taskLabel";
-      continue;
-    }
-    goalStarted = true;
-  }
-
-  return { expecting, goalStarted };
-}
-
-type OrchStatusAction = "on" | "orchestrate" | "status" | "history" | "help" | "doctor" | "roles" | "stop";
-
-type OrchestraToolName = "orch_status" | "orch_dispatch";
-
-interface OrchStatusParams {
-  action: OrchStatusAction;
-  limit?: string;
-  runId?: string;
-  role?: string;
-  setting?: string;
-  value?: string;
-}
-
-function roleWantsParentContext(metadata: RoleMetadata, requestedRole?: string | null): boolean {
-  const selected = (requestedRole ?? "").trim() || metadata.defaultRole;
-  if (!selected) return false;
-  return metadata.passParentContext.includes(selected);
-}
-
-interface ParentContextSessionManager {
-  buildContextEntries?: () => unknown[];
-  getBranch?: (fromId?: string) => unknown[];
-}
-
-function isSessionMessageEntry(value: unknown): value is { type: "message"; message: unknown } {
-  if (typeof value !== "object" || value === null) return false;
-  const entry = value as { type?: unknown; message?: unknown };
-  return entry.type === "message" && typeof entry.message === "object" && entry.message !== null;
-}
-
-function renderParentContextArtifact(entries: unknown[]): string {
-  const lines = entries.filter(isSessionMessageEntry).map((entry) => JSON.stringify(entry.message));
-  return lines.length > 0 ? `${lines.join("\n")}\n` : "";
-}
-
-function renderDispatchRequestFallback(params: DispatchParams): string {
+function formatReturnMessage(payload: ReturnPayload): string {
   const lines: string[] = [];
-  const goal = (params.goal ?? "").trim();
-  if (goal) lines.push(`goal: ${goal}`);
-  const role = (params.role ?? "").trim();
-  if (role) lines.push(`role: ${role}`);
-  const taskLabel = (params.taskLabel ?? "").trim();
-  if (taskLabel) lines.push(`task_label: ${taskLabel}`);
-  return lines.length > 0 ? `${lines.join("\n")}\n` : "";
-}
-
-function captureParentContextText(sessionManager: ParentContextSessionManager, params: DispatchParams): string {
-  if (typeof sessionManager.buildContextEntries !== "function") {
-    throw new Error("Pi session manager does not expose buildContextEntries()");
+  const runId = payload.run_id ?? "(unknown run)";
+  if (payload.stopped) {
+    lines.push(`Orchestra run ${runId} was stopped before completion.`);
+  } else {
+    lines.push(`Orchestra run ${runId} finished (${payload.category ?? "unknown"}).`);
   }
-  let text = renderParentContextArtifact(sessionManager.buildContextEntries());
-  if (!text && typeof sessionManager.getBranch === "function") {
-    // The current command may not be recorded in the compacted context yet.
-    text = renderParentContextArtifact(sessionManager.getBranch());
+  if (payload.hint?.trim()) lines.push("", payload.hint.trim());
+  const jobs = payload.jobs ?? [];
+  if (jobs.length > 0) {
+    lines.push("", "Jobs:");
+    for (const job of jobs) {
+      lines.push(`- ${job.role ?? "worker"} [${job.status ?? "?"}]: ${(job.summary ?? "").trim()}`);
+    }
   }
-  if (!text) {
-    // Fresh sessions have no recorded messages; capture the dispatch request itself.
-    text = renderDispatchRequestFallback(params);
-  }
-  if (!text) throw new Error("parent context capture produced no session content");
-  return text;
+  if (payload.note?.trim()) lines.push("", payload.note.trim());
+  return lines.join("\n");
 }
 
 export default async function orchestraExtension(pi: ExtensionAPI) {
   let currentSessionId: string | null = null;
-  const reportWatchers = new Map<string, Set<ChildProcessWithoutNullStreams>>();
-  const awaitRunWatchers = new Map<string, Set<ChildProcessWithoutNullStreams>>();
-  const sessionRuns = new Map<string, Set<string>>();
-  const sessionCompletedRuns = new Map<string, Set<string>>();
-  const sessionGenerations = new Map<string, number>();
-  const sessionRefreshRequests = new Map<string, number>();
-  const reportWatcherRetries = new Map<string, ReturnType<typeof setTimeout>>();
-  const pendingSessionReports = new Map<string, PendingSessionReport>();
-  const compactingSessions = new Set<string>();
-  const compactionDeliveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  let cachedRoleNames: ({ expiresAt: number } & RoleMetadata) | null = null;
-  let cachedActiveStatus: { expiresAt: number; sessionId: string; status: ActiveSessionStatus } | null = null;
-  let turnBudget = parseBudgetEnv(ORCHESTRA_TURN_BUDGET_ENV);
-  let softTimeoutSeconds = parseBudgetEnv(ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV);
-  let sessionStartedAt = Date.now();
-  let budgetPromptInjected = false;
-  let orchestraToolsEnabled = true;
-  let mainSessionMode: MainSessionMode | null = null;
+  let mode: string | null = null;
+  let model: Model<Api> | undefined;
+  const workerSessionIds = new Set<string>();
+  const pendingReturns = new Map<string, string[]>();
+  const compacting = new Set<string>();
 
-  function injectBudgetExceededPrompt(reason: "turn_limit" | "soft_timeout"): void {
-    if (budgetPromptInjected) return;
-    const prompt = process.env[ORCHESTRA_BUDGET_EXCEEDED_PROMPT_ENV]?.trim();
-    if (!prompt) return;
-    budgetPromptInjected = true;
-    pi.sendUserMessage(`${prompt}\n\n${currentToolInfo.budgetTriggerLabel}: ${reason}`, { deliverAs: "steer" });
-  }
-
-  function softTimeoutExceeded(): boolean {
-    return softTimeoutSeconds > 0 && Date.now() - sessionStartedAt >= softTimeoutSeconds * 1000;
-  }
-
-  pi.on("turn_end", async () => {
-    if (budgetPromptInjected) return;
-    if (turnBudget > 1) {
-      turnBudget -= 1;
-      process.env[ORCHESTRA_TURN_BUDGET_ENV] = String(turnBudget);
-    }
-    if (turnBudget === 1) {
-      injectBudgetExceededPrompt("turn_limit");
-      return;
-    }
-    if (softTimeoutExceeded()) {
-      injectBudgetExceededPrompt("soft_timeout");
-    }
-  });
-
-  pi.on("session_before_compact", async () => {
-    if (currentSessionId) compactingSessions.add(currentSessionId);
-  });
-
-  function finishCompaction(): void {
-    if (!currentSessionId) return;
-    const sessionId = currentSessionId;
-    const generation = ensureSessionGeneration(sessionId);
-    const previous = compactionDeliveryTimers.get(sessionId);
-    if (previous) clearTimeout(previous);
-    // Pi emits session_compact before clearing its compaction controller.
-    // Deliver on the next task, after the lifecycle callback has returned.
-    const timer = setTimeout(() => {
-      compactionDeliveryTimers.delete(sessionId);
-      if (!isCurrentSessionGeneration(sessionId, generation)) return;
-      compactingSessions.delete(sessionId);
-      submitPendingReport(sessionId);
-    }, 0);
-    compactionDeliveryTimers.set(sessionId, timer);
-  }
-
-  pi.on("session_compact", finishCompaction);
-  pi.on("session_compact_failed", finishCompaction);
-
-  pi.on("tool_call", async () => {
-    if (budgetPromptInjected || !softTimeoutExceeded()) return;
-    injectBudgetExceededPrompt("soft_timeout");
-    return { block: true, reason: currentToolInfo.softTimeoutBlockReason };
-  });
-
-  pi.registerEntryRenderer<OrchestraCommandEntry>("orchestra-command", (entry) => {
-    const text = entry.data?.text ?? "/orch";
-    return new Text(text, 0, 0);
-  });
-
-  pi.registerEntryRenderer<OrchestraOutputEntry>("orchestra-output", (entry, _context, theme) => {
-    const text = entry.data?.text ?? "";
-    return new Text(theme.fg("toolOutput", text), 0, 0);
-  });
-
-  function emitEntryOutput(ctx: { hasUI: boolean }, text: string): void {
+  function emitOutput(ctx: UiCtx, text: string, level: "info" | "warning" | "error" = "info"): void {
     if (ctx.hasUI) {
-      pi.appendEntry<OrchestraOutputEntry>("orchestra-output", { text });
+      ctx.ui.notify(text, level);
       return;
     }
     process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
   }
 
-  function parseAwaitRunOutput(output: string): { status: string | null; role: string | null; blocker: string | null; activeRemaining: number | null } {
-    let status: string | null = null;
-    let role: string | null = null;
-    let blocker: string | null = null;
-    let activeRemaining: number | null = null;
-    for (const line of output.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      const statusMatch = /^status:\s+(.+)$/.exec(trimmed);
-      if (statusMatch) status = statusMatch[1].trim();
-      const roleMatch = /^role:\s+(.+)$/.exec(trimmed);
-      if (roleMatch) role = roleMatch[1].trim();
-      const blockerMatch = /^blocker:\s+(.+)$/.exec(trimmed);
-      if (blockerMatch) blocker = blockerMatch[1].trim();
-      const activeMatch = /^active_runs_remaining:\s+(\d+)$/.exec(trimmed);
-      if (activeMatch) activeRemaining = Number(activeMatch[1]);
+  function emitEntryOutput(ctx: { hasUI: boolean }, text: string): void {
+    if (ctx.hasUI) {
+      pi.appendEntry("orchestra-output", { text });
+      return;
     }
-    return { status, role, blocker, activeRemaining };
+    process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
   }
 
-  function progressNotifier(ctx: { hasUI: boolean; ui: { notify: (msg: string, level: "info" | "warning" | "error") => void } }): ProgressNotifier {
-    if (!ctx.hasUI) {
-      return { notify: (message: string) => process.stderr.write(`${message}\n`) };
+  function setToolsActive(enabled: boolean): void {
+    const active = pi.getActiveTools();
+    const withoutOrchestra = active.filter((name) => name !== "orch_dispatch");
+    pi.setActiveTools(enabled ? [...withoutOrchestra, "orch_dispatch"] : withoutOrchestra);
+  }
+
+  async function refreshFooter(ctx: UiCtx): Promise<void> {
+    if (!currentSessionId) return;
+    const result = await runOrchestra(["status", "--session-id", currentSessionId]);
+    if (result.code !== 0) return;
+    const payload = parseJsonLine<StatusPayload>(result.stdout);
+    if (!payload?.data) return;
+    const roleCounts = Object.entries(
+      (payload.data.session_jobs ?? []).reduce<Record<string, number>>((counts, job) => {
+        if (job.role) counts[job.role] = (counts[job.role] ?? 0) + 1;
+        return counts;
+      }, {}),
+    ).map(([role, count]) => ({ role, count }));
+    const theme = ctx.ui.theme;
+    const parts = [usageText(readWorkerUsage(workerSessionIds), model, theme)];
+    if (mode) parts.push(theme.fg("dim", `(Orchestra:${mode})`));
+    const meter = renderRoleMeter(theme, roleCounts);
+    if (meter) parts.push(meter);
+    ctx.ui.setWidget("orchestra", parts.join(" ").split("\n"), { placement: "belowEditor" });
+  }
+
+  function deliverReturn(sessionId: string, message: string): void {
+    if (compacting.has(sessionId)) {
+      pendingReturns.set(sessionId, [...(pendingReturns.get(sessionId) ?? []), message]);
+      return;
     }
-    const notify = ctx.ui.notify.bind(ctx.ui);
-    return { notify: (message: string) => notify(message, "info") };
+    pi.sendUserMessage(message, { deliverAs: "steer" });
   }
 
-  function trackRun(sessionId: string, runId: string): void {
-    const runs = sessionRuns.get(sessionId) ?? new Set<string>();
-    runs.add(runId);
-    sessionRuns.set(sessionId, runs);
-    if (!sessionCompletedRuns.has(sessionId)) sessionCompletedRuns.set(sessionId, new Set<string>());
-  }
+  pi.on("session_before_compact", async () => {
+    if (currentSessionId) compacting.add(currentSessionId);
+  });
 
-  function ensureSessionGeneration(sessionId: string): number {
-    const generation = sessionGenerations.get(sessionId) ?? 1;
-    sessionGenerations.set(sessionId, generation);
-    return generation;
-  }
-
-  function bumpSessionGeneration(sessionId: string): number {
-    const generation = ensureSessionGeneration(sessionId) + 1;
-    sessionGenerations.set(sessionId, generation);
-    return generation;
-  }
-
-  function isCurrentSessionGeneration(sessionId: string, generation: number): boolean {
-    return sessionGenerations.get(sessionId) === generation;
-  }
-
-  function nextRefreshRequestId(sessionId: string): number {
-    const requestId = (sessionRefreshRequests.get(sessionId) ?? 0) + 1;
-    sessionRefreshRequests.set(sessionId, requestId);
-    return requestId;
-  }
-
-  function isCurrentRefreshRequest(sessionId: string, generation: number, requestId: number): boolean {
-    return isCurrentSessionGeneration(sessionId, generation) && sessionRefreshRequests.get(sessionId) === requestId;
-  }
-
-  function stopWatcherSet(
-    watcherMap: Map<string, Set<ChildProcessWithoutNullStreams>>,
-    sessionId: string,
-  ): void {
-    const watchers = watcherMap.get(sessionId);
-    if (!watchers) return;
-    for (const watcher of watchers) {
-      try {
-        watcher.kill("SIGTERM");
-      } catch {
-        // ignore shutdown races
-      }
-    }
-    watcherMap.delete(sessionId);
-  }
-
-  function stopSessionWatchers(sessionId: string | null): void {
+  function finishCompaction(): void {
+    const sessionId = currentSessionId;
     if (!sessionId) return;
-    stopWatcherSet(awaitRunWatchers, sessionId);
-    stopWatcherSet(reportWatchers, sessionId);
-    const retry = reportWatcherRetries.get(sessionId);
-    if (retry) clearTimeout(retry);
-    reportWatcherRetries.delete(sessionId);
-    const deliveryTimer = compactionDeliveryTimers.get(sessionId);
-    if (deliveryTimer) clearTimeout(deliveryTimer);
-    compactionDeliveryTimers.delete(sessionId);
-    compactingSessions.delete(sessionId);
-    // Unconfirmed reports are dropped locally; their runs stay unreported so
-    // the next watcher can deliver them.
-    pendingSessionReports.delete(sessionId);
-    sessionRefreshRequests.delete(sessionId);
-    sessionRuns.delete(sessionId);
-    sessionCompletedRuns.delete(sessionId);
-  }
-
-  function parseProgressNotification(output: string): { message: string | null } {
-    if (!output.trim()) return { message: null };
-    try {
-      const payload = JSON.parse(output) as { message?: unknown };
-      return { message: typeof payload.message === "string" ? payload.message : null };
-    } catch {
-      return { message: null };
+    compacting.delete(sessionId);
+    const pending = pendingReturns.get(sessionId);
+    if (!pending?.length) return;
+    pendingReturns.delete(sessionId);
+    for (const message of pending) {
+      pi.sendUserMessage(message, { deliverAs: "steer" });
     }
   }
 
-  function watchRunProgress(
-    sessionId: string,
-    runId: string,
-    notifier: ProgressNotifier,
-    updateStatus?: (status: ActiveSessionStatus | null) => void,
-    effectiveTimeout?: number,
-  ): void {
-    const sessionGeneration = ensureSessionGeneration(sessionId);
-    const timeout = effectiveTimeout !== undefined
-      ? effectiveTimeout + WATCHER_TIMEOUT_MARGIN_SECONDS
-      : undefined;
-    const child = spawn(
-      "orchestra",
-      [
-        ...orchestraBaseArgs(),
-        "_await-run",
-        "--session-id",
-        sessionId,
-        "--run-id",
-        runId,
-        ...(timeout !== undefined ? ["--timeout", String(timeout)] : []),
-        "--json",
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
-    );
+  pi.on("session_compact", finishCompaction);
+  pi.on("session_compact_failed", finishCompaction);
 
-    const watchers = awaitRunWatchers.get(sessionId) ?? new Set<ChildProcessWithoutNullStreams>();
-    watchers.add(child);
-    awaitRunWatchers.set(sessionId, watchers);
-
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    if (timeout !== undefined) {
-      timeoutId = setTimeout(() => {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          // ignore if already closed
-        }
-      }, timeout * 1000);
-    }
-
-    let stdout = "";
-    let refreshedFailureStatus = false;
-    const refreshFailureStatus = (): void => {
-      if (refreshedFailureStatus) return;
-      refreshedFailureStatus = true;
-      void refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true, expectedGeneration: sessionGeneration });
-    };
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-
-    child.on("error", () => {
-      refreshFailureStatus();
-    });
-
-    child.on("close", (code) => {
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      }
-      watchers.delete(child);
-      if (watchers.size === 0) awaitRunWatchers.delete(sessionId);
-
-      if (code !== 0) {
-        refreshFailureStatus();
-        return;
-      }
-      if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
-      void (async () => {
-        try {
-          const completed = sessionCompletedRuns.get(sessionId) ?? new Set<string>();
-          completed.add(runId);
-          sessionCompletedRuns.set(sessionId, completed);
-          const awaitPayload = JSON.parse(stdout) as AwaitRunPayload;
-          const status = awaitPayload.status ?? null;
-          const role = awaitPayload.role ?? null;
-          const blocker = awaitPayload.blocker ?? null;
-          const activeRemaining = typeof awaitPayload.active_runs_remaining === "number" ? awaitPayload.active_runs_remaining : null;
-          const total = sessionRuns.get(sessionId)?.size ?? completed.size + (activeRemaining ?? 0);
-          const command = [
-            "_progress-message",
-            "--completed",
-            String(completed.size),
-            "--total",
-            String(total),
-            "--run-id",
-            runId,
-            "--status",
-            status ?? "done",
-          ];
-          if (role) command.push("--role", role);
-          const result = await runOrchestra(command);
-          if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
-          const message = parseProgressNotification(result.stdout).message;
-          notifier.notify(message ? (blocker ? `${message} :: ${blocker}` : message) : result.stdout);
-        } catch (error) {
-          const err = error as { message?: string };
-          process.stderr.write(`orchestra progress notification failed: ${err.message ?? String(error)}\n`);
-        } finally {
-          const activeCount = await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true, expectedGeneration: sessionGeneration });
-          if (activeCount === 0 && isCurrentSessionGeneration(sessionId, sessionGeneration)) {
-            sessionRuns.delete(sessionId);
-            sessionCompletedRuns.delete(sessionId);
+  /** Spawn the core dispatch; the first stdout JSONL line (the ack) resolves
+   * `onAck`; the second (the return) is delivered to the session as a steer. */
+  function dispatchWorker(sessionId: string, params: DispatchParams, ctx: UiCtx, onAck: (ack: AckPayload | null) => void): void {
+    const goal = (params.taskLabel?.trim() ? `[${params.taskLabel.trim()}] ` : "") + (params.goal?.trim() ?? "");
+    const args = ["dispatch", "--session-id", sessionId, "--goal", goal];
+    const role = params.role?.trim();
+    if (role) args.push("--role", role);
+    let sawAck = false;
+    spawnDispatch(
+      args,
+      params.additionalContext?.trim() ?? "",
+      (line) => {
+        const payload = parseJsonLine<ReturnPayload & AckPayload>(line);
+        if (!payload) return;
+        if (!sawAck) {
+          sawAck = true;
+          for (const job of payload.jobs ?? []) {
+            if (job.worker_session_id) workerSessionIds.add(job.worker_session_id);
           }
-        }
-      })();
-    });
-  }
-
-  async function dispatchWorker(
-    sessionId: string,
-    params: DispatchParams,
-    notifier: ProgressNotifier,
-    updateStatus?: (status: ActiveSessionStatus | null) => void,
-    sessionManager?: ParentContextSessionManager,
-  ): Promise<DispatchResult> {
-    const goal = params.goal?.trim() ?? "";
-    if (!goal) return { code: 1, runId: null, output: "Usage: provide a worker goal." };
-
-    let parentContextInput: string | null = null;
-
-    const command = [
-      "do",
-      "--session-id",
-      sessionId,
-      "--goal",
-      goal,
-      "--json",
-    ];
-    const additionalContext = params.additionalContext?.trim();
-    if (additionalContext) {
-      command.push("--additional-context", additionalContext);
-    }
-    const requestedRole = params.role?.trim();
-    if (requestedRole) {
-      command.push("--role", requestedRole);
-    }
-    if (params.timeout !== undefined) {
-      command.push("--timeout", String(params.timeout));
-    }
-    if (params.taskLabel?.trim()) {
-      command.push("--task-label", params.taskLabel.trim());
-    }
-    if (roleWantsParentContext(await getRoleMetadata(), requestedRole)) {
-      if (!sessionManager) {
-        return { code: 1, runId: null, output: "parent context capture unavailable: Pi session manager is required for pass_parent_context roles" };
-      }
-      try {
-        // Captured context stays in memory and is piped to core stdin; the adapter never
-        // writes a staging or temp file, so the run-scoped artifact is the only copy.
-        parentContextInput = captureParentContextText(sessionManager, params);
-        command.push("--parent-context-artifact", "-");
-      } catch (error) {
-        const message = (error as { message?: string }).message ?? String(error);
-        return { code: 1, runId: null, output: `parent context capture failed: ${message}` };
-      }
-    }
-
-    const result = await runOrchestra(command, parentContextInput ?? undefined);
-    let dispatch: DispatchPayload | null = null;
-    if (result.code === 0) {
-      try {
-        dispatch = parseDispatchPayload(result.stdout);
-      } catch {
-        dispatch = null;
-      }
-    }
-    const runId = typeof dispatch?.run_id === "string" ? dispatch.run_id : null;
-    if (runId) {
-      trackRun(sessionId, runId);
-      const effectiveTimeout = typeof dispatch?.timeout_seconds === "number"
-        ? dispatch.timeout_seconds
-        : undefined;
-      watchRunProgress(sessionId, runId, notifier, updateStatus, effectiveTimeout);
-      watchSessionReport(sessionId, runId, updateStatus);
-      const role = typeof dispatch?.role === "string" && dispatch.role.trim() ? dispatch.role : (requestedRole || "worker");
-      const ack = await runOrchestra(["_dispatch-ack", "--run-id", runId, "--role", role]);
-      await refreshOrchestraWorkerStatus(sessionId, updateStatus, { fresh: true });
-      if (ack.code !== 0 || !ack.stdout) {
-        return { code: ack.code || 1, runId: null, output: commandErrorMessage(ack, "orchestra dispatch ack failed") };
-      }
-      return { code: 0, runId, output: ack.stdout };
-    }
-    if (result.code === 0 && !runId) {
-      // Recover the exact session's report without guessing a run id or redispatching.
-      watchSessionReport(sessionId, "", updateStatus);
-      return {
-        code: 0,
-        runId: null,
-        output: "orchestra dispatch was accepted but the response was malformed; the run_id is not recoverable from this response. Automatic session report recovery is active; do not redispatch. Check `orchestra status` to identify the accepted run.",
-      };
-    }
-    return { code: result.code, runId: null, output: dispatch?.message || commandErrorMessage(result, "orchestra dispatch failed") };
-  }
-
-  function reportRunIdArgs(runIds: string[]): string[] {
-    return runIds.flatMap((id) => ["--run-id", id]);
-  }
-
-  function scheduleSessionReportRetry(
-    sessionId: string,
-    runId: string,
-    updateStatus: ((status: ActiveSessionStatus | null) => void) | undefined,
-    sessionGeneration: number,
-    failedAttempt: number,
-  ): void {
-    if (failedAttempt >= REPORT_WATCHER_MAX_ATTEMPTS - 1 || reportWatcherRetries.has(sessionId)) return;
-    const retry = setTimeout(() => {
-      reportWatcherRetries.delete(sessionId);
-      if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
-      watchSessionReport(sessionId, runId, updateStatus, failedAttempt + 1);
-    }, REPORT_WATCHER_RETRY_MS * (failedAttempt + 1));
-    reportWatcherRetries.set(sessionId, retry);
-  }
-
-  function submitPendingReport(sessionId: string): void {
-    const pending = pendingSessionReports.get(sessionId);
-    if (!pending || pending.confirmed || pending.submitted || compactingSessions.has(sessionId)) return;
-    if (currentSessionId !== sessionId || !isCurrentSessionGeneration(sessionId, pending.sessionGeneration)) return;
-    pending.submitted = true;
-    try {
-      pi.sendUserMessage(pending.message, { deliverAs: "steer" });
-    } catch (error) {
-      pendingSessionReports.delete(sessionId);
-      scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);
-      const err = error as { message?: string };
-      process.stderr.write(`orchestra auto-return reinjection failed: ${err.message ?? String(error)}\n`);
-    }
-  }
-
-  function watchSessionReport(
-    sessionId: string,
-    runId: string = "",
-    updateStatus?: (status: ActiveSessionStatus | null) => void,
-    attempt = 0,
-  ): void {
-    const pending = pendingSessionReports.get(sessionId);
-    if (pending) {
-      pending.watchAgain = true;
-      return;
-    }
-    if (reportWatchers.has(sessionId)) return;
-
-    const sessionGeneration = ensureSessionGeneration(sessionId);
-    let child: ChildProcessWithoutNullStreams;
-    try {
-      child = spawn(
-        "orchestra",
-        [
-          ...orchestraBaseArgs(),
-          "_await-session-report",
-          "--session-id",
-          sessionId,
-          ...(runId ? ["--run-id", runId] : []),
-          "--json",
-        ],
-        { stdio: ["ignore", "pipe", "pipe"] },
-      );
-    } catch (error) {
-      const err = error as { message?: string };
-      process.stderr.write(`orchestra auto-return watcher failed: ${err.message ?? String(error)}\n`);
-      scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
-      return;
-    }
-
-    const watchers = new Set<ChildProcessWithoutNullStreams>([child]);
-    reportWatchers.set(sessionId, watchers);
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (error) => {
-      stderr = error.message;
-    });
-
-    child.on("close", (code) => {
-      watchers.delete(child);
-      if (reportWatchers.get(sessionId) === watchers) reportWatchers.delete(sessionId);
-      if (!isCurrentSessionGeneration(sessionId, sessionGeneration)) return;
-
-      const rawReport = stdout.trim();
-      if (code !== 0) {
-        process.stderr.write(`orchestra auto-return watcher failed: ${commandErrorMessage({ stdout, stderr }, `exit ${code}`)}\n`);
-        scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
-        return;
-      }
-      if (!rawReport) {
-        scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
-        return;
-      }
-
-      let runIds: string[] = [];
-      try {
-        const payload = JSON.parse(rawReport) as { runIds?: unknown; report?: unknown };
-        runIds = Array.isArray(payload.runIds)
-          ? payload.runIds.filter((id): id is string => typeof id === "string" && id.length > 0)
-          : [];
-        const message = typeof payload.report === "string" ? payload.report.trim() : "";
-        if (!message || runIds.length === 0) {
-          scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
+          onAck(payload);
+          emitOutput(ctx, `orchestra: run ${payload.run_id ?? ""} dispatched (${payload.role ?? "default role"}).`, "info");
+          void refreshFooter(ctx);
           return;
         }
-        pendingSessionReports.set(sessionId, {
-          runIds,
-          message,
-          anchorRunId: runId,
-          updateStatus,
-          sessionGeneration,
-          confirmed: false,
-          submitted: false,
-        });
-        submitPendingReport(sessionId);
-      } catch (error) {
-        scheduleSessionReportRetry(sessionId, runId, updateStatus, sessionGeneration, attempt);
-        const err = error as { message?: string };
-        process.stderr.write(`orchestra auto-return reinjection failed: ${err.message ?? String(error)}\n`);
-      }
-    });
-  }
-
-  function userMessageText(message: unknown): string | null {
-    const value = message as { role?: unknown; content?: unknown };
-    if (value.role !== "user") return null;
-    if (typeof value.content === "string") return value.content;
-    if (!Array.isArray(value.content)) return null;
-    return value.content
-      .filter((part): part is { type: "text"; text: string } => (
-        typeof part === "object" && part !== null
-        && (part as { type?: unknown }).type === "text"
-        && typeof (part as { text?: unknown }).text === "string"
-      ))
-      .map((part) => part.text)
-      .join("\n");
-  }
-
-  pi.on("message_end", (event) => {
-    if (!currentSessionId) return;
-    const sessionId = currentSessionId;
-    const pending = pendingSessionReports.get(sessionId);
-    if (!pending || pending.confirmed || userMessageText(event.message) !== pending.message) return;
-    pending.confirmed = true;
-    setImmediate(() => {
-      void (async () => {
-        if (pendingSessionReports.get(sessionId) !== pending) return;
-        if (pending.runIds.length > 0) {
-          const markResult = await runOrchestra([
-            "_mark-session-report-delivered",
-            "--session-id",
-            sessionId,
-            ...reportRunIdArgs(pending.runIds),
-          ]);
-          if (markResult.code !== 0) {
-            if (pendingSessionReports.get(sessionId) !== pending) return;
-            pendingSessionReports.delete(sessionId);
-            scheduleSessionReportRetry(sessionId, pending.anchorRunId, pending.updateStatus, pending.sessionGeneration, -1);
-            process.stderr.write(`orchestra report delivery mark failed: ${commandErrorMessage(markResult, "orchestra report delivery mark failed")}\n`);
-            return;
-          }
-        }
-        if (pendingSessionReports.get(sessionId) !== pending) return;
-        pendingSessionReports.delete(sessionId);
-        if (pending.watchAgain && isCurrentSessionGeneration(sessionId, pending.sessionGeneration)) {
-          watchSessionReport(sessionId, "", pending.updateStatus);
-        }
-        await refreshOrchestraWorkerStatus(sessionId, pending.updateStatus, {
-          fresh: true,
-          expectedGeneration: pending.sessionGeneration,
-        });
-      })();
-    });
-  });
-
-  pi.on("session_start", async (_event, ctx) => {
-    turnBudget = parseBudgetEnv(ORCHESTRA_TURN_BUDGET_ENV);
-    softTimeoutSeconds = parseBudgetEnv(ORCHESTRA_SOFT_TIMEOUT_SECONDS_ENV);
-    sessionStartedAt = Date.now();
-    budgetPromptInjected = false;
-    stopSessionWatchers(currentSessionId);
-    currentSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
-    bumpSessionGeneration(currentSessionId);
-    mainSessionMode = null;
-    try {
-      const sessionToolInfo = await loadToolInfo(currentSessionId);
-      if (
-        sessionToolInfo.mainSessionMode === "off" ||
-        sessionToolInfo.mainSessionMode === "on" ||
-        sessionToolInfo.mainSessionMode === "orchestrate"
-      ) {
-        mainSessionMode = sessionToolInfo.mainSessionMode;
-      }
-      setOrchestraToolsActive(sessionToolInfo.mainSessionMode !== "off");
-    } catch {
-      // Core unavailable: keep Orchestra tools and status UI inactive.
-      setOrchestraToolsActive(false);
-    }
-    await refreshOrchestraWorkerStatus(currentSessionId, (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode), { fresh: true });
-    const sessionId = currentSessionId;
-    const generation = ensureSessionGeneration(sessionId);
-    const statusResult = await runOrchestra(["status", "--session-id", sessionId, "--json"]);
-    if (statusResult.code === 0 && isCurrentSessionGeneration(sessionId, generation)) {
-      try {
-        const status = JSON.parse(statusResult.stdout) as {
-          session_report_available?: boolean;
-          active_runs?: { count?: number };
-        };
-        if (status.session_report_available || (status.active_runs?.count ?? 0) > 0) {
-          // This watcher reads without consuming; only a matching chat echo marks delivery.
-          watchSessionReport(sessionId, "", (value) => setOrchestraWorkerStatus(ctx, value, mainSessionMode));
-        }
-      } catch {
-        // Leave reports durable when status cannot be read.
-      }
-    }
-  });
-
-  pi.on("session_shutdown", async (_event, ctx) => {
-    if (currentSessionId) {
-      bumpSessionGeneration(currentSessionId);
-    }
-    setOrchestraWorkerStatus(ctx, null);
-    stopSessionWatchers(currentSessionId);
-    currentSessionId = null;
-    mainSessionMode = null;
-  });
-
-  const registerDispatchTool = canDispatchOrchestraWorker();
-
-  function orchestraToolNames(): OrchestraToolName[] {
-    return registerDispatchTool ? ["orch_status", "orch_dispatch"] : ["orch_status"];
-  }
-
-  function setOrchestraToolsActive(enabled: boolean): void {
-    const active = pi.getActiveTools();
-    const orchestraTools = new Set<OrchestraToolName>(orchestraToolNames());
-    const withoutOrchestra = active.filter((toolName) => !orchestraTools.has(toolName as OrchestraToolName));
-    pi.setActiveTools(enabled ? [...withoutOrchestra, ...orchestraTools] : withoutOrchestra);
-    orchestraToolsEnabled = enabled;
-  }
-
-  async function getRoleMetadata(): Promise<RoleMetadata> {
-    const now = Date.now();
-    if (cachedRoleNames && cachedRoleNames.expiresAt > now) {
-      return {
-        roles: cachedRoleNames.roles,
-        harnessConfigs: cachedRoleNames.harnessConfigs,
-        passParentContext: cachedRoleNames.passParentContext,
-        defaultRole: cachedRoleNames.defaultRole,
-      };
-    }
-    const result = await runOrchestra(["_role-metadata"]);
-    const metadata: RoleMetadata = result.code === 0
-      ? parseRoleMetadata(result.stdout)
-      : { roles: [], harnessConfigs: [], passParentContext: [], defaultRole: null };
-    cachedRoleNames = { expiresAt: now + 5_000, ...metadata };
-    return metadata;
-  }
-
-  async function getRoleNames(): Promise<string[]> {
-    return (await getRoleMetadata()).roles;
-  }
-
-  async function getActiveSessionStatus(sessionId: string): Promise<ActiveSessionStatus> {
-    const now = Date.now();
-    if (
-      cachedActiveStatus
-      && cachedActiveStatus.sessionId === sessionId
-      && cachedActiveStatus.expiresAt > now
-    ) {
-      return cachedActiveStatus.status;
-    }
-    const result = await runOrchestra(["status", "--session-id", sessionId, "--json"]);
-    if (result.code !== 0) throw new Error(commandErrorMessage(result, "orchestra status failed"));
-    const status = parseActiveSessionStatus(result.stdout);
-    cachedActiveStatus = { expiresAt: now + 2_000, sessionId, status };
-    return status;
-  }
-
-  async function getActiveRunIds(sessionId: string): Promise<string[]> {
-    return (await getActiveSessionStatus(sessionId)).runIds;
-  }
-
-  async function fetchSpsiPayload(sessionId: string): Promise<SpsiPayload> {
-    const result = await runOrchestra(["_spsi-payload", "--session-id", sessionId, "--json"]);
-    const detail = (result.stderr || "").trim() || (result.stdout || "").trim();
-    if (result.code !== 0) {
-      throw new Error(commandErrorMessage(result, `orchestra _spsi-payload exited with code ${result.code}`));
-    }
-    if (!detail) {
-      throw new Error("orchestra _spsi-payload returned an empty response");
-    }
-    try {
-      return JSON.parse(result.stdout) as SpsiPayload;
-    } catch {
-      throw new Error(`orchestra _spsi-payload returned invalid JSON: ${detail.slice(0, 200)}`);
-    }
-  }
-
-  pi.on("before_agent_start", async (event, ctx) => {
-    let sessionId: string | null = currentSessionId;
-    try {
-      sessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
-    } catch {
-      // Fall back to the last session_start id when host context cannot provide one.
-    }
-    if (!sessionId) return;
-    // Core SPSI failures throw so the host shows an extension error in every
-    // mode (print stderr, RPC extension_error event, TUI error banner). Pi
-    // catches handler errors and continues the turn; this hook cannot abort
-    // the run, so the error is surfaced visibly without claiming abort semantics.
-    let payload: SpsiPayload;
-    try {
-      payload = await fetchSpsiPayload(sessionId);
-    } catch (error) {
-      throwSpsiContextFailure(error instanceof Error ? error.message : String(error));
-    }
-    if (payload.ok !== true) {
-      throwSpsiContextFailure("core reported an unsuccessful SPSI payload");
-    }
-    if (payload.enabled !== true) return;
-    if (!payload.content?.trim()) {
-      throwSpsiContextFailure("enabled SPSI payload missing content");
-    }
-    return { systemPrompt: `${event.systemPrompt}\n\n${payload.content.trim()}` };
-  });
-
-  async function refreshOrchestraWorkerStatus(
-    sessionId: string,
-    updateStatus?: (status: ActiveSessionStatus | null) => void,
-    options?: { fresh?: boolean; expectedGeneration?: number },
-  ): Promise<number | null> {
-    const sessionGeneration = options?.expectedGeneration ?? ensureSessionGeneration(sessionId);
-    if (options?.expectedGeneration !== undefined && !isCurrentSessionGeneration(sessionId, sessionGeneration)) {
-      return null;
-    }
-    const requestId = nextRefreshRequestId(sessionId);
-    try {
-      if (options?.fresh) cachedActiveStatus = null;
-      const activeStatus = await getActiveSessionStatus(sessionId);
-      if (!isCurrentRefreshRequest(sessionId, sessionGeneration, requestId)) return null;
-      updateStatus?.(activeStatus);
-      return activeStatus.activeCount;
-    } catch {
-      if (!isCurrentRefreshRequest(sessionId, sessionGeneration, requestId)) return null;
-      return null;
-    }
-  }
-
-  async function handleOrchMode(sessionId: string, mode: MainSessionMode): Promise<{ code: number; output: string }> {
-    const modeResult = await runOrchestra(["_session-mode", "set", "--session-id", sessionId, "--mode", mode, "--json"]);
-    if (modeResult.code !== 0 || !modeResult.stdout.trim()) {
-      return { code: 1, output: modeResult.stderr || "Orchestra mode transition failed." };
-    }
-    const payload = parseSessionModeTransitionPayload(modeResult.stdout);
-    const effect = payload.effect;
-    if (payload.ok !== true || effect?.mode !== mode || effect.tools_enabled !== (mode !== "off")) {
-      return { code: 1, output: effect?.error || "Orchestra returned an invalid mode transition." };
-    }
-    mainSessionMode = effect.mode;
-    setOrchestraToolsActive(effect.tools_enabled);
-    return { code: 0, output: effect.display_text || "" };
-  }
-
-  async function getOrchArgumentCompletions(argumentPrefix: string): Promise<Array<{ value: string; label: string; description?: string }> | null> {
-    const parsed = tokenizeArgs(argumentPrefix);
-    if (parsed.error) return null;
-
-    const subcommands = [
-      { token: "help", description: "Show Orchestra help" },
-      { token: "on", description: "Enable Orchestra tools" },
-      { token: "orchestrate", description: "Enable full Orchestra guidance" },
-      { token: "off", description: "Hide Orchestra tools for this session" },
-      { token: "doctor", description: "Check Orchestra setup" },
-      { token: "do ", description: "Dispatch a subagent" },
-      { token: "roles ", description: "Show or update configured roles" },
-      { token: "config ", description: "Show or update supported config values" },
-      { token: "status", description: "Show active subagents for this session" },
-      { token: "stop ", description: "Stop an active worker." },
-      { token: "history ", description: "Show recent results for this session" },
-    ];
-
-    if (parsed.tokens.length === 0) {
-      return subcommands.map((item) => buildCompletionItem(item.token, item.token.trim(), item.description));
-    }
-
-    if (parsed.tokens.length === 1 && !parsed.trailingSpace) {
-      return filterStaticCompletions(argumentPrefix, parsed.tokens[0], subcommands);
-    }
-
-    const subcommand = parsed.tokens[0];
-
-    if (subcommand === "history") {
-      const historyLimits = ["10", "20", "50"];
-      if (parsed.tokens.length === 1 && parsed.trailingSpace) {
-        return historyLimits.map((limit) => buildCompletionItem(appendCompletion(argumentPrefix, limit), limit));
-      }
-      if (parsed.tokens.length === 2 && !parsed.trailingSpace) {
-        return historyLimits
-          .filter((limit) => limit.startsWith(parsed.tokens[1]))
-          .map((limit) => buildCompletionItem(replaceCurrentToken(argumentPrefix, parsed.tokens[1], limit), limit));
-      }
-      return null;
-    }
-
-    if (subcommand === "stop") {
-      if (!currentSessionId) return null;
-      const runIds = await getActiveRunIds(currentSessionId);
-      if (parsed.tokens.length === 1 && parsed.trailingSpace) {
-        return runIds.map((runId) => buildCompletionItem(appendCompletion(argumentPrefix, runId), runId));
-      }
-      if (parsed.tokens.length === 2 && !parsed.trailingSpace) {
-        return runIds
-          .filter((runId) => runId.startsWith(parsed.tokens[1]))
-          .map((runId) => buildCompletionItem(replaceCurrentToken(argumentPrefix, parsed.tokens[1], runId), runId));
-      }
-      return null;
-    }
-
-    if (subcommand === "roles") {
-      const roleMetadata = await getRoleMetadata();
-      const roleNames = roleMetadata.roles;
-      const roleSettings = [
-        { token: "harness ", description: "Set selected harness config" },
-        { token: "enabled ", description: "Enable or disable a role" },
-        { token: "model ", description: "Set model for selected harness" },
-        { token: "profile ", description: "Set harness profile when supported" },
-        { token: "agent ", description: "Set harness agent when supported" },
-      ];
-      const boolValues = ["true", "false"];
-
-      if (parsed.tokens.length === 1 && parsed.trailingSpace) {
-        return roleNames.map((roleName) => buildCompletionItem(appendCompletion(argumentPrefix, roleName), roleName));
-      }
-      if (parsed.tokens.length === 2 && !parsed.trailingSpace) {
-        return roleNames
-          .filter((roleName) => roleName.startsWith(parsed.tokens[1]))
-          .map((roleName) => buildCompletionItem(replaceCurrentToken(argumentPrefix, parsed.tokens[1], roleName), roleName));
-      }
-      if (parsed.tokens.length === 2 && parsed.trailingSpace) {
-        return roleSettings.map((setting) => buildCompletionItem(appendCompletion(argumentPrefix, setting.token), setting.token.trim(), setting.description));
-      }
-      if (parsed.tokens.length === 3 && !parsed.trailingSpace) {
-        return filterStaticCompletions(argumentPrefix, parsed.tokens[2], roleSettings);
-      }
-      if (parsed.tokens.length === 3 && parsed.trailingSpace && parsed.tokens[2] === "enabled") {
-        return boolValues.map((value) => buildCompletionItem(appendCompletion(argumentPrefix, value), value));
-      }
-      if (parsed.tokens.length === 4 && !parsed.trailingSpace && parsed.tokens[2] === "enabled") {
-        return boolValues
-          .filter((value) => value.startsWith(parsed.tokens[3]))
-          .map((value) => buildCompletionItem(replaceCurrentToken(argumentPrefix, parsed.tokens[3], value), value));
-      }
-      if (parsed.tokens.length === 3 && parsed.trailingSpace && parsed.tokens[2] === "harness") {
-        return roleMetadata.harnessConfigs.map((value) => buildCompletionItem(appendCompletion(argumentPrefix, value), value));
-      }
-      if (parsed.tokens.length === 4 && !parsed.trailingSpace && parsed.tokens[2] === "harness") {
-        return roleMetadata.harnessConfigs
-          .filter((value) => value.startsWith(parsed.tokens[3]))
-          .map((value) => buildCompletionItem(replaceCurrentToken(argumentPrefix, parsed.tokens[3], value), value));
-      }
-      return null;
-    }
-
-    if (subcommand === "do") {
-      const roleNames = await getRoleNames();
-      const doFlags = [
-        { token: "--role ", description: "Select a configured role" },
-        { token: "--timeout ", description: "Set timeout in seconds" },
-        { token: "--task-label ", description: "Set a short task label" },
-      ];
-      const timeoutValues = ["60", "120", "300", "600"];
-      const doTokens = parsed.tokens.slice(1);
-      const beforeCurrentTokens = parsed.trailingSpace ? doTokens : doTokens.slice(0, -1);
-      const currentToken = parsed.trailingSpace ? "" : (doTokens.at(-1) ?? "");
-      const context = doArgumentContext(beforeCurrentTokens);
-
-      if (context.expecting === "role") {
-        if (parsed.trailingSpace) {
-          return roleNames.map((roleName) => buildCompletionItem(appendCompletion(argumentPrefix, roleName), roleName));
-        }
-        return roleNames
-          .filter((roleName) => roleName.startsWith(currentToken))
-          .map((roleName) => buildCompletionItem(replaceCurrentToken(argumentPrefix, currentToken, roleName), roleName));
-      }
-
-      if (context.expecting === "timeout") {
-        if (parsed.trailingSpace) {
-          return timeoutValues.map((value) => buildCompletionItem(appendCompletion(argumentPrefix, value), value));
-        }
-        return timeoutValues
-          .filter((value) => value.startsWith(currentToken))
-          .map((value) => buildCompletionItem(replaceCurrentToken(argumentPrefix, currentToken, value), value));
-      }
-
-      if (context.expecting === "taskLabel") {
-        return null;
-      }
-
-      if (context.goalStarted) {
-        return null;
-      }
-
-      if (parsed.trailingSpace) {
-        return doFlags.map((flag) => buildCompletionItem(appendCompletion(argumentPrefix, flag.token), flag.token.trim(), flag.description));
-      }
-
-      if (currentToken.startsWith("--")) {
-        return filterStaticCompletions(argumentPrefix, currentToken, doFlags);
-      }
-    }
-
-    return null;
-  }
-
-  function sanitizeRoleListing(output: string): string {
-    const sanitized = output.trim();
-    return sanitized.length > 0 ? sanitized : "";
-  }
-
-  function registerOrchStatusTool(toolInfo: ToolInfoPayload): void {
-    pi.registerTool({
-      name: "orch_status",
-      label: "Orchestra Status",
-      description: toolInfo.statusDescription,
-      parameters: Type.Object({
-        action: Type.Union([
-          Type.Literal("on"),
-          Type.Literal("orchestrate"),
-          Type.Literal("status"),
-          Type.Literal("history"),
-          Type.Literal("help"),
-          Type.Literal("doctor"),
-          Type.Literal("roles"),
-          Type.Literal("stop"),
-        ]),
-        limit: Type.Optional(Type.String({ description: toolInfo.statusLimitDescription })),
-        runId: Type.Optional(Type.String({ description: toolInfo.statusRunIdDescription })),
-        role: Type.Optional(Type.String({ description: toolInfo.statusRoleDescription })),
-        setting: Type.Optional(Type.String({ description: toolInfo.statusSettingDescription })),
-        value: Type.Optional(Type.String({ description: toolInfo.statusValueDescription })),
-      }),
-      async execute(_toolCallId, params: OrchStatusParams, _signal, _onUpdate, ctx) {
-        const failure = (text: string): PiTextToolResult => toolTextResult(text, true);
-        const success = (text: string): PiTextToolResult => toolTextResult(text);
-        const runtimeSessionId = () => {
-          try {
-            return normalizePiSessionId(ctx.sessionManager.getSessionId());
-          } catch {
-            return null;
-          }
-        };
-
-        if (params.action === "help") {
-          const result = await runOrchestra(["help-host"]);
-          return success(result.stdout || result.stderr);
-        }
-
-        if (params.action === "doctor") {
-          const result = await runOrchestra(["doctor"]);
-          return success(result.stdout || result.stderr);
-        }
-
-        if (params.action === "on" || params.action === "orchestrate") {
-          const sessionId = runtimeSessionId();
-          if (!sessionId) {
-            return failure("Pi session_id is required for orch_status on.");
-          }
-          const result = await handleOrchMode(sessionId, params.action);
-          return result.code === 0 ? success(result.output) : failure(result.output);
-        }
-
-        if (params.action === "status") {
-          const sessionId = runtimeSessionId();
-          if (!sessionId) {
-            return failure("Pi session_id is required for orch_status status.");
-          }
-          const result = await runOrchestra(["status", "--session-id", sessionId, "--json"]);
-          return success(result.stdout || result.stderr);
-        }
-
-        if (params.action === "history") {
-          const sessionId = runtimeSessionId();
-          if (!sessionId) {
-            return failure("Pi session_id is required for orch_status history.");
-          }
-          const limitValue = params.limit?.trim() || "10";
-          const result = await runOrchestra(["history", "--session-id", sessionId, "--limit", limitValue]);
-          return success(result.stdout || result.stderr);
-        }
-
-        if (params.action === "roles") {
-          const role = params.role?.trim() || "";
-          const setting = params.setting?.trim() || "";
-          const value = params.value?.trim() || "";
-          if (role || setting || value) {
-            return failure("orch_status roles is read-only; use the host /orch roles command to change role settings.");
-          }
-          const result = await runOrchestra(["roles", "--all"]);
-          const output = sanitizeRoleListing(result.stdout || result.stderr);
-          return output ? success(output) : success("");
-        }
-
-        if (params.action === "stop") {
-          const sessionId = runtimeSessionId();
-          if (!sessionId) {
-            return failure("Pi session_id is required for orch_status stop.");
-          }
-          const runId = params.runId?.trim() || "";
-          if (!runId) {
-            return failure("runId is required for orch_status stop.");
-          }
-          const result = await runOrchestra(["stop", "--session-id", sessionId, "--run-id", runId]);
-          await refreshOrchestraWorkerStatus(
-            sessionId,
-            (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode),
-            { fresh: true },
-          );
-          return success(result.stdout || result.stderr);
-        }
-
-        return failure(`Unknown orch_status action: ${params.action}`);
+        emitOutput(ctx, `orchestra: run ${payload.run_id ?? ""} returned.`, "info");
+        deliverReturn(sessionId, formatReturnMessage(payload.return ?? payload));
+        void refreshFooter(ctx);
       },
-    });
-  }
-
-  function registerOrchDispatchTool(toolInfo: ToolInfoPayload): void {
-    pi.registerTool({
-      name: "orch_dispatch",
-      label: "Orchestra Dispatch",
-      description: toolInfo.description,
-      parameters: Type.Object({
-        goal: Type.String({ description: toolInfo.goalDescription }),
-        additionalContext: Type.Optional(Type.String({ description: toolInfo.additionalContextDescription })),
-        role: Type.Optional(Type.String({ description: toolInfo.roleDescription })),
-        taskLabel: Type.Optional(Type.String({ description: toolInfo.taskLabelDescription })),
-      }),
-      async execute(_toolCallId, params: DispatchParams, _signal, _onUpdate, ctx) {
-        if (params.timeout !== undefined) {
-          return toolTextResult(toolInfo.dispatchTimeoutError, true);
-        }
-        const runtimeSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
-        const result = await dispatchWorker(
-          runtimeSessionId,
-          params,
-          progressNotifier(ctx),
-          (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode),
-          ctx.sessionManager,
-        );
-        return toolTextResult(result.output, result.code !== 0);
+      (code) => {
+        if (!sawAck) onAck(null);
+        if (code !== 0) process.stderr.write(`orchestra dispatch exited with code ${code}\n`);
       },
-    });
+    );
   }
 
-  function registerOrchestraTools(toolInfo: ToolInfoPayload): void {
-    registerOrchStatusTool(toolInfo);
-    if (registerDispatchTool) registerOrchDispatchTool(toolInfo);
-  }
+  pi.registerEntryRenderer<{ text?: string }>("orchestra-command", (entry) => {
+    return new Text(entry.data?.text ?? "/orch", 0, 0);
+  });
 
-  async function refreshOrchestraToolRegistrations(toolInfo?: ToolInfoPayload): Promise<void> {
-    currentToolInfo = toolInfo ?? await loadToolInfo();
-    registerOrchestraTools(currentToolInfo);
-  }
+  pi.registerEntryRenderer<{ text?: string }>("orchestra-output", (entry, _options, theme) => {
+    return new Text(theme.fg("toolOutput", entry.data?.text ?? ""), 0, 0);
+  });
 
-  let currentToolInfo = await loadToolInfo();
-  await refreshOrchestraToolRegistrations(currentToolInfo);
+  pi.registerTool({
+    name: "orch_dispatch",
+    label: "Orchestra Dispatch",
+    description:
+      "Submit an assignment to Orchestra. Provide a goal (assignment text with scope, boundaries, stop condition, and expected return); role, additional context, and a short task label are optional. Returns the dispatch acknowledgement; execution continues in the background and one consolidated return is delivered to this session when all dispatched jobs finish. Do not poll.",
+    parameters: Type.Object({
+      goal: Type.String({ description: "Assignment text: goal, scope, boundaries, stop condition, expected return, and relevant prior evidence." }),
+      additionalContext: Type.Optional(Type.String({ description: "Extra context piped to the dispatcher as parent context for roles configured to receive it." })),
+      role: Type.Optional(Type.String({ description: "Configured role name; omitted uses the configured default role." })),
+      taskLabel: Type.Optional(Type.String({ description: "Short display label prefixed to the goal." })),
+    }),
+    async execute(_toolCallId, params: DispatchParams, _signal, _onUpdate, ctx) {
+      const goal = params.goal?.trim() ?? "";
+      if (!goal) {
+        return { content: [{ type: "text", text: "Usage: provide a worker goal." }], isError: true, details: undefined };
+      }
+      const sessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
+      const ack = await new Promise<AckPayload | null>((resolve) => {
+        dispatchWorker(sessionId, params, ctx as UiCtx, resolve);
+      });
+      if (ack === null) {
+        return { content: [{ type: "text", text: "orchestra dispatch failed (see stderr)." }], isError: true, details: undefined };
+      }
+      return { content: [{ type: "text", text: ack.ack ?? "Assignment accepted." }], isError: false, details: undefined };
+    },
+  });
 
   pi.registerCommand("orch", {
-    description: "Orchestra host adapter: /orch help|on|orchestrate|off|do|roles|config|status|stop|doctor|history",
-    getArgumentCompletions: getOrchArgumentCompletions,
+    description: "Orchestra: /orch help|on|off|doctor|status|history|do|stop",
     handler: async (args, ctx) => {
       const trimmed = args.trim();
-      pi.appendEntry<OrchestraCommandEntry>("orchestra-command", {
-        text: await commandEchoText(trimmed),
-      });
-      if (!trimmed) {
-        emitEntryOutput(ctx, await hostHelp());
-        return;
-      }
-
+      const sessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
       const [subcommand, ...rest] = trimmed.split(/\s+/);
-      const runtimeSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
+      const emit = (text: string) => {
+        pi.appendEntry("orchestra-command", { text: trimmed ? `/orch ${trimmed}` : "/orch" });
+        emitEntryOutput(ctx, text);
+      };
 
-      if (subcommand === "help") {
-        emitEntryOutput(ctx, await hostHelp());
+      if (!subcommand || subcommand === "help") {
+        const result = await runOrchestra(["help"]);
+        emit(result.stdout || result.stderr);
         return;
       }
 
-      if (subcommand === "on" || subcommand === "orchestrate") {
-        const result = await handleOrchMode(runtimeSessionId, subcommand);
-        setOrchestraWorkerStatus(ctx, null, mainSessionMode);
-        emitOutput(ctx, result.output, result.code === 0 ? "info" : "warning");
-        return;
-      }
-
-      if (subcommand === "off") {
-        const result = await handleOrchMode(runtimeSessionId, "off");
-        setOrchestraWorkerStatus(ctx, null, mainSessionMode);
-        emitOutput(ctx, result.output, result.code === 0 ? "info" : "warning");
+      if (subcommand === "on" || subcommand === "off") {
+        mode = subcommand;
+        setToolsActive(subcommand === "on");
+        emitOutput(ctx, `Orchestra ${subcommand}.`, "info");
+        await refreshFooter(ctx);
         return;
       }
 
       if (subcommand === "doctor") {
         const result = await runOrchestra(["doctor"]);
-        emitEntryOutput(ctx, result.stdout || result.stderr);
-        return;
-      }
-
-      if (subcommand === "config") {
-        const result = await runOrchestra(rest.length > 0 ? ["config", ...rest] : ["config"]);
-        emitEntryOutput(ctx, result.stdout || result.stderr);
-        return;
-      }
-
-      if (subcommand === "roles") {
-        const result = await runOrchestra(rest.length > 0 ? ["roles", ...rest] : ["roles", "--all"]);
-        emitEntryOutput(ctx, result.stdout || result.stderr);
-        if (result.code === 0) {
-          cachedRoleNames = null;
-          await refreshOrchestraToolRegistrations();
-        }
+        emit(result.stdout || result.stderr);
         return;
       }
 
       if (subcommand === "status") {
-        const displayResult = await runOrchestra(["status", "--session-id", runtimeSessionId]);
-        emitEntryOutput(ctx, displayResult.stdout || displayResult.stderr);
-        const statusResult = await runOrchestra(["status", "--session-id", runtimeSessionId, "--json"]);
-        if (statusResult.code === 0) {
-          const status = parseActiveSessionStatus(statusResult.stdout);
-          cachedActiveStatus = { expiresAt: Date.now() + 2_000, sessionId: runtimeSessionId, status };
-          setOrchestraWorkerStatus(ctx, status, mainSessionMode);
-        }
+        const result = await runOrchestra(["status", "--session-id", sessionId]);
+        emit(result.stdout || result.stderr);
+        await refreshFooter(ctx);
         return;
       }
 
       if (subcommand === "history") {
-        const limit = rest[0] ?? "10";
-        const result = await runOrchestra([
-          "history",
-          "--session-id",
-          runtimeSessionId,
-          "--limit",
-          limit,
-        ]);
-        emitEntryOutput(ctx, result.stdout || result.stderr);
+        const result = await runOrchestra(["history", "--session-id", sessionId, "--limit", rest[0] ?? "10"]);
+        emit(result.stdout || result.stderr);
         return;
       }
 
@@ -1871,45 +447,75 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           emitOutput(ctx, "Usage: /orch stop <run-id>", "warning");
           return;
         }
-        const result = await runOrchestra([
-          "stop",
-          "--session-id",
-          runtimeSessionId,
-          "--run-id",
-          runId,
-        ]);
-        emitEntryOutput(ctx, result.stdout || result.stderr);
-        await refreshOrchestraWorkerStatus(runtimeSessionId, (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode), { fresh: true });
+        const result = await runOrchestra(["stop", "--session-id", sessionId, "--run-id", runId]);
+        emit(result.stdout || result.stderr);
+        await refreshFooter(ctx);
         return;
       }
 
       if (subcommand === "do") {
-        const parsed = parseDoArgs(rest.join(" "));
-        if (parsed.error) {
-          emitOutput(ctx, parsed.error, "warning");
+        const tokens = rest.join(" ").match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
+        let role: string | undefined;
+        let taskLabel: string | undefined;
+        const goalParts: string[] = [];
+        for (let i = 0; i < tokens.length; i += 1) {
+          const token = tokens[i];
+          if (token === "--role" && tokens[i + 1]) {
+            role = tokens[i + 1];
+            i += 1;
+          } else if (token === "--task-label" && tokens[i + 1]) {
+            taskLabel = tokens[i + 1];
+            i += 1;
+          } else {
+            goalParts.push(token.replace(/^"|"$/g, ""));
+          }
+        }
+        const goal = goalParts.join(" ").trim();
+        if (!goal) {
+          emitOutput(ctx, "Usage: /orch do [--role ROLE] [--task-label LABEL] <goal>", "warning");
           return;
         }
-        if (!parsed.goal) {
-          emitOutput(ctx, "Usage: /orch do [--role ROLE] [--timeout SEC] [--task-label LABEL] <goal>", "warning");
-          return;
-        }
-        const result = await dispatchWorker(
-          runtimeSessionId,
-          {
-            goal: parsed.goal,
-            role: parsed.role,
-            timeout: parsed.timeout === null ? undefined : Number(parsed.timeout),
-            taskLabel: parsed.taskLabel ?? undefined,
-          },
-          progressNotifier(ctx),
-          (status) => setOrchestraWorkerStatus(ctx, status, mainSessionMode),
-          ctx.sessionManager,
-        );
-        emitOutput(ctx, result.output, result.code === 0 ? "info" : "error");
+        dispatchWorker(sessionId, { goal, role, taskLabel }, ctx, (ack) => {
+          emitOutput(ctx, ack?.ack ?? "orchestra dispatch failed (see stderr).", ack ? "info" : "error");
+        });
         return;
       }
 
-      emitOutput(ctx, `Unknown /orch subcommand: ${subcommand}\n\n${await hostHelp()}`, "warning");
+      const result = await runOrchestra(["help"]);
+      emitOutput(ctx, `Unknown /orch subcommand: ${subcommand}\n\n${result.stdout || result.stderr}`, "warning");
     },
+  });
+
+  pi.on("session_start", async (_event, ctx) => {
+    try {
+      currentSessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
+    } catch {
+      currentSessionId = null;
+      return;
+    }
+    compacting.delete(currentSessionId);
+    pendingReturns.delete(currentSessionId);
+    workerSessionIds.clear();
+    model = ctx.model;
+    mode = null;
+    try {
+      const result = await runOrchestra(["initial-mode"]);
+      mode = result.code === 0 && result.stdout.trim() ? result.stdout.trim() : null;
+    } catch {
+      mode = null;
+    }
+    setToolsActive(mode !== "off");
+    await refreshFooter(ctx);
+  });
+
+  pi.on("session_shutdown", async (_event, ctx) => {
+    ctx.ui.setWidget("orchestra", undefined, { placement: "belowEditor" });
+    if (currentSessionId) {
+      compacting.delete(currentSessionId);
+      pendingReturns.delete(currentSessionId);
+    }
+    currentSessionId = null;
+    mode = null;
+    workerSessionIds.clear();
   });
 }

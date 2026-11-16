@@ -1,0 +1,16 @@
+pi:
+  harness: pi
+  command:
+    - pi
+    - --model
+    - '{model}'
+    - --mode
+    - rpc
+hermes:
+  harness: hermes
+  command:
+    - hermes
+    - --profile
+    - '{profile}'
+    - -z
+    - '{prompt}'

@@ -1,737 +1,175 @@
-"""Status, history, and debug formatting helpers for Orchestra."""
+"""Status query and rendering for Orchestra 2.
+
+Pure query over the job queue plus the only display formatting for
+`/orch status`. No cache, no LLM, no timestamps.
+"""
 
 from __future__ import annotations
 
-import json
-import os
-import sqlite3
-from pathlib import Path
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
 
-from orchestra.artifacts import (
-    canonical_events_path,
-    canonical_request_path,
-    canonical_return_path,
-    legacy_supervisor_output_path,
-)
-from orchestra.config import PromptConfig
-from orchestra.context import CONTRACT_VERSION, AppContext, AppError
-from orchestra.reports import (
-    _return_hint,
-    aggregate_completed_run_accounting,
-    clean_result_summary,
-    session_status_details,
-)
-from orchestra.session_mode import default_main_session_mode, resolve_main_session_mode
-from orchestra.state import (
-    STATUS_CANCELLED,
-    STATUS_DONE,
-    STATUS_FAILED,
-    STATUS_INCOMPLETE,
-    RunRecord,
-)
+from orchestra.queue import JobQueue
 
-if TYPE_CHECKING:
-    from orchestra.reports import SessionStatusDetails
-
-__all__ = [
-    "await_run_payload",
-    "format_debug_run",
-    "format_debug_session",
-    "format_history",
-    "format_status",
-    "status_payload",
-]
+_TERMINAL: frozenset[str] = frozenset({"succeeded", "failed", "skipped"})
 
 
-def _require_session_id(session_id: str) -> None:
-    if not session_id.strip():
-        raise AppError("session_id is required")
+class StatusError(ValueError):
+    """Raised on invalid input types for status functions."""
 
 
-def _reconcile_stale_queued_runs(context: AppContext) -> None:
-    from orchestra.supervision import reconcile_stale_queued_runs
+@dataclass(frozen=True)
+class StatusEntry:
+    """One active (pending or running) session job."""
 
-    reconcile_stale_queued_runs(context)
+    sequence: int
+    role: str
+    status: str
+    run_id: str
+    waiting_on: tuple[str, ...]
 
 
-def _yes_no(value: bool) -> str:
-    return "yes" if value else "no"
+@dataclass(frozen=True)
+class LastCompleted:
+    """Tallies for the most recently finished run of a session."""
+
+    run_id: str
+    succeeded: int
+    failed: int
+    skipped: int
 
 
-def _append_session_status_details(lines: list[str], details: SessionStatusDetails) -> None:
-    lines.extend(
-        [
-            f"descendants_terminal: {_yes_no(details.descendants_terminal)}",
-            f"session_report_available: {_yes_no(details.session_report_available)}",
-            f"session_report_delivered: {_yes_no(details.session_report_delivered)}",
-        ]
+@dataclass(frozen=True)
+class StatusData:
+    """Typed result of a status query, independent of any rendering."""
+
+    session_jobs: tuple[StatusEntry, ...]
+    global_running: int
+    global_pending: int
+    last_completed: LastCompleted | None
+
+
+def status(queue: JobQueue, parent_session: str) -> StatusData:
+    """Query the queue for session and global status.
+
+    Session jobs are the matching session's pending and running jobs,
+    ordered by sequence. ``waiting_on`` lists prerequisite job ids that are
+    not yet terminal. ``last_completed`` tallies the most recently finished
+    run (max finished_at among terminal jobs of that session's runs).
+    """
+    if not isinstance(queue, JobQueue):
+        raise StatusError(f"queue must be a JobQueue, got {type(queue).__name__}")
+    if not isinstance(parent_session, str):
+        raise StatusError(
+            f"parent_session must be a str, got {type(parent_session).__name__}"
+        )
+
+    all_jobs = queue.list_jobs()
+    job_by_id = {job.job_id: job for job in all_jobs}
+
+    session_jobs = tuple(
+        StatusEntry(
+            sequence=job.sequence,
+            role=job.role,
+            status=job.status,
+            run_id=job.run_id,
+            waiting_on=tuple(
+                prereq_id
+                for prereq_id in job.prerequisites
+                if prereq_id in job_by_id
+                and job_by_id[prereq_id].status not in _TERMINAL
+            ),
+        )
+        for job in sorted(
+            (
+                job
+                for job in all_jobs
+                if job.parent_session == parent_session
+                and job.status in ("pending", "running")
+            ),
+            key=lambda job: job.sequence,
+        )
     )
 
+    global_running = sum(1 for job in all_jobs if job.status == "running")
+    global_pending = sum(1 for job in all_jobs if job.status == "pending")
 
-def _token_accounting_payload(run: RunRecord) -> dict[str, int | float | None]:
-    return {
-        "input_tokens": run.input_tokens,
-        "output_tokens": run.output_tokens,
-        "reasoning_tokens": run.reasoning_tokens,
-        "cache_read_tokens": run.cache_read_tokens,
-        "cache_write_tokens": run.cache_write_tokens,
-        "cost_usd": run.cost_usd,
+    session_run_ids = {
+        job.run_id
+        for job in all_jobs
+        if job.parent_session == parent_session and job.status in _TERMINAL
     }
-
-
-def _aggregate_accounting_payload(runs: list[RunRecord]) -> dict[str, int | bool | float | None]:
-    return aggregate_completed_run_accounting(runs)
-
-
-def _append_accounting_totals(
-    lines: list[str],
-    accounting: dict[str, int | bool | float | None],
-) -> None:
-    lines.append(f"accounting_elapsed_seconds_complete: {accounting['elapsed_seconds_complete']}")
-    lines.append(f"accounting_tokens_complete: {accounting['tokens_complete']}")
-    lines.append(f"accounting_completed_runs: {accounting['completed_runs']}")
-    lines.append(f"accounting_elapsed_seconds: {accounting['elapsed_seconds']}")
-    lines.append(f"accounting_input_tokens: {accounting['input_tokens']}")
-    lines.append(f"accounting_output_tokens: {accounting['output_tokens']}")
-    lines.append(f"accounting_reasoning_tokens: {accounting['reasoning_tokens']}")
-    lines.append(f"accounting_cache_read_tokens: {accounting['cache_read_tokens']}")
-    lines.append(f"accounting_cache_write_tokens: {accounting['cache_write_tokens']}")
-    lines.append(f"accounting_total_tokens: {accounting['total_tokens']}")
-    lines.append(f"accounting_cost_usd: {accounting['cost_usd']}")
-
-
-def _compact_active_run_line(run: RunRecord, *, include_owner: bool = False) -> str:
-    parts = [f"- {run.run_id}", run.role, run.status, f"task={json.dumps(run.task_label)}"]
-    token_bits = [
-        bit
-        for bit in (
-            f"input={run.input_tokens}" if run.input_tokens is not None else None,
-            f"output={run.output_tokens}" if run.output_tokens is not None else None,
-            f"reasoning={run.reasoning_tokens}" if run.reasoning_tokens is not None else None,
-            f"cache_read={run.cache_read_tokens}" if run.cache_read_tokens is not None else None,
-            f"cache_write={run.cache_write_tokens}" if run.cache_write_tokens is not None else None,
-            f"cost_usd={run.cost_usd}" if run.cost_usd is not None else None,
+    finished = [
+        job
+        for job in all_jobs
+        if job.run_id in session_run_ids
+        and job.status in _TERMINAL
+        and job.finished_at is not None
+    ]
+    last_completed: LastCompleted | None = None
+    if finished:
+        latest_run = max(finished, key=lambda job: job.finished_at or "").run_id
+        tallies = {"succeeded": 0, "failed": 0, "skipped": 0}
+        for job in finished:
+            if job.run_id == latest_run:
+                tallies[job.status] += 1
+        last_completed = LastCompleted(
+            run_id=latest_run,
+            succeeded=tallies["succeeded"],
+            failed=tallies["failed"],
+            skipped=tallies["skipped"],
         )
-        if bit is not None
-    ]
-    if token_bits:
-        parts.append("tokens=" + ",".join(token_bits))
-    if include_owner:
-        parts.append(f"owner={run.orchestrator_session_id}")
-    if run.cycle_id:
-        parts.append(f"cycle={run.cycle_id}")
-    if run.triggered_by_run_id:
-        parts.append(f"triggered_by={run.triggered_by_run_id}")
-    if run.trigger_reason:
-        parts.append(f"trigger={run.trigger_reason}")
-    if run.sequence_index is not None:
-        parts.append(f"seq={run.sequence_index}")
-    if run.blocker_text:
-        parts.append(f"blocker={json.dumps(run.blocker_text)}")
-    return " ".join(parts)
 
-
-def _format_run_linkage_details(run: RunRecord) -> str | None:
-    if not (
-        run.cycle_id
-        or run.triggered_by_run_id
-        or run.trigger_reason
-        or run.sequence_index is not None
-    ):
-        return None
-    lines = ["## Cycle linkage"]
-    if run.cycle_id:
-        lines.append(f"cycle_id: {run.cycle_id}")
-    if run.triggered_by_run_id:
-        lines.append(f"triggered_by_run_id: {run.triggered_by_run_id}")
-    if run.trigger_reason:
-        lines.append(f"trigger_reason: {run.trigger_reason}")
-    if run.sequence_index is not None:
-        lines.append(f"sequence_index: {run.sequence_index}")
-    return "\n".join(lines)
-
-
-def _list_active_runs_for_session_ids(
-    context: AppContext,
-    session_ids: list[str],
-) -> list[RunRecord]:
-    if len(session_ids) == 1:
-        return context.store.list_active_runs(session_ids[0])
-    runs = [
-        run
-        for lineage_session_id in session_ids
-        for run in context.store.list_active_runs(lineage_session_id)
-    ]
-    return sorted(runs, key=lambda run: (run.created_at, run.run_id))
-
-
-def _list_runs_for_session_ids(
-    context: AppContext,
-    session_ids: list[str],
-    *,
-    limit: int,
-) -> list[RunRecord]:
-    if len(session_ids) == 1:
-        return context.store.list_runs(session_ids[0], limit=limit)
-    runs = [
-        run
-        for lineage_session_id in session_ids
-        for run in context.store.list_runs(lineage_session_id, limit=limit)
-    ]
-    runs.sort(key=lambda run: (run.created_at, run.run_id), reverse=True)
-    return runs[:limit]
-
-
-def _orchestrator_lineage_session_ids(session_id: str) -> list[str]:
-    if not session_id.startswith("hermes:"):
-        return [session_id]
-
-    raw_session_id = session_id.removeprefix("hermes:")
-    try:
-        raw_ids = _read_hermes_compression_lineage(raw_session_id)
-    except (OSError, sqlite3.Error):
-        return [session_id]
-    if len(raw_ids) <= 1:
-        return [session_id]
-    return [f"hermes:{raw_id}" for raw_id in raw_ids]
-
-
-def _read_hermes_compression_lineage(session_id: str) -> list[str]:
-    db_path = _hermes_state_db_path()
-    if not db_path.exists():
-        return [session_id]
-
-    with sqlite3.connect(
-        f"file:{db_path}?mode=ro",
-        uri=True,
-        timeout=0.25,
-    ) as connection:
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA query_only = ON")
-        rows = connection.execute(
-            "SELECT id, parent_session_id, started_at, ended_at, end_reason FROM sessions"
-        ).fetchall()
-
-    by_id = {str(row["id"]): row for row in rows if row["id"]}
-    if session_id not in by_id:
-        return [session_id]
-
-    root_id = _hermes_compression_root_id(session_id, by_id)
-    return _hermes_compression_descendant_ids(root_id, by_id)
-
-
-def _hermes_state_db_path() -> Path:
-    explicit_home = os.environ.get("HERMES_HOME", "").strip()
-    if explicit_home:
-        return Path(explicit_home).expanduser() / "state.db"
-
-    root_home = Path.home() / ".hermes"
-    try:
-        active_profile = (root_home / "active_profile").read_text(encoding="utf-8").strip()
-    except OSError:
-        active_profile = ""
-    if active_profile and active_profile != "default":
-        return root_home / "profiles" / active_profile / "state.db"
-    return root_home / "state.db"
-
-
-def _hermes_compression_root_id(session_id: str, by_id: dict[str, sqlite3.Row]) -> str:
-    current = session_id
-    seen: set[str] = set()
-    while current not in seen:
-        seen.add(current)
-        row = by_id.get(current)
-        if row is None:
-            return current
-        parent_id = row["parent_session_id"]
-        if not parent_id or str(parent_id) not in by_id:
-            return current
-        parent = by_id[str(parent_id)]
-        if not _hermes_is_compression_edge(parent, row):
-            return current
-        current = str(parent_id)
-    return current
-
-
-def _hermes_compression_descendant_ids(root_id: str, by_id: dict[str, sqlite3.Row]) -> list[str]:
-    children_by_parent: dict[str, list[sqlite3.Row]] = {}
-    for row in by_id.values():
-        parent_id = row["parent_session_id"]
-        if parent_id:
-            children_by_parent.setdefault(str(parent_id), []).append(row)
-
-    lineage_ids: list[str] = []
-    stack = [root_id]
-    seen: set[str] = set()
-    while stack:
-        current = stack.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        lineage_ids.append(current)
-        parent = by_id.get(current)
-        if parent is None:
-            continue
-        children = [
-            row
-            for row in children_by_parent.get(current, [])
-            if _hermes_is_compression_edge(parent, row)
-        ]
-        children.sort(
-            key=lambda row: (float(row["started_at"] or 0.0), str(row["id"])),
-            reverse=True,
-        )
-        stack.extend(str(row["id"]) for row in children)
-
-    return sorted(
-        lineage_ids,
-        key=lambda raw_id: (float(by_id[raw_id]["started_at"] or 0.0), raw_id),
+    return StatusData(
+        session_jobs=session_jobs,
+        global_running=global_running,
+        global_pending=global_pending,
+        last_completed=last_completed,
     )
 
 
-def _hermes_is_compression_edge(parent: sqlite3.Row, child: sqlite3.Row) -> bool:
-    parent_ended_at = _optional_float(parent["ended_at"])
-    child_started_at = _optional_float(child["started_at"])
-    return (
-        parent["end_reason"] == "compression"
-        and parent_ended_at is not None
-        and child_started_at is not None
-        and child_started_at >= parent_ended_at
-    )
-
-
-def _optional_float(value: object) -> float | None:
-    if not isinstance(value, (int, float, str, bytes)):
-        return None
-    try:
-        return float(value)
-    except ValueError:
-        return None
-
-
-def status_payload(context: AppContext, session_id: str | None = None) -> dict[str, object]:
-    from orchestra.supervision import reconcile_stale_queued_runs
-
-    reconcile_stale_queued_runs(context)
-    global_runs = context.store.list_active_runs()
-    global_limit = context.config.concurrency.global_limit
-    per_session_limit = context.config.concurrency.per_session_limit
-    if session_id is not None:
-        _require_session_id(session_id)
-
-    payload: dict[str, object] = {
-        "contract_version": CONTRACT_VERSION,
-        "kind": "status",
-        "ok": True,
-        "scope": "global" if session_id is None else "session",
-        "orchestra_tools": (
-            default_main_session_mode(context)
-            if session_id is None
-            else resolve_main_session_mode(context, session_id)
-        ),
-        "active_runs": {
-            "count": len(global_runs) if session_id is None else 0,
-            "limit": global_limit if session_id is None else per_session_limit,
-            "runs": [],
-        },
-        "global_active_runs": {
-            "count": len(global_runs),
-            "limit": global_limit,
-        },
-    }
-    if session_id is None:
-        payload["accounting"] = _aggregate_accounting_payload(
-            context.store.list_all_runs(limit=10_000_000)
-        )
-        payload["active_runs"] = {
-            "count": len(global_runs),
-            "limit": global_limit,
-            "runs": [
-                {
-                    "run_id": run.run_id,
-                    "role": run.role,
-                    "status": run.status,
-                    "task_label": run.task_label,
-                    "owner": run.orchestrator_session_id,
-                    "model": run.model,
-                    **(
-                        {
-                            "cycle_id": run.cycle_id,
-                            "triggered_by_run_id": run.triggered_by_run_id,
-                            "trigger_reason": run.trigger_reason,
-                            "sequence_index": run.sequence_index,
-                        }
-                        if (
-                            run.cycle_id
-                            or run.triggered_by_run_id
-                            or run.trigger_reason
-                            or run.sequence_index is not None
-                        )
-                        else {}
-                    ),
-                }
-                for run in global_runs
-            ],
-        }
-        return payload
-
-    lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
-    accounting_runs = _list_runs_for_session_ids(
-        context, lineage_session_ids, limit=10_000_000
-    )
-    payload["accounting"] = _aggregate_accounting_payload(accounting_runs)
-    runs = _list_active_runs_for_session_ids(context, lineage_session_ids)
-    role_counts: dict[str, int] = {}
-    for run in runs:
-        role_counts[run.role] = role_counts.get(run.role, 0) + 1
-    details = session_status_details(context, lineage_session_ids, active_runs=runs)
-    payload.update(
-        {
-            "session_id": session_id,
-            "lineage_session_ids": lineage_session_ids if len(lineage_session_ids) > 1 else None,
-            "active_runs": {
-                "count": len(runs),
-                "limit": per_session_limit,
-                "runs": [
-                    {
-                        "run_id": run.run_id,
-                        "role": run.role,
-                        "status": run.status,
-                        "task_label": run.task_label,
-                        "owner": run.orchestrator_session_id,
-                        "model": run.model,
-                        **_token_accounting_payload(run),
-                        **(
-                            {
-                                "cycle_id": run.cycle_id,
-                                "triggered_by_run_id": run.triggered_by_run_id,
-                                "trigger_reason": run.trigger_reason,
-                                "sequence_index": run.sequence_index,
-                            }
-                            if (
-                                run.cycle_id
-                                or run.triggered_by_run_id
-                                or run.trigger_reason
-                                or run.sequence_index is not None
-                            )
-                            else {}
-                        ),
-                    }
-                    for run in runs
-                ],
-            },
-            "role_counts": [
-                {"role": role, "count": count}
-                for role, count in sorted(role_counts.items())
-            ],
-            "descendants_terminal": details.descendants_terminal,
-            "session_report_available": details.session_report_available,
-            "session_report_delivered": details.session_report_delivered,
-        }
-    )
-    return payload
-
-
-def format_status(context: AppContext, session_id: str | None = None) -> str:
-    from orchestra.supervision import reconcile_stale_queued_runs
-
-    reconcile_stale_queued_runs(context)
-    global_runs = context.store.list_active_runs()
-    global_limit = context.config.concurrency.global_limit
-    per_session_limit = context.config.concurrency.per_session_limit
-    model_limits = context.catalog.model_limits
-    if session_id is None:
-        lines = [
-            f"orchestra_tools: {default_main_session_mode(context)}",
-            "scope: global",
-            f"active_runs: {len(global_runs)}/{global_limit}",
-            f"global_active_runs: {len(global_runs)}/{global_limit}",
-        ]
-        if model_limits:
-            lines.append("model_active_runs:")
-            for model in sorted(model_limits):
-                active = sum(1 for run in global_runs if run.model == model)
-                lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
-        accounting_runs = (
-            context.store.list_all_runs(limit=10_000_000)
-            if hasattr(context.store, "list_all_runs")
-            else global_runs
-        )
-        if not global_runs:
-            lines.append("status: no active runs")
-            _append_accounting_totals(lines, _aggregate_accounting_payload(accounting_runs))
-            return "\n".join(lines)
-
-        lines.append("active:")
-        for run in global_runs:
-            lines.append(_compact_active_run_line(run, include_owner=True))
-        _append_accounting_totals(lines, _aggregate_accounting_payload(accounting_runs))
-        return "\n".join(lines)
-
-    _require_session_id(session_id)
-    lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
-    runs = _list_active_runs_for_session_ids(context, lineage_session_ids)
-    lines = [
-        f"orchestra_tools: {resolve_main_session_mode(context, session_id)}",
-        f"session_id: {session_id}",
-    ]
-    if len(lineage_session_ids) > 1:
-        lines.append(f"lineage_current_session_id: {lineage_session_ids[-1]}")
-        lines.append(f"lineage_session_ids: {', '.join(lineage_session_ids)}")
-    lines.extend(
-        [
-            f"active_runs: {len(runs)}/{per_session_limit}",
-            f"global_active_runs: {len(global_runs)}/{global_limit}",
-        ]
-    )
-    if model_limits:
-        lines.append("model_active_runs:")
-        for model in sorted(model_limits):
-            active = sum(1 for run in runs if run.model == model)
-            lines.append(f"- {model}: {active}/{model_limits[model].concurrency}")
-    details = session_status_details(context, lineage_session_ids, active_runs=runs)
-    accounting_runs = (
-        _list_runs_for_session_ids(context, lineage_session_ids, limit=10_000_000)
-        if hasattr(context.store, "list_runs")
-        else runs
-    )
-    if not runs:
-        lines.append("status: no active runs")
-        _append_session_status_details(lines, details)
-        _append_accounting_totals(lines, _aggregate_accounting_payload(accounting_runs))
-        return "\n".join(lines)
-
-    _append_session_status_details(lines, details)
-    lines.append("active:")
-    for run in runs:
-        lines.append(_compact_active_run_line(run, include_owner=len(lineage_session_ids) > 1))
-    _append_accounting_totals(lines, _aggregate_accounting_payload(accounting_runs))
-    return "\n".join(lines)
-
-
-def await_run_payload(
-    record: RunRecord,
-    *,
-    active_remaining: int,
-    details: SessionStatusDetails,
-    prompts: PromptConfig,
-) -> dict[str, object]:
-    return {
-        "contract_version": CONTRACT_VERSION,
-        "kind": "await_run",
-        "ok": True,
-        "run_id": record.run_id,
-        "status": record.status,
-        "role": record.role,
-        "harness": record.harness,
-        "result": record.result_summary,
-        "error": record.error_text,
-        "blocker": record.blocker_text,
-        "next": (
-            _return_hint(record, prompts=prompts)
-            if record.status == STATUS_INCOMPLETE
-            else None
-        ),
-        "active_runs_remaining": active_remaining,
-        "descendants_terminal": details.descendants_terminal,
-        "session_report_available": details.session_report_available,
-        "session_report_delivered": details.session_report_delivered,
-    }
-
-
-def _format_run_summary(run: RunRecord) -> str:
-    summary = clean_result_summary(run.blocker_text or run.error_text or run.result_summary)
-    if run.result_summary_truncated:
-        return f"{summary} [truncated]"
-    return summary
-
-
-def _find_pi_transcript(worker_session_id: str) -> Path | None:
-    agent_dir = Path(os.environ.get("PI_CODING_AGENT_DIR", str(Path.home() / ".pi" / "agent")))
-    session_root = Path(os.environ.get("PI_CODING_AGENT_SESSION_DIR", str(agent_dir / "sessions")))
-    if not session_root.is_dir():
-        return None
-    matches = list(session_root.rglob(f"*_{worker_session_id}.jsonl"))
-    if not matches:
-        return None
-    return max(matches, key=lambda path: path.stat().st_mtime)
-
-
-def _debug_file_section(title: str, path: Path) -> str:
-    lines = [f"## {title}", f"path: {path}"]
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except FileNotFoundError:
-        lines.append("missing")
-    else:
-        lines.extend(["", text.rstrip()])
-    return "\n".join(lines)
-
-
-def _format_debug_field_lines(record: RunRecord) -> list[str]:
-    lines = [
-        f"run_id: {record.run_id}",
-        f"status: {record.status}",
-        f"session_id: {record.orchestrator_session_id}",
-        f"role: {record.role}",
-        f"harness: {record.harness}",
-        f"task: {record.task_label}",
-        f"created_at: {record.created_at}",
-        f"log_path: {record.log_path}",
-    ]
-    for label, value in (
-        ("batch_id", record.batch_id),
-        ("model", record.model),
-        ("started_at", record.started_at),
-        ("ended_at", record.ended_at),
-        ("supervisor_pid", record.supervisor_pid),
-        ("supervisor_started_at", record.supervisor_started_at),
-        ("supervisor_output_path", record.supervisor_output_path),
-        ("process_id", record.process_id),
-        ("process_group_id", record.process_group_id),
-        ("result_summary", record.result_summary),
-        ("result_summary_truncated", record.result_summary_truncated),
-        ("semantic_verdict", record.semantic_verdict),
-        ("error_text", record.error_text),
-        ("blocker_text", record.blocker_text),
-        ("worker_session_id", record.worker_session_id),
-        ("transcript_path", record.transcript_path),
-        ("approval_needed", record.approval_needed),
-        ("input_tokens", record.input_tokens),
-        ("output_tokens", record.output_tokens),
-        ("reasoning_tokens", record.reasoning_tokens),
-        ("cache_read_tokens", record.cache_read_tokens),
-        ("cache_write_tokens", record.cache_write_tokens),
-        ("cost_usd", record.cost_usd),
-        ("report_claimed_at", record.report_claimed_at),
-        ("reported_at", record.reported_at),
-        ("cycle_id", record.cycle_id),
-        ("triggered_by_run_id", record.triggered_by_run_id),
-        ("trigger_reason", record.trigger_reason),
-        ("sequence_index", record.sequence_index),
-    ):
-        if value is not None:
-            lines.append(f"{label}: {value}")
-    return lines
-
-
-def _debug_transcript_section(record: RunRecord) -> str:
-    lines = ["## Harness transcript"]
-    if record.worker_session_id:
-        lines.append(f"worker_session_id: {record.worker_session_id}")
-    if record.transcript_path:
-        lines.append(_debug_file_section("Transcript content", record.transcript_path))
-        return "\n".join(lines)
-    if record.worker_session_id and record.harness == "pi":
-        fallback = _find_pi_transcript(record.worker_session_id)
-        if fallback is not None:
-            lines.append("transcript_path: discovered by Pi fallback search")
-            lines.append(_debug_file_section("Transcript content", fallback))
-            return "\n".join(lines)
-        lines.append("transcript_path: not recorded")
-        lines.append(
-            "fallback_search: find "
-            '"${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/sessions}" '
-            f"-type f -name '*_{record.worker_session_id}.jsonl'"
+def render_status(data: StatusData, mode: str) -> str:
+    """Format StatusData for display. The only display formatting for status."""
+    lines = [f"Orchestra: {mode}", ""]
+    if data.session_jobs:
+        lines.append("This session:")
+        lines.extend(
+            _entry_line(entry, _sequence_of(entry.waiting_on))
+            for entry in data.session_jobs
         )
     else:
-        lines.append("transcript_path: not available")
-    return "\n".join(lines)
-
-
-def _format_debug_bundle(context: AppContext, record: RunRecord) -> str:
-    canonical_events = canonical_events_path(context.config.state_dir, record.run_id)
-    sections = [
-        "# Orchestra debug bundle",
-        "",
-        "## Run record",
-        "\n".join(_format_debug_field_lines(record)),
-    ]
-    sections.append(
-        _debug_file_section(
-            "Canonical request", canonical_request_path(context.config.state_dir, record.run_id)
-        )
+        lines.append("This session: no active jobs.")
+    lines.append("")
+    lines.append(
+        f"Global: {data.global_running} running, {data.global_pending} pending"
     )
-    sections.append(_debug_file_section("Canonical events", canonical_events))
-    sections.append(
-        _debug_file_section(
-            "Canonical return", canonical_return_path(context.config.state_dir, record.run_id)
-        )
-    )
-    if record.log_path != canonical_events:
-        sections.append(_debug_file_section("Legacy lifecycle log", record.log_path))
-    if record.supervisor_output_path:
-        sections.append(_debug_file_section("Supervisor output", record.supervisor_output_path))
-    else:
-        sections.append(
-            _debug_file_section(
-                "Supervisor output",
-                legacy_supervisor_output_path(context.config.log_dir, record.run_id),
-            )
-        )
-    sections.append(_debug_transcript_section(record))
-    return "\n\n".join(sections)
+    completed = data.last_completed
+    if completed is not None:
+        lines.append("")
+        tally = f"{completed.succeeded} succeeded, {completed.failed} failed"
+        if completed.skipped:
+            tally += f", {completed.skipped} skipped"
+        lines.append(f"Last completed: run {completed.run_id} — {tally}")
+    return "\n".join(lines) + "\n"
 
 
-def format_debug_run(context: AppContext, run_id: str) -> str:
-    _reconcile_stale_queued_runs(context)
-    record = context.store.get_run(run_id)
-    return _format_debug_bundle(context, record)
+def _sequence_of(job_ids: tuple[str, ...]) -> dict[str, int]:
+    """Map prerequisite job ids to their sequence numbers.
+
+    Queue job ids have the ``<run_id>:<sequence>`` form; anything else is
+    rendered verbatim via a sequence of -1 placeholder avoided by keeping
+    the raw id in the mapping lookup.
+    """
+    mapping: dict[str, int] = {}
+    for job_id in job_ids:
+        _, _, tail = job_id.rpartition(":")
+        mapping[job_id] = int(tail) if tail.isdigit() else -1
+    return mapping
 
 
-def format_debug_session(context: AppContext, session_id: str, limit: int = 20) -> str:
-    _reconcile_stale_queued_runs(context)
-    _require_session_id(session_id)
-    lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
-    runs = _list_runs_for_session_ids(context, lineage_session_ids, limit=limit)
-    lines = ["# Orchestra debug session", "", f"session_id: {session_id}", f"runs: {len(runs)}"]
-    for run in runs:
-        lines.extend(["", _format_debug_bundle(context, run)])
-    return "\n".join(lines)
-
-
-def format_history(context: AppContext, session_id: str, limit: int) -> str:
-    _reconcile_stale_queued_runs(context)
-    _require_session_id(session_id)
-    lineage_session_ids = _orchestrator_lineage_session_ids(session_id)
-    runs = _list_runs_for_session_ids(context, lineage_session_ids, limit=limit)
-    lines = [f"session_id: {session_id}"]
-    if len(lineage_session_ids) > 1:
-        lines.append(f"lineage_current_session_id: {lineage_session_ids[-1]}")
-        lines.append(f"lineage_session_ids: {', '.join(lineage_session_ids)}")
-    lines.append(f"history_count: {len(runs)}")
-    _append_accounting_totals(lines, _aggregate_accounting_payload(runs))
-    if not runs:
-        lines.append("history: no runs found")
-        return "\n".join(lines)
-
-    lines.append("runs:")
-    for run in runs:
-        summary = _format_run_summary(run)
-        owner = (
-            f" session={run.orchestrator_session_id}" if len(lineage_session_ids) > 1 else ""
-        )
-        lines.append(
-            f"- {run.run_id} [{run.status}] {run.role}{owner} :: {run.task_label} :: {summary}"
-        )
-        if run.cycle_id:
-            lines.append(f"  cycle_id: {run.cycle_id}")
-        if run.triggered_by_run_id:
-            lines.append(f"  triggered_by_run_id: {run.triggered_by_run_id}")
-        if run.trigger_reason:
-            lines.append(f"  trigger_reason: {run.trigger_reason}")
-        if run.sequence_index is not None:
-            lines.append(f"  sequence_index: {run.sequence_index}")
-        return_path = canonical_return_path(context.config.state_dir, run.run_id)
-        lines.append(f"  return_path: {return_path}")
-        if run.reported_at:
-            lines.append("  delivery: delivered")
-        elif run.status in {STATUS_DONE, STATUS_FAILED, STATUS_CANCELLED, STATUS_INCOMPLETE}:
-            lines.append("  delivery: pending")
-        else:
-            lines.append("  delivery: unavailable")
-        if run.worker_session_id:
-            lines.append(f"  worker_session_id: {run.worker_session_id}")
-        lines.append(f"  log: {run.log_path}")
-    return "\n".join(lines)
+def _entry_line(entry: StatusEntry, sequence_of: dict[str, int]) -> str:
+    line = f"  #{entry.sequence}".ljust(7) + entry.role.ljust(12)
+    line += entry.status.ljust(10) + f"run {entry.run_id}"
+    if entry.waiting_on:
+        refs = ", ".join(f"#{sequence_of[job_id]}" for job_id in entry.waiting_on)
+        line += f"   (waiting on {refs})"
+    return line

@@ -1,138 +1,62 @@
+# Prompt text for Orchestra 2, loaded as a flat key -> text map by
+# orchestra.config.load_prompts. Missing required keys and unknown keys are
+# loud ConfigError failures; there are no defaults or fallbacks.
+
+# ---------------------------------------------------------------------------
+# formats: the subagent return format contract.
+# Consumed by harness plugins when preparing agent assignments; every subagent
+# return follows this compact schema. Durable detail belongs in artifacts, not
+# in the return text.
+# ---------------------------------------------------------------------------
 default_return_format: |-
-  Return only this compact schema unless a blocker needs more detail:
-  Status: complete|blocked|failed
-  Verdict: pass|fail|blocked|n/a
-  Artifacts updated:
-  - <file or none>
-  Files changed:
-  - <file or none>
-  Commands:
-  - <exact command or none> — <result>
-  Evidence reused:
-  - <artifact path and exact command evidence, or none>
-  Material evidence:
-  - <one-line decisive evidence>
-  Findings:
-  - <severity; file:line or affected contract; finding, impact, and supporting evidence>
-  Blockers:
-  - none|<blocker>
-  Risks:
-  - none|<risk>
-  Next:
-  - <next dispatch/action>
+  Return compact status, verdict, agent response, relevant evidence, and next
+  action. Include updated artifacts, files changed, exact commands with their
+  results, reused evidence with references, material evidence, findings,
+  blockers, and risks when relevant; omit empty fields. Keep it short; put
+  durable detail in the assigned artifact.
 
-  Include Findings only for supported review or security findings. Preserve enough
-  location, impact, and evidence detail for each finding to be actionable.
-  Keep the chat return under 1000 characters when possible. Put durable detail
-  in the assigned artifact, not in the chat return. Omit empty fields. Do not
-  include broad tables, history narratives, or lists of every file read unless
-  material to a blocker or finding.
-tool_description: >-
-  Dispatch a focused subagent when useful or when the user asks. Choose an
-  enabled role and give it one clear goal, scope, boundaries, stop condition,
-  and expected return. Dispatch transfers ownership of that scope: do not
-  duplicate the subagent's work, commands, or checks; trust successful returns.
-  If a return is failed, blocked, or incomplete, use its evidence for a smaller
-  follow-up or ask the user for a decision. In structured orchestration mode,
-  delegation is the default: inspect the whole request for slices and dependencies,
-  dispatch each currently unblocked independent slice in parallel (one call per
-  slice), and follow dependency order. Completed subagents return automatically;
-  do not poll. {roles}
-tool_prompt_snippet: ""
-tool_prompt_guidelines: []
-tool_goal_description: >-
-  One small subagent slice: goal, exact scope, prior evidence to reuse, stop
-  condition, and return shape.
-tool_additional_context_description: >-
-  Compact artifact reference for the slice, such as `PLAN.md Slice 2`. Keep
-  detailed scope, boundaries, acceptance, and verification in the referenced artifact.
-tool_role_description: >-
-  Optional subagent capability. Choose the enabled role that best matches the
-  slice. Omit role when no specialized enabled role is a better match than the
-  default. {roles}
-tool_task_label_description: Optional short request label.
-main_session_ownership_guidance: >-
-  The main-session orchestrator reads failed return artifacts, decides how to
-  proceed, and handles run status, recovery decisions, and synthesis. Follow-up
-  dispatch continues unfinished operational work after that decision.
-status_description: >-
-  Use orch_status only when the user explicitly asks for an Orchestra
-  status/control/help action in the current session. Use status for active
-  subagents, history for completed subagent results, roles for read-only role
-  information, doctor for setup checks, help for usage, on to enable Orchestra
-  tools, and stop with a runId to cancel an owned active run.
-status_action_description: >-
-  Action to perform: help, doctor, roles, status, history, on, or stop. Use stop
-  only with a runId for an active run owned by the current host session.
-status_limit_description: Optional positive history limit for action=history.
-status_run_id_description: Required run id when action=stop.
-status_role_description: Reserved for compatibility; action=roles lists all configured roles.
-status_setting_description: Reserved for role updates; model-callable roles are read-only for now.
-status_value_description: Reserved for role updates; model-callable roles are read-only for now.
-budget_trigger_label: Budget trigger
-soft_timeout_block_reason: Orchestra soft timeout reached; return budget handoff
-session_mode_off_message: Orchestra tools hidden for this session. Run /orch on to enable them again.
-session_mode_on_message: Orchestra tools enabled for this session.
-session_mode_orchestrate_message: Orchestra tools and orchestrator skill enabled for this session.
-dispatch_ack_instruction: subagent will auto-return when finished. Do not poll, stop.
-return_hint_done: advance the plan using this subagent return; do not repeat its work
-return_hint_incomplete: pass this return_path handoff artifact to the next dispatch and continue from it
-return_hint_failed: read the failed return artifact and decide how to proceed
-return_hint_builder_failed: pass this return_path handoff artifact to one bounded fix-only builder follow-up
-return_hint_budget_exceeded: pass this return_path handoff artifact to a smaller continuation dispatch; preserve completed work and do not repeat it
-budget_exceeded_prompt: |-
-  [Orchestra subagent budget exceeded]
-  Stop everything you're doing immediately.
+# ---------------------------------------------------------------------------
+# tool_response: text the harness plugin returns to the calling orchestrator
+# session immediately after a dispatch is accepted, while execution continues
+# in the background. The orchestrator does not poll.
+# ---------------------------------------------------------------------------
+dispatch_ack: |-
+  Assignment accepted and running in the background. Results return to this
+  session when all dispatched jobs finish; do not poll.
 
-  Your only task now, is to create a handoff for the next agent,
-  do not continue any previous work.
+# ---------------------------------------------------------------------------
+# budget_intervention: text sent to a subagent when its turn limit or soft
+# timeout is reached, telling it to stop and produce a continuation handoff.
+# ---------------------------------------------------------------------------
+budget_intervention: |-
+  Your turn or time budget for this assignment is exhausted. Stop the
+  assignment now and produce a continuation handoff: compact status,
+  completed work, evidence and artifact locations, current state, and the
+  remaining work. Do not start new work.
 
-  Start with:
-
-  ORCHESTRA_STATUS: incomplete
-  ORCHESTRA_STOP_REASON: budget_exceeded
-
-  Then return the normal compact result schema as a continuation handoff:
-
-  Status: incomplete
-  Verdict: n/a
-  Artifacts updated:
-  - <file or none>
-  Files changed:
-  - <file or none>
-  Commands:
-  - <exact command or none> — <result>
-  Evidence reused:
-  - <artifact path and exact command evidence, or none>
-  Material evidence:
-  - <completed work, current state, and data locations>
-  Blockers:
-  - none|<blocker>
-  Risks:
-  - none|<risk>
-  Next:
-  - <small continuation dispatch, including remaining work and stop condition>
-
-  Preserve completed work and make the handoff sufficient for the caller to pass
-  this return artifact directly to the continuation dispatch.
-host_help: |-
-  Orchestra commands:
-    /orch help                         Show this help
-    /orch on                           Enable Orchestra tools
-    /orch orchestrate                  Enable Orchestra tools and main-session guidance
-    /orch off                          Hide Orchestra tools for this session
-    /orch doctor                       Check Orchestra setup
-    /orch do <request>                 Dispatch a subagent
-    /orch do --role ROLE <request>     Start a subagent with a role
-    /orch roles                        Show configured roles
-    /orch roles ROLE SETTING VALUE     Update a role setting
-                                       Settings: harness, enabled, model, profile, agent
-                                       VALUE for enabled: true, yes, y, 1, on | false, no, n, 0, off
-    /orch config [KEY] [VALUE]         Show or update supported config values
-    /orch status                       Show active subagents for this session
-    /orch stop <run-id>                Stop an active subagent.
-    /orch history [limit]              Show recent results for this session
-
-  Plain text: ask me to delegate, dispatch, use a subagent/sub-agent, ask a subagent,
-  or ask another agent.
-  Subagent completions automatically return to the owning session.
+# ---------------------------------------------------------------------------
+# return_hints: one short guidance line per return category, selected by
+# orchestra.guidance.derive_return_category and looked up by
+# orchestra.guidance.return_hint. Categories are exactly:
+#   all_succeeded           - builder and verifier jobs succeeded
+#   verification_disagreement - a verifier failed while its builder-style
+#                               prerequisite succeeded; review findings first
+#   budget_exhausted        - a job failed with a dispatcher-recorded budget
+#                             wrap-up reason (turn limit or soft timeout)
+#   hard_failure            - any other failure
+# Precedence when several apply: budget_exhausted > verification_disagreement
+# > hard_failure > all_succeeded.
+# ---------------------------------------------------------------------------
+return_hint_all_succeeded: |-
+  Builder and verifier succeeded. Trust the evidence, advance using the
+  result, and do not duplicate the work or retest unnecessarily.
+return_hint_verification_disagreement: |-
+  The verifier does not confirm the builder. Review the verifier's findings
+  first before deciding how to proceed.
+return_hint_budget_exhausted: |-
+  A turn limit or soft timeout was hit; the scope was likely too big.
+  Decompose the remaining work and redispatch; completed work is preserved
+  in artifacts.
+return_hint_hard_failure: |-
+  A harness or execution error occurred. Inspect the evidence in artifacts
+  and decide how to proceed.

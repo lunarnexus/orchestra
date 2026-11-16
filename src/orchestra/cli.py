@@ -1,944 +1,445 @@
-"""CLI entrypoint for Orchestra."""
+"""Minimal core command entry for harness plugins.
+
+One thin, generic entry point covering the operations every host plugin
+needs: dispatch (submit + run + assemble, printing one JSON acknowledgement
+line, then one JSON return line), status, history, stop, help, doctor, and
+the configured initial session mode. All wording here is host-neutral; the
+host adapters add no wording of their own.
+
+Line protocol for ``dispatch`` (JSONL on stdout):
+  {"type": "ack", "run_id": ..., "role": ..., "ack": ..., "jobs": [...]}
+  {"type": "return", "run_id": ..., "return": {...} | null, "stopped": bool}
+
+Errors go to stderr as plain text and exit nonzero: failures are loud.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
+import threading
+import time
 from collections.abc import Sequence
+from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
-from orchestra.config import (
-    ConfigError,
-    list_config_values,
-    read_config_value,
-    resolve_config_path,
-    resolve_prompts_path,
-    update_config_value,
-)
-from orchestra.context import AppError, load_context
-from orchestra.dispatch import format_started_run, start_run, started_run_payload
-from orchestra.errors import error_envelope
-from orchestra.host_commands import (
-    dispatch_command_payload,
-    session_mode_transition_payload,
-    tool_info_payload,
-)
-from orchestra.host_text import (
-    ROLE_USAGE,
-    dispatch_ack_payload,
-    format_command_echo,
-    format_dispatch_ack,
-    format_host_help,
-    format_progress_notification,
-    progress_notification_payload,
-)
-from orchestra.init import (
-    InitFileResult,
-    doctor_checks_pass,
-    format_doctor_checks,
-    init_all,
-    init_codex,
-    init_hermes,
-    init_pi,
-    run_doctor,
-)
-from orchestra.reports import (
-    await_run_terminal_status,
-    await_session_report,
-    await_session_report_payload,
-    consume_pending_session_report,
-    format_run_report,
-    mark_session_report_delivered,
-    session_report_payload,
-)
-from orchestra.roles import format_roles, role_metadata, set_role_setting
-from orchestra.session_mode import (
-    main_session_state_payload,
-    set_main_session_mode,
-)
-from orchestra.spsi import spsi_payload
-from orchestra.state import StateError
-from orchestra.status import (
-    await_run_payload,
-    format_debug_run,
-    format_debug_session,
-    format_history,
-    format_status,
-    status_payload,
-)
-from orchestra.supervision import run_supervisor_guarded, stop_run
+from orchestra.config import OrchestraConfig, load_orchestra_config
+from orchestra.dispatcher import run as run_dispatcher
+from orchestra.pi_harness import AgentPlan, PiHarness
+from orchestra.queue import Job, JobQueue
+from orchestra.results import assemble
+from orchestra.status import render_status
+from orchestra.status import status as status_query
+from orchestra.submit import Assignment, Submission, submit
 
-INTERNAL_COMMANDS = frozenset(
-    {
-        "help-host",
-        "_run-supervisor",
-        "_pending-report",
-        "_await-session-report",
-        "_await-run",
-        "_mark-session-report-delivered",
-        "_dispatch-command",
-        "_dispatch-ack",
-        "_progress-message",
-        "_command-echo",
-        "_session-mode",
-        "_tool-info",
-        "_role-metadata",
-        "_spsi-payload",
-    }
-)
-
-
-def build_parser(*, include_internal: bool = False) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="orchestra",
-        description="Focused worker-agent orchestration.",
-        epilog=(
-            "Examples:\n"
-            "  orchestra doctor\n"
-            "  orchestra roles\n"
-            "  orchestra config\n"
-            "  orchestra do --session-id manual:demo --goal \"smoke test\"\n"
-            "  orchestra history --session-id manual:demo"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument(
-        "--config",
-        metavar="PATH",
-        default=None,
-        help=(
-            "config directory containing config.yaml, agent-catalog.yaml, "
-            "and/or prompts.yaml overrides"
-        ),
-    )
-
-    subparsers = parser.add_subparsers(dest="command", metavar="<command>", title="commands")
-
-    do_parser = subparsers.add_parser("do", help="dispatch a worker run")
-    do_parser.add_argument(
-        "--session-id",
-        required=True,
-        help=(
-            "local/manual session id for CLI mode; runtime host adapters "
-            "supply session ids from runtime context"
-        ),
-    )
-    do_parser.add_argument("--role", default=None, help="worker role name")
-    do_parser.add_argument("--goal", required=True, help="goal for the worker")
-    do_parser.add_argument(
-        "--additional-context",
-        default="",
-        help="additional context for the worker",
-    )
-    do_parser.add_argument(
-        "--parent-context-artifact",
-        default=None,
-        help=(
-            "path to a parent session context artifact file, or '-' to read the parent "
-            "context from stdin; core writes the only run-scoped private artifact under "
-            "the run state directory"
-        ),
-    )
-    do_parser.add_argument("--boundaries", default="", help="out-of-scope boundaries")
-    do_parser.add_argument("--acceptance-target", default="", help="acceptance target")
-    do_parser.add_argument("--return-format", default="", help="explicit return format")
-    do_parser.add_argument("--timeout", type=_positive_int, default=None, help="timeout in seconds")
-    do_parser.add_argument("--task-label", default="", help="short task label")
-    do_parser.add_argument("--batch-id", default=None, help="optional batch id")
-    do_parser.add_argument("--json", action="store_true")
-    do_parser.set_defaults(handler=_handle_do)
-
-    status_parser = subparsers.add_parser("status", help="show active run status")
-    status_parser.add_argument(
-        "--session-id",
-        default=None,
-        help="local/manual session id for CLI mode",
-    )
-    status_parser.add_argument("--json", action="store_true")
-    status_parser.set_defaults(handler=_handle_status)
-
-    stop_parser = subparsers.add_parser("stop", help="stop a worker run")
-    stop_parser.add_argument(
-        "--session-id",
-        required=True,
-        help="local/manual session id for CLI mode",
-    )
-    stop_parser.add_argument("--run-id", required=True, help="run id to cancel")
-    stop_parser.set_defaults(handler=_handle_stop)
-
-    doctor_parser = subparsers.add_parser("doctor", help="check local setup")
-    doctor_parser.set_defaults(handler=_handle_doctor)
-
-    roles_parser = subparsers.add_parser("roles", help="list configured worker roles")
-    roles_parser.add_argument(
-        "--all",
-        action="store_true",
-        help="include disabled roles and default role metadata",
-    )
-    roles_parser.add_argument("role", nargs="?", help="role to update")
-    roles_parser.add_argument(
-        "setting",
-        nargs="?",
-        choices=("harness", "enabled", "model", "profile", "agent"),
-        help="role setting to update",
-    )
-    roles_parser.add_argument("value", nargs="?", help="new role setting value")
-    roles_parser.set_defaults(handler=_handle_roles)
-
-    config_parser = subparsers.add_parser("config", help="read or update config values")
-    config_parser.add_argument("key", nargs="?", help="config key to read or update")
-    config_parser.add_argument("value", nargs="?", help="new config value")
-    config_parser.set_defaults(handler=_handle_config)
-
-    if include_internal:
-        help_parser = subparsers.add_parser("help-host", help=argparse.SUPPRESS)
-        help_parser.set_defaults(handler=_handle_help_host)
-
-    history_parser = subparsers.add_parser("history", help="show prior run summaries")
-    history_parser.add_argument(
-        "--session-id",
-        required=True,
-        help="local/manual session id for CLI mode",
-    )
-    history_parser.add_argument("--limit", type=int, default=10, help="maximum number of runs")
-    history_parser.set_defaults(handler=_handle_history)
-
-    prune_parser = subparsers.add_parser("prune", help="prune old runtime state")
-    prune_parser.add_argument(
-        "--retention-days",
-        type=_positive_int,
-        default=None,
-        help="override configured retention_days for this prune run",
-    )
-    prune_parser.add_argument(
-        "--delete",
-        action="store_true",
-        help="delete old terminal runs, owned runtime files, and safe old orphan files",
-    )
-    prune_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="print the prune result as JSON",
-    )
-    prune_parser.set_defaults(handler=_handle_prune)
-
-    debug_parser = subparsers.add_parser("debug", help="print run/session debug bundle")
-    debug_target = debug_parser.add_mutually_exclusive_group(required=True)
-    debug_target.add_argument("--run-id", help="run id to inspect")
-    debug_target.add_argument("--session-id", help="session id to inspect")
-    debug_parser.add_argument("--limit", type=int, default=20, help="maximum session runs")
-    debug_parser.set_defaults(handler=_handle_debug)
-
-    init_parser = subparsers.add_parser("init", help="initialize host integrations")
-    init_subparsers = init_parser.add_subparsers(dest="init_target", metavar="TARGET")
-    init_pi_parser = init_subparsers.add_parser("pi", help="install global Pi extension")
-    init_pi_parser.add_argument("--force", action="store_true", help="overwrite existing files")
-    init_pi_parser.add_argument(
-        "--copy",
-        action="store_true",
-        help="copy config files instead of linking",
-    )
-    init_pi_parser.set_defaults(handler=_handle_init_pi)
-
-    init_hermes_parser = init_subparsers.add_parser("hermes", help="install Hermes plugin")
-    init_hermes_parser.add_argument(
-        "--profile",
-        default=None,
-        help="optional Hermes profile override",
-    )
-    init_hermes_parser.add_argument("--force", action="store_true", help="force reinstall")
-    init_hermes_parser.add_argument(
-        "--copy",
-        action="store_true",
-        help="copy config files instead of linking",
-    )
-    init_hermes_parser.set_defaults(handler=_handle_init_hermes)
-
-    init_codex_parser = init_subparsers.add_parser(
-        "codex",
-        help="install Codex plugin scaffold",
-    )
-    init_codex_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="overwrite existing plugin source and marketplace entry",
-    )
-    init_codex_parser.add_argument(
-        "--copy",
-        action="store_true",
-        help="copy plugin directory instead of linking",
-    )
-    init_codex_parser.set_defaults(handler=_handle_init_codex)
-
-    init_all_parser = init_subparsers.add_parser(
-        "all",
-        help="initialize configured integrations",
-    )
-    init_all_parser.add_argument("--force", action="store_true", help="overwrite existing files")
-    init_all_parser.add_argument(
-        "--copy",
-        action="store_true",
-        help="copy config files instead of linking",
-    )
-    init_all_parser.set_defaults(handler=_handle_init_all)
-
-    if include_internal:
-        supervisor_parser = subparsers.add_parser("_run-supervisor", help=argparse.SUPPRESS)
-        supervisor_parser.add_argument("--run-id", required=True)
-        supervisor_parser.add_argument("--request-file", required=True)
-        supervisor_parser.set_defaults(handler=_handle_run_supervisor)
-
-        pending_parser = subparsers.add_parser("_pending-report", help=argparse.SUPPRESS)
-        pending_parser.add_argument("--session-id", required=True)
-        pending_parser.set_defaults(handler=_handle_pending_report)
-
-        wait_parser = subparsers.add_parser("_await-session-report", help=argparse.SUPPRESS)
-        wait_parser.add_argument("--session-id", required=True)
-        wait_parser.add_argument("--run-id")
-        wait_parser.add_argument("--timeout", type=float, default=None)
-        wait_parser.add_argument("--json", action="store_true")
-        wait_parser.set_defaults(handler=_handle_await_session_report)
-
-        mark_report_parser = subparsers.add_parser(
-            "_mark-session-report-delivered",
-            help=argparse.SUPPRESS,
-        )
-        mark_report_parser.add_argument("--session-id", required=True)
-        mark_report_parser.add_argument("--run-id", action="append", required=True)
-        mark_report_parser.set_defaults(handler=_handle_mark_session_report_delivered)
-
-        wait_run_parser = subparsers.add_parser("_await-run", help=argparse.SUPPRESS)
-        wait_run_parser.add_argument("--session-id", required=True)
-        wait_run_parser.add_argument("--run-id", required=True)
-        wait_run_parser.add_argument("--timeout", type=float, default=None)
-        wait_run_parser.add_argument("--json", action="store_true")
-        wait_run_parser.set_defaults(handler=_handle_await_run)
-
-        dispatch_command_parser = subparsers.add_parser("_dispatch-command", help=argparse.SUPPRESS)
-        dispatch_command_parser.add_argument("--session-id", required=True)
-        dispatch_command_parser.add_argument("--goal", required=True)
-        dispatch_command_parser.add_argument("--additional-context", default=None)
-        dispatch_command_parser.add_argument("--role", default=None)
-        dispatch_command_parser.add_argument("--timeout", type=_positive_int, default=None)
-        dispatch_command_parser.add_argument("--task-label", default=None)
-        dispatch_command_parser.add_argument("--json", action="store_true")
-        dispatch_command_parser.set_defaults(handler=_handle_dispatch_command)
-
-        dispatch_ack_parser = subparsers.add_parser("_dispatch-ack", help=argparse.SUPPRESS)
-        dispatch_ack_parser.add_argument("--run-id", required=True)
-        dispatch_ack_parser.add_argument("--role", default=None)
-        dispatch_ack_parser.add_argument("--json", action="store_true")
-        dispatch_ack_parser.set_defaults(handler=_handle_dispatch_ack)
-
-        progress_parser = subparsers.add_parser("_progress-message", help=argparse.SUPPRESS)
-        progress_parser.add_argument("--completed", type=int, required=True)
-        progress_parser.add_argument("--total", type=int, required=True)
-        progress_parser.add_argument("--run-id", required=True)
-        progress_parser.add_argument("--status", required=True)
-        progress_parser.add_argument("--role", default=None)
-        progress_parser.add_argument("--json", action="store_true")
-        progress_parser.set_defaults(handler=_handle_progress_message)
-
-        echo_parser = subparsers.add_parser("_command-echo", help=argparse.SUPPRESS)
-        echo_parser.add_argument("raw_command")
-        echo_parser.set_defaults(handler=_handle_command_echo)
-
-        session_mode_parser = subparsers.add_parser(
-            "_session-mode",
-            help=argparse.SUPPRESS,
-        )
-        session_mode_subparsers = session_mode_parser.add_subparsers(
-            dest="session_mode_action",
-            metavar="ACTION",
-            required=True,
-        )
-        session_mode_set_parser = session_mode_subparsers.add_parser("set")
-        session_mode_set_parser.add_argument("--session-id", required=True)
-        session_mode_set_parser.add_argument("--mode", required=True)
-        session_mode_set_parser.add_argument("--json", action="store_true")
-        session_mode_set_parser.set_defaults(handler=_handle_session_mode)
-
-        session_mode_get_parser = session_mode_subparsers.add_parser("get")
-        session_mode_get_parser.add_argument("--session-id", required=True)
-        session_mode_get_parser.add_argument("--json", action="store_true")
-        session_mode_get_parser.set_defaults(handler=_handle_session_mode)
-
-        tool_info_parser = subparsers.add_parser("_tool-info", help=argparse.SUPPRESS)
-        tool_info_parser.add_argument(
-            "--session-id",
-            default=None,
-            help="optional session id for resolving main_session_mode",
-        )
-        tool_info_parser.set_defaults(handler=_handle_tool_info)
-
-        role_metadata_parser = subparsers.add_parser("_role-metadata", help=argparse.SUPPRESS)
-        role_metadata_parser.set_defaults(handler=_handle_role_metadata)
-
-        spsi_payload_parser = subparsers.add_parser("_spsi-payload", help=argparse.SUPPRESS)
-        spsi_payload_parser.add_argument("--session-id", required=True)
-        spsi_payload_parser.add_argument("--json", action="store_true")
-        spsi_payload_parser.set_defaults(handler=_handle_spsi_payload)
-
-    return parser
+QUEUE_FILENAME = "queue.db"
+STOP_DIRNAME = "stops"
+SKILLS_DIRNAME = "skills"
+STOP_POLL_SECONDS = 15.0
+STOP_POLL_INTERVAL = 0.25
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    effective_argv = list(sys.argv[1:] if argv is None else argv)
-    parser = build_parser(include_internal=_uses_internal_command(effective_argv))
-    args = parser.parse_args(effective_argv)
-    config_arg = getattr(args, "config", None)
-    if config_arg is not None and Path(config_arg).expanduser().is_file():
-        return _fail(args, "config", f"--config must be a directory: {config_arg}")
-    handler = getattr(args, "handler", None)
-    if handler is None:
-        parser.print_help()
-        return 0
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    handler = {
+        "dispatch": _cmd_dispatch,
+        "status": _cmd_status,
+        "history": _cmd_history,
+        "stop": _cmd_stop,
+        "help": _cmd_help,
+        "doctor": _cmd_doctor,
+        "initial-mode": _cmd_initial_mode,
+    }[args.command]
     try:
-        return int(handler(args))
-    except (AppError, ConfigError, StateError) as exc:
-        return _fail(args, _error_operation(args), str(exc))
-    except KeyError as exc:
-        detail = exc.args[0] if exc.args else str(exc)
-        return _fail(args, _error_operation(args), str(detail))
+        handler(args)
+    except Exception as exc:  # noqa: BLE001 - the CLI boundary reports loudly
+        print(f"orchestra error: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
-def _error_operation(args: argparse.Namespace) -> str:
-    command = getattr(args, "command", None)
-    if not command:
-        return "cli"
-    for dest in ("init_target", "session_mode_action"):
-        part = getattr(args, dest, None)
-        if part:
-            return f"{command} {part}"
-    return str(command)
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="orchestra", description="Orchestra 2 core operations")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    dispatch = subparsers.add_parser("dispatch", help="submit an assignment and run it to completion")
+    dispatch.add_argument("--session-id", required=True)
+    dispatch.add_argument("--goal", required=True)
+    dispatch.add_argument("--role")
+    status = subparsers.add_parser("status", help="query session and global job status")
+    status.add_argument("--session-id", required=True)
+    status.add_argument("--mode", default="on", choices=("on", "off"))
+    history = subparsers.add_parser("history", help="completed runs for a session")
+    history.add_argument("--session-id", required=True)
+    history.add_argument("--limit", type=int, default=10)
+    stop = subparsers.add_parser("stop", help="cancel an active run owned by the session")
+    stop.add_argument("--session-id", required=True)
+    stop.add_argument("--run-id", required=True)
+    subparsers.add_parser("help", help="show Orchestra help")
+    subparsers.add_parser("doctor", help="check Orchestra setup and report findings")
+    subparsers.add_parser("initial-mode", help="print the configured initial session mode")
+    return parser
 
 
-def _fail(args: argparse.Namespace, operation: str, message: str) -> int:
-    if getattr(args, "json", False):
-        print(
-            json.dumps(
-                error_envelope(
-                    message,
-                    operation,
-                    run_id=getattr(args, "run_id", None),
-                )
-            )
-        )
-    else:
-        print(f"error: {message}")
-    return 1
+def _load(args: argparse.Namespace) -> OrchestraConfig:
+    return load_orchestra_config()
 
 
-def _uses_internal_command(argv: Sequence[str]) -> bool:
-    return any(token in INTERNAL_COMMANDS for token in argv)
+def _queue(config: OrchestraConfig) -> JobQueue:
+    return JobQueue(Path(config.runtime.state_dir) / QUEUE_FILENAME)
 
 
-def _positive_int(raw: str) -> int:
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("must be a positive integer") from exc
-    if value < 1:
-        raise argparse.ArgumentTypeError("must be a positive integer")
-    return value
+# ---------------------------------------------------------------------------
+# dispatch
+# ---------------------------------------------------------------------------
 
 
-def _handle_do(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-
-    parent_context_content: str | None = None
-    parent_context_artifact = args.parent_context_artifact
-    if parent_context_artifact == "-":
-        parent_context_content = sys.stdin.read()
-        parent_context_artifact = None
-    elif parent_context_artifact is not None:
-        from pathlib import Path as _Path
-        artifact_path = _Path(parent_context_artifact)
-        if not artifact_path.is_file():
-            raise AppError(
-                f"parent context artifact file does not exist: {parent_context_artifact}"
-            )
-        parent_context_artifact = str(artifact_path.resolve())
-
-    started = start_run(
-        context,
-        session_id=args.session_id,
-        role_name=args.role,
+def _cmd_dispatch(args: argparse.Namespace) -> None:
+    config = _load(args)
+    parent_context = sys.stdin.read()
+    queue = _queue(config)
+    assignment = Assignment(
         goal=args.goal,
-        additional_context=args.additional_context,
-        boundaries=args.boundaries,
-        acceptance_target=args.acceptance_target,
-        return_format=args.return_format,
-        timeout_seconds=args.timeout,
-        task_label=args.task_label,
-        batch_id=args.batch_id,
-        parent_context_artifact=parent_context_artifact,
-        parent_context_content=parent_context_content,
-    )
-    if args.json:
-        print(
-            json.dumps(
-                started_run_payload(started, prompts=context.config.prompts)
-            )
-        )
-    else:
-        print(format_started_run(started, prompts=context.config.prompts))
-    return 0
-
-
-def _handle_status(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    if args.json:
-        print(json.dumps(status_payload(context, args.session_id)))
-    else:
-        print(format_status(context, args.session_id))
-    return 0
-
-
-def _handle_session_mode(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    if not args.session_id.strip():
-        raise AppError("session_id is required")
-    action = args.session_mode_action
-    if action == "set":
-        state = set_main_session_mode(context, args.session_id, args.mode)
-        if getattr(args, "json", False):
-            print(
-                json.dumps(
-                    session_mode_transition_payload(
-                        context,
-                        args.session_id,
-                        state.main_session_mode,
-                    ).to_payload()
-                )
-            )
-        else:
-            print(f"main_session_mode: {state.main_session_mode}")
-        return 0
-    payload = main_session_state_payload(context, args.session_id)
-    if getattr(args, "json", False):
-        print(json.dumps(payload))
-    else:
-        print(f"main_session_mode: {payload['main_session_mode']}")
-    return 0
-
-
-def _handle_stop(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    record = stop_run(context, args.session_id, args.run_id)
-    print(format_run_report(record, prompts=context.config.prompts))
-    return 0
-
-
-def _handle_doctor(args: argparse.Namespace) -> int:
-    checks = run_doctor(config_path=args.config, catalog_path=None)
-    print(format_doctor_checks(checks))
-    return 0 if doctor_checks_pass(checks) else 1
-
-
-def _handle_roles(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    role_update_args = (args.role, args.setting, args.value)
-    if any(value is not None for value in role_update_args):
-        if any(value is None for value in role_update_args):
-            raise AppError(f"missing value for role setting\n\n{ROLE_USAGE}")
-        print(set_role_setting(context, args.role, args.setting, args.value))
-        return 0
-    print(format_roles(context, include_disabled=args.all))
-    return 0
-
-
-def _handle_config(args: argparse.Namespace) -> int:
-    config_path = resolve_config_path(args.config)
-    prompts_path = resolve_prompts_path(args.config)
-    if args.key is None:
-        values = list_config_values(config_path, prompts_path=prompts_path)
-        for key, value in values.items():
-            print(f"{key}: {value}")
-        return 0
-    if args.value is None:
-        print(read_config_value(config_path, args.key, prompts_path=prompts_path))
-        return 0
-    print(update_config_value(config_path, args.key, args.value))
-    return 0
-
-
-def _handle_help_host(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    print(format_host_help(context))
-    return 0
-
-
-def _handle_history(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    if args.limit < 1:
-        raise AppError("limit must be a positive integer")
-    print(format_history(context, args.session_id, args.limit))
-    return 0
-
-
-def _handle_prune(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    retention_days = args.retention_days or context.config.retention_days
-    plan = context.store.plan_prune(
-        retention_days,
-        request_dir=context.config.state_dir / "requests",
-        log_dir=context.config.log_dir,
-    )
-    result = None
-    if args.delete:
-        result = context.store.delete_prune_candidates(
-            plan,
-            allowed_roots=(context.config.state_dir, context.config.log_dir),
-        )
-    payload = {
-        "kind": "prune",
-        "ok": result is None or not result.failed_paths,
-        "dry_run": not args.delete,
-        "retention_days": plan.retention_days,
-        "cutoff_at": plan.cutoff_at,
-        "candidate_count": len(plan.candidates),
-        "candidates": [
-            {
-                "run_id": candidate.run_id,
-                "session_id": candidate.orchestrator_session_id,
-                "role": candidate.role,
-                "status": candidate.status,
-                "created_at": candidate.created_at,
-                "owned_paths": [str(path) for path in candidate.owned_paths],
-            }
-            for candidate in plan.candidates
-        ],
-        "orphan_candidate_count": len(plan.orphan_candidates),
-        "orphan_candidates": [str(path) for path in plan.orphan_candidates],
-        "deleted_run_ids": list(result.deleted_run_ids) if result else [],
-        "deleted_session_ids": list(result.deleted_session_ids) if result else [],
-        "deleted_paths": [str(path) for path in result.deleted_paths] if result else [],
-        "skipped_paths": [str(path) for path in result.skipped_paths] if result else [],
-        "failed_paths": [str(path) for path in result.failed_paths] if result else [],
-    }
-    if args.json:
-        print(json.dumps(payload, indent=2, sort_keys=True))
-    else:
-        if args.delete:
-            print("prune: delete completed")
-        else:
-            print("prune: dry-run only; no deletion performed")
-        print(f"retention_days: {plan.retention_days}")
-        print(f"cutoff_at: {plan.cutoff_at}")
-        print(f"candidate_count: {len(plan.candidates)}")
-        for candidate in plan.candidates:
-            print(
-                f"- {candidate.run_id} {candidate.status} {candidate.role} "
-                f"session={candidate.orchestrator_session_id} created_at={candidate.created_at}"
-            )
-            for path in candidate.owned_paths:
-                print(f"  path: {path}")
-        if plan.orphan_candidates:
-            print("orphan_candidates:")
-            for path in plan.orphan_candidates:
-                print(f"- {path}")
-        if result:
-            print(f"deleted_runs: {len(result.deleted_run_ids)}")
-            print(f"deleted_sessions: {len(result.deleted_session_ids)}")
-            print(f"deleted_paths: {len(result.deleted_paths)}")
-            if result.skipped_paths:
-                print("skipped_paths:")
-                for path in result.skipped_paths:
-                    print(f"- {path}")
-            if result.failed_paths:
-                print("failed_paths:")
-                for path in result.failed_paths:
-                    print(f"- {path}")
-    return 1 if result and result.failed_paths else 0
-
-
-def _handle_debug(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    if args.run_id:
-        print(format_debug_run(context, args.run_id))
-    else:
-        if args.limit < 1:
-            raise AppError("limit must be a positive integer")
-        print(format_debug_session(context, args.session_id, limit=args.limit))
-    return 0
-
-
-def _handle_init_pi(args: argparse.Namespace) -> int:
-    result = init_pi(force=bool(args.force), copy=bool(args.copy))
-    _print_init_files(result.files)
-    print(f"verify: {result.verification_command}")
-    return 0
-
-
-def _handle_init_hermes(args: argparse.Namespace) -> int:
-    result = init_hermes(profile=args.profile, force=bool(args.force), copy=bool(args.copy))
-    _print_init_files(result.files)
-    print(f"installed: {' '.join(result.command)}")
-    if result.stdout:
-        print(result.stdout)
-    if result.stderr:
-        print(result.stderr)
-    print(f"verify: {result.verification_command}")
-    return 0
-
-
-def _handle_init_codex(args: argparse.Namespace) -> int:
-    result = init_codex(
-        force=bool(args.force),
-        copy=bool(args.copy),
-    )
-    _print_init_files(result.files)
-    _print_init_files([result.marketplace])
-    print(f"installed: {' '.join(result.command)}")
-    if result.stdout:
-        print(result.stdout)
-    if result.stderr:
-        print(result.stderr)
-    return 0
-
-
-def _handle_init_all(args: argparse.Namespace) -> int:
-    result = init_all(
-        force=bool(args.force),
-        copy=bool(args.copy),
-        catalog_path=None,
-    )
-    if result.pi is not None:
-        print("[pi]")
-        _print_init_files(result.pi.files)
-        print(f"verify: {result.pi.verification_command}")
-    for hermes_result in result.hermes:
-        print("[hermes]")
-        _print_init_files(hermes_result.files)
-        print(f"installed: {' '.join(hermes_result.command)}")
-        if hermes_result.stdout:
-            print(hermes_result.stdout)
-        if hermes_result.stderr:
-            print(hermes_result.stderr)
-        print(f"verify: {hermes_result.verification_command}")
-    return 0
-
-
-def _print_init_files(files: Sequence[InitFileResult]) -> None:
-    for file_result in files:
-        print(f"{file_result.action}:{file_result.mode}: {file_result.target}")
-
-
-def _handle_dispatch_command(args: argparse.Namespace) -> int:
-    payload = dispatch_command_payload(
-        args.session_id,
-        args.goal,
-        additional_context=args.additional_context,
         role=args.role,
-        timeout_seconds=args.timeout,
-        task_label=args.task_label,
     )
-    print(json.dumps(payload.to_payload()))
-    return 0
-
-
-def _handle_dispatch_ack(args: argparse.Namespace) -> int:
-    instruction = _load_dispatch_ack_instruction(args.config)
-    concurrency_slots_remaining: int | None = None
-    concurrency_limit: int | None = None
-    try:
-        context = load_context(config_path=args.config, catalog_path=None)
-        record = context.store.get_run(args.run_id)
-        active = context.store.count_active_runs(record.orchestrator_session_id)
-        limit = context.config.concurrency.per_session_limit
-        concurrency_limit = limit
-        concurrency_slots_remaining = max(0, limit - active)
-    except Exception:
-        concurrency_slots_remaining = None
-        concurrency_limit = None
-    if args.json:
-        print(
-            json.dumps(
-                dispatch_ack_payload(
-                    args.run_id,
-                    role=args.role,
-                    instruction=instruction,
-                    concurrency_slots_remaining=concurrency_slots_remaining,
-                    concurrency_limit=concurrency_limit,
-                )
-            )
-        )
-    else:
-        print(
-            format_dispatch_ack(
-                args.run_id,
-                role=args.role,
-                instruction=instruction,
-                concurrency_slots_remaining=concurrency_slots_remaining,
-                concurrency_limit=concurrency_limit,
-            )
-        )
-    return 0
-
-
-def _load_dispatch_ack_instruction(config_path: str | None) -> str:
-    try:
-        from orchestra.config import load_app_config, resolve_config_path, resolve_prompts_path
-
-        config_file = resolve_config_path(config_path)
-        prompts_file = resolve_prompts_path(config_path)
-        config = load_app_config(config_file, prompts_path=prompts_file)
-        return config.prompts.dispatch_ack_instruction
-    except Exception:
-        return "subagent will auto-return when finished. Do not poll, stop."
-
-
-def _handle_command_echo(args: argparse.Namespace) -> int:
-    print(format_command_echo(args.raw_command))
-    return 0
-
-
-def _handle_tool_info(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    session_id = args.session_id
-    info = tool_info_payload(context, session_id).to_payload()
+    submission = submit(
+        Path(config.runtime.state_dir),
+        queue,
+        config,
+        args.session_id,
+        [assignment],
+        context_provider=lambda: parent_context,
+    )
+    ack = config.prompts["dispatch_ack"]
     print(
         json.dumps(
             {
-                "description": info["description"],
-                "promptSnippet": info["prompt_snippet"],
-                "promptGuidelines": info["prompt_guidelines"],
-                "goalDescription": info["goal_description"],
-                "additionalContextDescription": info["additional_context_description"],
-                "roleDescription": info["role_description"],
-                "taskLabelDescription": info["task_label_description"],
-                "statusDescription": info["status_description"],
-                "statusActionDescription": info["status_action_description"],
-                "statusLimitDescription": info["status_limit_description"],
-                "statusRunIdDescription": info["status_run_id_description"],
-                "statusRoleDescription": info["status_role_description"],
-                "statusSettingDescription": info["status_setting_description"],
-                "statusValueDescription": info["status_value_description"],
-                "dispatchTimeoutError": info["dispatch_timeout_error"],
-                "budgetTriggerLabel": info["budget_trigger_label"],
-                "softTimeoutBlockReason": info["soft_timeout_block_reason"],
-                "mainSessionMode": info["main_session_mode"],
+                "type": "ack",
+                "run_id": submission.run_id,
+                "role": _role_of(submission),
+                "ack": ack,
+                "jobs": [
+                    {
+                        "job_id": job.job_id,
+                        "sequence": job.sequence,
+                        "role": job.role,
+                        "worker_session_id": f"orchestra-worker-{job.job_id.replace(':', '-')}",
+                    }
+                    for job in submission.jobs
+                ],
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+    harness = _harness_for(config, submission)
+    stop_event = _stop_event(config, submission.run_id)
+    runtime = config.runtime
+    run_dispatcher(
+        queue,
+        config.runtime.state_dir,
+        harness,
+        submission.run_id,
+        global_limit=runtime.concurrency.global_limit,
+        per_session_limit=runtime.concurrency.per_session_limit,
+        model_limits={
+            name: limit.concurrency for name, limit in config.catalog.model_limits.items()
+        },
+        payloads=dict(submission.payloads),
+        stop_event=stop_event,
+    )
+    _record_notes(config, submission, harness)
+    stopped = getattr(stop_event, "stop_requested", False)
+    if stopped:
+        print(json.dumps({"type": "return", "run_id": submission.run_id, "return": None, "stopped": True}), flush=True)
+        return
+    assembled = assemble(queue, config.runtime.state_dir, config.prompts, submission.run_id)
+    print(
+        json.dumps(
+            {
+                "type": "return",
+                "run_id": submission.run_id,
+                "stopped": False,
+                "return": {
+                    "run_id": assembled.run_id,
+                    "category": assembled.category,
+                    "hint": assembled.hint,
+                    "note": assembled.note,
+                    "jobs": [asdict(job) for job in assembled.jobs],
+                },
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+
+
+def _role_of(submission: Submission) -> str:
+    return submission.jobs[0].role if submission.jobs else "worker"
+
+
+class _StopEvent(threading.Event):
+    """Event plus a flag distinguishing a requested stop from process exit."""
+
+    stop_requested: bool = False
+
+
+def _stop_event(config: OrchestraConfig, run_id: str) -> _StopEvent:
+    stop_event = _StopEvent()
+    sentinel = Path(config.runtime.state_dir) / STOP_DIRNAME / run_id
+
+    def watch() -> None:
+        while not stop_event.is_set():
+            if sentinel.exists():
+                stop_event.stop_requested = True
+                stop_event.set()
+                return
+            time.sleep(STOP_POLL_INTERVAL)
+
+    thread = threading.Thread(target=watch, daemon=True)
+    thread.start()
+    return stop_event
+
+
+def _harness_for(config: OrchestraConfig, submission: Submission) -> PiHarness:
+    plans: dict[str, AgentPlan] = {}
+    skills_dir = Path(config.config_dir) / SKILLS_DIRNAME
+    for job in submission.jobs:
+        role = config.catalog.roles.get(job.role)
+        if role is None:
+            continue
+        harness_config = config.harnesses.get(role.harness_config)
+        if harness_config is None or harness_config.harness != "pi":
+            continue
+        resolved: list[str] = []
+        missing: list[str] = []
+        for skill in role.skills:
+            path = skills_dir / skill / "SKILL.md"
+            if path.is_file():
+                resolved.append(str(path))
+            else:
+                missing.append(skill)
+        plans[job.job_id] = AgentPlan(
+            command=harness_config.command,
+            model=job.model,
+            env=role.env,
+            skill_paths=tuple(resolved),
+            missing_skills=tuple(missing),
+        )
+    return PiHarness(plans, config.prompts["budget_intervention"])
+
+
+def _record_notes(
+    config: OrchestraConfig, submission: Submission, harness: PiHarness
+) -> None:
+    """Append final Response records carrying notes and native transcripts.
+
+    The dispatcher records a minimal reason per job. This pass replaces it
+    with the harness note (budget wrap-up mark, missing skills) when present
+    and links the subagent's native session transcript. Later records win,
+    so the appended record is the one Results assembles.
+    """
+    from orchestra.artifacts import Response, append, recall
+
+    state = Path(config.runtime.state_dir)
+    for job in submission.jobs:
+        note = harness.note_for(job.job_id)
+        records = [
+            record
+            for record in recall(state, submission.run_id)
+            if isinstance(record, Response) and record.job_id == job.job_id
+        ]
+        if not records:
+            continue
+        original = records[-1]
+        response_text = original.response
+        if note.reason is not None:
+            response_text = f"failed: {note.reason}"
+        transcript = note.transcript or original.transcript
+        if response_text == original.response and transcript == original.transcript:
+            continue
+        append(
+            state,
+            submission.run_id,
+            Response(
+                job_id=job.job_id,
+                timestamp=_now(),
+                response=response_text,
+                transcript=transcript,
+            ),
+        )
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# status / history / stop
+# ---------------------------------------------------------------------------
+
+
+def _cmd_status(args: argparse.Namespace) -> None:
+    config = _load(args)
+    data = status_query(_queue(config), args.session_id)
+    print(
+        json.dumps(
+            {
+                "rendered": render_status(data, args.mode),
+                "data": {
+                    "session_jobs": [asdict(entry) for entry in data.session_jobs],
+                    "global_running": data.global_running,
+                    "global_pending": data.global_pending,
+                    "last_completed": asdict(data.last_completed) if data.last_completed else None,
+                },
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+
+
+def _cmd_history(args: argparse.Namespace) -> None:
+    config = _load(args)
+    jobs = _queue(config).list_jobs()
+    runs: dict[str, list[Job]] = {}
+    for job in jobs:
+        if job.parent_session != args.session_id:
+            continue
+        if job.status not in ("succeeded", "failed", "skipped"):
+            continue
+        runs.setdefault(job.run_id, []).append(job)
+    entries = []
+    for run_id, run_jobs in runs.items():
+        finished = [job.finished_at for job in run_jobs if job.finished_at]
+        if not finished:
+            continue
+        entries.append(
+            {
+                "run_id": run_id,
+                "finished_at": max(finished),
+                "succeeded": sum(1 for job in run_jobs if job.status == "succeeded"),
+                "failed": sum(1 for job in run_jobs if job.status == "failed"),
+                "skipped": sum(1 for job in run_jobs if job.status == "skipped"),
             }
         )
+    entries.sort(key=lambda entry: str(entry["finished_at"]), reverse=True)
+    print(json.dumps({"runs": entries[: args.limit]}, separators=(",", ":")), flush=True)
+
+
+def _cmd_stop(args: argparse.Namespace) -> None:
+    config = _load(args)
+    queue = _queue(config)
+    jobs = queue.list_jobs(args.run_id)
+    if not jobs:
+        raise ValueError(f"unknown run {args.run_id!r}")
+    if any(job.parent_session != args.session_id for job in jobs):
+        raise ValueError("run is not owned by this session")
+    if all(job.status in ("succeeded", "failed", "skipped") for job in jobs):
+        print(json.dumps({"run_id": args.run_id, "stopped": True, "already_finished": True}), flush=True)
+        return
+    sentinel = Path(config.runtime.state_dir) / STOP_DIRNAME / args.run_id
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text("stop\n", encoding="utf-8")
+    deadline = time.monotonic() + STOP_POLL_SECONDS
+    while time.monotonic() < deadline:
+        jobs = queue.list_jobs(args.run_id)
+        if all(job.status in ("succeeded", "failed", "skipped") for job in jobs):
+            break
+        time.sleep(STOP_POLL_INTERVAL)
+    jobs = queue.list_jobs(args.run_id)
+    terminal = all(job.status in ("succeeded", "failed", "skipped") for job in jobs)
+    print(
+        json.dumps({"run_id": args.run_id, "stopped": terminal, "already_finished": False}),
+        flush=True,
     )
-    return 0
 
 
-def _handle_role_metadata(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    print(json.dumps(role_metadata(context)))
-    return 0
+# ---------------------------------------------------------------------------
+# help / doctor / initial-mode
+# ---------------------------------------------------------------------------
+
+HELP_TEXT = """Orchestra 2 — submit work, track it, get one return.
+
+Dispatch:
+  dispatch --session-id ID --goal TEXT [--role ROLE]
+    Submits the assignment through Submit, runs every queued job to a
+    terminal state, and prints one acknowledgement JSON line, then one
+    return JSON line with the assembled result for the session.
+    Parent context text arrives on stdin; it is captured only for roles
+    configured with parent context.
+
+Session operations:
+  status --session-id ID --mode MODE    Active jobs for the session, global counts, last completed run.
+  history --session-id ID [--limit N]   The last N completed runs for the session, newest first.
+  stop --session-id ID --run-id RUN     Cancel an active run owned by the session.
+
+Setup:
+  doctor                                Validate configuration, catalog, prompts, and harnesses.
+  initial-mode                          Print the configured initial session mode.
+
+Roles, models, harnesses, budgets, and skills come from configuration; see
+the project README for the YAML layout.
+"""
 
 
-def _handle_spsi_payload(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    print(json.dumps(spsi_payload(context, args.session_id).to_payload()))
-    return 0
+def _cmd_help(args: argparse.Namespace) -> None:
+    print(HELP_TEXT, end="")
 
 
-def _handle_progress_message(args: argparse.Namespace) -> int:
-    if args.json:
-        print(
-            json.dumps(
-                progress_notification_payload(
-                    completed_count=args.completed,
-                    total_count=args.total,
-                    run_id=args.run_id,
-                    status=args.status,
-                    role=args.role,
-                )
-            )
-        )
+def _cmd_initial_mode(args: argparse.Namespace) -> None:
+    config = _load(args)
+    print(config.runtime.default_mode)
+
+
+def _cmd_doctor(args: argparse.Namespace) -> None:
+    config = _load(args)
+    problems: list[str] = []
+    print("Orchestra doctor")
+    print(f"config: ok (loaded from {config.config_dir})")
+    catalog = config.catalog
+    print(
+        f"catalog: ok (default role {catalog.default_role}; "
+        f"roles: {', '.join(catalog.roles)})"
+    )
+    for name, role in catalog.roles.items():
+        if role.harness_config not in config.harnesses:
+            problems.append(f"role {name!r} references unknown harness config {role.harness_config!r}")
+    for name, harness in config.harnesses.items():
+        executable = harness.command[0]
+        found = shutil.which(executable) is not None or Path(executable).is_file()
+        detail = "ok" if found else "NOT FOUND on PATH"
+        print(f"harness {name}: {detail} ({' '.join(harness.command)})")
+        if not found:
+            problems.append(f"harness {name!r} executable {executable!r} not found")
+    print(f"prompts: ok ({len(config.prompts)} keys)")
+    state_dir = Path(config.runtime.state_dir)
+    log_dir = Path(config.runtime.log_dir)
+    for label, path in (("state dir", state_dir), ("log dir", log_dir)):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            print(f"{label}: ok ({path})")
+        except OSError as exc:
+            problems.append(f"{label} {path} unavailable: {exc}")
+    skills_dir = Path(config.config_dir) / SKILLS_DIRNAME
+    configured = {skill for role in catalog.roles.values() for skill in role.skills}
+    if not configured:
+        print("skills: no role skills configured")
     else:
-        print(
-            format_progress_notification(
-                completed_count=args.completed,
-                total_count=args.total,
-                run_id=args.run_id,
-                status=args.status,
-                role=args.role,
-            )
-        )
-    return 0
+        for skill in sorted(configured):
+            found = (skills_dir / skill / "SKILL.md").is_file()
+            print(f"skill {skill}: {'ok' if found else 'MISSING'}")
+            if not found:
+                problems.append(f"skill {skill!r} not found under {skills_dir}")
+    if problems:
+        for problem in problems:
+            print(f"problem: {problem}")
+        raise SystemExit(1)
+    print("doctor: all checks passed")
 
 
-def _handle_run_supervisor(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    run_supervisor_guarded(context, run_id=args.run_id, request_file=args.request_file)
-    return 0
-
-
-def _handle_pending_report(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    report = consume_pending_session_report(context, args.session_id)
-    if report:
-        print(report)
-    return 0
-
-
-def _handle_await_session_report(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    if args.json:
-        report = await_session_report_payload(
-            context,
-            args.session_id,
-            run_id=args.run_id,
-            timeout_seconds=args.timeout,
-        )
-        if report:
-            print(json.dumps(session_report_payload(report)))
-        return 0
-
-    report_text = await_session_report(
-        context,
-        args.session_id,
-        run_id=args.run_id,
-        timeout_seconds=args.timeout,
-    )
-    if report_text:
-        print(report_text)
-    return 0
-
-
-def _handle_mark_session_report_delivered(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    mark_session_report_delivered(context, args.session_id, list(args.run_id))
-    return 0
-
-
-def _handle_await_run(args: argparse.Namespace) -> int:
-    context = load_context(config_path=args.config, catalog_path=None)
-    record, active_remaining, details = await_run_terminal_status(
-        context,
-        args.session_id,
-        run_id=args.run_id,
-        timeout_seconds=args.timeout,
-    )
-    payload = await_run_payload(
-        record,
-        active_remaining=active_remaining,
-        details=details,
-        prompts=context.config.prompts,
-    )
-    if args.json:
-        print(json.dumps(payload))
-        return 0
-    print(f"run_id: {record.run_id}")
-    print(f"status: {record.status}")
-    print(f"role: {record.role}")
-    print(f"harness: {record.harness}")
-    if record.result_summary:
-        print(f"result: {record.result_summary}")
-    if record.error_text:
-        print(f"error: {record.error_text}")
-    if record.blocker_text:
-        print(f"blocker: {record.blocker_text}")
-    if payload["next"]:
-        print(f"next: {payload['next']}")
-    print(f"active_runs_remaining: {active_remaining}")
-    print(f"descendants_terminal: {'yes' if details.descendants_terminal else 'no'}")
-    print(f"session_report_available: {'yes' if details.session_report_available else 'no'}")
-    print(f"session_report_delivered: {'yes' if details.session_report_delivered else 'no'}")
-    return 0
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

@@ -1,0 +1,213 @@
+"""Tests for the Pi RPC harness plugin: real stub pi subprocess, no mocks.
+
+The stub script speaks the Pi RPC protocol over stdin/stdout: it answers
+``prompt`` events, emits assistant turns, honors a ``steer`` (wrap-up),
+answers ``get_last_assistant_text``, settles, and writes a native session
+transcript file so transcript lookup runs for real.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+
+from orchestra.harness import Budgets, CommandJob, HarnessError
+from orchestra.pi_harness import BUDGET_SOFT_REASON, BUDGET_TURN_REASON, AgentPlan, PiHarness
+
+STUB_PI = r"""
+import json, os, sys
+
+sid = sys.argv[sys.argv.index("--session-id") + 1]
+session_dir = os.environ.get("PI_CODING_AGENT_SESSION_DIR", "")
+if session_dir:
+    os.makedirs(session_dir, exist_ok=True)
+    with open(os.path.join(session_dir, "2025-01-01T00-00-00-000Z_" + sid + ".jsonl"), "w") as f:
+        f.write(json.dumps({"session_id": sid}) + "\n")
+text = os.environ.get("STUB_TEXT", "stub ok")
+wait_steer = os.environ.get("STUB_WAIT_STEER") == "1"
+turns = int(os.environ.get("STUB_TURNS", "1"))
+settled = False
+steered = False
+
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+for line in sys.stdin:
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        continue
+    kind = obj.get("type")
+    if kind == "prompt":
+        send({"id": obj.get("id"), "type": "response", "success": True})
+        for _ in range(turns):
+            send({"type": "message", "message": {"role": "assistant"}})
+        if not wait_steer:
+            send({"type": "agent_settled"})
+            settled = True
+    elif kind == "steer" and not settled:
+        steered = True
+        send({"type": "message", "message": {"role": "assistant"}})
+        send({"type": "agent_settled"})
+        settled = True
+    elif kind == "get_last_assistant_text":
+        reply = "wrapped up" if steered else text
+        send({"type": "response", "command": "get_last_assistant_text", "data": {"text": reply}})
+"""
+
+
+@pytest.fixture()
+def stub_script(tmp_path: Path) -> Path:
+    path = tmp_path / "stub_pi.py"
+    path.write_text(STUB_PI, encoding="utf-8")
+    return path
+
+
+@pytest.fixture()
+def sessions_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    directory = tmp_path / "sessions"
+    monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(directory))
+    yield directory
+
+
+def plan(stub_script: Path, **env: str) -> AgentPlan:
+    return AgentPlan(command=("python3", str(stub_script)), model="m1", env=env)
+
+
+def _wait_process(handle: object, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        process = getattr(handle, "process", None)
+        if process is not None and process.poll() is None:
+            time.sleep(0.1)  # let the stub reach its wait loop
+            return
+        time.sleep(0.01)
+    pytest.fail("pi process never started")
+
+
+def test_success_path_and_output(stub_script: Path, sessions_dir: Path) -> None:
+    harness = PiHarness({"j1": plan(stub_script, STUB_TEXT="did the work")}, "budget!")
+    outcome = harness.execute(CommandJob("j1", ("the assignment prompt",)), Budgets())
+    assert outcome.success
+    assert outcome.output == "did the work"
+    assert outcome.error == ""
+    assert not outcome.terminated
+    assert outcome.started_at <= outcome.finished_at
+
+
+def test_transcript_lookup_and_note(stub_script: Path, sessions_dir: Path) -> None:
+    harness = PiHarness({"j1": plan(stub_script)}, "budget!")
+    outcome = harness.execute(CommandJob("j1", ("prompt",)), Budgets())
+    assert outcome.success
+    assert outcome.transcript is not None
+    assert outcome.transcript.endswith("_orchestra-worker-j1.jsonl")
+    assert Path(str(outcome.transcript)).is_file()
+    note = harness.note_for("j1")
+    assert note.transcript == outcome.transcript
+    assert note.reason is None
+
+
+def test_turn_limit_sends_one_wrap_up_steer(stub_script: Path, sessions_dir: Path) -> None:
+    harness = PiHarness({"j1": plan(stub_script, STUB_WAIT_STEER="1", STUB_TURNS="2")}, "budget!")
+    outcome = harness.execute(CommandJob("j1", ("prompt",)), Budgets(turn_limit=2))
+    assert not outcome.success
+    assert outcome.output == "wrapped up"
+    assert harness.note_for("j1").reason == BUDGET_TURN_REASON
+
+
+def test_soft_timeout_sends_wrap_up_steer(stub_script: Path, sessions_dir: Path) -> None:
+    harness = PiHarness({"j1": plan(stub_script, STUB_WAIT_STEER="1")}, "budget!")
+    outcome = harness.execute(CommandJob("j1", ("prompt",)), Budgets(soft_timeout=1))
+    assert not outcome.success
+    assert outcome.output == "wrapped up"
+    assert harness.note_for("j1").reason == BUDGET_SOFT_REASON
+
+
+def test_missing_skills_fail_fast(stub_script: Path, sessions_dir: Path) -> None:
+    missing = AgentPlan(
+        command=("python3", str(stub_script)),
+        model="m1",
+        missing_skills=("orch-builder",),
+    )
+    harness = PiHarness({"j1": missing}, "budget!")
+    outcome = harness.execute(CommandJob("j1", ("prompt",)), Budgets())
+    assert not outcome.success
+    assert harness.note_for("j1").reason == "missing skills: orch-builder"
+
+
+def test_terminate_kills_process_group(stub_script: Path, sessions_dir: Path) -> None:
+    harness = PiHarness({"j1": plan(stub_script, STUB_WAIT_STEER="1")}, "budget!")
+    handle = harness.new_handle()
+    results: list[object] = []
+
+    def run() -> None:
+        results.append(harness.execute(CommandJob("j1", ("prompt",)), Budgets(), handle))
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    try:
+        _wait_process(handle)
+        harness.terminate(handle)
+        thread.join(timeout=10)
+    finally:
+        if thread.is_alive():
+            harness.terminate(handle)
+            thread.join(timeout=5)
+    assert not thread.is_alive()
+    outcome = results[0]
+    assert not outcome.success  # type: ignore[attr-defined]
+    assert outcome.terminated  # type: ignore[attr-defined]
+    process = getattr(handle, "process", None)
+    assert process is not None
+    deadline = time.monotonic() + 5
+    while process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert process.poll() is not None
+
+
+def test_execute_leaves_no_live_subprocess_or_reader_threads(
+    stub_script: Path, sessions_dir: Path
+) -> None:
+    """After execute() returns, the stub subprocess is dead and pump threads ended."""
+    for env, budgets in (({}, Budgets()), ({"STUB_WAIT_STEER": "1"}, Budgets(soft_timeout=1))):
+        harness = PiHarness({"j1": plan(stub_script, **env)}, "budget!")
+        handle = harness.new_handle()
+        before = set(threading.enumerate())
+        outcome = harness.execute(CommandJob("j1", ("prompt",)), budgets, handle)
+        assert outcome.success != bool(env)
+        process = getattr(handle, "process", None)
+        assert process is not None
+        deadline = time.monotonic() + 5
+        while process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert process.poll() is not None
+        readers = [
+            t
+            for t in set(threading.enumerate()) - before
+            if t is not threading.current_thread()
+        ]
+        for thread in readers:
+            thread.join(timeout=5)
+        assert not any(thread.is_alive() for thread in readers)
+
+
+def test_prompt_placeholder_template_is_rejected(stub_script: Path, sessions_dir: Path) -> None:
+    bad = AgentPlan(command=("pi", "--mode", "rpc", "-p", "{prompt}"), model="m1")
+    harness = PiHarness({"j1": bad}, "budget!")
+    with pytest.raises(HarnessError, match="prompt"):
+        harness.execute(CommandJob("j1", ("prompt",)), Budgets())
+
+
+def test_unknown_job_delegates_to_shell(tmp_path: Path, stub_script: Path, sessions_dir: Path) -> None:
+    harness = PiHarness({}, "budget!")
+    outcome = harness.execute(CommandJob("j2", ("/bin/echo", "hello")), Budgets())
+    assert outcome.success
+    assert outcome.output == "hello\n"
+    assert outcome.transcript is None
