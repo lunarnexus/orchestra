@@ -247,6 +247,27 @@ def test_uses_real_project_prompts(queue: JobQueue, config: OrchestraConfig, tmp
     assert result.hint.strip()
 
 
+def test_single_role_success_hint_is_role_neutral(
+    queue: JobQueue, config: OrchestraConfig, tmp_path: Path
+) -> None:
+    """A run with no verifier must not get a hint claiming one succeeded."""
+    real_prompts = load_prompts(resolve_config_dir() / PROMPTS_FILENAME)
+    state_dir = tmp_path / "state"
+    run_id = _submit_and_run(
+        queue,
+        config,
+        state_dir,
+        Assignment(goal="do the thing", role="plain", payload=("true",)),
+    )
+
+    result = assemble(queue, state_dir, real_prompts, run_id)
+
+    assert result.category == "all_succeeded"
+    assert result.hint == real_prompts["return_hint_all_succeeded"]
+    assert "verifier" not in result.hint.lower()
+    assert "builder" not in result.hint.lower()
+
+
 def test_deterministic(queue: JobQueue, config: OrchestraConfig, tmp_path: Path) -> None:
     state_dir = tmp_path / "state"
     run_id = _submit_and_run(

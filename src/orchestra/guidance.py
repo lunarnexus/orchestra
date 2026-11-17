@@ -20,14 +20,14 @@ Return categories and the documented, tie-free, deterministic precedence
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from orchestra.config import (
     ACK_PROMPT_KEY,
     RETURN_CATEGORIES,
     _return_hint_key,
 )
-from orchestra.queue import JobQueue
+from orchestra.queue import Job, JobQueue
 
 ALL_SUCCEEDED = "all_succeeded"
 VERIFICATION_DISAGREEMENT = "verification_disagreement"
@@ -63,6 +63,18 @@ def derive_return_category(
     jobs = queue.list_jobs(run_id)
     if not jobs:
         raise GuidanceError(f"run {run_id!r} has no jobs")
+    return categorize(jobs, reasons)
+
+
+def categorize(
+    jobs: Sequence[Job],
+    reasons: Mapping[str, str],
+) -> str:
+    """Categorize an explicit set of jobs (one run or several combined).
+
+    ``reasons`` maps job_id -> the dispatcher's recorded outcome reason and
+    is consulted only for failed jobs. Same documented precedence.
+    """
     failed = [job for job in jobs if job.status == "failed"]
     if failed:
         if any(BUDGET_REASON_MARK in str(reasons.get(job.job_id, "")) for job in failed):

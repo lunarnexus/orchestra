@@ -30,7 +30,7 @@ from orchestra.config import OrchestraConfig, load_orchestra_config
 from orchestra.dispatcher import run as run_dispatcher
 from orchestra.pi_harness import AgentPlan, PiHarness
 from orchestra.queue import Job, JobQueue
-from orchestra.results import assemble
+from orchestra.results import assemble, assemble_session
 from orchestra.status import render_status
 from orchestra.status import status as status_query
 from orchestra.submit import Assignment, Submission, submit
@@ -47,6 +47,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     handler = {
         "dispatch": _cmd_dispatch,
+        "session-return": _cmd_session_return,
         "status": _cmd_status,
         "history": _cmd_history,
         "stop": _cmd_stop,
@@ -78,6 +79,12 @@ def _build_parser() -> argparse.ArgumentParser:
     stop = subparsers.add_parser("stop", help="cancel an active run owned by the session")
     stop.add_argument("--session-id", required=True)
     stop.add_argument("--run-id", required=True)
+    session_return = subparsers.add_parser(
+        "session-return",
+        help="assemble one consolidated return across completed runs of a session",
+    )
+    session_return.add_argument("--session-id", required=True)
+    session_return.add_argument("--run-id", action="append", required=True)
     subparsers.add_parser("help", help="show Orchestra help")
     subparsers.add_parser("doctor", help="check Orchestra setup and report findings")
     subparsers.add_parser("initial-mode", help="print the configured initial session mode")
@@ -179,6 +186,43 @@ def _cmd_dispatch(args: argparse.Namespace) -> None:
 
 def _role_of(submission: Submission) -> str:
     return submission.jobs[0].role if submission.jobs else "worker"
+
+
+def _cmd_session_return(args: argparse.Namespace) -> None:
+    """Print one consolidated return JSON line for explicit completed runs.
+
+    Core blocks loudly when the session still has outstanding jobs; host
+    plugins call this after every dispatched run of the session has drained
+    and inject the single return instead of per-run returns.
+    """
+    config = _load(args)
+    assembled = assemble_session(
+        _queue(config),
+        config.runtime.state_dir,
+        config.prompts,
+        args.session_id,
+        args.run_id,
+    )
+    print(
+        json.dumps(
+            {
+                "type": "return",
+                "session_id": assembled.parent_session,
+                "run_ids": list(assembled.run_ids),
+                "stopped": False,
+                "return": {
+                    "parent_session": assembled.parent_session,
+                    "run_ids": list(assembled.run_ids),
+                    "category": assembled.category,
+                    "hint": assembled.hint,
+                    "note": assembled.note,
+                    "jobs": [asdict(job) for job in assembled.jobs],
+                },
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
 
 
 class _StopEvent(threading.Event):
@@ -380,6 +424,12 @@ Session operations:
   status --session-id ID --mode MODE    Active jobs for the session, global counts, last completed run.
   history --session-id ID [--limit N]   The last N completed runs for the session, newest first.
   stop --session-id ID --run-id RUN     Cancel an active run owned by the session.
+  session-return --session-id ID --run-id RUN [--run-id RUN ...]
+    Assembles one consolidated return across the explicitly listed completed
+    runs of the session. Assembly is blocked loudly while any job of the
+    session is still outstanding; jobs from unlisted runs are not included.
+    Host plugins call this after every dispatched run of the session has
+    drained and deliver the single consolidated return.
 
 Setup:
   doctor                                Validate configuration, catalog, prompts, and harnesses.

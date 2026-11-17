@@ -48,8 +48,8 @@ budget_intervention: |-
 # > hard_failure > all_succeeded.
 # ---------------------------------------------------------------------------
 return_hint_all_succeeded: |-
-  Builder and verifier succeeded. Trust the evidence, advance using the
-  result, and do not duplicate the work or retest unnecessarily.
+  All jobs succeeded. Trust the evidence, advance using the result, and
+  do not duplicate the work or retest unnecessarily.
 return_hint_verification_disagreement: |-
   The verifier does not confirm the builder. Review the verifier's findings
   first before deciding how to proceed.

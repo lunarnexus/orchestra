@@ -318,6 +318,19 @@ def test_parent_context_callback_failure_leaves_zero_jobs(
     assert not list((state_dir / "artifacts").glob("*.jsonl"))
 
 
+def test_empty_parent_context_capture_fails_clearly(
+    queue: JobQueue, config: OrchestraConfig
+) -> None:
+    """An opted-in role whose captured context is empty fails the submission.
+
+    No empty context artifact is written and no job is queued: capture
+    unavailability must be reported, never faked as a successful capture.
+    """
+    with pytest.raises(SubmitError, match="parent context"):
+        _submit(queue, config, Assignment(goal="opts in"), context_provider=lambda: "  \n")
+    assert not list((Path(config.runtime.state_dir) / "artifacts").glob("*/*.parent-context"))
+
+
 def test_empty_assignments_rejected(queue: JobQueue, config: OrchestraConfig) -> None:
     with pytest.raises(SubmitError, match="at least one assignment"):
         _submit(queue, config)

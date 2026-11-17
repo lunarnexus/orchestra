@@ -290,6 +290,11 @@ def _capture_parent_context(
     if not role.parent_context or context_provider is None:
         return None
     text = context_provider()
+    if not text.strip():
+        raise SubmitError(
+            f"parent context capture is empty for job {job_id}; "
+            "refusing to queue a fake successful capture"
+        )
     path = state_dir / "artifacts" / run_id / f"{job_id}{CONTEXT_SUFFIX}"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")

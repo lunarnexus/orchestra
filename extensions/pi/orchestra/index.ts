@@ -68,6 +68,9 @@ interface UiCtx {
     setWidget(key: string, content: string[] | undefined, options?: { placement?: string }): void;
     theme: Theme;
   };
+  /** Present on real Pi tool/command contexts; capture fails clearly when
+   * a caller supplies a context without it. */
+  sessionManager?: ParentContextSessionManager;
 }
 
 interface AckPayload {
@@ -104,6 +107,57 @@ interface DispatchParams {
   additionalContext?: string;
   role?: string;
   taskLabel?: string;
+}
+
+/** Minimal surface of the Pi session manager used for parent-context
+ * capture; mirrors the documented read-only session access. */
+interface ParentContextSessionManager {
+  buildContextEntries?: () => unknown[];
+  getBranch?: (fromId?: string) => unknown[];
+}
+
+function isSessionMessageEntry(value: unknown): value is { type: "message"; message: unknown } {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as { type?: unknown; message?: unknown };
+  return entry.type === "message" && typeof entry.message === "object" && entry.message !== null;
+}
+
+/** Native session history as JSONL message lines; the core run artifact is
+ * the only persisted copy. */
+function renderParentContextArtifact(entries: unknown[]): string {
+  const lines = entries.filter(isSessionMessageEntry).map((entry) => JSON.stringify(entry.message));
+  return lines.length > 0 ? `${lines.join("\n")}\n` : "";
+}
+
+function renderDispatchRequestFallback(params: DispatchParams): string {
+  const lines: string[] = [];
+  const goal = (params.goal ?? "").trim();
+  if (goal) lines.push(`goal: ${goal}`);
+  const role = (params.role ?? "").trim();
+  if (role) lines.push(`role: ${role}`);
+  const taskLabel = (params.taskLabel ?? "").trim();
+  if (taskLabel) lines.push(`task_label: ${taskLabel}`);
+  return lines.length > 0 ? `${lines.join("\n")}\n` : "";
+}
+
+/** Capture the native Pi session context for parent-context roles. Fresh
+ * sessions fall back to the dispatch request itself; an empty capture is a
+ * hard error so core never receives a fake successful capture. */
+function captureParentContextText(sessionManager: ParentContextSessionManager, params: DispatchParams): string {
+  if (typeof sessionManager.buildContextEntries !== "function") {
+    throw new Error("Pi session manager does not expose buildContextEntries()");
+  }
+  let text = renderParentContextArtifact(sessionManager.buildContextEntries());
+  if (!text && typeof sessionManager.getBranch === "function") {
+    // The current command may not be recorded in the compacted context yet.
+    text = renderParentContextArtifact(sessionManager.getBranch());
+  }
+  if (!text) {
+    // Fresh sessions have no recorded messages; capture the dispatch request itself.
+    text = renderDispatchRequestFallback(params);
+  }
+  if (!text) throw new Error("parent context capture produced no session content");
+  return text;
 }
 
 interface UsageSummary {
@@ -265,23 +319,16 @@ function renderRoleMeter(theme: Theme, roleCounts: Array<{ role: string; count: 
     .join(" ");
 }
 
-function formatReturnMessage(payload: ReturnPayload): string {
+/** One consolidated session return: minimal role/status per delivered job
+ * with its actual child response, one applicable hint, no per-run summary
+ * prose, no "Jobs:" heading, and no internal scope-limitation note. */
+function formatSessionReturn(payload: ReturnPayload): string {
   const lines: string[] = [];
-  const runId = payload.run_id ?? "(unknown run)";
-  if (payload.stopped) {
-    lines.push(`Orchestra run ${runId} was stopped before completion.`);
-  } else {
-    lines.push(`Orchestra run ${runId} finished (${payload.category ?? "unknown"}).`);
+  lines.push(`Orchestra return (${payload.category ?? "unknown"}):`);
+  for (const job of payload.jobs ?? []) {
+    lines.push(`- ${job.role ?? "worker"} [${job.status ?? "?"}]: ${(job.summary ?? "").trim()}`);
   }
   if (payload.hint?.trim()) lines.push("", payload.hint.trim());
-  const jobs = payload.jobs ?? [];
-  if (jobs.length > 0) {
-    lines.push("", "Jobs:");
-    for (const job of jobs) {
-      lines.push(`- ${job.role ?? "worker"} [${job.status ?? "?"}]: ${(job.summary ?? "").trim()}`);
-    }
-  }
-  if (payload.note?.trim()) lines.push("", payload.note.trim());
   return lines.join("\n");
 }
 
@@ -292,6 +339,13 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   const workerSessionIds = new Set<string>();
   const pendingReturns = new Map<string, string[]>();
   const compacting = new Set<string>();
+  // Session-wide return consolidation: run ids acked and awaiting their
+  // return, run ids returned and awaiting the one consolidated delivery, and
+  // live dispatch subprocesses whose acknowledgement has not arrived yet.
+  const pendingRuns = new Map<string, Set<string>>();
+  const completedRuns = new Map<string, string[]>();
+  const liveSpawns = new Map<string, number>();
+  const deliveryChains = new Map<string, Promise<void>>();
 
   function emitOutput(ctx: UiCtx, text: string, level: "info" | "warning" | "error" = "info"): void {
     if (ctx.hasUI) {
@@ -343,6 +397,42 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     pi.sendUserMessage(message, { deliverAs: "steer" });
   }
 
+  /** Deliver one consolidated session return once every outstanding job of
+   * the originating session is terminal: no dispatch subprocess is still
+   * spawning/unacked, and no acked run is still executing (follow-ups stay
+   * inside their run, so a run's return line implies they finished). Calls
+   * are serialized per session; the gate is live process/run state, never a
+   * timeout. Core blocks loudly on any outstanding session job and its
+   * error text is surfaced unchanged. */
+  function deliverWhenReady(sessionId: string, ctx: UiCtx): void {
+    const previous = deliveryChains.get(sessionId) ?? Promise.resolve();
+    const next = previous.then(() => deliverIfReady(sessionId, ctx));
+    deliveryChains.set(sessionId, next.catch(() => {}));
+  }
+
+  async function deliverIfReady(sessionId: string, ctx: UiCtx): Promise<void> {
+    for (;;) {
+      if ((liveSpawns.get(sessionId) ?? 0) > 0) return;
+      if ((pendingRuns.get(sessionId)?.size ?? 0) > 0) return;
+      const runIds = completedRuns.get(sessionId) ?? [];
+      if (runIds.length === 0) return;
+      const args = ["session-return", "--session-id", sessionId];
+      for (const runId of runIds) args.push("--run-id", runId);
+      const result = await runOrchestra(args);
+      if (result.code !== 0) {
+        emitOutput(ctx, result.stderr || result.stdout || "orchestra session return failed.", "error");
+        return;
+      }
+      const payload = parseJsonLine<ReturnPayload>(result.stdout);
+      if (!payload?.return) {
+        emitOutput(ctx, "orchestra session return produced no assembled return.", "error");
+        return;
+      }
+      completedRuns.delete(sessionId);
+      deliverReturn(sessionId, formatSessionReturn(payload.return));
+    }
+  }
+
   pi.on("session_before_compact", async () => {
     if (currentSessionId) compacting.add(currentSessionId);
   });
@@ -365,19 +455,46 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   /** Spawn the core dispatch; the first stdout JSONL line (the ack) resolves
    * `onAck`; the second (the return) is delivered to the session as a steer. */
   function dispatchWorker(sessionId: string, params: DispatchParams, ctx: UiCtx, onAck: (ack: AckPayload | null) => void): void {
-    const goal = (params.taskLabel?.trim() ? `[${params.taskLabel.trim()}] ` : "") + (params.goal?.trim() ?? "");
+    let goal = (params.taskLabel?.trim() ? `[${params.taskLabel.trim()}] ` : "") + (params.goal?.trim() ?? "");
+    // Additional context is assignment data carried in the goal text; it is
+    // never a substitute for the native session history piped on stdin.
+    const additionalContext = params.additionalContext?.trim();
+    if (additionalContext) {
+      goal = `${goal}\n\nAdditional context:\n${additionalContext}`;
+    }
+    // Native Pi session context: core persists it only for roles that opt
+    // in via their catalog parent_context setting; other roles ignore it.
+    let parentContextInput: string;
+    try {
+      parentContextInput = captureParentContextText(ctx.sessionManager ?? {}, params);
+    } catch (error) {
+      const message = (error as { message?: string }).message ?? String(error);
+      onAck(null);
+      emitOutput(ctx, `orchestra: parent context capture failed: ${message}`, "error");
+      return;
+    }
     const args = ["dispatch", "--session-id", sessionId, "--goal", goal];
     const role = params.role?.trim();
     if (role) args.push("--role", role);
+    liveSpawns.set(sessionId, (liveSpawns.get(sessionId) ?? 0) + 1);
     let sawAck = false;
+    let sawReturn = false;
+    let ackedRunId = "";
     spawnDispatch(
       args,
-      params.additionalContext?.trim() ?? "",
+      parentContextInput,
       (line) => {
         const payload = parseJsonLine<ReturnPayload & AckPayload>(line);
         if (!payload) return;
         if (!sawAck) {
           sawAck = true;
+          ackedRunId = payload.run_id ?? "";
+          liveSpawns.set(sessionId, (liveSpawns.get(sessionId) ?? 1) - 1);
+          if (ackedRunId) {
+            const pending = pendingRuns.get(sessionId) ?? new Set<string>();
+            pending.add(ackedRunId);
+            pendingRuns.set(sessionId, pending);
+          }
           for (const job of payload.jobs ?? []) {
             if (job.worker_session_id) workerSessionIds.add(job.worker_session_id);
           }
@@ -386,12 +503,31 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           void refreshFooter(ctx);
           return;
         }
-        emitOutput(ctx, `orchestra: run ${payload.run_id ?? ""} returned.`, "info");
-        deliverReturn(sessionId, formatReturnMessage(payload.return ?? payload));
+        sawReturn = true;
+        const runId = payload.run_id ?? ackedRunId;
+        pendingRuns.get(sessionId)?.delete(runId);
+        emitOutput(ctx, `orchestra: run ${runId} returned.`, "info");
+        if (payload.stopped) {
+          // Cancellation is reported immediately; a stopped run may leave
+          // pending jobs, so it is excluded from the consolidated return.
+          deliverReturn(sessionId, `Orchestra run ${runId} was stopped before completion.`);
+        } else {
+          completedRuns.set(sessionId, [...(completedRuns.get(sessionId) ?? []), runId]);
+        }
         void refreshFooter(ctx);
+        deliverWhenReady(sessionId, ctx);
       },
       (code) => {
-        if (!sawAck) onAck(null);
+        if (!sawAck) {
+          liveSpawns.set(sessionId, Math.max((liveSpawns.get(sessionId) ?? 1) - 1, 0));
+          onAck(null);
+        } else if (!sawReturn) {
+          // The dispatch CLI died after acknowledging: report the run as
+          // drained; core blocks loudly if any of its jobs is still
+          // outstanding, and that error is surfaced unchanged.
+          pendingRuns.get(sessionId)?.delete(ackedRunId);
+          deliverWhenReady(sessionId, ctx);
+        }
         if (code !== 0) process.stderr.write(`orchestra dispatch exited with code ${code}\n`);
       },
     );
@@ -428,7 +564,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       if (ack === null) {
         return { content: [{ type: "text", text: "orchestra dispatch failed (see stderr)." }], isError: true, details: undefined };
       }
-      return { content: [{ type: "text", text: ack.ack ?? "Assignment accepted." }], isError: false, details: undefined };
+      const ackRole = ack.role ?? "default role";
+      return { content: [{ type: "text", text: `${(ack.ack ?? "Assignment accepted.").trim()} Role: ${ackRole}.` }], isError: false, details: undefined };
     },
   });
 
@@ -530,6 +667,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     }
     compacting.delete(currentSessionId);
     pendingReturns.delete(currentSessionId);
+    pendingRuns.delete(currentSessionId);
+    completedRuns.delete(currentSessionId);
+    liveSpawns.delete(currentSessionId);
+    deliveryChains.delete(currentSessionId);
     workerSessionIds.clear();
     model = ctx.model;
     mode = null;
@@ -548,6 +689,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     if (currentSessionId) {
       compacting.delete(currentSessionId);
       pendingReturns.delete(currentSessionId);
+      pendingRuns.delete(currentSessionId);
+      completedRuns.delete(currentSessionId);
+      liveSpawns.delete(currentSessionId);
+      deliveryChains.delete(currentSessionId);
     }
     currentSessionId = null;
     mode = null;
