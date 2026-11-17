@@ -11,6 +11,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -90,6 +91,50 @@ def _wait_process(handle: object, timeout: float = 5.0) -> None:
             return
         time.sleep(0.01)
     pytest.fail("pi process never started")
+
+
+@pytest.mark.parametrize("wrap_up", [False, True])
+def test_agent_response_reaches_assembled_return(
+    tmp_path: Path, stub_script: Path, sessions_dir: Path, wrap_up: bool
+) -> None:
+    from orchestra.cli import _record_notes
+    from orchestra.config import load_orchestra_config
+    from orchestra.dispatcher import run
+    from orchestra.queue import JobQueue
+    from orchestra.results import assemble
+    from orchestra.submit import Assignment, submit
+
+    config = load_orchestra_config(Path(__file__).resolve().parents[1])
+    config = replace(
+        config,
+        runtime=replace(config.runtime, state_dir=tmp_path, turn_limit=2),
+    )
+    answer = "Quiet branches sway\nMorning settles on the pond\nLight rests on the leaves"
+    with JobQueue(tmp_path / "queue.db") as queue:
+        submission = submit(
+            tmp_path, queue, config, "test:haiku",
+            [Assignment(goal="Write a haiku", role="researcher")],
+        )
+        job_id = submission.jobs[0].job_id
+        env = {"STUB_TEXT": answer}
+        if wrap_up:
+            env.update(STUB_WAIT_STEER="1", STUB_TURNS="2")
+        harness = PiHarness({job_id: plan(stub_script, **env)}, "budget!")
+        run(
+            queue, tmp_path, harness, submission.run_id,
+            global_limit=1, per_session_limit=1, payloads=submission.payloads,
+        )
+        _record_notes(config, submission, harness)
+        result = assemble(queue, tmp_path, config.prompts, submission.run_id)
+        if wrap_up:
+            assert result.jobs[0].status == "failed"
+            assert result.category == "budget_exhausted"
+            assert "wrapped up" in result.jobs[0].summary
+            assert BUDGET_TURN_REASON in result.jobs[0].summary
+        else:
+            assert result.jobs[0].status == "succeeded"
+            assert result.jobs[0].summary == answer
+        assert Path(result.jobs[0].artifact_paths[0]).is_file()
 
 
 def test_success_path_and_output(stub_script: Path, sessions_dir: Path) -> None:

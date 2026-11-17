@@ -95,7 +95,7 @@ interface ReturnPayload {
 
 interface StatusPayload {
   data?: {
-    session_jobs?: Array<{ role?: string }>;
+    session_jobs?: Array<{ role?: string; status?: string }>;
   };
 }
 
@@ -323,7 +323,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     if (!payload?.data) return;
     const roleCounts = Object.entries(
       (payload.data.session_jobs ?? []).reduce<Record<string, number>>((counts, job) => {
-        if (job.role) counts[job.role] = (counts[job.role] ?? 0) + 1;
+        if (job.status === "running" && job.role) counts[job.role] = (counts[job.role] ?? 0) + 1;
         return counts;
       }, {}),
     ).map(([role, count]) => ({ role, count }));

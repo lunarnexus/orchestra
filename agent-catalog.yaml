@@ -1,40 +1,79 @@
-default_role: builder
+default_role: intern
 model_limits:
+  "lmstudio/llmfan46/qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved":
+    concurrency: 2
+  "lmstudio/llmfan46/qwen3.6-27b-uncensored-heretic-v2-native-mtp-preserved":
+    concurrency: 2
+  "lmstudio/qwen/qwen3.8-27b":
+    concurrency: 1
   "vllm/LOADED":
     concurrency: 3
 roles:
+  intern:
+    enabled: manual
+    harness_config: pi
+    model: "vllm/LOADED"
+    env:
+      HINDSIGHT4PI_AUTO_RETAIN: '0'
+      HINDSIGHT4PI_AUTO_RECALL: '0'
+    skills: []
+    parent_context: true
+    auto_verify: false
+  appsec:
+    enabled: manual
+    harness_config: pi
+    model: "vllm/LOADED"
+    env:
+      HINDSIGHT4PI_AUTO_RETAIN: '0'
+      HINDSIGHT4PI_AUTO_RECALL: '0'
+    skills: []
+    parent_context: true
+    auto_verify: false
   builder:
     enabled: manual
     harness_config: pi
     model: "vllm/LOADED"
-    env: {}
+    env:
+      HINDSIGHT4PI_AUTO_RETAIN: '0'
+      HINDSIGHT4PI_AUTO_RECALL: '0'
     skills: []
+    parent_context: true
     auto_verify: true
   verifier:
     enabled: auto
     harness_config: pi
     model: "vllm/LOADED"
-    env: {}
+    env:
+      HINDSIGHT4PI_AUTO_RETAIN: '0'
+      HINDSIGHT4PI_AUTO_RECALL: '0'
     skills: []
     auto_verify: false
   reviewer:
     enabled: manual
     harness_config: pi
     model: "vllm/LOADED"
-    env: {}
+    env:
+      HINDSIGHT4PI_AUTO_RETAIN: '0'
+      HINDSIGHT4PI_AUTO_RECALL: '0'
+    parent_context: true
     skills: []
     auto_verify: false
   planner:
-    enabled: manual
+    enabled: disabled
     harness_config: pi
-    model: "vllm/LOADED"
-    env: {}
+    model: "openai-codex/gpt-5.5"
+    env:
+      HINDSIGHT4PI_AUTO_RETAIN: '0'
+      HINDSIGHT4PI_AUTO_RECALL: '0'
     skills: []
     auto_verify: false
   researcher:
     enabled: manual
     harness_config: pi
     model: "vllm/LOADED"
-    env: {}
+    env:
+      HINDSIGHT4PI_AUTO_RETAIN: '0'
+      HINDSIGHT4PI_AUTO_RECALL: '0'
+    parent_context: true
     skills: []
     auto_verify: false

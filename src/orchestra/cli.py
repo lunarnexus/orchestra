@@ -256,8 +256,12 @@ def _record_notes(
             continue
         original = records[-1]
         response_text = original.response
+        if original.transcript is not None:
+            # The dispatcher stored the agent's returned text as output detail.
+            # Deliver that response, rather than only its mechanical status.
+            response_text = Path(original.transcript).read_text(encoding="utf-8")
         if note.reason is not None:
-            response_text = f"failed: {note.reason}"
+            response_text = f"failed: {note.reason}\n{response_text}"
         transcript = note.transcript or original.transcript
         if response_text == original.response and transcript == original.transcript:
             continue
