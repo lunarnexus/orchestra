@@ -163,8 +163,8 @@ def load_runtime_config(path: str | Path) -> RuntimeConfig:
     if not isinstance(default_mode, str) or default_mode not in MODES:
         raise ConfigError(f"'default_mode' must be one of: {', '.join(MODES)}")
     return RuntimeConfig(
-        state_dir=_path_value(_require(raw, "state_dir", str(path)), "state_dir"),
-        log_dir=_path_value(_require(raw, "log_dir", str(path)), "log_dir"),
+        state_dir=_path_value(_require(raw, "state_dir", str(path)), "state_dir", Path(path).parent),
+        log_dir=_path_value(_require(raw, "log_dir", str(path)), "log_dir", Path(path).parent),
         default_timeout=default_timeout,
         soft_timeout=soft_timeout,
         turn_limit=_positive_int(_require(raw, "turn_limit", str(path)), "'turn_limit'"),
@@ -410,10 +410,11 @@ def _load_skills(raw: Any, context: str) -> tuple[str, ...]:
     return tuple(raw)
 
 
-def _path_value(value: Any, key: str) -> Path:
+def _path_value(value: Any, key: str, config_dir: Path) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise ConfigError(f"'{key}' must be a non-empty string")
-    return Path(value).expanduser()
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else (config_dir / path).resolve()
 
 
 def _positive_int(value: Any, key: str) -> int:

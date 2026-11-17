@@ -16,13 +16,48 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const PI_MODULE_ARGV = ["-m", "orchestra"];
+
+/** Install record written beside the extension by `./orchestra init pi`:
+ * this checkout's root and dedicated interpreter, so core invocations always
+ * use this checkout's project-local environment instead of an arbitrary
+ * system Python. */
+interface InstallRecord {
+  root?: string;
+  python?: string;
+}
+
+function moduleDir(): string {
+  try {
+    return dirname(fileURLToPath(import.meta.url));
+  } catch {
+    // Some loaders do not expose import.meta; jiti provides __dirname.
+  }
+  return typeof __dirname !== "undefined" ? __dirname : process.cwd();
+}
+
+function loadInstallRecord(): InstallRecord | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(moduleDir(), "install.json"), "utf8"));
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as InstallRecord;
+      if (typeof record.root === "string" && typeof record.python === "string") return record;
+    }
+  } catch {
+    // No install record; fall back to the environment below.
+  }
+  return null;
+}
+
+const install: InstallRecord | null = loadInstallRecord();
+const orchestraPython: string = install?.python ?? "python3";
 
 type Theme = { fg(color: string, text: string): string; bold(text: string): string };
 
@@ -87,7 +122,7 @@ function normalizePiSessionId(raw: string): string {
 /** Environment for core CLI calls: Orchestra 2 config dir, and its src/ on
  * PYTHONPATH so `python3 -m orchestra` resolves the Orchestra 2 package. */
 function orchestraEnv(): NodeJS.ProcessEnv {
-  const configDir = process.env.ORCHESTRA_CONFIG ?? "";
+  const configDir = process.env.ORCHESTRA_CONFIG ?? install?.root ?? "";
   const pythonPath = [configDir ? join(configDir, "src") : "", process.env.PYTHONPATH ?? ""]
     .filter((part) => part.length > 0)
     .join(":");
@@ -100,7 +135,7 @@ function orchestraEnv(): NodeJS.ProcessEnv {
 
 function runOrchestra(args: string[], input?: string): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn("python3", [...PI_MODULE_ARGV, ...args], {
+    const child = spawn(orchestraPython, [...PI_MODULE_ARGV, ...args], {
       env: orchestraEnv(),
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -134,7 +169,7 @@ function spawnDispatch(
   onLine: (line: string) => void,
   onClose: (code: number | null) => void,
 ): void {
-  const child = spawn("python3", [...PI_MODULE_ARGV, ...args], {
+  const child = spawn(orchestraPython, [...PI_MODULE_ARGV, ...args], {
     env: orchestraEnv(),
     stdio: ["pipe", "pipe", "pipe"],
   });

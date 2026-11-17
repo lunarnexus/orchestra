@@ -1,5 +1,6 @@
-state_dir: ~/workspace/orchestra2/state
-log_dir: ~/workspace/orchestra2/logs
+# Relative paths resolve against this file's directory, not Pi's working directory.
+state_dir: state
+log_dir: logs
 default_timeout: 1500
 soft_timeout: 1200
 turn_limit: 60

@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Local launcher and installer for Orchestra 2.
+
+Usage:
+  ./orchestra [CORE ARGS...]      run the Orchestra core CLI from this checkout
+  ./orchestra init pi [--force]   install the Pi host extension into the Pi
+                                  agent directory (PI_CODING_AGENT_DIR)
+
+The launcher prepares a project-local virtual environment (.venv) with this
+project's package and dependencies, then runs the core CLI with that
+interpreter. Repeat invocations skip the install until the declared
+dependencies change or the installed package is missing.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tomllib
+import venv
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+VENV_DIR = ROOT / ".venv"
+PYPROJECT = ROOT / "pyproject.toml"
+MARKER_NAME = "orchestra-launcher.json"
+CONFIG_DIR_ENV = "ORCHESTRA_CONFIG"
+
+
+def venv_python() -> Path:
+    return VENV_DIR / "bin" / "python"
+
+
+def dependencies_signature() -> str:
+    """Signature of the declared runtime dependencies driving reinstalls."""
+    data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    project = data.get("project", {})
+    payload = json.dumps(
+        {
+            "requires-python": project.get("requires-python"),
+            "dependencies": project.get("dependencies", []),
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def package_importable(python: Path) -> bool:
+    result = subprocess.run(
+        [str(python), "-c", "import orchestra"], capture_output=True, check=False
+    )
+    return result.returncode == 0
+
+
+def environment_is_ready(python: Path) -> bool:
+    marker = VENV_DIR / MARKER_NAME
+    if not marker.is_file() or not python.is_file():
+        return False
+    try:
+        record = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if record.get("deps") != dependencies_signature():
+        return False
+    return package_importable(python)
+
+
+def ensure_environment() -> Path:
+    """Create .venv and install this project's package/dependencies if needed."""
+    python = venv_python()
+    if environment_is_ready(python):
+        return python
+    if not python.is_file():
+        venv.create(VENV_DIR, with_pip=True)
+    print(
+        f"orchestra launcher: installing this project into {VENV_DIR} ...",
+        file=sys.stderr,
+        flush=True,
+    )
+    subprocess.run(
+        [
+            str(python),
+            "-m",
+            "pip",
+            "install",
+            "--quiet",
+            "--disable-pip-version-check",
+            "--no-input",
+            "-e",
+            str(ROOT),
+        ],
+        check=True,
+    )
+    marker = VENV_DIR / MARKER_NAME
+    marker.write_text(
+        json.dumps({"deps": dependencies_signature()}) + "\n", encoding="utf-8"
+    )
+    return python
+
+
+def main(argv: list[str]) -> int:
+    if not PYPROJECT.is_file():
+        print(f"orchestra launcher: {PYPROJECT} not found", file=sys.stderr)
+        return 1
+    try:
+        python = ensure_environment()
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print(f"orchestra launcher: environment setup failed: {exc}", file=sys.stderr)
+        return 1
+    args = argv[1:] or ["help"]
+    if args[0] == "init":
+        entry = "orchestra.install"
+        args = args[1:]
+    else:
+        entry = "orchestra"
+    env = dict(os.environ)
+    env.setdefault(CONFIG_DIR_ENV, str(ROOT))
+    os.execve(str(python), [str(python), "-m", entry, *args], env)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

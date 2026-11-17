@@ -115,6 +115,28 @@ def write_fixture(
     return tmp_path
 
 
+def test_storage_paths_are_independent_of_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    directory = write_fixture(
+        tmp_path / "configuration",
+        config_yaml=CONFIG_YAML.format(state_dir="data/jobs", mode="off"),
+    )
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    runtime = load_orchestra_config(directory).runtime
+    assert runtime.state_dir == directory / "data/jobs"
+    assert runtime.log_dir == directory / "logs"
+
+
+def test_home_storage_path_expands(tmp_path: Path) -> None:
+    directory = write_fixture(
+        tmp_path, config_yaml=CONFIG_YAML.format(state_dir="~/custom-orchestra", mode="off")
+    )
+    assert load_orchestra_config(directory).runtime.state_dir == Path.home() / "custom-orchestra"
+
+
 def test_valid_fixture_resolves_typed_values(tmp_path: Path) -> None:
     directory = write_fixture(tmp_path)
     loaded = load_orchestra_config(directory)
@@ -122,7 +144,7 @@ def test_valid_fixture_resolves_typed_values(tmp_path: Path) -> None:
     runtime = loaded.runtime
     assert isinstance(runtime, RuntimeConfig)
     assert runtime.state_dir == tmp_path / "state"
-    assert runtime.log_dir == Path("logs")
+    assert runtime.log_dir == tmp_path / "logs"
     assert runtime.default_timeout == 1500
     assert runtime.soft_timeout == 1200
     assert runtime.turn_limit == 60
