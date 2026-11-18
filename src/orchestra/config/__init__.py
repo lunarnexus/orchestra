@@ -27,9 +27,10 @@ RoleMode = Literal["manual", "disabled", "auto"]
 MODES: tuple[str, ...] = ("on", "off")
 
 # Required prompt keys, mirroring the commented sections of prompts.yaml:
-# formats (default_return_format), tool_response (dispatch_ack), budget
-# intervention (sent to a subagent at its turn/time budget), and return_hints
-# (one flat key per guidance return category).
+# tool_response (dispatch_ack), budget intervention (sent to a subagent at its
+# turn/time budget), and return_hints (one flat key per guidance return
+# category). Each role's return expectations live in its own catalog
+# ``dispatch_hint``, not in a shared prompt key.
 RETURN_CATEGORIES: tuple[str, ...] = (
     "all_succeeded",
     "verification_disagreement",
@@ -37,7 +38,6 @@ RETURN_CATEGORIES: tuple[str, ...] = (
     "hard_failure",
 )
 ACK_PROMPT_KEY = "dispatch_ack"
-FORMAT_PROMPT_KEY = "default_return_format"
 BUDGET_INTERVENTION_KEY = "budget_intervention"
 
 
@@ -47,7 +47,6 @@ def _return_hint_key(category: str) -> str:
 
 REQUIRED_PROMPT_KEYS: tuple[str, ...] = (
     ACK_PROMPT_KEY,
-    FORMAT_PROMPT_KEY,
     BUDGET_INTERVENTION_KEY,
     *(_return_hint_key(category) for category in RETURN_CATEGORIES),
 )
@@ -89,6 +88,7 @@ class RoleConfig:
     auto_verify: bool
     env: dict[str, str]
     skills: tuple[str, ...]
+    dispatch_hint: str
     parent_context: bool = False
 
 
@@ -231,6 +231,7 @@ def load_agent_catalog(
             "env",
             "skills",
             "parent_context",
+            "dispatch_hint",
         }
         _reject_unknown_keys(role_raw, allowed, f"role '{role_name}'")
         harness_config = _require(role_raw, "harness_config", f"role '{role_name}'")
@@ -244,6 +245,9 @@ def load_agent_catalog(
         model = _require(role_raw, "model", f"role '{role_name}'")
         if not isinstance(model, str) or not model.strip():
             raise ConfigError(f"role '{role_name}' requires a non-empty 'model'")
+        dispatch_hint = _require(role_raw, "dispatch_hint", f"role '{role_name}'")
+        if not isinstance(dispatch_hint, str) or not dispatch_hint.strip():
+            raise ConfigError(f"role '{role_name}' requires a non-empty 'dispatch_hint'")
         enabled = _require(role_raw, "enabled", f"role '{role_name}'")
         if enabled not in ("manual", "disabled", "auto"):
             raise ConfigError(
@@ -264,6 +268,7 @@ def load_agent_catalog(
             auto_verify=auto_verify,
             env=env,
             skills=skills,
+            dispatch_hint=dispatch_hint,
             parent_context=parent_context_raw,
         )
 

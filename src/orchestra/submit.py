@@ -30,7 +30,6 @@ from orchestra.config import AgentCatalog, OrchestraConfig, RoleConfig
 from orchestra.queue import Job, JobQueue, JobSpec
 
 CONTEXT_SUFFIX: Final[str] = ".parent-context"
-RETURN_FORMAT_KEY: Final[str] = "default_return_format"
 
 
 class SubmitError(ValueError):
@@ -74,23 +73,22 @@ def _assemble_prompt(
     goal: str,
     parent_context: str | None,
     skills: tuple[str, ...],
-    prompts: Mapping[str, str],
+    dispatch_hint: str,
 ) -> str:
     """Assemble the full agent prompt from data Submit already has.
 
     Sections, in stable order, joined by blank lines (skipped when absent):
     role header, assignment goal, parent-context artifact reference, role
-    skills, and the return-format contract. Shell jobs (explicit argv
-    payload) never reach assembly.
+    skills, and the role's ``dispatch_hint`` (its capabilities, boundaries,
+    and response expectations). Shell jobs (explicit argv payload) never
+    reach assembly.
     """
     sections = [f"Role: {role_name}", goal]
     if parent_context is not None:
         sections.append(render_reference(parent_context))
     if skills:
         sections.append("Skills: " + ", ".join(skills))
-    return_format = prompts.get(RETURN_FORMAT_KEY, "")
-    if return_format:
-        sections.append(return_format)
+    sections.append(dispatch_hint)
     return "\n\n".join(sections)
 
 
@@ -171,7 +169,7 @@ def submit(
                 item.assignment.goal,
                 parent_context,
                 item.role.skills,
-                config.prompts,
+                item.role.dispatch_hint,
             )
         )
         tasks.append(
@@ -227,7 +225,7 @@ def submit(
             reference,
             None,
             verifier_role.skills,
-            config.prompts,
+            verifier_role.dispatch_hint,
         )
         tasks.append(
             Task(

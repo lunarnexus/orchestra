@@ -101,6 +101,7 @@ roles:
     model: "m1"
     env: {}
     skills: []
+    dispatch_hint: Build the requested change and return the concrete edits and checks.
     auto_verify: true
   verifier:
     enabled: auto
@@ -108,6 +109,7 @@ roles:
     model: "m1"
     env: {}
     skills: []
+    dispatch_hint: Verify the assigned work and return your verdict with supporting evidence.
     auto_verify: false
   plain:
     enabled: manual
@@ -115,6 +117,7 @@ roles:
     model: "m1"
     env: {}
     skills: []
+    dispatch_hint: Do the assigned work and return a concise result.
     auto_verify: false
 `);
 

@@ -29,7 +29,6 @@ from orchestra.submit import Assignment, submit
 
 PROMPTS = {
     "dispatch_ack": "Assignment accepted; do not poll.",
-    "default_return_format": "compact",
     "return_hint_all_succeeded": "all good",
     "return_hint_verification_disagreement": "disagree",
     "return_hint_budget_exhausted": "budget hit",
@@ -45,6 +44,7 @@ model_limits:
 roles:
   builder:
     enabled: manual
+    dispatch_hint: Return builder changes.
     harness_config: shell
     model: "m1"
     env: {}
@@ -52,6 +52,7 @@ roles:
     auto_verify: false
   verifier:
     enabled: auto
+    dispatch_hint: Return verdict and evidence.
     harness_config: shell
     model: "m1"
     env: {}
@@ -59,6 +60,7 @@ roles:
     auto_verify: false
   runner:
     enabled: manual
+    dispatch_hint: Return runner output.
     harness_config: shell
     model: "m1"
     env: {}

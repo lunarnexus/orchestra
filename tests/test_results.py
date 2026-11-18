@@ -37,6 +37,7 @@ model_limits:
 roles:
   builder:
     enabled: manual
+    dispatch_hint: Return builder changes.
     harness_config: shell
     model: "m1"
     env: {}
@@ -44,6 +45,7 @@ roles:
     auto_verify: true
   verifier:
     enabled: auto
+    dispatch_hint: Return verdict and evidence.
     harness_config: shell
     model: "m1"
     env: {}
@@ -51,6 +53,7 @@ roles:
     auto_verify: false
   plain:
     enabled: manual
+    dispatch_hint: Return plain result.
     harness_config: shell
     model: "m1"
     env: {}
@@ -79,7 +82,6 @@ shell:
 
 PROMPTS_YAML = """
 dispatch_ack: ack
-default_return_format: format
 return_hint_all_succeeded: all good
 return_hint_verification_disagreement: disagree
 return_hint_budget_exhausted: budget hit

@@ -122,10 +122,39 @@ function isSessionMessageEntry(value: unknown): value is { type: "message"; mess
   return entry.type === "message" && typeof entry.message === "object" && entry.message !== null;
 }
 
-/** Native session history as JSONL message lines; the core run artifact is
- * the only persisted copy. */
+/** Natural-language text from a message's content: a plain string, or the
+ * `text` blocks of a content array. Tool calls, thinking/reasoning, tool
+ * results, images, and all metadata are dropped. */
+function extractMessageText(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const block of content) {
+      if (typeof block !== "object" || block === null) continue;
+      const part = block as { type?: unknown; text?: unknown };
+      if (part.type === "text" && typeof part.text === "string" && part.text.length > 0) {
+        parts.push(part.text);
+      }
+    }
+    return parts.join(" ").trim();
+  }
+  return "";
+}
+
+/** Chat-only parent context: only `user`/`assistant` conversational text,
+ * one role-prefixed line per non-empty message; every other role, tool call,
+ * result, reasoning, and metadata is excluded. The core run artifact is the
+ * only persisted copy. */
 function renderParentContextArtifact(entries: unknown[]): string {
-  const lines = entries.filter(isSessionMessageEntry).map((entry) => JSON.stringify(entry.message));
+  const lines: string[] = [];
+  for (const entry of entries) {
+    if (!isSessionMessageEntry(entry)) continue;
+    const message = entry.message as { role?: unknown; content?: unknown };
+    if (message.role !== "user" && message.role !== "assistant") continue;
+    const text = extractMessageText(message.content);
+    if (!text) continue;
+    lines.push(`${message.role}: ${text}`);
+  }
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 
@@ -455,7 +484,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   /** Spawn the core dispatch; the first stdout JSONL line (the ack) resolves
    * `onAck`; the second (the return) is delivered to the session as a steer. */
   function dispatchWorker(sessionId: string, params: DispatchParams, ctx: UiCtx, onAck: (ack: AckPayload | null) => void): void {
-    let goal = (params.taskLabel?.trim() ? `[${params.taskLabel.trim()}] ` : "") + (params.goal?.trim() ?? "");
+    let goal = params.goal?.trim() ?? "";
     // Additional context is assignment data carried in the goal text; it is
     // never a substitute for the native session history piped on stdin.
     const additionalContext = params.additionalContext?.trim();
@@ -550,7 +579,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       goal: Type.String({ description: "Assignment text: goal, scope, boundaries, stop condition, expected return, and relevant prior evidence." }),
       additionalContext: Type.Optional(Type.String({ description: "Extra context piped to the dispatcher as parent context for roles configured to receive it." })),
       role: Type.Optional(Type.String({ description: "Configured role name; omitted uses the configured default role." })),
-      taskLabel: Type.Optional(Type.String({ description: "Short display label prefixed to the goal." })),
+      taskLabel: Type.Optional(Type.String({ description: "Short optional display label for the assignment." })),
     }),
     async execute(_toolCallId, params: DispatchParams, _signal, _onUpdate, ctx) {
       const goal = params.goal?.trim() ?? "";

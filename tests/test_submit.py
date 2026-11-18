@@ -26,6 +26,7 @@ model_limits:
 roles:
   builder:
     enabled: manual
+    dispatch_hint: Return builder changes.
     harness_config: pi
     model: "m1"
     env: {}
@@ -34,6 +35,7 @@ roles:
     parent_context: true
   verifier:
     enabled: auto
+    dispatch_hint: Return verdict and evidence.
     harness_config: pi
     model: "m1"
     env: {}
@@ -41,6 +43,7 @@ roles:
     auto_verify: false
   plain:
     enabled: manual
+    dispatch_hint: Return plain result.
     harness_config: pi
     model: "m1"
     env: {}
@@ -48,6 +51,7 @@ roles:
     auto_verify: false
   runner:
     enabled: manual
+    dispatch_hint: Return runner output.
     harness_config: shell
     model: "m1"
     env: {}
@@ -55,6 +59,7 @@ roles:
     auto_verify: true
   locked:
     enabled: disabled
+    dispatch_hint: Return locked result.
     harness_config: pi
     model: "m1"
     env: {}
@@ -62,6 +67,7 @@ roles:
     auto_verify: false
   skilled:
     enabled: manual
+    dispatch_hint: Return skilled changes.
     harness_config: pi
     model: "m1"
     env: {}
@@ -93,7 +99,6 @@ shell:
 
 PROMPTS_YAML = """
 dispatch_ack: ack
-default_return_format: format
 return_hint_all_succeeded: ok
 return_hint_verification_disagreement: disagree
 return_hint_budget_exhausted: budget
@@ -155,10 +160,10 @@ def test_submit_creates_run_job_and_task(
     task = records[0]
     assert isinstance(task, Task)
     assert task.job_id == job.job_id
-    # Agent-job prompt assembly: role header, goal, and the configured
-    # return-format contract; the assembled prompt is also the payload.
+    # Agent-job prompt assembly: role header, goal, and the role's
+    # dispatch_hint; the assembled prompt is also the payload.
     assert task.prompt.startswith("Role: plain\n\nbuild the thing\n\n")
-    assert config.prompts["default_return_format"] in task.prompt
+    assert config.catalog.roles["plain"].dispatch_hint in task.prompt
     assert submission.payloads[job.job_id] == (task.prompt,)
     assert task.role == "plain"
     # The artifacts file lives under the run's artifacts area.
@@ -229,6 +234,7 @@ def test_recursive_verifier_is_not_created(
         ROLES_YAML.replace(
             '''  verifier:
     enabled: auto
+    dispatch_hint: Return verdict and evidence.
     harness_config: pi
     model: "m1"
     env: {}
@@ -236,6 +242,7 @@ def test_recursive_verifier_is_not_created(
     auto_verify: false''',
             '''  verifier:
     enabled: auto
+    dispatch_hint: Return verdict and evidence.
     harness_config: pi
     model: "m1"
     env: {}
@@ -551,10 +558,10 @@ def test_skills_survive_alongside_existing_submission_data(
     assert submission.jobs == tuple(jobs)
 
 
-def test_agent_prompt_contains_role_goal_and_real_return_format(
+def test_agent_prompt_contains_role_goal_and_dispatch_hint(
     queue: JobQueue, tmp_path: Path
 ) -> None:
-    """Assembly uses the real project prompts.yaml return-format text."""
+    """Assembly uses the resolved role's real dispatch_hint text."""
     real_config = load_orchestra_config(None)
     submission = submit(
         tmp_path / "state",
@@ -568,7 +575,7 @@ def test_agent_prompt_contains_role_goal_and_real_return_format(
     prompt = submission.payloads[job.job_id][0]
     assert "Role: reviewer" in prompt
     assert "polish the docs" in prompt
-    assert real_config.prompts["default_return_format"] in prompt
+    assert real_config.catalog.roles["reviewer"].dispatch_hint in prompt
     assert prompt == task.prompt
 
 
@@ -613,7 +620,7 @@ def test_prompt_contains_configured_skills_or_omits_section(
     skilled_prompt = skilled.payloads[skilled_job.job_id][0]
     assert "Skills: orch-builder, builder" in skilled_prompt
     assert skilled_prompt.index("Skills:") < skilled_prompt.index(
-        config.prompts["default_return_format"]
+        config.catalog.roles["skilled"].dispatch_hint
     )
 
     plain = _submit(queue, config, Assignment(goal="plain", role="plain"))
@@ -628,7 +635,7 @@ def test_verifier_prompt_is_isolated_to_builder_task_reference(
     _builder_job, verifier_job = queue.list_jobs(submission.run_id)  # builder auto-verifies
     verifier_prompt = submission.payloads[verifier_job.job_id][0]
     assert "Role: verifier" in verifier_prompt
-    assert config.prompts["default_return_format"] in verifier_prompt
+    assert config.catalog.roles["verifier"].dispatch_hint in verifier_prompt
     (verifier_task,) = [
         r
         for r in recall(config.runtime.state_dir, submission.run_id, verifier_job.job_id)

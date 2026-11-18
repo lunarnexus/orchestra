@@ -59,6 +59,7 @@ model_limits:
 roles:
   builder:
     enabled: manual
+    dispatch_hint: build it
     harness_config: pi
     model: "example/model-a"
     env:
@@ -67,6 +68,7 @@ roles:
     auto_verify: true
   verifier:
     enabled: auto
+    dispatch_hint: verify it
     harness_config: pi
     model: "example/model-a"
     env: {}
@@ -74,6 +76,7 @@ roles:
     auto_verify: false
   planner:
     enabled: disabled
+    dispatch_hint: plan it
     harness_config: pi
     model: "example/model-a"
     env: {}
@@ -83,7 +86,6 @@ roles:
 
 PROMPTS_YAML = """
 dispatch_ack: ack text
-default_return_format: format text
 budget_intervention: budget
 return_hint_all_succeeded: ok
 return_hint_verification_disagreement: disagree
@@ -158,6 +160,7 @@ def test_valid_fixture_resolves_typed_values(tmp_path: Path) -> None:
     assert catalog.roles["builder"].harness_config == "pi"
     assert catalog.roles["builder"].env == {"EXAMPLE_FLAG": "1"}
     assert catalog.roles["builder"].skills == ()
+    assert catalog.roles["builder"].dispatch_hint == "build it"
     assert catalog.model_limits["example/model-a"].concurrency == 2
     harness = loaded.harnesses["pi"]
     assert isinstance(harness, HarnessConfig)
@@ -277,6 +280,32 @@ def test_reserved_env_prefix_rejected(tmp_path: Path) -> None:
         )
 
 
+def test_role_missing_dispatch_hint_rejected(tmp_path: Path) -> None:
+    """A role without a required dispatch_hint fails loud at load time."""
+    directory = write_fixture(
+        tmp_path,
+        catalog_yaml=CATALOG_YAML.replace(
+            "  builder:\n    enabled: manual\n    dispatch_hint: build it\n",
+            "  builder:\n    enabled: manual\n",
+        ),
+    )
+    with pytest.raises(ConfigError, match="dispatch_hint"):
+        load_agent_catalog(
+            directory / "agent-catalog.yaml", directory / "harnesses.yaml"
+        )
+
+
+def test_role_empty_dispatch_hint_rejected(tmp_path: Path) -> None:
+    directory = write_fixture(
+        tmp_path,
+        catalog_yaml=CATALOG_YAML.replace("dispatch_hint: build it", 'dispatch_hint: "  "'),
+    )
+    with pytest.raises(ConfigError, match="non-empty 'dispatch_hint'"):
+        load_agent_catalog(
+            directory / "agent-catalog.yaml", directory / "harnesses.yaml"
+        )
+
+
 def test_builder_auto_verify_surfaced_on_role(tmp_path: Path) -> None:
     directory = write_fixture(tmp_path)
     catalog = load_agent_catalog(
@@ -320,7 +349,7 @@ def test_prompts_unknown_key_rejected(tmp_path: Path) -> None:
     directory = write_fixture(tmp_path)
     path = directory / "prompts.yaml"
     (path).write_text(
-        "dispatch_ack: ack\ndefault_return_format: fmt\nbudget_intervention: b\n"
+        "dispatch_ack: ack\nbudget_intervention: b\n"
         "return_hint_all_succeeded: ok\n"
         "return_hint_verification_disagreement: d\nreturn_hint_budget_exhausted: b\n"
         "return_hint_hard_failure: h\nmystery_key: nope\n",
@@ -335,7 +364,6 @@ def test_project_prompts_yaml_loads_with_all_sections(tmp_path: Path) -> None:
 
     prompts = load_prompts(PROJECT_ROOT / PROMPTS_FILENAME)
     assert prompts["dispatch_ack"]
-    assert prompts["default_return_format"]
     for category in (
         "all_succeeded",
         "verification_disagreement",
@@ -349,7 +377,7 @@ def test_project_prompts_yaml_has_commented_sections() -> None:
     from orchestra.config import PROMPTS_FILENAME
 
     raw = (PROJECT_ROOT / PROMPTS_FILENAME).read_text(encoding="utf-8")
-    for section in ("formats", "tool_response", "return_hints"):
+    for section in ("tool_response", "return_hints"):
         assert section in raw
 
 

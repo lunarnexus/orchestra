@@ -150,7 +150,7 @@ Resolves configured role skills and reports missing skills clearly. Prepares ins
 Parse and expose runtime configuration, prompt/guidance text, workflow definitions, and the agent catalog.
 
 - Configuration determines automatic behavior, context passing, SPSI requirements, and configured limits.
-- The catalog supplies roles and agent/harness selections, including an explicit default role and enabled, disabled, or automation-only role modes.
+- The catalog supplies roles and agent/harness selections, including an explicit default role and enabled, disabled, or automation-only role modes. Each role supplies a `dispatch_hint`: its agent-facing capabilities, boundaries, and response expectations, rendered into the assignment prompt in place of a separately appended generic return format.
 
 ## Program flow
 
@@ -254,11 +254,11 @@ Before adding functionality, schema, data, or function paths, identify the agree
 
 ## Agent-facing instructions
 
-Each instruction has one owner. The catalog supplies configuration, not agent-facing content directly.
+Each instruction has one owner. The catalog supplies configuration; a role's `dispatch_hint` is that role's single agent-facing rendering, and the generic return-format contract is no longer appended separately.
 
 | Type | Responsibility |
 | --- | --- |
-| Role descriptions | Present capabilities and boundaries generated from catalog configuration. |
+| Role descriptions | A role's `dispatch_hint`: present capabilities, boundaries, and response expectations, generated from catalog configuration. |
 | Tool instructions | Explain operation usage, inputs, and returns; reuse role descriptions. |
 | Skills | Define working methods, judgment, and evidence standards. |
 | Dispatch acknowledgement | Confirm acceptance and automatic completion. |

@@ -11,6 +11,9 @@ model_limits:
 roles:
   intern:
     enabled: manual
+    dispatch_hint: >-
+      Answer the assignment directly and concisely. Return only the requested
+      result, with no extra commentary or unrequested detail.
     harness_config: pi
     model: "vllm/LOADED"
     env:
@@ -21,6 +24,9 @@ roles:
     auto_verify: false
   appsec:
     enabled: manual
+    dispatch_hint: >-
+      Report security findings only. For each, give the location, the risk, and
+      the supporting evidence; omit anything that is not a finding.
     harness_config: pi
     model: "vllm/LOADED"
     env:
@@ -31,6 +37,9 @@ roles:
     auto_verify: false
   builder:
     enabled: manual
+    dispatch_hint: >-
+      Implement only the assigned scope. Return a short list of the concrete
+      changes made and the checks you ran; do not re-test work already proven.
     harness_config: pi
     model: "vllm/LOADED"
     env:
@@ -41,6 +50,9 @@ roles:
     auto_verify: true
   verifier:
     enabled: auto
+    dispatch_hint: >-
+      Judge the referenced work. Return a verdict, the supporting evidence, and
+      any discrepancies; nothing else.
     harness_config: pi
     model: "vllm/LOADED"
     env:
@@ -50,6 +62,9 @@ roles:
     auto_verify: false
   reviewer:
     enabled: manual
+    dispatch_hint: >-
+      Report review findings only. For each, give the location and impact; omit
+      anything that is not a finding.
     harness_config: pi
     model: "vllm/LOADED"
     env:
@@ -60,6 +75,9 @@ roles:
     auto_verify: false
   planner:
     enabled: disabled
+    dispatch_hint: >-
+      Return a concrete plan of ordered steps, files, and per-step
+      verification; do not implement.
     harness_config: pi
     model: "openai-codex/gpt-5.5"
     env:
@@ -69,6 +87,9 @@ roles:
     auto_verify: false
   researcher:
     enabled: manual
+    dispatch_hint: >-
+      Return concise findings, each backed by the evidence and sources that
+      support it.
     harness_config: pi
     model: "vllm/LOADED"
     env:

@@ -3,19 +3,6 @@
 # loud ConfigError failures; there are no defaults or fallbacks.
 
 # ---------------------------------------------------------------------------
-# formats: the subagent return format contract.
-# Consumed by harness plugins when preparing agent assignments; every subagent
-# return follows this compact schema. Durable detail belongs in artifacts, not
-# in the return text.
-# ---------------------------------------------------------------------------
-default_return_format: |-
-  Return compact status, verdict, agent response, relevant evidence, and next
-  action. Include updated artifacts, files changed, exact commands with their
-  results, reused evidence with references, material evidence, findings,
-  blockers, and risks when relevant; omit empty fields. Keep it short; put
-  durable detail in the assigned artifact.
-
-# ---------------------------------------------------------------------------
 # tool_response: text the harness plugin returns to the calling orchestrator
 # session immediately after a dispatch is accepted, while execution continues
 # in the background. The orchestrator does not poll.
