@@ -64,15 +64,36 @@ def _failure_reason(outcome: Outcome) -> str:
     return f"failed: exit status {outcome.exit_status}"
 
 
+# Label header that separates a child's stderr/diagnostics from its stdout
+# answer in the recorded transcript body, so a warning never splices onto the
+# end of the answer text.
+_STDERR_HEADER = "[stderr]"
+
+
+def _transcript_body(output: str, error: str) -> str:
+    """Join stdout answer and stderr diagnostics as separate, labeled sections.
+
+    The answer (stdout) is the response body. Stderr is kept visible but in a
+    distinctly labeled section, never inline-appended to the answer text.
+    """
+    if not error:
+        return output
+    if not output:
+        return f"{_STDERR_HEADER}\n{error}"
+    return f"{output.rstrip(chr(10))}\n\n{_STDERR_HEADER}\n{error}"
+
+
 def _record(
     state_dir: Path | str,
     run_id: str,
     job_id: str,
     reason: str,
-    combined_output: str,
+    output: str,
+    error: str = "",
 ) -> str | None:
     """Write one output file when there is output, append one Response."""
     transcript: str | None = None
+    combined_output = _transcript_body(output, error)
     if combined_output:
         path = _output_path(state_dir, run_id, job_id)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -195,9 +216,8 @@ def _execute_job(
         outcome = harness.execute(
             CommandJob(job_id=job.job_id, argv=argv), budgets, handle
         )
-        combined = outcome.output + outcome.error
         reason = "succeeded" if outcome.success else _failure_reason(outcome)
-        _record(state_dir, run_id, job.job_id, reason, combined)
+        _record(state_dir, run_id, job.job_id, reason, outcome.output, outcome.error)
         queue.complete_job(job.job_id, "succeeded" if outcome.success else "failed")
     except Exception as exc:  # noqa: BLE001 - worker must never die silently
         # Unexpected failure: record it and mark the job failed, never hang.

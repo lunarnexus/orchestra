@@ -267,6 +267,34 @@ def test_loop_exits_and_second_run_returns_promptly(
     assert list(responses) == [job.job_id]  # recorded exactly once
 
 
+def test_stderr_is_separated_from_answer_body(queue: JobQueue, tmp_path: Path) -> None:
+    """A stderr line must never splice onto the end of the child's answer.
+
+    Regression: the dispatcher recorded ``output + error`` with no delimiter,
+    so a benign harness startup warning appended directly after the last
+    answer line in the delivered response/transcript body.
+    """
+    job = _add(queue, "r1")
+    # Answer has no trailing newline; stderr is a distinct warning line.
+    payload = [
+        "sh",
+        "-c",
+        "printf 'the final answer'; printf 'Warning: No project session found; creating a new session.\\n' 1>&2",
+    ]
+    _run(queue, tmp_path, "r1", {job.job_id: payload})
+
+    assert queue.get_job(job.job_id).status == "succeeded"
+    out = tmp_path / "state" / "artifacts" / "r1" / f"{job.job_id}.output"
+    body = out.read_text()
+    # The stderr warning must not be spliced directly onto the answer text.
+    assert "the final answerWarning" not in body
+    # The answer stands alone as the leading response body.
+    assert body.split("\n")[0] == "the final answer"
+    # Stderr is preserved, but in a separately labeled diagnostic section.
+    assert "Warning: No project session found; creating a new session." in body
+    assert "[stderr]" in body
+
+
 def test_large_output_captured_byte_exact_record_stays_small(
     queue: JobQueue, tmp_path: Path
 ) -> None:

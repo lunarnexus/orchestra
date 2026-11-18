@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 import queue as queue_mod
+import re
 import signal
 import subprocess
 import threading
@@ -41,6 +42,27 @@ BUDGET_TURN_REASON = "budget wrap-up (turn limit)"
 
 _TRANSCRIPT_ATTEMPTS = 10
 _TRANSCRIPT_RETRY_SECONDS = 0.2
+
+# Pi prints this informational notice to stderr the first time a worker
+# session id is used. It is expected startup behavior, never a job failure,
+# so it is dropped from the captured stderr to keep it out of the response.
+_BENIGN_PI_NOTICE = re.compile(
+    r"^Warning: No project session found with id '[^']*'; "
+    r"creating a new session with that id\.\s*$"
+)
+
+
+def _filter_stderr(chunks: list[str]) -> str:
+    """Drop the benign Pi 'creating a new session' notice line from stderr.
+
+    All other stderr (real warnings/errors) is retained unchanged.
+    """
+    kept = [
+        line
+        for line in "".join(chunks).splitlines()
+        if not _BENIGN_PI_NOTICE.match(line.strip())
+    ]
+    return "\n".join(kept).strip()
 
 
 @dataclass(frozen=True)
@@ -247,7 +269,7 @@ class PiHarness:
 
         finished_at = time.time()
         output = last_text if isinstance(last_text, str) else ""
-        error = "".join(stderr_chunks).strip()
+        error = _filter_stderr(stderr_chunks)
         note = rpc_handle.note
         if prompt_error is not None:
             note.reason = f"prompt rejected: {prompt_error}"

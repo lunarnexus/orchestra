@@ -91,18 +91,25 @@ process.stdin.on('end', () => {
   assert.equal(ack.isError, false, `dispatch ack failed: ${JSON.stringify(ack)}`);
 
   const captured = readFileSync(capturePath, 'utf8');
+  // Chat lines stay chat-only; the deterministic references digest (read path
+  // and bash command from the tool calls) is appended after the chat lines.
   const expected = [
     'user: Please build the widget.',
     'assistant: I will inspect the source first.',
     'user: A plain string user turn.',
     '',
+    'Files touched:',
+    '  TOOLCALL_ARGS_MARKER (read)',
+    'Commands run:',
+    '  ONLYTOOLCALL_MARKER -> ok',
+    '',
   ].join('\n');
-  assert.equal(captured, expected, 'artifact keeps ONLY user/assistant natural-language text, one role-prefixed line per non-empty message, trailing newline');
+  assert.equal(captured, expected, 'chat-only lines then a deterministic files/commands references digest');
 
-  for (const marker of ['THINKING_MARKER', 'TOOLCALL_ARGS_MARKER', 'ONLYTOOLCALL_MARKER', 'SYS_MARKER', 'TOOLRESULT_MARKER', 'SKILLS_MARKER', 'toolCall', 'thinking', 'toolResult', 'role":"system']) {
+  for (const marker of ['THINKING_MARKER', 'SYS_MARKER', 'TOOLRESULT_MARKER', 'SKILLS_MARKER', 'toolCall', 'thinking', 'toolResult', 'role":"system']) {
     assert.ok(!captured.includes(marker), `captured artifact must exclude ${marker}`);
   }
-  assert.ok(!/ONLYTOOLCALL_MARKER|^\s*assistant:\s*$/m.test(captured), 'assistant turn with no text is skipped');
+  assert.ok(!/^\s*assistant:\s*$/m.test(captured), 'assistant turn with no text is skipped');
 
   console.log('Pi parent-context chat-only capture passed');
 } finally {

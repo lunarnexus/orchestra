@@ -29,6 +29,10 @@ if session_dir:
     with open(os.path.join(session_dir, "2025-01-01T00-00-00-000Z_" + sid + ".jsonl"), "w") as f:
         f.write(json.dumps({"session_id": sid}) + "\n")
 text = os.environ.get("STUB_TEXT", "stub ok")
+stderr_text = os.environ.get("STUB_STDERR", "")
+if stderr_text:
+    sys.stderr.write(stderr_text)
+    sys.stderr.flush()
 wait_steer = os.environ.get("STUB_WAIT_STEER") == "1"
 turns = int(os.environ.get("STUB_TURNS", "1"))
 settled = False
@@ -185,6 +189,36 @@ def test_missing_skills_fail_fast(stub_script: Path, sessions_dir: Path) -> None
     outcome = harness.execute(CommandJob("j1", ("prompt",)), Budgets())
     assert not outcome.success
     assert harness.note_for("j1").reason == "missing skills: orch-builder"
+
+
+def test_benign_pi_startup_notice_is_dropped_from_stderr(
+    stub_script: Path, sessions_dir: Path
+) -> None:
+    """Pi's benign 'creating a new session with that id' notice is not a failure.
+
+    Regression: the notice printed to stderr on a first worker dispatch rode
+    into the captured stderr (and, via the old dispatcher concatenation, the
+    delivered answer). The harness drops only that known informational notice
+    and keeps all other stderr plus the stdout answer.
+    """
+    benign = (
+        "Warning: No project session found with id "
+        "'orchestra-worker-c1d73535da484378a34e79746455510b-1'; "
+        "creating a new session with that id.\n"
+    )
+    real = "real: some diagnostic warning\n"
+    harness = PiHarness(
+        {"j1": plan(stub_script, STUB_TEXT="the answer", STUB_STDERR=benign + real)},
+        "budget!",
+    )
+    outcome = harness.execute(CommandJob("j1", ("prompt",)), Budgets())
+    assert outcome.success
+    # The stdout answer is unaffected.
+    assert outcome.output == "the answer"
+    # The benign Pi startup notice is dropped; real stderr is retained.
+    assert "No project session found" not in outcome.error
+    assert "creating a new session with that id" not in outcome.error
+    assert "real: some diagnostic warning" in outcome.error
 
 
 def test_terminate_kills_process_group(stub_script: Path, sessions_dir: Path) -> None:

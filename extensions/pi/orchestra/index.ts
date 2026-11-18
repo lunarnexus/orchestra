@@ -141,10 +141,80 @@ function extractMessageText(content: unknown): string {
   return "";
 }
 
+/** Anti-bloat cap for the digest commands section: keep the most-recent
+ * this many de-duplicated commands. File paths are kept in full. */
+const MAX_DIGEST_COMMANDS = 25;
+
+/** Tool names whose `arguments.path` is recorded as a touched file. */
+const FILE_TOOL_NAMES = new Set(["read", "edit", "write"]);
+
+/** Deterministic, no-LLM references digest appended after the chat lines:
+ * which file paths the parent read/wrote/edited (labeled with the action verb
+ * actually used) and which bash commands it ran (ok vs failed taken only from
+ * the joined tool result's `isError`, never from result content). Tool result
+ * bodies, file contents, reasoning, schemas, and metadata are never read. */
+function renderReferencesDigest(entries: unknown[]): string {
+  // Map each tool call id to whether its joined result reported isError.
+  const failedIds = new Set<string>();
+  for (const entry of entries) {
+    if (!isSessionMessageEntry(entry)) continue;
+    const message = entry.message as { role?: unknown; toolCallId?: unknown; isError?: unknown };
+    if (message.role !== "toolResult") continue;
+    if (typeof message.toolCallId === "string" && message.toolCallId && message.isError === true) {
+      failedIds.add(message.toolCallId);
+    }
+  }
+
+  const seenPaths = new Set<string>();
+  const fileLines: string[] = [];
+  const seenCommands = new Set<string>();
+  const commandLines: string[] = [];
+
+  for (const entry of entries) {
+    if (!isSessionMessageEntry(entry)) continue;
+    const message = entry.message as { role?: unknown; content?: unknown };
+    if (message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    for (const block of message.content) {
+      if (typeof block !== "object" || block === null) continue;
+      const call = block as { type?: unknown; name?: unknown; arguments?: unknown; id?: unknown };
+      if (call.type !== "toolCall" || typeof call.name !== "string") continue;
+      const args =
+        typeof call.arguments === "object" && call.arguments !== null
+          ? (call.arguments as { path?: unknown; command?: unknown })
+          : {};
+      if (FILE_TOOL_NAMES.has(call.name)) {
+        if (typeof args.path === "string" && args.path.length > 0 && !seenPaths.has(args.path)) {
+          seenPaths.add(args.path);
+          fileLines.push(`  ${args.path} (${call.name})`);
+        }
+      } else if (call.name === "bash") {
+        if (typeof args.command === "string" && args.command.length > 0 && !seenCommands.has(args.command)) {
+          seenCommands.add(args.command);
+          const failed = typeof call.id === "string" && failedIds.has(call.id);
+          commandLines.push(`  ${args.command} -> ${failed ? "failed" : "ok"}`);
+        }
+      }
+    }
+  }
+
+  const cappedCommands =
+    commandLines.length > MAX_DIGEST_COMMANDS
+      ? commandLines.slice(commandLines.length - MAX_DIGEST_COMMANDS)
+      : commandLines;
+
+  const out: string[] = [];
+  if (fileLines.length > 0) out.push("Files touched:", ...fileLines);
+  if (cappedCommands.length > 0) out.push("Commands run:", ...cappedCommands);
+  return out.length > 0 ? `${out.join("\n")}\n` : "";
+}
+
 /** Chat-only parent context: only `user`/`assistant` conversational text,
  * one role-prefixed line per non-empty message; every other role, tool call,
- * result, reasoning, and metadata is excluded. The core run artifact is the
- * only persisted copy. */
+ * result, reasoning, and metadata is excluded, plus a deterministic references
+ * digest of touched files and run commands appended after the chat lines. The
+ * digest is appended only when there is chat content and at least one file or
+ * command entry, so it never by itself makes an empty capture non-empty. The
+ * core run artifact is the only persisted copy. */
 function renderParentContextArtifact(entries: unknown[]): string {
   const lines: string[] = [];
   for (const entry of entries) {
@@ -155,7 +225,11 @@ function renderParentContextArtifact(entries: unknown[]): string {
     if (!text) continue;
     lines.push(`${message.role}: ${text}`);
   }
-  return lines.length > 0 ? `${lines.join("\n")}\n` : "";
+  if (lines.length === 0) return "";
+  const chat = `${lines.join("\n")}\n`;
+  const digest = renderReferencesDigest(entries);
+  if (!digest) return chat;
+  return `${chat}\n${digest}`;
 }
 
 function renderDispatchRequestFallback(params: DispatchParams): string {
