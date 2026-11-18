@@ -74,6 +74,7 @@ interface UiCtx {
 }
 
 interface AckPayload {
+  type?: "ack" | "return" | "event";
   run_id?: string;
   role?: string;
   ack?: string;
@@ -81,12 +82,15 @@ interface AckPayload {
 }
 
 interface JobReturnPayload {
+  step?: number;
+  job_id?: string;
   role?: string;
   status?: string;
   summary?: string;
 }
 
 interface ReturnPayload {
+  type?: "ack" | "return" | "event";
   run_id?: string;
   category?: string;
   hint?: string;
@@ -422,15 +426,18 @@ function renderRoleMeter(theme: Theme, roleCounts: Array<{ role: string; count: 
     .join(" ");
 }
 
-/** One consolidated session return: minimal role/status per delivered job
- * with its actual child response, one applicable hint, no per-run summary
- * prose, no "Jobs:" heading, and no internal scope-limitation note. */
+/** One consolidated session return: one delimited step block per delivered
+ * job (the per-job boundary and step label come from core), each carrying
+ * that job's actual child response verbatim, then one applicable hint. No
+ * "Jobs:" heading, no internal scope-limitation note, no per-run summary
+ * prose. The plugin only renders the core-supplied per-job structure. */
 function formatSessionReturn(payload: ReturnPayload): string {
-  const lines: string[] = [];
-  lines.push(`Orchestra return (${payload.category ?? "unknown"}):`);
-  for (const job of payload.jobs ?? []) {
-    lines.push(`- ${job.role ?? "worker"} [${job.status ?? "?"}]: ${(job.summary ?? "").trim()}`);
-  }
+  const jobs = payload.jobs ?? [];
+  const lines: string[] = [`Orchestra return (${payload.category ?? "unknown"}):`];
+  jobs.forEach((job, index) => {
+    const step = job.step ?? index + 1;
+    lines.push("", `Step ${step} \u2014 ${job.role ?? "worker"} [${job.status ?? "?"}]`, (job.summary ?? "").trim());
+  });
   if (payload.hint?.trim()) lines.push("", payload.hint.trim());
   return lines.join("\n");
 }
@@ -449,6 +456,28 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   const completedRuns = new Map<string, string[]>();
   const liveSpawns = new Map<string, number>();
   const deliveryChains = new Map<string, Promise<void>>();
+  // Footer refresh is event-driven: the core dispatch stream publishes one
+  // lifecycle event per job transition, and each event refreshes the role
+  // meter. Overlapping refreshes are coalesced into at most one in-flight
+  // status round-trip plus one queued follow-up, so a burst of events cannot
+  // spawn a request storm. No periodic polling remains.
+  let footerRefreshInFlight = false;
+  let footerRefreshQueued = false;
+
+  function scheduleFooterRefresh(ctx: UiCtx): void {
+    if (footerRefreshInFlight) {
+      footerRefreshQueued = true;
+      return;
+    }
+    footerRefreshInFlight = true;
+    void (async () => {
+      do {
+        footerRefreshQueued = false;
+        await refreshFooter(ctx);
+      } while (footerRefreshQueued);
+      footerRefreshInFlight = false;
+    })();
+  }
 
   function emitOutput(ctx: UiCtx, text: string, level: "info" | "warning" | "error" = "info"): void {
     if (ctx.hasUI) {
@@ -589,6 +618,14 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       (line) => {
         const payload = parseJsonLine<ReturnPayload & AckPayload>(line);
         if (!payload) return;
+        if (payload.type === "event") {
+          // A generic mid-run lifecycle transition for this dispatch. It is
+          // neither the ack nor the return; refresh the role meter only while
+          // this dispatch's own session is still the active one, so a
+          // switched or shut-down session never receives a stale update.
+          if (sessionId === currentSessionId) scheduleFooterRefresh(ctx);
+          return;
+        }
         if (!sawAck) {
           sawAck = true;
           ackedRunId = payload.run_id ?? "";
@@ -603,7 +640,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           }
           onAck(payload);
           emitOutput(ctx, `orchestra: run ${payload.run_id ?? ""} dispatched (${payload.role ?? "default role"}).`, "info");
-          void refreshFooter(ctx);
+          scheduleFooterRefresh(ctx);
           return;
         }
         sawReturn = true;
@@ -617,7 +654,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         } else {
           completedRuns.set(sessionId, [...(completedRuns.get(sessionId) ?? []), runId]);
         }
-        void refreshFooter(ctx);
+        if (sessionId === currentSessionId) scheduleFooterRefresh(ctx);
         deliverWhenReady(sessionId, ctx);
       },
       (code) => {
@@ -631,6 +668,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           pendingRuns.get(sessionId)?.delete(ackedRunId);
           deliverWhenReady(sessionId, ctx);
         }
+        if (sessionId === currentSessionId) scheduleFooterRefresh(ctx);
         if (code !== 0) process.stderr.write(`orchestra dispatch exited with code ${code}\n`);
       },
     );

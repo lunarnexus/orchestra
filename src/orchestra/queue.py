@@ -87,6 +87,18 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def run_id_of(job_id: str) -> str:
+    """Return the run id embedded in a job id (``<run_id>:<sequence>``).
+
+    Job ids are built by :meth:`JobQueue.add_jobs`; dependents that only
+    know an upstream job id use this to locate that job's own records.
+    """
+    run_id, separator, sequence = job_id.rpartition(":")
+    if not separator or not run_id or not sequence:
+        raise QueueError(f"{job_id!r} is not a job id of the form <run_id>:<sequence>")
+    return run_id
+
+
 class JobQueue:
     """SQLite-backed job queue with dependency and concurrency gating."""
 

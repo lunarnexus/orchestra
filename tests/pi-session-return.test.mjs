@@ -205,6 +205,20 @@ try {
   assert.doesNotMatch(first, /Jobs:/, 'redundant Jobs heading is removed');
   assert.doesNotMatch(first, /covers one run|unlisted runs/i, 'internal scope-limitation prose is removed');
   assert.doesNotMatch(first, /finished \(/, 'duplicate per-run summary line is removed');
+  // Structural separation is a core-owned property: each delivered job renders
+  // as its own delimited step block, so a builder->verifier chain is separable
+  // without inferring boundaries from prose.
+  const stepHeaders = first.match(/^Step \d+ /gm) || [];
+  assert.ok(
+    stepHeaders.length >= 2,
+    `each delivered job must render as a separately delimited step (got ${stepHeaders.length})`,
+  );
+  const stepBlocks = first.split(/^Step \d+ /m);
+  const builderBlock = stepBlocks.find((b) => b.includes('one builder answer'));
+  const verifierBlock = stepBlocks.find((b) => b.includes('verifier: confirmed'));
+  assert.ok(builderBlock, 'builder response is delivered inside a step block');
+  assert.ok(verifierBlock, 'verifier response is delivered inside a step block');
+  assert.notEqual(builderBlock, verifierBlock, 'builder and verifier render in different step blocks');
   assert.equal(realStatus('pi:S1').length, 0, 'no session jobs remain running after the return');
 
   // --- journey 2: a later run must not repeat earlier delivered results --
@@ -245,6 +259,14 @@ try {
   assert.equal(steers.filter((s) => s === s2Steer).length, 1, 'single wake, not repeated');
   assert.doesNotMatch(s2Steer, /Jobs:/);
   assert.match(s2Steer, /All jobs succeeded|do not duplicate the work/i);
+  // Separation is generic, not verifier-specific: a plain two-job chain
+  // (no verifier) also renders as two separate delimited step blocks.
+  const s2Headers = s2Steer.match(/^Step \d+ /gm) || [];
+  assert.ok(s2Headers.length >= 2, 'plain two-job chain renders as delimited step blocks');
+  const s2Blocks = s2Steer.split(/^Step \d+ /m);
+  const alphaBlock = s2Blocks.find((b) => b.includes('alpha actual answer'));
+  const betaBlock = s2Blocks.find((b) => b.includes('beta actual answer'));
+  assert.ok(alphaBlock && betaBlock && alphaBlock !== betaBlock, 'alpha and beta render in different step blocks');
 
   // --- journey 4: other sessions are isolated; failures stay visible ----
   const ctx3 = makeContext('pi:S3');

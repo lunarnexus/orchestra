@@ -4,6 +4,10 @@
 
 Do not overcomplicate. Use the simplest solution that satisfies the spec. If you encounter an edge case you think needs handling beyond the spec, ask before implementing it.
 
+## 1.1 Stay modular and reusable
+
+Always aim for modular and reusable code, custom code paths are inefficent and sloppy.  This is a balancing act with simple and minimal, so all designs are to be discussed with the user, and all solutions should be presented in terms of simple/minimal and modular/reusable.  
+
 ## 2. Ask before adding or interpreting requirements
 
 `SPEC.md` defines the project. If something is not in the spec and you think it is needed, ask the owner before adding it. If anything is unclear, ask. Never invent functionality, requirements, or behavior without explicit approval.

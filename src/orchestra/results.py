@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from orchestra.artifacts import Response, Task, recall
-from orchestra.dispatcher import recorded_reasons
+from orchestra.dispatcher import recorded_reasons, resolve_answer
 from orchestra.guidance import categorize, derive_return_category, return_hint
 from orchestra.queue import Job, JobQueue
 
@@ -48,8 +48,17 @@ class ResultsError(ValueError):
 
 @dataclass(frozen=True)
 class JobReturn:
-    """One job's compact block in the assembled return."""
+    """One job's compact block in the assembled return.
 
+    ``step`` is the job's 1-based position in the assembled return, so a
+    reader distinguishes each job as an individually labeled step in stable
+    order without inferring boundaries from prose; it carries the job's own
+    ``role``/``status``/``summary`` and its own ``artifact_paths``. Jobs are
+    emitted in prerequisite order, so an upstream job always precedes its
+    follow-up.
+    """
+
+    step: int
     job_id: str
     role: str
     status: str
@@ -120,7 +129,8 @@ def assemble(
     hint = return_hint(prompts, category)
 
     blocks = tuple(
-        _job_return(job, responses, tasks) for job in jobs
+        _job_return(job, responses, tasks, index + 1, state_dir, run_id)
+        for index, job in enumerate(jobs)
     )
     return AssembledReturn(
         run_id=run_id,
@@ -195,7 +205,10 @@ def assemble_session(
         }
         combined_jobs.extend(jobs)
         reasons.update(recorded_reasons(state_dir, run_id))
-        blocks.extend(_job_return(job, responses, tasks) for job in jobs)
+        blocks.extend(
+            _job_return(job, responses, tasks, len(blocks) + 1, state_dir, run_id)
+            for job in jobs
+        )
 
     category = categorize(combined_jobs, reasons)
     return SessionReturn(
@@ -212,6 +225,9 @@ def _job_return(
     job: Job,
     responses: Mapping[str, Response],
     tasks: Mapping[str, Task],
+    step: int,
+    state_dir: Path | str,
+    run_id: str,
 ) -> JobReturn:
     if job.status == "skipped":
         summary = SKIPPED_LINE
@@ -222,7 +238,9 @@ def _job_return(
             raise ResultsError(
                 f"job {job.job_id!r} is {job.status} but has no response record"
             )
-        summary = response.response
+        # One shared core resolution: the summary is the text the job actually
+        # returned, reading the output file when the record kept only a reason.
+        summary = resolve_answer(state_dir, run_id, response)
     paths: list[str] = []
     if response is not None and response.transcript is not None:
         paths.append(response.transcript)
@@ -230,6 +248,7 @@ def _job_return(
     if task is not None:
         paths.extend(item["path"] for item in task.inputs)
     return JobReturn(
+        step=step,
         job_id=job.job_id,
         role=job.role,
         status=job.status,

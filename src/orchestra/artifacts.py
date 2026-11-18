@@ -153,16 +153,40 @@ def validate(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _path(state_dir: Path | str, run_id: str) -> Path:
+def _path(state_dir: Path | str, run_id: str, scope: str | None = None) -> Path:
     if not run_id:
         raise ArtifactsError("run_id must be non-empty")
+    if scope is not None:
+        # One-job-per-file view: a single job's own records, used as a
+        # handoff reference that carries only that job's records.
+        return Path(state_dir) / "artifacts" / run_id / f"{scope}.jsonl"
     return Path(state_dir) / "artifacts" / f"{run_id}.jsonl"
 
 
-def append(state_dir: Path | str, run_id: str, record: Record) -> None:
-    """Append one record to the run's JSONL file, creating it on demand."""
+def scoped_path(state_dir: Path | str, run_id: str, job_id: str) -> Path:
+    """Path to one job's own records view (its Task and Response only).
+
+    A follow-up job (e.g. an automatic verifier) is handed this path so it
+    receives only the upstream job's own records and no path that leads to
+    another job's parent context.
+    """
+    if not job_id:
+        raise ArtifactsError("job_id must be non-empty")
+    return _path(state_dir, run_id, scope=job_id)
+
+
+def append(
+    state_dir: Path | str, run_id: str, record: Record, *, scope: str | None = None
+) -> None:
+    """Append one record to a run's JSONL file, creating it on demand.
+
+    With ``scope`` set to a job id, the record is written to that job's own
+    ``<run_id>/<job_id>.jsonl`` view instead of the whole-run file; the view
+    holds only that job's records, so it can be handed to a follow-up job
+    without exposing other jobs' records.
+    """
     data = _to_dict(record)
-    path = _path(state_dir, run_id)
+    path = _path(state_dir, run_id, scope)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(data, ensure_ascii=False) + "\n")

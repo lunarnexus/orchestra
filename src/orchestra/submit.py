@@ -7,6 +7,13 @@ and queues the submission's jobs — including automatic ``auto_verify``
 follow-ups — in one queue transaction, appending one Task artifact record
 per job.
 
+Every job is prepared by the same path: directly submitted assignments and
+follow-ups Submit queues for itself share role access checks, model and
+budget resolution, skills, prompt assembly, inputs, upstream handoffs, and
+queue insertion. A dependent of any role is handed its prerequisites' own
+records views, so upstream assignments and responses reach it without an
+orchestrator round trip.
+
 Submit never reads configuration files: the caller loads the configuration
 once and passes the typed :class:`~orchestra.config.OrchestraConfig`. There
 are no retries (resubmission means calling :func:`submit` again with new
@@ -25,11 +32,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-from orchestra.artifacts import Task, append, render_reference
+from orchestra.artifacts import Task, append, render_reference, scoped_path
 from orchestra.config import AgentCatalog, OrchestraConfig, RoleConfig
-from orchestra.queue import Job, JobQueue, JobSpec
+from orchestra.queue import Job, JobQueue, JobSpec, QueueError, run_id_of
 
 CONTEXT_SUFFIX: Final[str] = ".parent-context"
+
+# Goal line of the verification follow-up Submit queues for itself. Upstream
+# assignments and responses arrive as artifact references, so this line only
+# states what the follow-up exists to do.
+VERIFY_GOAL: Final[str] = "Verify the upstream work referenced in this assignment."
 
 
 class SubmitError(ValueError):
@@ -74,18 +86,21 @@ def _assemble_prompt(
     parent_context: str | None,
     skills: tuple[str, ...],
     dispatch_hint: str,
+    references: Sequence[str] = (),
 ) -> str:
     """Assemble the full agent prompt from data Submit already has.
 
     Sections, in stable order, joined by blank lines (skipped when absent):
-    role header, assignment goal, parent-context artifact reference, role
-    skills, and the role's ``dispatch_hint`` (its capabilities, boundaries,
-    and response expectations). Shell jobs (explicit argv payload) never
-    reach assembly.
+    role header, assignment goal, parent-context artifact reference, upstream
+    handoff artifact references, role skills, and the role's
+    ``dispatch_hint`` (its capabilities, boundaries, and response
+    expectations). Shell jobs (explicit argv payload) never reach assembly.
     """
     sections = [f"Role: {role_name}", goal]
     if parent_context is not None:
         sections.append(render_reference(parent_context))
+    if references:
+        sections.append("\n".join(render_reference(path) for path in references))
     if skills:
         sections.append("Skills: " + ", ".join(skills))
     sections.append(dispatch_hint)
@@ -93,12 +108,14 @@ def _assemble_prompt(
 
 
 @dataclass(frozen=True)
-class _Resolved:
-    """One assignment with its role resolved (internal)."""
+class _Pending:
+    """One job with its role and parent context resolved, awaiting assembly."""
 
+    job_id: str
     name: str
     role: RoleConfig
     assignment: Assignment
+    parent_context: str | None = None
 
 
 def submit(
@@ -112,12 +129,20 @@ def submit(
     """Validate and queue one submission; return the run and its jobs.
 
     ``parent_session`` is the originating session id (required). Each
-    assignment's role defaults to the catalog ``default_role``. When the
-    resolved role has ``auto_verify`` enabled, a verifier follow-up job is
-    created through the same pipeline inside the same queue transaction;
-    the verifier's only input is the builder's Task record path.
-    ``context_provider`` is the host-supplied parent-context callback; it
-    is invoked only for roles that opt in via ``parent_context: true``.
+    assignment's role defaults to the catalog ``default_role``. Every job —
+    submitted directly or queued by Submit itself — is prepared by the one
+    loop below: role access, model, runtime budgets, skills, prompt assembly,
+    inputs, upstream handoffs, and queue insertion, in a single queue
+    transaction with one Task artifact record each.
+
+    When any resolved role has ``auto_verify`` enabled, Submit queues ONE
+    verifier follow-up for the submission, dependent on every auto-verified
+    job of that submission and handed all of their records. Follow-ups are
+    never grouped across runs, and a verifier never verifies itself.
+    ``context_provider`` is the host-supplied parent-context callback; it is
+    invoked only for directly submitted roles that opt in via
+    ``parent_context: true``. Follow-ups Submit queues for itself never
+    receive the orchestrator's conversation.
     """
     if not parent_session or not parent_session.strip():
         raise SubmitError("parent_session is required")
@@ -128,26 +153,89 @@ def submit(
             raise SubmitError(f"assignment {index} requires non-empty goal text")
 
     runtime = config.runtime
-    resolved: list[_Resolved] = []
+    resolved: list[tuple[str, RoleConfig, Assignment]] = []
     for index, assignment in enumerate(assignments):
         name = assignment.role if assignment.role is not None else config.catalog.default_role
         role = _callable_role(config.catalog, name, f"assignment {index}")
-        resolved.append(_Resolved(name=name, role=role, assignment=assignment))
+        resolved.append((name, role, assignment))
 
     run_id = uuid.uuid4().hex
-    artifacts_path = Path(state_dir) / "artifacts" / f"{run_id}.jsonl"
 
     # Pre-compute everything that can fail before touching the queue; job
     # ids of a fresh run are deterministic: sequence == insert order.
+    pending: list[_Pending] = []
+    for name, role, assignment in resolved:
+        job_id = f"{run_id}:{len(pending) + 1}"
+        parent_context = _capture_parent_context(
+            Path(state_dir), run_id, job_id, role, context_provider
+        )
+        pending.append(
+            _Pending(
+                job_id=job_id,
+                name=name,
+                role=role,
+                assignment=assignment,
+                parent_context=parent_context,
+            )
+        )
+
+    # Automatic verification is Submit's own follow-up: one verifier covering
+    # every auto-verified job of THIS submission, queued as an ordinary job in
+    # the same batch and dependent on all of them.
+    covered = tuple(item.job_id for item in pending if item.role.auto_verify)
+    if covered:
+        verifier_name, verifier_role = _verifier_role(
+            config.catalog, "auto_verify in this submission"
+        )
+        pending.append(
+            _Pending(
+                job_id=f"{run_id}:{len(pending) + 1}",
+                name=verifier_name,
+                role=verifier_role,
+                assignment=Assignment(goal=VERIFY_GOAL, prerequisites=covered),
+            )
+        )
+
     specs: list[JobSpec] = []
     tasks: list[Task] = []
     payloads: dict[str, tuple[str, ...]] = {}
     skills: dict[str, tuple[str, ...]] = {}
-    follow_ups: list[tuple[str, str, RoleConfig]] = []  # (builder job, role, config)
-    for item in resolved:
-        job_id = f"{run_id}:{len(specs) + 1}"
-        parent_context = _capture_parent_context(
-            Path(state_dir), run_id, job_id, item.role, context_provider
+    for item in pending:
+        # Provision this job's own records view with its assignment, so any
+        # dependent can be handed that one file and read this job's assignment
+        # now and its actual response once it finishes. The view is a
+        # projection of the assignment alone: no parent-context path, no
+        # assembled prompt, and no other job's records.
+        append(
+            state_dir,
+            run_id,
+            Task(
+                job_id=item.job_id,
+                timestamp=_now(),
+                prompt=item.assignment.goal,
+                role=item.name,
+                inputs=tuple(item.assignment.inputs),
+            ),
+            scope=item.job_id,
+        )
+        # Upstream handoff: every prerequisite is given the upstream job's own
+        # records path, both in the assembled prompt and as a structured input
+        # link. This is the general dependent facility, not verifier-specific.
+        handoffs = [
+            (_upstream_records(state_dir, prerequisite_id), prerequisite_id)
+            for prerequisite_id in item.assignment.prerequisites
+        ]
+        prompt = (
+            item.assignment.goal
+            if item.assignment.payload
+            else _assemble_prompt(
+                item.name,
+                item.assignment.goal,
+                item.parent_context,
+                item.role.skills,
+                item.role.dispatch_hint,
+                [path for path, _ in handoffs],
+            )
         )
         specs.append(
             JobSpec(
@@ -161,87 +249,44 @@ def submit(
                 turn_limit=runtime.turn_limit,
             )
         )
-        prompt = (
-            item.assignment.goal
-            if item.assignment.payload
-            else _assemble_prompt(
-                item.name,
-                item.assignment.goal,
-                parent_context,
-                item.role.skills,
-                item.role.dispatch_hint,
-            )
-        )
         tasks.append(
             Task(
-                job_id=job_id,
+                job_id=item.job_id,
                 timestamp=_now(),
                 prompt=prompt,
                 role=item.name,
-                parent_context=parent_context,
-                inputs=tuple(item.assignment.inputs),
+                parent_context=item.parent_context,
+                inputs=tuple(item.assignment.inputs)
+                + tuple(
+                    {"job_id": prerequisite_id, "path": path}
+                    for path, prerequisite_id in handoffs
+                ),
             )
         )
         if item.assignment.payload:
-            payloads[job_id] = tuple(item.assignment.payload)
+            payloads[item.job_id] = tuple(item.assignment.payload)
         else:
-            payloads[job_id] = (prompt,)
-        skills[job_id] = item.role.skills
-        if item.role.auto_verify:
-            follow_ups.append((job_id, item.name, item.role))
+            payloads[item.job_id] = (prompt,)
+        skills[item.job_id] = item.role.skills
 
-    # Automatic verifier follow-ups through the same pipeline. The verifier
-    # receives the builder's Task record only: prerequisite on the builder
-    # job, single input link to the builder's Task record path. A verifier
-    # never gains its own verifier, even when the verifier role sets
-    # ``auto_verify: true`` (no recursive verification).
-    seen: set[str] = set()
-    while follow_ups:
-        builder_job_id, builder_name, _builder_role = follow_ups.pop(0)
-        if builder_name in seen:
-            continue
-        seen.add(builder_name)
-        verifier_name, verifier_role = _verifier_role(
-            config.catalog, f"auto_verify for role {builder_name!r}"
-        )
-        job_id = f"{run_id}:{len(specs) + 1}"
-        specs.append(
-            JobSpec(
-                run_id=run_id,
-                parent_session=parent_session,
-                role=verifier_name,
-                model=verifier_role.model,
-                prerequisites=(builder_job_id,),
-                soft_timeout=runtime.soft_timeout,
-                hard_timeout=runtime.default_timeout,
-                turn_limit=runtime.turn_limit,
-            )
-        )
-        # Verifier isolation: its prompt contains only the builder Task
-        # record reference, never builder/orchestrator context.
-        reference = render_reference(str(artifacts_path))
-        prompt = _assemble_prompt(
-            verifier_name,
-            reference,
-            None,
-            verifier_role.skills,
-            verifier_role.dispatch_hint,
-        )
-        tasks.append(
-            Task(
-                job_id=job_id,
-                timestamp=_now(),
-                prompt=prompt,
-                role=verifier_name,
-                inputs=({"job_id": builder_job_id, "path": str(artifacts_path)},),
-            )
-        )
-        payloads[job_id] = (prompt,)
-        skills[job_id] = verifier_role.skills
     jobs = queue.add_jobs(specs)
     for task in tasks:
         append(state_dir, run_id, task)
     return Submission(run_id=run_id, jobs=jobs, payloads=payloads, skills=skills)
+
+
+def _upstream_records(state_dir: Path | str, job_id: str) -> str:
+    """Return the path of one upstream job's own records view, from its id.
+
+    A job's own records live under its own run's artifacts area, so a
+    dependent reaches them from the job id alone, whether the upstream job is
+    in this submission or an earlier one.
+    """
+    try:
+        run_id = run_id_of(job_id)
+    except QueueError as exc:
+        raise SubmitError(f"unknown prerequisite job id: {exc}") from exc
+    return str(scoped_path(state_dir, run_id, job_id))
 
 
 def _now() -> str:

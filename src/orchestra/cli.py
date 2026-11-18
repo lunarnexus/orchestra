@@ -8,7 +8,12 @@ host adapters add no wording of their own.
 
 Line protocol for ``dispatch`` (JSONL on stdout):
   {"type": "ack", "run_id": ..., "role": ..., "ack": ..., "jobs": [...]}
+  {"type": "event", "session_id": ..., "run_id": ..., "job_id": ..., "status": ...}  (0 or more, mid-run)
   {"type": "return", "run_id": ..., "return": {...} | null, "stopped": bool}
+
+The ``event`` lines are generic lifecycle transitions emitted while jobs run,
+between the acknowledgement and the final return; a host must treat them as
+neither the ack nor the return.
 
 Errors go to stderr as plain text and exit nonzero: failures are loud.
 """
@@ -27,6 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from orchestra.config import OrchestraConfig, load_orchestra_config
+from orchestra.dispatcher import JobEvent
 from orchestra.dispatcher import run as run_dispatcher
 from orchestra.pi_harness import AgentPlan, PiHarness
 from orchestra.queue import Job, JobQueue
@@ -145,6 +151,27 @@ def _cmd_dispatch(args: argparse.Namespace) -> None:
     harness = _harness_for(config, submission)
     stop_event = _stop_event(config, submission.run_id)
     runtime = config.runtime
+    # Forward each dispatcher lifecycle transition as a typed intermediate
+    # JSONL message on the SAME stdout stream as the ack and final return.
+    # A lock keeps concurrent worker events complete, single-line records.
+    stream_lock = threading.Lock()
+
+    def on_event(event: JobEvent) -> None:
+        with stream_lock:
+            print(
+                json.dumps(
+                    {
+                        "type": "event",
+                        "session_id": event.session_id,
+                        "run_id": event.run_id,
+                        "job_id": event.job_id,
+                        "status": event.status,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
+
     run_dispatcher(
         queue,
         config.runtime.state_dir,
@@ -157,6 +184,7 @@ def _cmd_dispatch(args: argparse.Namespace) -> None:
         },
         payloads=dict(submission.payloads),
         stop_event=stop_event,
+        on_event=on_event,
     )
     _record_notes(config, submission, harness)
     stopped = getattr(stop_event, "stop_requested", False)
@@ -279,12 +307,14 @@ def _harness_for(config: OrchestraConfig, submission: Submission) -> PiHarness:
 def _record_notes(
     config: OrchestraConfig, submission: Submission, harness: PiHarness
 ) -> None:
-    """Append final Response records carrying notes and native transcripts.
+    """Append final Response records linking the native session transcript.
 
-    The dispatcher records a minimal reason per job. This pass replaces it
-    with the harness note (budget wrap-up mark, missing skills) when present
-    and links the subagent's native session transcript. Later records win,
-    so the appended record is the one Results assembles.
+    The dispatcher already recorded each job's returned answer and its real
+    diagnostic reason (including a budget wrap-up) at completion, before the
+    queue released dependents. This pass adds only what the harness learns
+    after execution and the dispatcher never had: the subagent's native
+    session transcript. It never rewrites the response text, so the recorded
+    answer and reason stay exactly as the dispatcher persisted them.
     """
     from orchestra.artifacts import Response, append, recall
 
@@ -299,15 +329,7 @@ def _record_notes(
         if not records:
             continue
         original = records[-1]
-        response_text = original.response
-        if original.transcript is not None:
-            # The dispatcher stored the agent's returned text as output detail.
-            # Deliver that response, rather than only its mechanical status.
-            response_text = Path(original.transcript).read_text(encoding="utf-8")
-        if note.reason is not None:
-            response_text = f"failed: {note.reason}\n{response_text}"
-        transcript = note.transcript or original.transcript
-        if response_text == original.response and transcript == original.transcript:
+        if note.transcript is None or note.transcript == original.transcript:
             continue
         append(
             state,
@@ -315,8 +337,8 @@ def _record_notes(
             Response(
                 job_id=job.job_id,
                 timestamp=_now(),
-                response=response_text,
-                transcript=transcript,
+                response=original.response,
+                transcript=note.transcript,
             ),
         )
 

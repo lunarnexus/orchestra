@@ -123,6 +123,7 @@ class PiHarness:
                 error=note.reason,
                 started_at=time.time(),
                 finished_at=time.time(),
+                reason=note.reason,
             )
         if not job.argv or len(job.argv) != 1:
             raise HarnessError(
@@ -288,6 +289,7 @@ class PiHarness:
             finished_at=finished_at,
             terminated=rpc_handle.terminated and not settled,
             transcript=str(transcript) if transcript is not None else None,
+            reason=note.reason,
         )
 
     def _send_wrap_up(self, handle: _PiRpcHandle, reason: str) -> None:

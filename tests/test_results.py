@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestra.artifacts import Response, append
+from orchestra.artifacts import Response, append, recall
 from orchestra.config import (
     PROMPTS_FILENAME,
     OrchestraConfig,
@@ -23,6 +23,7 @@ from orchestra.results import (
     AssembledReturn,
     ResultsError,
     assemble,
+    assemble_session,
 )
 from orchestra.shell import ShellHarness
 from orchestra.submit import Assignment, submit
@@ -205,6 +206,37 @@ def test_budget_exhausted_preserves_child_response(
     assert result.jobs[0].summary == child_text
 
 
+def test_large_answer_resolved_in_results_from_output_file(
+    queue: JobQueue, config: OrchestraConfig, tmp_path: Path
+) -> None:
+    """Results reads the full answer through the shared resolution function.
+
+    The run record stays compact (the success marker) while the byte-exact
+    answer lives only in the job's ``.output`` file; the assembled summary is
+    that full answer, proving Results uses the one core resolution path rather
+    than a copied-inline or CLI-side promotion.
+    """
+    state_dir = tmp_path / "state"
+    payload = ("python3", "-c", "import sys; sys.stdout.write('x' * 100_000)")
+    run_id = _submit_and_run(
+        queue,
+        config,
+        state_dir,
+        Assignment(goal="emit a large answer", role="plain", payload=payload),
+    )
+
+    (record,) = [
+        item for item in recall(state_dir, run_id) if isinstance(item, Response)
+    ]
+    assert record.response == "succeeded"  # record kept compact, not the answer
+    assert record.transcript is not None
+
+    result = assemble(queue, state_dir, config.prompts, run_id)
+    (job,) = result.jobs
+    assert job.status == "succeeded"
+    assert job.summary == "x" * 100_000  # resolved from the output file
+
+
 def test_failure_with_skipped_dependent(
     queue: JobQueue, config: OrchestraConfig, tmp_path: Path
 ) -> None:
@@ -224,7 +256,10 @@ def test_failure_with_skipped_dependent(
     builder, verifier = result.jobs
     assert builder.role == "builder"
     assert builder.status == "failed"
-    assert builder.summary == "failed: exit status 1"
+    # The shared answer resolution keeps the diagnostic reason first and then
+    # the text the job actually returned before it failed.
+    assert builder.summary == "failed: exit status 1\n\nboom"
+    assert builder.summary.startswith("failed: exit status 1")
     assert verifier.role == "verifier"
     assert verifier.status == "skipped"
     assert verifier.summary == SKIPPED_LINE
@@ -283,6 +318,87 @@ def test_deterministic(queue: JobQueue, config: OrchestraConfig, tmp_path: Path)
     first = assemble(queue, state_dir, config.prompts, run_id)
     second = assemble(queue, state_dir, config.prompts, run_id)
     assert first == second
+
+
+def test_multistep_chain_has_ordered_job_boundaries(
+    queue: JobQueue, config: OrchestraConfig, tmp_path: Path
+) -> None:
+    """Any 2+-job chain assembles as ordered, individually labeled steps.
+
+    Uses two plain jobs chained by a prerequisite (no verifier, no
+    role-specific path) so structural separation is proven as a universal
+    property: each job is a delimited step carrying its own step ordinal,
+    job id, role, status, summary, and artifact references, and an upstream
+    job always precedes its follow-up.
+    """
+    state_dir = tmp_path / "state"
+    first = submit(
+        state_dir,
+        queue,
+        config,
+        SESSION,
+        [Assignment(goal="first step", role="plain", payload=("sh", "-c", "echo one"))],
+    )
+    (first_job,) = queue.list_jobs(first.run_id)
+    run(
+        queue,
+        state_dir,
+        ShellHarness(),
+        first.run_id,
+        global_limit=4,
+        per_session_limit=4,
+        payloads={first_job.job_id: ("sh", "-c", "echo one")},
+    )
+    second = submit(
+        state_dir,
+        queue,
+        config,
+        SESSION,
+        [
+            Assignment(
+                goal="second step",
+                role="plain",
+                payload=("sh", "-c", "echo two"),
+                prerequisites=(first_job.job_id,),
+            )
+        ],
+    )
+    (second_job,) = queue.list_jobs(second.run_id)
+    run(
+        queue,
+        state_dir,
+        ShellHarness(),
+        second.run_id,
+        global_limit=4,
+        per_session_limit=4,
+        payloads={second_job.job_id: ("sh", "-c", "echo two")},
+    )
+
+    # Consolidate both runs into one session return: a 2-job chain.
+    session = assemble_session(
+        queue,
+        state_dir,
+        config.prompts,
+        SESSION,
+        [first.run_id, second.run_id],
+    )
+    assert len(session.jobs) == 2
+    upstream, follow_up = session.jobs
+    # Distinct, core-supplied boundary data per step.
+    assert upstream.job_id == first_job.job_id
+    assert follow_up.job_id == second_job.job_id
+    assert upstream.job_id != follow_up.job_id
+    assert upstream.step < follow_up.step
+    # Step ordering preserves prerequisite order: upstream precedes follow-up.
+    assert [job.step for job in session.jobs] == sorted(job.step for job in session.jobs)
+    # Each step carries its own summary and its own artifact reference.
+    for job in session.jobs:
+        assert job.summary.strip()
+        assert job.artifact_paths
+        for path in job.artifact_paths:
+            assert Path(path).exists()
+    # The hint is a single value for the whole return, not stored per job.
+    assert session.hint == config.prompts["return_hint_all_succeeded"]
 
 
 def test_unknown_run_is_loud(queue: JobQueue, config: OrchestraConfig, tmp_path: Path) -> None:

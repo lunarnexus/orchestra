@@ -141,6 +141,54 @@ def test_agent_response_reaches_assembled_return(
         assert Path(result.jobs[0].artifact_paths[0]).is_file()
 
 
+def test_budget_reason_persisted_before_dependent_without_cli_notes(
+    tmp_path: Path, stub_script: Path, sessions_dir: Path
+) -> None:
+    """A real Pi wrap-up records the budget reason in core, before the CLI pass.
+
+    Regression for the budget-reason ownership route: the dispatcher must
+    persist the wrap-up reason into the run record at completion, before the
+    queue releases (here skips) the verifier dependent and before guidance
+    categorizes, so the late ``_record_notes`` CLI step is not what makes a
+    budget run report as ``budget_exhausted``. Uses the controlled RPC stub
+    only; no live pi, model, or global session.
+    """
+    from orchestra.config import load_orchestra_config
+    from orchestra.dispatcher import recorded_reasons, run
+    from orchestra.guidance import BUDGET_EXHAUSTED, derive_return_category
+    from orchestra.queue import JobQueue
+    from orchestra.submit import Assignment, submit
+
+    config = load_orchestra_config(Path(__file__).resolve().parents[1])
+    config = replace(
+        config,
+        runtime=replace(config.runtime, state_dir=tmp_path, turn_limit=2),
+    )
+    with JobQueue(tmp_path / "queue.db") as queue:
+        submission = submit(
+            tmp_path, queue, config, "test:budget",
+            [Assignment(goal="build it", role="builder")],
+            context_provider=lambda: "orchestrator context",
+        )
+        builder, verifier = queue.list_jobs(submission.run_id)
+        harness = PiHarness(
+            {builder.job_id: plan(stub_script, STUB_WAIT_STEER="1", STUB_TURNS="2")},
+            "budget!",
+        )
+        # Deliberately NO _record_notes call: only the dispatcher runs.
+        run(
+            queue, tmp_path, harness, submission.run_id,
+            global_limit=1, per_session_limit=1, payloads=dict(submission.payloads),
+        )
+        assert queue.get_job(builder.job_id).status == "failed"
+        assert queue.get_job(verifier.job_id).status == "skipped"
+        # The budget reason is already in the dispatcher-recorded answer, so
+        # guidance categorizes budget_exhausted without the CLI note pass.
+        reasons = recorded_reasons(tmp_path, submission.run_id)
+        assert BUDGET_TURN_REASON in reasons[builder.job_id]
+        assert derive_return_category(queue, submission.run_id, reasons) == BUDGET_EXHAUSTED
+
+
 def test_success_path_and_output(stub_script: Path, sessions_dir: Path) -> None:
     harness = PiHarness({"j1": plan(stub_script, STUB_TEXT="did the work")}, "budget!")
     outcome = harness.execute(CommandJob("j1", ("the assignment prompt",)), Budgets())

@@ -44,6 +44,10 @@ class Outcome:
     stdout and stderr. ``transcript`` locates the harness's native
     transcript; None when the harness has none (shell commands).
     ``started_at``/``finished_at`` are wall-clock Unix timestamps.
+    ``reason`` is the harness-owned diagnostic for a failed run (a budget
+    wrap-up or a rejected prompt); the dispatcher records it before the
+    queue releases dependents, so guidance and follow-ups read the real
+    reason without waiting for the run to end.
     """
 
     success: bool
@@ -54,6 +58,7 @@ class Outcome:
     finished_at: float
     terminated: bool = False
     transcript: str | None = None
+    reason: str | None = None
 
 
 @runtime_checkable

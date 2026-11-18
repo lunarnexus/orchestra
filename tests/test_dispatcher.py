@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from orchestra.artifacts import Response, recall
-from orchestra.dispatcher import run
+from orchestra.dispatcher import JobEvent, run
 from orchestra.queue import Job, JobQueue
 from orchestra.shell import ShellHarness
 
@@ -49,6 +49,7 @@ def _run(
     run_id: str,
     payloads: dict[str, list[str]],
     stop_event: threading.Event | None = None,
+    on_event: object = None,
 ) -> None:
     run(
         queue,
@@ -59,6 +60,7 @@ def _run(
         per_session_limit=4,
         payloads=payloads,
         stop_event=stop_event,
+        on_event=on_event,  # type: ignore[arg-type]
     )
 
 
@@ -88,7 +90,9 @@ def test_end_to_end_success_two_independent_jobs(
     assert queue.get_job(a.job_id).status == "succeeded"
     assert queue.get_job(b.job_id).status == "succeeded"
     responses = _responses(tmp_path, "r1")
-    assert responses == {a.job_id: "succeeded", b.job_id: "succeeded"}
+    # The recorded response is the text the job actually returned; a job that
+    # returned nothing records its status marker instead.
+    assert responses == {a.job_id: "succeeded", b.job_id: "hello"}
     out_b = tmp_path / "state" / "artifacts" / "r1" / f"{b.job_id}.output"
     assert out_b.read_text() == "hello"
     out_a = tmp_path / "state" / "artifacts" / "r1" / f"{a.job_id}.output"
@@ -131,7 +135,9 @@ def test_failure_skips_dependents_and_records_once(
     responses = _responses(tmp_path, "r1")
     # Only the executed job has a response; the skipped one never ran.
     assert list(responses) == [failing.job_id]
-    assert responses[failing.job_id] == "failed: exit status 3"
+    # A failure keeps its diagnostic reason first, then the output it produced
+    # before failing, so the recorded answer is honest evidence, not a status.
+    assert responses[failing.job_id] == "failed: exit status 3\n\nboom"
     out = tmp_path / "state" / "artifacts" / "r1" / f"{failing.job_id}.output"
     assert out.read_text() == "boom\n"
     record = next(
@@ -315,3 +321,103 @@ def test_large_output_captured_byte_exact_record_stays_small(
     assert response["response"] == "succeeded"
     assert response["transcript"] == str(out)
     assert len(json.dumps(response)) < 500
+
+
+def test_events_report_started_then_terminal_after_durable_state(
+    queue: JobQueue, tmp_path: Path
+) -> None:
+    """One job emits started then terminal, each after durable queue state."""
+    job = _add(queue, "r1")
+    events: list[JobEvent] = []
+    statuses_at_emit: list[str] = []
+
+    def on_event(event: JobEvent) -> None:
+        # The durable status observed at emit time must already match the
+        # event: started is published only once the claim set the job running,
+        # terminal only once the queue records the final status.
+        statuses_at_emit.append(queue.get_job(event.job_id).status)
+        events.append(event)
+
+    _run(queue, tmp_path, "r1", {job.job_id: ["true"]}, on_event=on_event)
+
+    assert [(e.job_id, e.status) for e in events] == [
+        (job.job_id, "running"),
+        (job.job_id, "succeeded"),
+    ]
+    assert all(e.run_id == "r1" and e.session_id == SESSION for e in events)
+    # Each event's status matched the already-persisted queue status.
+    assert statuses_at_emit == ["running", "succeeded"]
+
+
+def test_events_report_verifier_started_only_after_builder_terminal(
+    queue: JobQueue, tmp_path: Path
+) -> None:
+    """A follow-up verifier's started event follows the builder's terminal one."""
+    builder = _add(queue, "r1")
+    verifier = _add(queue, "r1", prerequisites=[builder.job_id])
+    events: list[tuple[str, str]] = []
+    lock = threading.Lock()
+
+    def on_event(event: JobEvent) -> None:
+        with lock:
+            events.append((event.job_id, event.status))
+
+    _run(
+        queue,
+        tmp_path,
+        "r1",
+        {builder.job_id: ["true"], verifier.job_id: ["true"]},
+        on_event=on_event,
+    )
+
+    assert events == [
+        (builder.job_id, "running"),
+        (builder.job_id, "succeeded"),
+        (verifier.job_id, "running"),
+        (verifier.job_id, "succeeded"),
+    ]
+
+
+def test_events_report_skipped_dependent_after_failure(
+    queue: JobQueue, tmp_path: Path
+) -> None:
+    """A failure is reported terminal, then the dependent it skips."""
+    failing = _add(queue, "r1")
+    dependent = _add(queue, "r1", prerequisites=[failing.job_id])
+    events: list[tuple[str, str]] = []
+
+    def on_event(event: JobEvent) -> None:
+        events.append((event.job_id, event.status))
+
+    _run(
+        queue,
+        tmp_path,
+        "r1",
+        {failing.job_id: ["sh", "-c", "exit 3"]},
+        on_event=on_event,
+    )
+
+    # The skipped dependent is reported once, after the failure, and its
+    # durable skip has already been written by the time the event fires.
+    assert (dependent.job_id, "skipped") in events
+    assert [s for j, s in events if j == failing.job_id] == ["running", "failed"]
+    assert events.index((dependent.job_id, "skipped")) > events.index(
+        (failing.job_id, "failed")
+    )
+    # A never-running skipped dependent has no started event of its own.
+    assert (dependent.job_id, "running") not in events
+
+
+def test_raising_event_callback_never_fails_a_successful_job(
+    queue: JobQueue, tmp_path: Path
+) -> None:
+    """A callback that always raises cannot turn success into failure."""
+    job = _add(queue, "r1")
+
+    def on_event(event: JobEvent) -> None:
+        raise RuntimeError("ui exploded")
+
+    _run(queue, tmp_path, "r1", {job.job_id: ["printf", "ok"]}, on_event=on_event)
+
+    assert queue.get_job(job.job_id).status == "succeeded"
+    assert _responses(tmp_path, "r1") == {job.job_id: "ok"}

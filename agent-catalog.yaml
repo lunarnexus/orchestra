@@ -51,8 +51,7 @@ roles:
   verifier:
     enabled: auto
     dispatch_hint: >-
-      Judge the referenced work. Return a verdict, the supporting evidence, and
-      any discrepancies; nothing else.
+      Verify the referenced work, not a design critique, just factually verify that the previous agent did what it claims, and success criteria are met. Return a pass/fail verdict, if failure, concise supporting evidence, nothing else.
     harness_config: pi
     model: "vllm/LOADED"
     env:
