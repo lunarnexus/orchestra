@@ -110,6 +110,10 @@ class JobQueue:
 
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
+        # A fresh dispatch reaches the queue before any state storage exists, so
+        # create the database's parent directory here instead of requiring a
+        # prior bootstrap step; sqlite will not create missing parent dirs.
+        self._path.parent.mkdir(parents=True, exist_ok=True)
         # isolation_level=None disables implicit transactions; every write runs
         # inside an explicit BEGIN IMMEDIATE transaction (see _transaction) so
         # concurrent claimers from other threads/processes serialize on the

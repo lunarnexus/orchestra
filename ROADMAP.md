@@ -4,6 +4,11 @@ Future work only. Completed items belong in `CHANGELOG.md`.
 
 ## TODO
 
+### Benchmark follow-up
+
+- [ ] Coordinate with the `orchestra-bench` agent on Orchestra2 metrics extraction so accepted/rejected dispatches and active/completed jobs match lifecycle evidence. Implementation and verification belong in the benchmark repository.
+- [ ] Evaluate the next benchmark for delegated-scope ownership, prompt return delivery without blocking sleeps, and trust in successful builder or combined builder/verifier results. Confirm automatic verification starts only after covered builder jobs succeed and does not recur on verifiers.
+
 ### Live-host validation
 
 - [ ] Validate the dispatch-control fixes on the test server in the originating Pi chat: management-tool exposure, acknowledgement IDs, session-owned cancellation, readable status, prompt-triggered footer convergence, and automatic return with persisted outcomes. Verify healthy execution survives originating-chat loss. Local controlled-host tests do not substitute for this live-host proof.

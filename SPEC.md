@@ -24,8 +24,6 @@ The harness plugin returns a dispatch acknowledgement and guidance. Execution co
 
 ### One-off operations
 
-- `/orch verify` submits verification of the last queued job.
-- `/orch verify <job-id>` submits verification of the specified job.
 - `/orch review` submits the configured review operation.
 - Other configured operations can represent individual jobs or sequences.
 
@@ -178,7 +176,7 @@ Parse and expose runtime configuration, prompt/guidance text, workflow definitio
 6. B receives A's return data and executes after A succeeds.
 7. Results includes the builder response and verifier conclusion in the originating session's single return prompt after all its dispatched jobs finish.
 
-The orchestrator does not launch B. Manual `/orch verify <job-id>` uses the identical verification operation. Other automatic operations use this same composition mechanism rather than role-specific dispatcher code.
+Orchestra alone submits automatic verification; the orchestrator does not dispatch the verifier. With `auto_verify` disabled, the orchestrator trusts the builder’s successful report without additional verification. With it enabled, verification starts only after builder success, and the orchestrator uses the combined builder/verifier result. Verification jobs do not trigger further verification. Failure investigation remains an orchestrator decision based on the returned evidence.
 
 ### Budget exhaustion
 

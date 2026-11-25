@@ -8,8 +8,11 @@
 # in the background. The orchestrator does not poll.
 # ---------------------------------------------------------------------------
 dispatch_ack: |-
-  Assignment accepted and running in the background. Results return to this
-  session when all dispatched jobs finish; do not poll.
+  Assignment accepted and running in the background. The subagent owns the
+  delegated scope until it returns; do not edit that scope or verify it
+  independently. Do not poll or sleep waiting for it — continue your own
+  independent work or end your response. Orchestra returns the results to
+  this session when every dispatched job and configured follow-up finishes.
 
 # ---------------------------------------------------------------------------
 # budget_intervention: text sent to a subagent when its turn limit or soft

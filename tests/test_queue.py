@@ -625,3 +625,23 @@ def test_claimed_job_record_carries_budgets(tmp_path: Path) -> None:
         3,
     )
     queue.close()
+
+
+def test_constructor_creates_missing_parent_dirs(tmp_path: Path) -> None:
+    """A fresh queue path whose parent dirs are absent is created before connect."""
+    db_path = tmp_path / "state" / "nested" / "jobs.sqlite"
+    assert not db_path.parent.exists()
+
+    queue = JobQueue(db_path)
+    try:
+        job = queue.add_job(run_id="r1", parent_session="s1", role="builder", model="m1")
+    finally:
+        queue.close()
+
+    assert db_path.is_file()
+    # Durable: a fresh connection to the same file sees the persisted job.
+    reopened = JobQueue(db_path)
+    try:
+        assert reopened.get_job(job.job_id).run_id == "r1"
+    finally:
+        reopened.close()

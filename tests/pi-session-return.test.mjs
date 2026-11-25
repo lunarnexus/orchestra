@@ -195,6 +195,12 @@ try {
   const ackText1 = ack1.content[0].text;
   assert.match(ackText1, /builder/i, 'ack must name the role');
   assert.match(ackText1, /do not poll/i, 'ack must tell the orchestrator not to poll');
+  // Delegated-scope ownership and yield guidance must reach the orchestrator in
+  // the ack (core -> ack -> tool), asserted by concept so rewording is allowed.
+  assert.match(ackText1, /own(s|ed)?\b|delegat/i, 'ack must convey the subagent owns the delegated scope');
+  assert.match(ackText1, /edit|independent|verify/i, 'ack must forbid parent edits or independent verification of the delegated scope');
+  assert.match(ackText1, /sleep/i, 'ack must forbid sleeping, not only polling');
+  assert.match(ackText1, /end (your|the) (response|turn)|your own|independent work|continue/i, 'ack must tell the orchestrator to continue independent work or end its response');
 
   await poll('consolidated S1 return', () => steers.length > 0);
   assert.equal(steers.length, 1, 'exactly one return prompt after all session jobs (builder + verifier) finish');

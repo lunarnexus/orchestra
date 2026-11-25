@@ -28,6 +28,11 @@ import { Type } from "typebox";
 
 const PI_MODULE_ARGV = ["-m", "orchestra"];
 
+/** Max bytes of child stderr retained (tail) so a pre-ack dispatch failure can
+ * surface its real cause in the tool result. Full stderr is still relayed live;
+ * only this bounded tail is held for the tool result. */
+const STDERR_TAIL_LIMIT = 4096;
+
 /** The Orchestra tools a session activates or deactivates as a unit. */
 const ORCHESTRA_TOOLS = ["orch_dispatch", "orch_status"];
 
@@ -349,12 +354,16 @@ function runOrchestra(args: string[], input?: string): Promise<{ code: number; s
   });
 }
 
-/** Spawn a long-running core dispatch; `onLine` receives each stdout JSONL line. */
+/** Spawn a long-running core dispatch; `onLine` receives each stdout JSONL
+ * line. `onClose(code, reason)` fires exactly once when the dispatch settles:
+ * `reason` is a bounded diagnostic (the launch error, else the stderr tail) so a
+ * pre-ack failure can be surfaced. A failed launch errors without ever closing,
+ * so the terminal is guarded to avoid a double-complete or a never-settle. */
 function spawnDispatch(
   args: string[],
   input: string,
   onLine: (line: string) => void,
-  onClose: (code: number | null) => void,
+  onClose: (code: number | null, reason: string) => void,
 ): void {
   const child = spawn(orchestraPython, [...PI_MODULE_ARGV, ...args], {
     env: orchestraEnv(),
@@ -365,9 +374,26 @@ function spawnDispatch(
   });
   child.stdin.end(input);
   createInterface({ input: child.stdout }).on("line", onLine);
-  createInterface({ input: child.stderr }).on("line", (line: string) => process.stderr.write(`${line}\n`));
-  child.on("error", (error: Error) => process.stderr.write(`orchestra dispatch failed to launch: ${error.message}\n`));
-  child.on("close", onClose);
+  // Relay the child's stderr live for diagnostics, and retain a bounded tail of
+  // it so the launch/exit cause can be surfaced in the tool result.
+  let stderrTail = "";
+  createInterface({ input: child.stderr }).on("line", (line: string) => {
+    process.stderr.write(`${line}\n`);
+    stderrTail = (stderrTail + line + "\n").slice(-STDERR_TAIL_LIMIT);
+  });
+  let settled = false;
+  let launchError = "";
+  const finish = (code: number | null): void => {
+    if (settled) return;
+    settled = true;
+    onClose(code, launchError || stderrTail.trim());
+  };
+  child.on("error", (error: Error) => {
+    launchError = `orchestra dispatch failed to launch: ${error.message}`;
+    process.stderr.write(`${launchError}\n`);
+    finish(null);
+  });
+  child.on("close", (code: number | null) => finish(code));
 }
 
 function parseJsonLine<T>(line: string): T | null {
@@ -633,7 +659,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   /** Spawn the core dispatch; the first stdout JSONL line (the ack) resolves
    * `onAck`; the second (the return) is delivered to the session as a steer. */
-  function dispatchWorker(sessionId: string, params: DispatchParams, ctx: UiCtx, onAck: (ack: AckPayload | null) => void): void {
+  function dispatchWorker(sessionId: string, params: DispatchParams, ctx: UiCtx, onAck: (ack: AckPayload | null, reason?: string) => void): void {
     let goal = params.goal?.trim() ?? "";
     // Additional context is assignment data carried in the goal text; it is
     // never a substitute for the native session history piped on stdin.
@@ -648,7 +674,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       parentContextInput = captureParentContextText(ctx.sessionManager ?? {}, params);
     } catch (error) {
       const message = (error as { message?: string }).message ?? String(error);
-      onAck(null);
+      onAck(null, `parent context capture failed: ${message}`);
       emitOutput(ctx, `orchestra: parent context capture failed: ${message}`, "error");
       return;
     }
@@ -704,10 +730,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         if (sessionId === currentSessionId) scheduleFooterRefresh(ctx);
         deliverWhenReady(sessionId, ctx);
       },
-      (code) => {
+      (code, reason) => {
         if (!sawAck) {
           liveSpawns.set(sessionId, Math.max((liveSpawns.get(sessionId) ?? 1) - 1, 0));
-          onAck(null);
+          onAck(null, reason);
         } else if (!sawReturn) {
           // The dispatch CLI died after acknowledging: report the run as
           // drained; core blocks loudly if any of its jobs is still
@@ -716,7 +742,9 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           deliverWhenReady(sessionId, ctx);
         }
         if (sessionId === currentSessionId) scheduleFooterRefresh(ctx);
-        if (code !== 0) process.stderr.write(`orchestra dispatch exited with code ${code}\n`);
+        // A launch error already reported its cause via `reason`; only a real
+        // nonzero child exit code needs this extra diagnostic line.
+        if (code !== null && code !== 0) process.stderr.write(`orchestra dispatch exited with code ${code}\n`);
       },
     );
   }
@@ -731,6 +759,13 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   function toolResult(text: string, isError = false) {
     return { content: [{ type: "text" as const, text }], isError, details: undefined };
+  }
+
+  /** Failure text for a pre-ack dispatch: the captured launch/stderr cause when
+   * available, else a clear fallback. Never mixes a child cause into a success. */
+  function dispatchFailureText(reason?: string): string {
+    const detail = (reason ?? "").trim() || "see stderr";
+    return `orchestra dispatch failed: ${detail}`;
   }
 
   pi.registerTool({
@@ -750,11 +785,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         return { content: [{ type: "text", text: "Usage: provide a worker goal." }], isError: true, details: undefined };
       }
       const sessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
-      const ack = await new Promise<AckPayload | null>((resolve) => {
-        dispatchWorker(sessionId, params, ctx as UiCtx, resolve);
+      const { ack, reason } = await new Promise<{ ack: AckPayload | null; reason?: string }>((resolve) => {
+        dispatchWorker(sessionId, params, ctx as UiCtx, (a, r) => resolve({ ack: a, reason: r }));
       });
       if (ack === null) {
-        return { content: [{ type: "text", text: "orchestra dispatch failed (see stderr)." }], isError: true, details: undefined };
+        return toolResult(dispatchFailureText(reason), true);
       }
       const ackRole = ack.role ?? "default role";
       // The identifiers the caller needs to follow up: the run id for
@@ -910,8 +945,8 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           emitOutput(ctx, "Usage: /orch do [--role ROLE] [--task-label LABEL] <goal>", "warning");
           return;
         }
-        dispatchWorker(sessionId, { goal, role, taskLabel }, ctx, (ack) => {
-          emitOutput(ctx, ack?.ack ?? "orchestra dispatch failed (see stderr).", ack ? "info" : "error");
+        dispatchWorker(sessionId, { goal, role, taskLabel }, ctx, (ack, reason) => {
+          emitOutput(ctx, ack?.ack ?? dispatchFailureText(reason), ack ? "info" : "error");
         });
         return;
       }

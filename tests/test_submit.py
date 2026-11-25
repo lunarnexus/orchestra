@@ -1123,3 +1123,34 @@ def test_auto_verifier_uses_its_own_role_skills_and_budgets(
     assert verifier_task.parent_context is None
     assert "chat capture" not in submission.payloads[verifier.job_id][0]
     assert builder_task.parent_context not in submission.payloads[verifier.job_id][0]
+
+
+def test_fresh_state_dispatch_creates_storage_without_prerequisite(
+    tmp_path: Path, config: OrchestraConfig
+) -> None:
+    """A fresh dispatch works with no pre-existing state_dir (no doctor/seed prerequisite)."""
+    # The fixture's state_dir is never created, mirroring a brand-new install.
+    state_dir = Path(config.runtime.state_dir)
+    assert not state_dir.exists()
+
+    # Build the queue through the exact path the CLI dispatch entry uses.
+    queue = JobQueue(state_dir / "queue.db")
+    try:
+        submission = submit(
+            state_dir, queue, config, SESSION, [Assignment(goal="build the thing", role="plain")]
+        )
+        assert submission.run_id
+        assert submission.jobs[0].status == "pending"
+    finally:
+        queue.close()
+
+    # The queue DB and the run artifacts persisted to the now-created state_dir.
+    assert (state_dir / "queue.db").is_file()
+    assert (state_dir / "artifacts" / f"{submission.run_id}.jsonl").is_file()
+    reopened = JobQueue(state_dir / "queue.db")
+    try:
+        assert [j.job_id for j in reopened.list_jobs(submission.run_id)] == [
+            submission.jobs[0].job_id
+        ]
+    finally:
+        reopened.close()
