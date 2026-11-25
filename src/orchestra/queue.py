@@ -55,6 +55,9 @@ class Job:
     soft_timeout: int | None
     hard_timeout: int | None
     turn_limit: int | None
+    dispatcher_token: str | None = None
+    child_pgid: int | None = None
+    child_start: float | None = None
 
 
 _SCHEMA = """
@@ -72,7 +75,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at TEXT,
     soft_timeout INTEGER,
     hard_timeout INTEGER,
-    turn_limit INTEGER
+    turn_limit INTEGER,
+    dispatcher_token TEXT,
+    child_pgid INTEGER,
+    child_start REAL
 );
 CREATE TABLE IF NOT EXISTS job_prerequisites (
     job_id TEXT NOT NULL REFERENCES jobs(job_id),
@@ -137,6 +143,13 @@ class JobQueue:
         for column in ("soft_timeout", "hard_timeout", "turn_limit"):
             if column not in existing:
                 self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} INTEGER")
+        # Execution-ownership columns (Slice 3): all nullable, additive only.
+        if "dispatcher_token" not in existing:
+            self._conn.execute("ALTER TABLE jobs ADD COLUMN dispatcher_token TEXT")
+        if "child_pgid" not in existing:
+            self._conn.execute("ALTER TABLE jobs ADD COLUMN child_pgid INTEGER")
+        if "child_start" not in existing:
+            self._conn.execute("ALTER TABLE jobs ADD COLUMN child_start REAL")
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
@@ -268,12 +281,15 @@ class JobQueue:
         per_session_limit: int,
         model_limits: dict[str, int] | None = None,
         run_id: str | None = None,
+        dispatcher_token: str | None = None,
     ) -> Job | None:
         """Claim the earliest ready pending job, respecting all limits.
 
         A job is ready when every prerequisite has succeeded. When ``run_id``
         is given, only that run's jobs are eligible. Returns None when no
-        pending job is both ready and within the limits.
+        pending job is both ready and within the limits. ``dispatcher_token``
+        attributes the claimed job to the claiming dispatcher so abandoned
+        work can later be reconciled.
         """
         if global_limit < 1 or per_session_limit < 1:
             raise QueueError("limits must be positive integers")
@@ -285,7 +301,7 @@ class JobQueue:
                 )
         with self._transaction():
             claimed = self._claim_next_locked(
-                global_limit, per_session_limit, limits, run_id
+                global_limit, per_session_limit, limits, run_id, dispatcher_token
             )
         return claimed
 
@@ -295,6 +311,7 @@ class JobQueue:
         per_session_limit: int,
         limits: dict[str, int],
         run_id: str | None,
+        dispatcher_token: str | None,
     ) -> Job | None:
         """Claim body; must run inside a BEGIN IMMEDIATE transaction."""
         running_global = self._running_count()
@@ -309,12 +326,54 @@ class JobQueue:
             ) >= model_limit:
                 continue
             self._conn.execute(
-                "UPDATE jobs SET status = 'running', started_at = ?"
-                " WHERE job_id = ?",
-                (_now(), job.job_id),
+                "UPDATE jobs SET status = 'running', started_at = ?,"
+                " dispatcher_token = ? WHERE job_id = ?",
+                (_now(), dispatcher_token, job.job_id),
             )
             return self.get_job(job.job_id)
         return None
+
+    def register_execution(
+        self, job_id: str, *, pgid: int, child_start: float | None
+    ) -> Job:
+        """Record the launched execution group identity for a running job.
+
+        Called by the harness launch callback immediately after the child is
+        spawned, before its first prompt. ``child_start`` is the process
+        creation identity used to reject a recycled PID at reconciliation;
+        None means the identity could not be read and execution stays
+        unverified.
+        """
+        with self._transaction():
+            job = self.get_job(job_id)
+            if job.status != "running":
+                raise QueueError(
+                    f"job {job_id!r} has status {job.status!r}; only a running"
+                    " job can register execution"
+                )
+            self._conn.execute(
+                "UPDATE jobs SET child_pgid = ?, child_start = ? WHERE job_id = ?",
+                (pgid, child_start, job_id),
+            )
+        return self.get_job(job_id)
+
+    def running_jobs(
+        self, *, dispatcher_token: str | None = None
+    ) -> tuple[Job, ...]:
+        """Running jobs, optionally only those owned by one dispatcher token."""
+        with self._lock:
+            if dispatcher_token is None:
+                rows = self._conn.execute(
+                    "SELECT * FROM jobs WHERE status = 'running'"
+                    " ORDER BY run_id, sequence"
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM jobs WHERE status = 'running'"
+                    " AND dispatcher_token = ? ORDER BY run_id, sequence",
+                    (dispatcher_token,),
+                ).fetchall()
+            return tuple(self._job_from_row(row) for row in rows)
 
     def complete_job(
         self, job_id: str, outcome: Literal["succeeded", "failed"]
@@ -330,8 +389,12 @@ class JobQueue:
                     f"job {job_id!r} has status {job.status!r}; only a running job"
                     " can be completed"
                 )
+            # Terminal transitions clear execution-ownership bookkeeping so a
+            # recycled PID is never mistaken for still-owned execution.
             self._conn.execute(
-                "UPDATE jobs SET status = ?, finished_at = ? WHERE job_id = ?",
+                "UPDATE jobs SET status = ?, finished_at = ?,"
+                " dispatcher_token = NULL, child_pgid = NULL, child_start = NULL"
+                " WHERE job_id = ?",
                 (outcome, _now(), job_id),
             )
             if outcome == "failed":
@@ -432,4 +495,9 @@ class JobQueue:
             turn_limit=(
                 None if row["turn_limit"] is None else int(row["turn_limit"])
             ),
+            dispatcher_token=(
+                None if row["dispatcher_token"] is None else str(row["dispatcher_token"])
+            ),
+            child_pgid=(None if row["child_pgid"] is None else int(row["child_pgid"])),
+            child_start=(None if row["child_start"] is None else float(row["child_start"])),
         )

@@ -8,6 +8,9 @@
  * - `orch_dispatch` tool: submits an assignment and returns the dispatch
  *   acknowledgement; the single session return is delivered later as a steer
  *   user message (guarded against compaction).
+ * - `orch_status` tool: read-only management of the current session's work —
+ *   status, history, session-owned cancellation, help, diagnostics, and the
+ *   role listing.
  * - `/orch help|on|off|doctor|status|history|do|stop` command.
  * - belowEditor footer widget: token/cost, mode, and worker role meter.
  * - Entry renderers for command echoes and Orchestra output; non-UI runs
@@ -18,12 +21,18 @@ import { createInterface } from "node:readline";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { calculateCost, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
+import { calculateCost, StringEnum, type Api, type Model, type Usage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 const PI_MODULE_ARGV = ["-m", "orchestra"];
+
+/** The Orchestra tools a session activates or deactivates as a unit. */
+const ORCHESTRA_TOOLS = ["orch_dispatch", "orch_status"];
+
+/** Management actions the model can take on its own session's Orchestra work. */
+const STATUS_ACTIONS = ["status", "history", "stop", "help", "doctor", "roles"] as const;
 
 /** Install record written beside the extension by `./orchestra init pi`:
  * this checkout's root and dedicated interpreter, so core invocations always
@@ -78,7 +87,7 @@ interface AckPayload {
   run_id?: string;
   role?: string;
   ack?: string;
-  jobs?: Array<{ worker_session_id?: string }>;
+  jobs?: Array<{ job_id?: string; sequence?: number; role?: string; worker_session_id?: string }>;
 }
 
 interface JobReturnPayload {
@@ -101,9 +110,19 @@ interface ReturnPayload {
 }
 
 interface StatusPayload {
+  rendered?: string;
   data?: {
     session_jobs?: Array<{ role?: string; status?: string }>;
   };
+}
+
+/** One core status read: rendered text for the display, structured data for
+ * the footer, plus whatever core reported on failure. */
+interface StatusRead {
+  ok: boolean;
+  rendered: string;
+  payload: StatusPayload | null;
+  output: string;
 }
 
 interface DispatchParams {
@@ -111,6 +130,13 @@ interface DispatchParams {
   additionalContext?: string;
   role?: string;
   taskLabel?: string;
+}
+
+interface StatusParams {
+  /** Declared as a string enum schema; the typed inference is opaque. */
+  action?: unknown;
+  limit?: number;
+  runId?: string;
 }
 
 /** Minimal surface of the Pi session manager used for parent-context
@@ -497,16 +523,31 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   function setToolsActive(enabled: boolean): void {
     const active = pi.getActiveTools();
-    const withoutOrchestra = active.filter((name) => name !== "orch_dispatch");
-    pi.setActiveTools(enabled ? [...withoutOrchestra, "orch_dispatch"] : withoutOrchestra);
+    const withoutOrchestra = active.filter((name) => !ORCHESTRA_TOOLS.includes(name));
+    pi.setActiveTools(enabled ? [...withoutOrchestra, ...ORCHESTRA_TOOLS] : withoutOrchestra);
   }
 
-  async function refreshFooter(ctx: UiCtx): Promise<void> {
-    if (!currentSessionId) return;
-    const result = await runOrchestra(["status", "--session-id", currentSessionId]);
-    if (result.code !== 0) return;
+  /** One core status read. Its `rendered` text serves the human-facing display
+   * and its structured data serves the footer, so a single subprocess covers
+   * both and no refresh ever spends two reads. */
+  async function readStatus(sessionId: string): Promise<StatusRead> {
+    const result = await runOrchestra(["status", "--session-id", sessionId, "--mode", mode ?? "on"]);
+    if (result.code !== 0) {
+      return { ok: false, rendered: "", payload: null, output: result.stderr || result.stdout };
+    }
     const payload = parseJsonLine<StatusPayload>(result.stdout);
-    if (!payload?.data) return;
+    return {
+      ok: true,
+      rendered: payload?.rendered ?? result.stdout,
+      payload,
+      output: result.stderr,
+    };
+  }
+
+  function applyFooter(ctx: UiCtx, sessionId: string, payload: StatusPayload | null): void {
+    // A response for a session that is no longer the active one is discarded,
+    // so a switched or shut-down session never receives a stale footer.
+    if (!payload?.data || currentSessionId !== sessionId) return;
     const roleCounts = Object.entries(
       (payload.data.session_jobs ?? []).reduce<Record<string, number>>((counts, job) => {
         if (job.status === "running" && job.role) counts[job.role] = (counts[job.role] ?? 0) + 1;
@@ -519,6 +560,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     const meter = renderRoleMeter(theme, roleCounts);
     if (meter) parts.push(meter);
     ctx.ui.setWidget("orchestra", parts.join(" ").split("\n"), { placement: "belowEditor" });
+  }
+
+  async function refreshFooter(ctx: UiCtx, sessionId: string | null = currentSessionId): Promise<void> {
+    if (!sessionId) return;
+    const status = await readStatus(sessionId);
+    applyFooter(ctx, sessionId, status.payload);
   }
 
   function deliverReturn(sessionId: string, message: string): void {
@@ -682,6 +729,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     return new Text(theme.fg("toolOutput", entry.data?.text ?? ""), 0, 0);
   });
 
+  function toolResult(text: string, isError = false) {
+    return { content: [{ type: "text" as const, text }], isError, details: undefined };
+  }
+
   pi.registerTool({
     name: "orch_dispatch",
     label: "Orchestra Dispatch",
@@ -706,7 +757,78 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         return { content: [{ type: "text", text: "orchestra dispatch failed (see stderr)." }], isError: true, details: undefined };
       }
       const ackRole = ack.role ?? "default role";
-      return { content: [{ type: "text", text: `${(ack.ack ?? "Assignment accepted.").trim()} Role: ${ackRole}.` }], isError: false, details: undefined };
+      // The identifiers the caller needs to follow up: the run id for
+      // `orch_status stop`, plus every job id the run contains (including jobs
+      // Submit created internally).
+      const jobLabels = (ack.jobs ?? [])
+        .map((job) => (job.job_id ? `${job.job_id}${job.role ? ` (${job.role})` : ""}` : ""))
+        .filter((label) => label.length > 0)
+        .join(", ");
+      const identifiers = [
+        ack.run_id ? `Run ${ack.run_id}.` : "",
+        jobLabels ? `Jobs: ${jobLabels}.` : "",
+      ]
+        .filter((part) => part.length > 0)
+        .join(" ");
+      const ackText = [`${(ack.ack ?? "Assignment accepted.").trim()} Role: ${ackRole}.`, identifiers]
+        .filter((part) => part.length > 0)
+        .join(" ");
+      return { content: [{ type: "text", text: ackText }], isError: false, details: undefined };
+    },
+  });
+
+  pi.registerTool({
+    name: "orch_status",
+    label: "Orchestra Status",
+    description:
+      "Manage the current Orchestra session: action status (active jobs for this session), history (recent completed runs, optional positive limit), stop (cancel an active run of this session using the run id from a dispatch acknowledgement), help (usage), doctor (setup diagnostics), roles (configured roles and models, read-only). Session ownership comes from the host runtime context, so another session's runs cannot be inspected or cancelled and no role or configuration is ever changed. Dispatched results return to this session automatically; never use this tool to wait or poll for them.",
+    parameters: Type.Object({
+      action: StringEnum(STATUS_ACTIONS, { description: "Management action to perform." }),
+      limit: Type.Optional(Type.Number({ description: "history only: how many completed runs to list (default 10)." })),
+      runId: Type.Optional(Type.String({ description: "stop only: the run id from a dispatch acknowledgement." })),
+    }),
+    async execute(_toolCallId, params: StatusParams, _signal, _onUpdate, ctx) {
+      const sessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
+      const ui = ctx as UiCtx;
+      const action = typeof params.action === "string" ? params.action : "";
+      if (!action || !STATUS_ACTIONS.includes(action as (typeof STATUS_ACTIONS)[number])) {
+        return toolResult(`Unknown orchestra action: ${action || "(none)"}. Use: ${STATUS_ACTIONS.join(", ")}.`, true);
+      }
+      if (action === "status") {
+        const status = await readStatus(sessionId);
+        if (!status.ok) return toolResult(`orchestra status failed: ${status.output}`, true);
+        applyFooter(ui, sessionId, status.payload);
+        return toolResult(status.rendered);
+      }
+      if (action === "history") {
+        const limit = params.limit;
+        if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+          return toolResult("history limit must be a positive integer.", true);
+        }
+        const args = ["history", "--session-id", sessionId];
+        if (limit !== undefined) args.push("--limit", String(limit));
+        const result = await runOrchestra(args);
+        if (result.code !== 0) {
+          return toolResult(result.stderr || result.stdout || "orchestra history failed.", true);
+        }
+        return toolResult(result.stdout);
+      }
+      if (action === "stop") {
+        const runId = params.runId?.trim();
+        if (!runId) return toolResult("stop requires the runId from a dispatch acknowledgement.", true);
+        const result = await runOrchestra(["stop", "--session-id", sessionId, "--run-id", runId]);
+        const status = await readStatus(sessionId);
+        applyFooter(ui, sessionId, status.payload);
+        if (result.code !== 0) {
+          return toolResult(result.stderr || result.stdout || "orchestra stop failed.", true);
+        }
+        return toolResult(result.stdout);
+      }
+      const passthrough = await runOrchestra([action]);
+      if (passthrough.code !== 0) {
+        return toolResult([passthrough.stdout, passthrough.stderr].filter(Boolean).join("\n") || `orchestra ${action} failed.`, true);
+      }
+      return toolResult(passthrough.stdout);
     },
   });
 
@@ -742,9 +864,9 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }
 
       if (subcommand === "status") {
-        const result = await runOrchestra(["status", "--session-id", sessionId]);
-        emit(result.stdout || result.stderr);
-        await refreshFooter(ctx);
+        const status = await readStatus(sessionId);
+        emit(status.ok ? status.rendered : status.output || "orchestra status failed.");
+        if (status.ok) applyFooter(ctx, sessionId, status.payload);
         return;
       }
 
@@ -797,6 +919,21 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       const result = await runOrchestra(["help"]);
       emitOutput(ctx, `Unknown /orch subcommand: ${subcommand}\n\n${result.stdout || result.stderr}`, "warning");
     },
+  });
+
+  pi.on("before_agent_start", async (_event, ctx) => {
+    // One status read per agent-run start, from the session identity in the
+    // runtime context: the same response refreshes the footer, so persisted
+    // state that changed without a lifecycle event is reflected before the
+    // run proceeds. No timer, polling loop, or watcher is involved, and a
+    // response for a session that has since been switched is discarded.
+    let sessionId: string;
+    try {
+      sessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
+    } catch {
+      return;
+    }
+    await refreshFooter(ctx as UiCtx, sessionId);
   });
 
   pi.on("session_start", async (_event, ctx) => {

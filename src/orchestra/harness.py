@@ -9,6 +9,7 @@ arrive as arguments.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -63,7 +64,16 @@ class Outcome:
 
 @runtime_checkable
 class Handle(Protocol):
-    """Execution state the dispatcher can use between contract calls."""
+    """Execution state the dispatcher can use between contract calls.
+
+    ``on_launch`` is an optional callback the dispatcher sets so a harness
+    reports the child's process-group id and creation identity immediately
+    after launch, before the child's first prompt. It is invoked as
+    ``on_launch(pgid, child_start)`` where ``child_start`` is None when the
+    identity could not be read.
+    """
+
+    on_launch: Callable[[int, float | None], None] | None
 
 
 @runtime_checkable

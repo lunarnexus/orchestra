@@ -26,6 +26,7 @@ import shutil
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -34,8 +35,10 @@ from pathlib import Path
 from orchestra.config import OrchestraConfig, load_orchestra_config
 from orchestra.dispatcher import JobEvent
 from orchestra.dispatcher import run as run_dispatcher
+from orchestra.lifetime import DispatcherLifetimeLock
 from orchestra.pi_harness import AgentPlan, PiHarness
 from orchestra.queue import Job, JobQueue
+from orchestra.reconcile import ReconcileReport, reconcile_abandoned
 from orchestra.results import assemble, assemble_session
 from orchestra.status import render_status
 from orchestra.status import status as status_query
@@ -57,6 +60,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "status": _cmd_status,
         "history": _cmd_history,
         "stop": _cmd_stop,
+        "roles": _cmd_roles,
         "help": _cmd_help,
         "doctor": _cmd_doctor,
         "initial-mode": _cmd_initial_mode,
@@ -85,6 +89,7 @@ def _build_parser() -> argparse.ArgumentParser:
     stop = subparsers.add_parser("stop", help="cancel an active run owned by the session")
     stop.add_argument("--session-id", required=True)
     stop.add_argument("--run-id", required=True)
+    subparsers.add_parser("roles", help="list the configured roles (read-only)")
     session_return = subparsers.add_parser(
         "session-return",
         help="assemble one consolidated return across completed runs of a session",
@@ -103,6 +108,18 @@ def _load(args: argparse.Namespace) -> OrchestraConfig:
 
 def _queue(config: OrchestraConfig) -> JobQueue:
     return JobQueue(Path(config.runtime.state_dir) / QUEUE_FILENAME)
+
+
+def _unresolved(report: ReconcileReport) -> list[dict[str, str]]:
+    """Generic blocker view of the work one reconciliation pass could not resolve.
+
+    A retained job stays running because its dispatcher loss is unconfirmed
+    (no lifetime lock) or its execution identity is unverified, so it must not
+    be finalized on a guess. Each entry carries the job id and the reason the
+    report recorded, so a caller surfaces a truthful blocker instead of
+    silently discarding the report. The shape is host-neutral and additive.
+    """
+    return [{"job_id": entry.job_id, "reason": entry.detail} for entry in report.retained]
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +167,11 @@ def _cmd_dispatch(args: argparse.Namespace) -> None:
     )
     harness = _harness_for(config, submission)
     stop_event = _stop_event(config, submission.run_id)
+    # A per-dispatcher OS lifetime lock, acquired before claiming and held for
+    # the whole run, is what reconciliation trusts to detect dispatcher death.
+    # The child harness drops the descriptor (close-on-exec), so an orphaned
+    # child never keeps its own abandoned work falsely live.
+    dispatcher_token = uuid.uuid4().hex
     runtime = config.runtime
     # Forward each dispatcher lifecycle transition as a typed intermediate
     # JSONL message on the SAME stdout stream as the ack and final return.
@@ -172,20 +194,23 @@ def _cmd_dispatch(args: argparse.Namespace) -> None:
                 flush=True,
             )
 
-    run_dispatcher(
-        queue,
-        config.runtime.state_dir,
-        harness,
-        submission.run_id,
-        global_limit=runtime.concurrency.global_limit,
-        per_session_limit=runtime.concurrency.per_session_limit,
-        model_limits={
-            name: limit.concurrency for name, limit in config.catalog.model_limits.items()
-        },
-        payloads=dict(submission.payloads),
-        stop_event=stop_event,
-        on_event=on_event,
-    )
+    with DispatcherLifetimeLock.create(config.runtime.state_dir, dispatcher_token):
+        run_dispatcher(
+            queue,
+            config.runtime.state_dir,
+            harness,
+            submission.run_id,
+            global_limit=runtime.concurrency.global_limit,
+            per_session_limit=runtime.concurrency.per_session_limit,
+            model_limits={
+                name: limit.concurrency
+                for name, limit in config.catalog.model_limits.items()
+            },
+            payloads=dict(submission.payloads),
+            stop_event=stop_event,
+            on_event=on_event,
+            dispatcher_token=dispatcher_token,
+        )
     _record_notes(config, submission, harness)
     stopped = getattr(stop_event, "stop_requested", False)
     if stopped:
@@ -224,8 +249,21 @@ def _cmd_session_return(args: argparse.Namespace) -> None:
     and inject the single return instead of per-run returns.
     """
     config = _load(args)
+    queue = _queue(config)
+    # Reconcile abandoned execution first so a dead dispatcher cannot keep the
+    # consolidated session return permanently blocked by a stale running row.
+    report = reconcile_abandoned(queue, config.runtime.state_dir, parent_session=args.session_id)
+    unresolved = _unresolved(report)
+    if unresolved:
+        # A job retained as unresolved is genuinely still running, so assembly
+        # must stay blocked; report the recorded reason through the error path
+        # rather than a generic outstanding-count message.
+        raise ValueError(
+            "session return is blocked by unresolved work: "
+            + "; ".join(f"{entry['job_id']}: {entry['reason']}" for entry in unresolved)
+        )
     assembled = assemble_session(
-        _queue(config),
+        queue,
         config.runtime.state_dir,
         config.prompts,
         args.session_id,
@@ -354,11 +392,25 @@ def _now() -> str:
 
 def _cmd_status(args: argparse.Namespace) -> None:
     config = _load(args)
-    data = status_query(_queue(config), args.session_id)
+    queue = _queue(config)
+    # Reconcile abandoned execution from confirmed-dead dispatchers before
+    # reading, so status and the host footer never show a stale running job.
+    # This is the shared recovery path the Pi prompt-start refresh reuses.
+    report = reconcile_abandoned(queue, config.runtime.state_dir)
+    unresolved = _unresolved(report)
+    data = status_query(queue, args.session_id)
+    rendered = render_status(data, args.mode)
+    if unresolved:
+        # Work that stays running on an unconfirmed loss must be readable too,
+        # so the footer shows why a running job has not reached a terminal state.
+        rendered += "Unresolved (needs attention):\n" + "".join(
+            f"  {entry['job_id']}: {entry['reason']}\n" for entry in unresolved
+        )
     print(
         json.dumps(
             {
-                "rendered": render_status(data, args.mode),
+                "rendered": rendered,
+                "unresolved": unresolved,
                 "data": {
                     "session_jobs": [asdict(entry) for entry in data.session_jobs],
                     "global_running": data.global_running,
@@ -374,7 +426,10 @@ def _cmd_status(args: argparse.Namespace) -> None:
 
 def _cmd_history(args: argparse.Namespace) -> None:
     config = _load(args)
-    jobs = _queue(config).list_jobs()
+    queue = _queue(config)
+    report = reconcile_abandoned(queue, config.runtime.state_dir, parent_session=args.session_id)
+    unresolved = _unresolved(report)
+    jobs = queue.list_jobs()
     runs: dict[str, list[Job]] = {}
     for job in jobs:
         if job.parent_session != args.session_id:
@@ -397,7 +452,13 @@ def _cmd_history(args: argparse.Namespace) -> None:
             }
         )
     entries.sort(key=lambda entry: str(entry["finished_at"]), reverse=True)
-    print(json.dumps({"runs": entries[: args.limit]}, separators=(",", ":")), flush=True)
+    print(
+        json.dumps(
+            {"runs": entries[: args.limit], "unresolved": unresolved},
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
 
 
 def _cmd_stop(args: argparse.Namespace) -> None:
@@ -411,6 +472,12 @@ def _cmd_stop(args: argparse.Namespace) -> None:
     if all(job.status in ("succeeded", "failed", "skipped") for job in jobs):
         print(json.dumps({"run_id": args.run_id, "stopped": True, "already_finished": True}), flush=True)
         return
+    # Cancel through the shared reconciliation first: a dead dispatcher will
+    # never observe the sentinel, so finalize its abandoned work (and
+    # terminate verified execution) now. A live dispatcher's work is left for
+    # the sentinel cooperative path below.
+    report = reconcile_abandoned(queue, config.runtime.state_dir, run_id=args.run_id)
+    unresolved = _unresolved(report)
     sentinel = Path(config.runtime.state_dir) / STOP_DIRNAME / args.run_id
     sentinel.parent.mkdir(parents=True, exist_ok=True)
     sentinel.write_text("stop\n", encoding="utf-8")
@@ -423,7 +490,15 @@ def _cmd_stop(args: argparse.Namespace) -> None:
     jobs = queue.list_jobs(args.run_id)
     terminal = all(job.status in ("succeeded", "failed", "skipped") for job in jobs)
     print(
-        json.dumps({"run_id": args.run_id, "stopped": terminal, "already_finished": False}),
+        json.dumps(
+            {
+                "run_id": args.run_id,
+                "stopped": terminal,
+                "already_finished": False,
+                "unresolved": unresolved,
+            },
+            separators=(",", ":"),
+        ),
         flush=True,
     )
 
@@ -431,7 +506,6 @@ def _cmd_stop(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # help / doctor / initial-mode
 # ---------------------------------------------------------------------------
-
 HELP_TEXT = """Orchestra 2 — submit work, track it, get one return.
 
 Dispatch:
@@ -446,6 +520,7 @@ Session operations:
   status --session-id ID --mode MODE    Active jobs for the session, global counts, last completed run.
   history --session-id ID [--limit N]   The last N completed runs for the session, newest first.
   stop --session-id ID --run-id RUN     Cancel an active run owned by the session.
+  roles                                 List configured roles, models, and skills (read-only).
   session-return --session-id ID --run-id RUN [--run-id RUN ...]
     Assembles one consolidated return across the explicitly listed completed
     runs of the session. Assembly is blocked loudly while any job of the
@@ -460,6 +535,34 @@ Setup:
 Roles, models, harnesses, budgets, and skills come from configuration; see
 the project README for the YAML layout.
 """
+
+
+def _cmd_roles(args: argparse.Namespace) -> None:
+    """Print the configured role catalog. Read-only: nothing is mutated."""
+    config = _load(args)
+    catalog = config.catalog
+    print(
+        json.dumps(
+            {
+                "default_role": catalog.default_role,
+                "roles": [
+                    {
+                        "name": name,
+                        "enabled": role.enabled,
+                        "model": role.model,
+                        "harness_config": role.harness_config,
+                        "auto_verify": role.auto_verify,
+                        "parent_context": role.parent_context,
+                        "skills": list(role.skills),
+                        "dispatch_hint": role.dispatch_hint,
+                    }
+                    for name, role in catalog.roles.items()
+                ],
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
 
 
 def _cmd_help(args: argparse.Namespace) -> None:

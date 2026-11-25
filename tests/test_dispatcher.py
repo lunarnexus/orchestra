@@ -14,6 +14,7 @@ import pytest
 
 from orchestra.artifacts import Response, recall
 from orchestra.dispatcher import JobEvent, run
+from orchestra.harness import Budgets, CommandJob, Handle, Outcome
 from orchestra.queue import Job, JobQueue
 from orchestra.shell import ShellHarness
 
@@ -259,6 +260,151 @@ def test_stop_terminates_running_and_fails_them(
     assert responses[running.job_id] == (
         "failed: terminated (hard timeout or cancellation)"
     )
+
+
+def test_dispatch_registers_dispatch_and_execution_identity(
+    queue: JobQueue, tmp_path: Path
+) -> None:
+    # A launched job records its owning dispatcher token at claim time and its
+    # execution-group identity immediately after launch, so a later dispatcher
+    # loss can be reconciled against a durable record.
+    slow = _add(queue, "r1")
+    thread = threading.Thread(
+        target=run,
+        args=(queue, tmp_path / "state", ShellHarness(), "r1"),
+        kwargs={
+            "global_limit": 1,
+            "per_session_limit": 1,
+            "payloads": {slow.job_id: ["sleep", "5"]},
+            "dispatcher_token": "tok-xyz",
+        },
+    )
+    thread.start()
+    try:
+        _wait_status(queue, slow.job_id, "running")
+        for _ in range(500):
+            job = queue.get_job(slow.job_id)
+            if job.child_pgid is not None:
+                break
+            time.sleep(0.01)
+        job = queue.get_job(slow.job_id)
+        assert job.dispatcher_token == "tok-xyz"
+        assert job.child_pgid is not None
+        assert job.child_start is not None
+    finally:
+        harness_pgid = queue.get_job(slow.job_id).child_pgid
+        if harness_pgid is not None:
+            import os
+
+            try:
+                os.killpg(harness_pgid, 9)
+            except ProcessLookupError:
+                pass
+        thread.join(timeout=10)
+
+
+def test_registration_failure_terminates_and_fails_untracked_launch(
+    queue: JobQueue, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A launched child whose execution identity cannot be durably registered
+    # would run unowned and could outlive this dispatcher with nothing left to
+    # terminate it. The dispatcher must fail closed: surface a visible error,
+    # mark the job failed, and leave no orphaned running group.
+    slow = _add(queue, "r1")
+    launched: list[int] = []
+
+    def boom(job_id: str, *, pgid: int, child_start: float | None) -> None:
+        launched.append(pgid)
+        raise RuntimeError("injected queue registration failure")
+
+    monkeypatch.setattr(queue, "register_execution", boom)
+    _run(queue, tmp_path, "r1", {slow.job_id: ["sleep", "5"]})
+
+    # The injected failure really fired against a real launched child.
+    assert launched, "launch registration callback never ran"
+    pgid = launched[0]
+
+    # The job failed with a visible registration error through the evidence path.
+    assert queue.get_job(slow.job_id).status == "failed"
+    responses = _responses(tmp_path, "r1")
+    assert list(responses) == [slow.job_id]  # recorded exactly once
+    assert "execution registration failed" in responses[slow.job_id]
+
+    # No orphan: the launched process group was terminated, not left running.
+    for _ in range(200):
+        try:
+            reaped, _status = os.waitpid(pgid, os.WNOHANG)
+        except ChildProcessError:
+            break  # already gone
+        if reaped == pgid:
+            break  # terminated and reaped here
+        time.sleep(0.01)
+    else:
+        pytest.fail(f"launched group {pgid} still running after failed registration")
+
+
+class _BadSetupHarness:
+    """Harness whose handle rejects dispatcher setup (mirrors a bare object)."""
+
+    def __init__(self) -> None:
+        self.executed: list[str] = []
+
+    def execute(
+        self, job: CommandJob, budgets: Budgets, handle: Handle | None = None
+    ) -> Outcome:
+        self.executed.append(job.job_id)  # must never be reached
+        raise AssertionError("execute must not run when handle setup fails")
+
+    def new_handle(self) -> Handle:
+        return object()  # type: ignore[return-value]  # no __dict__: on_launch raises
+
+    def request_wrap_up(self, handle: Handle) -> None:
+        return None
+
+    def terminate(self, handle: Handle) -> None:
+        return None
+
+
+def test_failing_handle_setup_yields_durable_failure_and_run_returns(
+    queue: JobQueue, tmp_path: Path
+) -> None:
+    """A handle that rejects setup must fail durably, never hang the run.
+
+    Regression for the fan-in hang: ``handle.on_launch`` wiring once ran
+    outside the worker's try/finally, so a handle rejecting the assignment
+    killed the thread before the terminal state/wake, leaving the job stuck in
+    "running" and the dispatch loop spinning forever. Setup must instead record
+    a durable failure and wake the loop.
+    """
+    job = _add(queue, "r1")
+    harness = _BadSetupHarness()
+
+    thread = threading.Thread(
+        target=lambda: run(
+            queue,
+            tmp_path / "state",
+            harness,
+            "r1",
+            global_limit=1,
+            per_session_limit=1,
+            payloads={job.job_id: ["true"]},
+        ),
+        daemon=True,
+    )
+    thread.start()
+    thread.join(timeout=10)  # bounded: the guarded-setup fix makes run() return
+    assert not thread.is_alive(), (
+        "run() hung: worker died on handle setup without waking the loop"
+    )
+
+    # Setup failed before execute, so the command never launched.
+    assert harness.executed == []
+    # The failure is durable and visible through the evidence path, not a
+    # silent thread death leaving the job stuck in "running".
+    assert queue.get_job(job.job_id).status == "failed"
+    responses = _responses(tmp_path, "r1")
+    assert list(responses) == [job.job_id]  # recorded exactly once
+    assert "on_launch" in responses[job.job_id]
 
 
 def test_loop_exits_and_second_run_returns_promptly(

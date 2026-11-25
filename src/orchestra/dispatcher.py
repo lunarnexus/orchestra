@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Literal
 
 from orchestra.artifacts import Response, append, recall
-from orchestra.harness import Budgets, CommandJob, Harness, HarnessError, Outcome
+from orchestra.harness import Budgets, CommandJob, Handle, Harness, HarnessError, Outcome
 from orchestra.queue import Job, JobQueue, Status, run_id_of
 
 _TERMINAL = frozenset({"succeeded", "failed", "skipped"})
@@ -250,7 +250,7 @@ class _Run:
 
     def __init__(self) -> None:
         self.cond = threading.Condition()
-        self.handles: dict[str, object] = {}
+        self.handles: dict[str, Handle] = {}
         self.threads: list[threading.Thread] = []
 
     def wake(self) -> None:
@@ -270,6 +270,7 @@ def run(
     payloads: Mapping[str, Sequence[str]],
     stop_event: threading.Event | None = None,
     on_event: Callable[[JobEvent], None] | None = None,
+    dispatcher_token: str | None = None,
 ) -> None:
     """Execute every queued job of ``run_id`` to a terminal state.
 
@@ -310,6 +311,7 @@ def run(
             per_session_limit=per_session_limit,
             model_limits=dict(model_limits) if model_limits is not None else None,
             run_id=run_id,
+            dispatcher_token=dispatcher_token,
         )
         if claimed is not None:
             # The claim has already set the job running durably; publish the
@@ -353,18 +355,42 @@ def _execute_job(
 ) -> None:
     """Run one claimed job and record its outcome; always wakes the loop."""
     handle = harness.new_handle()
-    with state.cond:
-        state.handles[job.job_id] = handle
+    # Register the child's execution identity durably as soon as it launches,
+    # before its first prompt, so reconciliation can later attribute and
+    # terminate a group that outlives a dispatcher that died. Tracking is
+    # safety-critical: if registration fails the just-launched group would run
+    # unowned and could outlive this dispatcher with nothing left to terminate
+    # it, so fail closed instead of continuing untracked — terminate the group
+    # we just launched and abort so the worker records a visible failure.
+    def _register(pgid: int, child_start: float | None) -> None:
+        try:
+            queue.register_execution(job.job_id, pgid=pgid, child_start=child_start)
+        except Exception as exc:  # re-raised below: broad catch aborts untracked launch
+            with suppress(Exception):  # best-effort cleanup: never leave an orphan
+                harness.terminate(handle)
+            raise RuntimeError(
+                f"execution registration failed; aborted untracked launch: {exc}"
+            ) from exc
+
     timer: threading.Timer | None = None
-    if job.hard_timeout is not None:
-        # Dispatcher-owned hard timeout: terminate if execute has not
-        # returned by the deadline (plugins may also enforce it internally).
-        timer = threading.Timer(
-            job.hard_timeout, _terminate_quietly, (harness, handle)
-        )
-        timer.daemon = True
-        timer.start()
     try:
+        # Wire the launch-identity callback and publish the handle before
+        # execute can launch anything, but keep this setup INSIDE the guarded
+        # path: a handle that rejects the callback assignment, or any other
+        # setup fault, must record a durable failure and wake the loop rather
+        # than silently killing this worker and leaving the job stuck in
+        # "running" forever. See the never-die-never-hang invariant below.
+        handle.on_launch = _register
+        with state.cond:
+            state.handles[job.job_id] = handle
+        if job.hard_timeout is not None:
+            # Dispatcher-owned hard timeout: terminate if execute has not
+            # returned by the deadline (plugins may also enforce it internally).
+            timer = threading.Timer(
+                job.hard_timeout, _terminate_quietly, (harness, handle)
+            )
+            timer.daemon = True
+            timer.start()
         argv = tuple(payloads.get(job.job_id, ()))
         if not argv:
             was_pending = _pending_ids(queue, run_id)
@@ -406,7 +432,7 @@ def _execute_job(
         state.wake()
 
 
-def _terminate_quietly(harness: Harness, handle: object) -> None:
+def _terminate_quietly(harness: Harness, handle: Handle) -> None:
     try:
         harness.terminate(handle)
     except HarnessError:

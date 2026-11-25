@@ -10,12 +10,12 @@ have no meaning for commands and are ignored.
 
 from __future__ import annotations
 
-import os
-import signal
 import subprocess
 import time
+from collections.abc import Callable
 
 from orchestra.harness import Budgets, CommandJob, Handle, HarnessError, Outcome
+from orchestra.terminate import launch_start_time, terminate_group
 
 
 class ShellHandle:
@@ -25,6 +25,7 @@ class ShellHandle:
         self.job_id: str | None = None
         self.process: subprocess.Popen[str] | None = None
         self.terminated = False
+        self.on_launch: Callable[[int, float | None], None] | None = None
 
     @property
     def pgid(self) -> int | None:
@@ -45,7 +46,11 @@ class ShellHarness:
     ) -> Outcome:
         """Run the command, capturing stdout/stderr, enforcing the hard timeout."""
         if not isinstance(handle, ShellHandle):
+            # Preserve any launch-registration callback the dispatcher set on
+            # the incoming handle even when it is not a ShellHandle.
+            on_launch = getattr(handle, "on_launch", None)
             handle = ShellHandle()
+            handle.on_launch = on_launch
         assert isinstance(handle, ShellHandle)
         shell_handle = handle
 
@@ -67,6 +72,8 @@ class ShellHarness:
                 f"{job.argv[0]!r}: {exc}"
             ) from exc
         shell_handle.process = process
+        if shell_handle.on_launch is not None:
+            shell_handle.on_launch(process.pid, launch_start_time(process.pid))
 
         terminated = False
         deadline = (
@@ -113,18 +120,13 @@ class ShellHarness:
         assert isinstance(handle, ShellHandle)
 
     def terminate(self, handle: Handle) -> None:
-        """Kill the command's whole process group."""
+        """Terminate the command's whole process group via the shared helper."""
         if not isinstance(handle, ShellHandle):
             raise HarnessError("terminate expects a ShellHandle from this harness")
         pgid = handle.pgid
         if pgid is None:
             raise HarnessError("cannot terminate a command that has not started")
         handle.terminated = True
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass  # already gone
-        except PermissionError:
-            # macOS quirk: killpg on a group whose leader is an unreaped
-            # zombie reports EPERM instead of ESRCH; the group is gone.
-            pass
+        # Bounded SIGTERM then SIGKILL; the group is this harness's own child,
+        # so identity is inherent and no start token is needed.
+        terminate_group(pgid)

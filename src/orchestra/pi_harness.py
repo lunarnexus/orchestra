@@ -23,17 +23,17 @@ import json
 import os
 import queue as queue_mod
 import re
-import signal
 import subprocess
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
 
 from orchestra.harness import Budgets, CommandJob, Handle, HarnessError, Outcome
 from orchestra.shell import ShellHarness
+from orchestra.terminate import launch_start_time, terminate_group
 
 # Recorded outcome reasons carry this mark (see orchestra.guidance) so the
 # return category becomes budget_exhausted.
@@ -90,6 +90,7 @@ class _PiRpcHandle:
         self.wrapped_up = False
         self.terminated = False
         self.note = JobExecutionNote()
+        self.on_launch: Callable[[int, float | None], None] | None = None
 
 
 class PiHarness:
@@ -179,6 +180,10 @@ class PiHarness:
         except OSError as exc:
             raise HarnessError(f"failed to launch pi for job {job_id!r}: {exc}") from exc
         rpc_handle.process = process
+        # Register launch identity durably before the first prompt so a
+        # dispatcher that dies later can be reconciled against a live group.
+        if rpc_handle.on_launch is not None:
+            rpc_handle.on_launch(process.pid, launch_start_time(process.pid))
 
         lines: queue_mod.Queue[tuple[str, str] | None] = queue_mod.Queue()
         threading.Thread(target=_pump, args=(process.stdout, lines), daemon=True).start()
@@ -320,10 +325,9 @@ class PiHarness:
                 stdin.close()
             except (OSError, ValueError):
                 pass
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
+        # Shared bounded SIGTERM-then-SIGKILL termination of the group (this
+        # harness's own child, so identity is inherent).
+        terminate_group(process.pid)
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:

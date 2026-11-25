@@ -197,6 +197,8 @@ The orchestrator does not launch B. Manual `/orch verify <job-id>` uses the iden
 - Results exposes the failure and available evidence.
 - Guidance advises the orchestrator when judgment, decomposition, or resubmission is needed.
 
+When a dispatcher dies, Orchestra terminates its surviving owned execution and records unfinished work as failed, preserving available evidence and resolving dependent jobs. Originating-session death alone does not stop healthy execution.
+
 Predetermined follow-ups remain inside Orchestra. Decisions requiring the orchestrator return to it with evidence and guidance.
 
 ## Delegation behavior

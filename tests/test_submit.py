@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,7 @@ from orchestra.artifacts import Response, Task, recall, render_reference, scoped
 from orchestra.config import OrchestraConfig, load_orchestra_config
 from orchestra.dispatcher import recorded_reasons, run
 from orchestra.guidance import BUDGET_EXHAUSTED, derive_return_category
-from orchestra.harness import CommandJob, Outcome
+from orchestra.harness import CommandJob, Handle, Outcome
 from orchestra.queue import JobQueue, JobSpec, QueueError
 from orchestra.shell import ShellHarness
 from orchestra.submit import Assignment, Submission, SubmitError, submit
@@ -754,6 +755,18 @@ def test_invalid_submissions_are_loud(queue: JobQueue, config: OrchestraConfig) 
 # --- shared preparation and upstream-result handoffs -----------------------
 
 
+@dataclass
+class _Handle:
+    """Minimal test double satisfying the runtime ``Handle`` contract.
+
+    The dispatcher assigns ``handle.on_launch`` inside the worker's guarded
+    path; a bare ``object()`` has no ``__dict__`` and rejects that assignment,
+    so the double must be a real attribute-bearing handle like a production one.
+    """
+
+    on_launch: Callable[[int, float | None], None] | None = None
+
+
 class _OrderHarness:
     """Controlled harness: records claim order and returns per-job answers.
 
@@ -780,8 +793,8 @@ class _OrderHarness:
             finished_at=0.0,
         )
 
-    def new_handle(self) -> object:
-        return object()
+    def new_handle(self) -> Handle:
+        return _Handle()
 
     def request_wrap_up(self, handle: object) -> None:
         return None
