@@ -85,6 +85,7 @@ roles:
 """
 
 PROMPTS_YAML = """
+delegation_guidance: delegate advice
 dispatch_ack: ack text
 budget_intervention: budget
 return_hint_all_succeeded: ok

@@ -18,6 +18,24 @@ dispatch_ack: |-
   follow-up finishes.
 
 # ---------------------------------------------------------------------------
+# delegation_guidance: pre-dispatch behavior text injected into the core
+# dispatch tool description so the orchestrator sees delegation-by-default
+# guidance before its first opportunity to choose direct work.
+# ---------------------------------------------------------------------------
+delegation_guidance: |-
+  Delegate by default. Offload research, file inspection, implementation,
+  testing, and review to subagents whenever they can perform the work, keeping
+  detailed working context out of the orchestrator's conversation. The
+  orchestrator coordinates assignments, dependencies, decisions, and returned
+  evidence rather than repeating delegated work. Before acting, inspect the
+  whole request for independent slices. Dispatch every currently unblocked
+  independent slice in parallel, one call per slice; follow dependency order
+  for dependent work. For a sequential task, delegate the next executable
+  slice rather than doing it yourself. Give each subagent clear ownership and
+  sufficient context, preferably through artifact references. Trust successful
+  returns and reuse their evidence.
+
+# ---------------------------------------------------------------------------
 # budget_intervention: text sent to a subagent when its turn limit or soft
 # timeout is reached, telling it to stop and produce a continuation handoff.
 # ---------------------------------------------------------------------------

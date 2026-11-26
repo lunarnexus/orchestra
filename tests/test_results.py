@@ -82,6 +82,7 @@ shell:
 """
 
 PROMPTS_YAML = """
+delegation_guidance: delegate
 dispatch_ack: ack
 return_hint_all_succeeded: all good
 return_hint_verification_disagreement: disagree

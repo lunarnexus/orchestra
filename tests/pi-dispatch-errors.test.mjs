@@ -33,6 +33,10 @@ const fillerLines = 4000;
 writeFileSync(join(temp, 'python3'), [
   `#!${process.execPath}`,
   "const args = process.argv.slice(2);",
+  "if (args.includes('tool-info')) {",
+  `  process.stdout.write(JSON.stringify(${JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"goal.",additionalContext:"ctx.",role:"role.",taskLabel:"label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"action.",limit:"limit.",runId:"runId."}},command:{description:"/orch"},actions:["status","history","stop","help","doctor","roles"]})}));`,
+  "  process.exit(0);",
+  "}",
   "if (args.includes('dispatch')) {",
   "  process.stderr.write('Traceback (most recent call last):\\n');",
   `  for (let i = 0; i < ${fillerLines}; i += 1) process.stderr.write(${JSON.stringify(FILLER + ' ')} + i + '\\n');`,
@@ -105,7 +109,7 @@ try {
   const jiti = createJiti(import.meta.url);
   const { default: activate } = await jiti.import('../extensions/pi/orchestra/index.ts');
   const tools = new Map();
-  activate({
+  await activate({
     on() {},
     registerTool: (tool) => tools.set(tool.name, tool),
     registerCommand() {},

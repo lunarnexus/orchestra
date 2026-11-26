@@ -21,6 +21,10 @@ const failPath = join(temp, 'fail');
 writeFileSync(join(temp, 'python3'), `#!${process.execPath}
 const fs = require('node:fs');
 const argv = process.argv.join(' ');
+if (argv.includes('tool-info')) {
+  process.stdout.write(JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"Assignment text.",additionalContext:"Extra context.",role:"Role name.",taskLabel:"Short label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"Action.",limit:"Limit.",runId:"Run ID."}},command:{description:"/orch help|on|off|doctor|status|history|do|stop"},actions:["status","history","stop","help","doctor","roles"]}));
+  process.exit(0);
+}
 if (argv.includes('initial-mode')) { console.log('on'); process.exit(0); }
 fs.appendFileSync(${JSON.stringify(callsPath)}, 'status\\n');
 if (fs.existsSync(${JSON.stringify(failPath)})) {
@@ -64,7 +68,7 @@ try {
   const entries = [];
   let tools = [];
   let footer;
-  activate({
+  await activate({
     on: (name, handler) => hooks.set(name, handler),
     registerTool() {},
     registerCommand: (name, definition) => commands.set(name, definition),

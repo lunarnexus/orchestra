@@ -30,6 +30,10 @@ assert.ok(realPython, 'a real python3 interpreter is required');
 writeFileSync(join(temp, 'python3'), `#!${process.execPath}
 const { spawn } = require('node:child_process');
 const args = process.argv.slice(2);
+if (args.includes('tool-info')) {
+  process.stdout.write(JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"Assignment text.",additionalContext:"Extra context.",role:"Role name.",taskLabel:"Short label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"Action.",limit:"Limit.",runId:"Run ID."}},command:{description:"/orch help|on|off|doctor|status|history|do|stop"},actions:["status","history","stop","help","doctor","roles"]}));
+  process.exit(0);
+}
 const goalIndex = args.indexOf('--goal');
 const goal = goalIndex >= 0 ? (args[goalIndex + 1] || '') : '';
 const delay = args[0] === 'dispatch' && goal.includes('beta') ? 200 : 0;
@@ -155,7 +159,7 @@ try {
   const tools = new Map();
   const steers = [];
   const notifications = [];
-  activate({
+  await activate({
     on: (name, handler) => hooks.set(name, handler),
     registerTool: (t) => tools.set(t.name, t),
     registerCommand() {}, registerEntryRenderer() {},

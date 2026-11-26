@@ -39,6 +39,7 @@ RETURN_CATEGORIES: tuple[str, ...] = (
 )
 ACK_PROMPT_KEY = "dispatch_ack"
 BUDGET_INTERVENTION_KEY = "budget_intervention"
+DELEGATION_GUIDANCE_KEY = "delegation_guidance"
 
 
 def _return_hint_key(category: str) -> str:
@@ -48,6 +49,7 @@ def _return_hint_key(category: str) -> str:
 REQUIRED_PROMPT_KEYS: tuple[str, ...] = (
     ACK_PROMPT_KEY,
     BUDGET_INTERVENTION_KEY,
+    DELEGATION_GUIDANCE_KEY,
     *(_return_hint_key(category) for category in RETURN_CATEGORIES),
 )
 

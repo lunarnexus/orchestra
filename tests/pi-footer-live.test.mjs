@@ -26,6 +26,10 @@ try {
     `const EV = ${JSON.stringify(eventsPath)};`,
     `const args = process.argv.slice(2);`,
     `const sub = args[2];`,
+    `if (args.includes('tool-info')) {`,
+    `  process.stdout.write(JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"Assignment text.",additionalContext:"Extra context.",role:"Role name.",taskLabel:"Short label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"Action.",limit:"Limit.",runId:"Run ID."}},command:{description:"/orch"},actions:["status","history","stop","help","doctor","roles"]}));`,
+    `  process.exit(0);`,
+    `}`,
     `if (sub === 'initial-mode') { console.log('on'); process.exit(0); }`,
     `if (sub === 'status') {`,
     `  let n = 0; try { n = parseInt(fs.readFileSync(C, 'utf8'), 10) || 0; } catch {}`,
@@ -34,7 +38,7 @@ try {
     `}`,
     `if (sub === 'dispatch') {`,
     `  fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
-    `  console.log(JSON.stringify({ type: 'ack', run_id: 'footer-live-run', role: 'builder', ack: 'Assignment accepted.', jobs: [{ worker_session_id: 'w1' }] }));`,
+    `  console.log(JSON.stringify({ type: 'ack', run_id: 'footer-live-run', role: 'builder', ack: 'Assignment accepted.', jobs: [{ job_id: 'footer-live-run:1', worker_session_id: 'w1' }] }));`,
     // Forward test-enqueued lifecycle event lines as they appear (test-side
     // polling, not the extension). Never emits a return, so nothing here lets
     // a late return line mask whether the meter updated live.
@@ -59,7 +63,7 @@ try {
   const hooks = new Map();
   const tools = new Map();
   let footer = '';
-  activate({
+  await activate({
     on: (name, handler) => hooks.set(name, handler),
     registerTool: (t) => tools.set(t.name, t),
     registerCommand() {}, registerEntryRenderer() {},

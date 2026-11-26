@@ -17,12 +17,16 @@ try {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 const cmd = args[2];
+if (args.includes('tool-info')) {
+  process.stdout.write(JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"Assignment text.",additionalContext:"Extra context.",role:"Role name.",taskLabel:"Short label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"Action.",limit:"Limit.",runId:"Run ID."}},command:{description:"/orch"},actions:["status","history","stop","help","doctor","roles"]}));
+  process.exit(0);
+}
 let input = '';
 process.stdin.on('data', (d) => { input += d; });
 process.stdin.on('end', () => {
   if (cmd === 'dispatch') {
     fs.writeFileSync(${JSON.stringify(capturePath)}, input);
-    process.stdout.write(JSON.stringify({ run_id: 'test-run', role: 'builder', ack: 'Assignment accepted.', jobs: [] }) + '\\n');
+    process.stdout.write(JSON.stringify({ type: 'ack', run_id: 'test-run', role: 'builder', ack: 'Assignment accepted.', jobs: [] }) + '\\n');
     process.exit(0);
   }
   if (cmd === 'status') {
@@ -39,7 +43,7 @@ process.stdin.on('end', () => {
   const { default: activate } = await jiti.import('../extensions/pi/orchestra/index.ts');
 
   const tools = new Map();
-  activate({
+  await activate({
     on() {},
     registerTool: (t) => tools.set(t.name, t),
     registerCommand() {}, registerEntryRenderer() {},

@@ -36,8 +36,13 @@ const STDERR_TAIL_LIMIT = 4096;
 /** The Orchestra tools a session activates or deactivates as a unit. */
 const ORCHESTRA_TOOLS = ["orch_dispatch", "orch_status"];
 
-/** Management actions the model can take on its own session's Orchestra work. */
-const STATUS_ACTIONS = ["status", "history", "stop", "help", "doctor", "roles"] as const;
+/** Fixed contract returned by `python3 -m orchestra tool-info`. */
+interface ToolInfo {
+  dispatch: { label: string; description: string; params: { goal: string; additionalContext: string; role: string; taskLabel: string } };
+  status: { label: string; description: string; params: { action: string; limit: string; runId: string } };
+  command: { description: string };
+  actions: string[];
+}
 
 /** Install record written beside the extension by `./orchestra init pi`:
  * this checkout's root and dedicated interpreter, so core invocations always
@@ -92,7 +97,17 @@ interface AckPayload {
   run_id?: string;
   role?: string;
   ack?: string;
+  task_label?: string;
   jobs?: Array<{ job_id?: string; sequence?: number; role?: string; worker_session_id?: string }>;
+}
+
+/** A dispatch acknowledgement that passed the boundary contract: the required
+ * identifiers are present and non-empty, so valid-ack renderers never need a
+ * "unknown"/"?" placeholder or a malformed-success fallback. */
+interface ValidAck extends AckPayload {
+  run_id: string;
+  role: string;
+  ack: string;
 }
 
 interface JobReturnPayload {
@@ -127,7 +142,7 @@ interface StatusRead {
   ok: boolean;
   rendered: string;
   payload: StatusPayload | null;
-  output: string;
+  result: { code: number; stdout: string; stderr: string };
 }
 
 interface DispatchParams {
@@ -273,8 +288,6 @@ function renderDispatchRequestFallback(params: DispatchParams): string {
   if (goal) lines.push(`goal: ${goal}`);
   const role = (params.role ?? "").trim();
   if (role) lines.push(`role: ${role}`);
-  const taskLabel = (params.taskLabel ?? "").trim();
-  if (taskLabel) lines.push(`task_label: ${taskLabel}`);
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 
@@ -323,6 +336,64 @@ function orchestraEnv(): NodeJS.ProcessEnv {
     ...(configDir ? { ORCHESTRA_CONFIG: configDir } : {}),
     ...(pythonPath ? { PYTHONPATH: pythonPath } : {}),
   };
+}
+
+/** Load the core tool-info metadata. Throws on launch failure, nonzero exit,
+ * malformed JSON, or missing required fields — activation never registers
+ * incomplete/fallback tools. */
+async function loadToolInfo(): Promise<ToolInfo> {
+  const result = await runOrchestra(["tool-info"]);
+  if (result.code !== 0) {
+    throw new Error(`tool-info failed (exit ${result.code}): ${result.stderr || result.stdout || "no output"}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    throw new Error(`tool-info returned malformed JSON: ${result.stdout.slice(0, 200)}`);
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("tool-info returned non-object JSON");
+  }
+  const info = parsed as Record<string, unknown>;
+  // Validate the fixed contract with small fixed checks (no validation
+  // framework): every required label/description/param is a NON-EMPTY string
+  // and actions is a non-empty array of non-empty strings. An empty string
+  // counts as missing.
+  const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+  const requireText = (obj: Record<string, unknown>, key: string, path: string): void => {
+    const value = obj[key];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      throw new Error(`tool-info.${path}.${key} must be a non-empty string`);
+    }
+  };
+  for (const key of ["dispatch", "status", "command", "actions"] as const) {
+    if (!(key in info)) throw new Error(`tool-info missing required field: ${key}`);
+  }
+  if (!isObj(info.dispatch)) throw new Error("tool-info.dispatch must be an object");
+  requireText(info.dispatch, "label", "dispatch");
+  requireText(info.dispatch, "description", "dispatch");
+  if (!isObj(info.dispatch.params)) throw new Error("tool-info.dispatch.params must be an object");
+  for (const key of ["goal", "additionalContext", "role", "taskLabel"] as const) {
+    requireText(info.dispatch.params, key, "dispatch.params");
+  }
+  if (!isObj(info.status)) throw new Error("tool-info.status must be an object");
+  requireText(info.status, "label", "status");
+  requireText(info.status, "description", "status");
+  if (!isObj(info.status.params)) throw new Error("tool-info.status.params must be an object");
+  for (const key of ["action", "limit", "runId"] as const) {
+    requireText(info.status.params, key, "status.params");
+  }
+  if (!isObj(info.command)) throw new Error("tool-info.command must be an object");
+  requireText(info.command, "description", "command");
+  if (
+    !Array.isArray(info.actions) ||
+    info.actions.length === 0 ||
+    !info.actions.every((a: unknown) => typeof a === "string" && a.trim().length > 0)
+  ) {
+    throw new Error("tool-info.actions must be a non-empty array of non-empty strings");
+  }
+  return info as unknown as ToolInfo;
 }
 
 function runOrchestra(args: string[], input?: string): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -394,6 +465,34 @@ function spawnDispatch(
     finish(null);
   });
   child.on("close", (code: number | null) => finish(code));
+}
+
+/** Relay a core command failure: prefer stderr, then stdout, and report only
+ * the actual transport exit code when the child produced no diagnostic text.
+ * Never substitutes an operation-specific message for the real cause. */
+function transportFailure(result: { code: number; stdout: string; stderr: string }): string {
+  const detail = result.stderr.trim() || result.stdout.trim();
+  return detail || `orchestra command failed with exit code ${result.code}.`;
+}
+
+/** Validate the first acknowledgement JSONL line against the core contract.
+ * Returns null when valid, else a short cause string. Required: type "ack",
+ * non-empty run_id/role/ack, and a jobs array whose entries carry job ids. */
+function ackError(payload: ReturnPayload & AckPayload): string | null {
+  if (payload.type !== "ack") return 'malformed acknowledgement: type is not "ack"';
+  if (typeof payload.run_id !== "string" || payload.run_id.trim().length === 0) return "malformed acknowledgement: no run id";
+  if (typeof payload.role !== "string" || payload.role.trim().length === 0) return "malformed acknowledgement: no role";
+  if (typeof payload.ack !== "string" || payload.ack.trim().length === 0) return "malformed acknowledgement: no acknowledgement text";
+  if (!Array.isArray(payload.jobs)) return "malformed acknowledgement: jobs must be an array";
+  for (const job of payload.jobs) {
+    // A jobs entry may be malformed (null or a non-object) from untrusted core
+    // output; guard before dereferencing job_id so a malformed entry is a
+    // visible protocol failure, not a TypeError thrown inside the async data
+    // callback.
+    if (typeof job !== "object" || job === null) return "malformed acknowledgement: a job entry is not an object";
+    if (typeof job.job_id !== "string" || job.job_id.trim().length === 0) return "malformed acknowledgement: a job has no job id";
+  }
+  return null;
 }
 
 function parseJsonLine<T>(line: string): T | null {
@@ -495,6 +594,7 @@ function formatSessionReturn(payload: ReturnPayload): string {
 }
 
 export default async function orchestraExtension(pi: ExtensionAPI) {
+  const toolInfo = await loadToolInfo();
   let currentSessionId: string | null = null;
   let mode: string | null = null;
   let model: Model<Api> | undefined;
@@ -559,14 +659,14 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   async function readStatus(sessionId: string): Promise<StatusRead> {
     const result = await runOrchestra(["status", "--session-id", sessionId, "--mode", mode ?? "on"]);
     if (result.code !== 0) {
-      return { ok: false, rendered: "", payload: null, output: result.stderr || result.stdout };
+      return { ok: false, rendered: "", payload: null, result };
     }
     const payload = parseJsonLine<StatusPayload>(result.stdout);
     return {
       ok: true,
       rendered: payload?.rendered ?? result.stdout,
       payload,
-      output: result.stderr,
+      result,
     };
   }
 
@@ -630,7 +730,7 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
       }
       const payload = parseJsonLine<ReturnPayload>(result.stdout);
       if (!payload?.return) {
-        emitOutput(ctx, "orchestra session return produced no assembled return.", "error");
+        emitOutput(ctx, "orchestra session-return produced malformed protocol output: no assembled return.", "error");
         return;
       }
       completedRuns.delete(sessionId);
@@ -659,12 +759,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   /** Spawn the core dispatch; the first stdout JSONL line (the ack) resolves
    * `onAck`; the second (the return) is delivered to the session as a steer. */
-  function dispatchWorker(sessionId: string, params: DispatchParams, ctx: UiCtx, onAck: (ack: AckPayload | null, reason?: string) => void): void {
+  function dispatchWorker(sessionId: string, params: DispatchParams, ctx: UiCtx, onAck: (ack: ValidAck | null, reason?: string) => void): void {
     let goal = params.goal?.trim() ?? "";
     // Additional context is assignment data carried in the goal text; it is
     // never a substitute for the native session history piped on stdin.
     const additionalContext = params.additionalContext?.trim();
-    if (additionalContext) {
+    if (goal && additionalContext) {
       goal = `${goal}\n\nAdditional context:\n${additionalContext}`;
     }
     // Native Pi session context: core persists it only for roles that opt
@@ -681,7 +781,11 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
     const args = ["dispatch", "--session-id", sessionId, "--goal", goal];
     const role = params.role?.trim();
     if (role) args.push("--role", role);
+    // The task label is forwarded literally: a supplied value is passed exactly
+    // as given (including an empty string); only an absent value omits the flag.
+    if (params.taskLabel !== undefined) args.push("--task-label", params.taskLabel);
     liveSpawns.set(sessionId, (liveSpawns.get(sessionId) ?? 0) + 1);
+    let ackResolved = false;
     let sawAck = false;
     let sawReturn = false;
     let ackedRunId = "";
@@ -699,21 +803,33 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           if (sessionId === currentSessionId) scheduleFooterRefresh(ctx);
           return;
         }
-        if (!sawAck) {
+        if (!ackResolved) {
+          ackResolved = true;
+          const invalid = ackError(payload);
+          if (invalid) {
+            // A malformed first acknowledgement is rejected once with its cause:
+            // no run tracking, no success notification, and no fallback ack.
+            liveSpawns.set(sessionId, Math.max((liveSpawns.get(sessionId) ?? 1) - 1, 0));
+            onAck(null, invalid);
+            return;
+          }
           sawAck = true;
           ackedRunId = payload.run_id ?? "";
           liveSpawns.set(sessionId, (liveSpawns.get(sessionId) ?? 1) - 1);
-          if (ackedRunId) {
-            const pending = pendingRuns.get(sessionId) ?? new Set<string>();
-            pending.add(ackedRunId);
-            pendingRuns.set(sessionId, pending);
-          }
+          const pending = pendingRuns.get(sessionId) ?? new Set<string>();
+          pending.add(ackedRunId);
+          pendingRuns.set(sessionId, pending);
           for (const job of payload.jobs ?? []) {
             if (job.worker_session_id) workerSessionIds.add(job.worker_session_id);
           }
-          onAck(payload);
-          emitOutput(ctx, `orchestra: run ${payload.run_id ?? ""} dispatched (${payload.role ?? "default role"}).`, "info");
+          onAck(payload as unknown as ValidAck);
+          emitOutput(ctx, `orchestra: run ${payload.run_id} dispatched (${payload.role}).`, "info");
           scheduleFooterRefresh(ctx);
+          return;
+        }
+        if (!sawAck) {
+          // The acknowledgement was rejected as malformed; ignore any later line
+          // so it cannot masquerade as a successful return.
           return;
         }
         sawReturn = true;
@@ -731,10 +847,10 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
         deliverWhenReady(sessionId, ctx);
       },
       (code, reason) => {
-        if (!sawAck) {
+        if (!ackResolved) {
           liveSpawns.set(sessionId, Math.max((liveSpawns.get(sessionId) ?? 1) - 1, 0));
           onAck(null, reason);
-        } else if (!sawReturn) {
+        } else if (sawAck && !sawReturn) {
           // The dispatch CLI died after acknowledging: report the run as
           // drained; core blocks loudly if any of its jobs is still
           // outstanding, and that error is surfaced unchanged.
@@ -764,48 +880,41 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
   /** Failure text for a pre-ack dispatch: the captured launch/stderr cause when
    * available, else a clear fallback. Never mixes a child cause into a success. */
   function dispatchFailureText(reason?: string): string {
-    const detail = (reason ?? "").trim() || "see stderr";
-    return `orchestra dispatch failed: ${detail}`;
+    const detail = (reason ?? "").trim();
+    return detail ? `orchestra dispatch failed: ${detail}` : "orchestra dispatch failed with no diagnostic output.";
   }
 
   pi.registerTool({
     name: "orch_dispatch",
-    label: "Orchestra Dispatch",
-    description:
-      "Submit an assignment to Orchestra. Provide a goal (assignment text with scope, boundaries, stop condition, and expected return); role, additional context, and a short task label are optional. Returns the dispatch acknowledgement; execution continues in the background and one consolidated return is delivered to this session when all dispatched jobs finish. Do not poll.",
+    label: toolInfo.dispatch.label,
+    description: toolInfo.dispatch.description,
     parameters: Type.Object({
-      goal: Type.String({ description: "Assignment text: goal, scope, boundaries, stop condition, expected return, and relevant prior evidence." }),
-      additionalContext: Type.Optional(Type.String({ description: "Extra context piped to the dispatcher as parent context for roles configured to receive it." })),
-      role: Type.Optional(Type.String({ description: "Configured role name; omitted uses the configured default role." })),
-      taskLabel: Type.Optional(Type.String({ description: "Short optional display label for the assignment." })),
+      goal: Type.String({ description: toolInfo.dispatch.params.goal }),
+      additionalContext: Type.Optional(Type.String({ description: toolInfo.dispatch.params.additionalContext })),
+      role: Type.Optional(Type.String({ description: toolInfo.dispatch.params.role })),
+      taskLabel: Type.Optional(Type.String({ description: toolInfo.dispatch.params.taskLabel })),
     }),
     async execute(_toolCallId, params: DispatchParams, _signal, _onUpdate, ctx) {
-      const goal = params.goal?.trim() ?? "";
-      if (!goal) {
-        return { content: [{ type: "text", text: "Usage: provide a worker goal." }], isError: true, details: undefined };
-      }
       const sessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
-      const { ack, reason } = await new Promise<{ ack: AckPayload | null; reason?: string }>((resolve) => {
+      const { ack, reason } = await new Promise<{ ack: ValidAck | null; reason?: string }>((resolve) => {
         dispatchWorker(sessionId, params, ctx as UiCtx, (a, r) => resolve({ ack: a, reason: r }));
       });
       if (ack === null) {
         return toolResult(dispatchFailureText(reason), true);
       }
-      const ackRole = ack.role ?? "default role";
+      // The acknowledgement already passed the boundary contract, so run id,
+      // role, and ack text are present and non-empty; no placeholder fallback.
       // The identifiers the caller needs to follow up: the run id for
-      // `orch_status stop`, plus every job id the run contains (including jobs
-      // Submit created internally).
+      // `orch_status stop`, plus every job id the run contains.
       const jobLabels = (ack.jobs ?? [])
         .map((job) => (job.job_id ? `${job.job_id}${job.role ? ` (${job.role})` : ""}` : ""))
         .filter((label) => label.length > 0)
         .join(", ");
-      const identifiers = [
-        ack.run_id ? `Run ${ack.run_id}.` : "",
-        jobLabels ? `Jobs: ${jobLabels}.` : "",
-      ]
+      const identifiers = [`Run ${ack.run_id}.`, jobLabels ? `Jobs: ${jobLabels}.` : ""]
         .filter((part) => part.length > 0)
         .join(" ");
-      const ackText = [`${(ack.ack ?? "Assignment accepted.").trim()} Role: ${ackRole}.`, identifiers]
+      const label = ack.task_label !== undefined ? `Label: ${ack.task_label}.` : "";
+      const ackText = [`${ack.ack.trim()} Role: ${ack.role}.`, identifiers, label]
         .filter((part) => part.length > 0)
         .join(" ");
       return { content: [{ type: "text", text: ackText }], isError: false, details: undefined };
@@ -814,61 +923,48 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "orch_status",
-    label: "Orchestra Status",
-    description:
-      "Manage the current Orchestra session: action status (active jobs for this session), history (recent completed runs, optional positive limit), stop (cancel an active run of this session using the run id from a dispatch acknowledgement), help (usage), doctor (setup diagnostics), roles (configured roles and models, read-only). Session ownership comes from the host runtime context, so another session's runs cannot be inspected or cancelled and no role or configuration is ever changed. Dispatched results return to this session automatically; never use this tool to wait or poll for them.",
+    label: toolInfo.status.label,
+    description: toolInfo.status.description,
     parameters: Type.Object({
-      action: StringEnum(STATUS_ACTIONS, { description: "Management action to perform." }),
-      limit: Type.Optional(Type.Number({ description: "history only: how many completed runs to list (default 10)." })),
-      runId: Type.Optional(Type.String({ description: "stop only: the run id from a dispatch acknowledgement." })),
+      action: StringEnum(toolInfo.actions as [string, ...string[]], { description: toolInfo.status.params.action }),
+      limit: Type.Optional(Type.Number({ description: toolInfo.status.params.limit })),
+      runId: Type.Optional(Type.String({ description: toolInfo.status.params.runId })),
     }),
     async execute(_toolCallId, params: StatusParams, _signal, _onUpdate, ctx) {
       const sessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
       const ui = ctx as UiCtx;
       const action = typeof params.action === "string" ? params.action : "";
-      if (!action || !STATUS_ACTIONS.includes(action as (typeof STATUS_ACTIONS)[number])) {
-        return toolResult(`Unknown orchestra action: ${action || "(none)"}. Use: ${STATUS_ACTIONS.join(", ")}.`, true);
-      }
       if (action === "status") {
         const status = await readStatus(sessionId);
-        if (!status.ok) return toolResult(`orchestra status failed: ${status.output}`, true);
+        if (!status.ok) return toolResult(transportFailure(status.result), true);
         applyFooter(ui, sessionId, status.payload);
         return toolResult(status.rendered);
       }
       if (action === "history") {
         const limit = params.limit;
-        if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
-          return toolResult("history limit must be a positive integer.", true);
-        }
         const args = ["history", "--session-id", sessionId];
         if (limit !== undefined) args.push("--limit", String(limit));
         const result = await runOrchestra(args);
-        if (result.code !== 0) {
-          return toolResult(result.stderr || result.stdout || "orchestra history failed.", true);
-        }
+        if (result.code !== 0) return toolResult(transportFailure(result), true);
         return toolResult(result.stdout);
       }
       if (action === "stop") {
-        const runId = params.runId?.trim();
-        if (!runId) return toolResult("stop requires the runId from a dispatch acknowledgement.", true);
-        const result = await runOrchestra(["stop", "--session-id", sessionId, "--run-id", runId]);
+        const args = ["stop", "--session-id", sessionId];
+        if (params.runId !== undefined) args.push("--run-id", params.runId.trim());
+        const result = await runOrchestra(args);
         const status = await readStatus(sessionId);
         applyFooter(ui, sessionId, status.payload);
-        if (result.code !== 0) {
-          return toolResult(result.stderr || result.stdout || "orchestra stop failed.", true);
-        }
+        if (result.code !== 0) return toolResult(transportFailure(result), true);
         return toolResult(result.stdout);
       }
       const passthrough = await runOrchestra([action]);
-      if (passthrough.code !== 0) {
-        return toolResult([passthrough.stdout, passthrough.stderr].filter(Boolean).join("\n") || `orchestra ${action} failed.`, true);
-      }
+      if (passthrough.code !== 0) return toolResult(transportFailure(passthrough), true);
       return toolResult(passthrough.stdout);
     },
   });
 
   pi.registerCommand("orch", {
-    description: "Orchestra: /orch help|on|off|doctor|status|history|do|stop",
+    description: toolInfo.command.description,
     handler: async (args, ctx) => {
       const trimmed = args.trim();
       const sessionId = normalizePiSessionId(ctx.sessionManager.getSessionId());
@@ -900,13 +996,15 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
       if (subcommand === "status") {
         const status = await readStatus(sessionId);
-        emit(status.ok ? status.rendered : status.output || "orchestra status failed.");
+        emit(status.ok ? status.rendered : transportFailure(status.result));
         if (status.ok) applyFooter(ctx, sessionId, status.payload);
         return;
       }
 
       if (subcommand === "history") {
-        const result = await runOrchestra(["history", "--session-id", sessionId, "--limit", rest[0] ?? "10"]);
+        const args = ["history", "--session-id", sessionId];
+        if (rest[0]) args.push("--limit", rest[0]);
+        const result = await runOrchestra(args);
         emit(result.stdout || result.stderr);
         return;
       }
@@ -925,19 +1023,24 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
       if (subcommand === "do") {
         const tokens = rest.join(" ").match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
+        // Strip only the paired double quotes the tokenizer above groups on;
+        // never strip an arbitrary leading/trailing apostrophe from a literal
+        // token (e.g. O'Connor' must keep its trailing apostrophe).
+        const unquote = (tok: string): string =>
+          tok.length >= 2 && tok.startsWith('"') && tok.endsWith('"') ? tok.slice(1, -1) : tok;
         let role: string | undefined;
         let taskLabel: string | undefined;
         const goalParts: string[] = [];
         for (let i = 0; i < tokens.length; i += 1) {
           const token = tokens[i];
           if (token === "--role" && tokens[i + 1]) {
-            role = tokens[i + 1];
+            role = unquote(tokens[i + 1]);
             i += 1;
           } else if (token === "--task-label" && tokens[i + 1]) {
-            taskLabel = tokens[i + 1];
+            taskLabel = unquote(tokens[i + 1]);
             i += 1;
           } else {
-            goalParts.push(token.replace(/^"|"$/g, ""));
+            goalParts.push(unquote(token));
           }
         }
         const goal = goalParts.join(" ").trim();
@@ -946,7 +1049,12 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
           return;
         }
         dispatchWorker(sessionId, { goal, role, taskLabel }, ctx, (ack, reason) => {
-          emitOutput(ctx, ack?.ack ?? dispatchFailureText(reason), ack ? "info" : "error");
+          if (ack) {
+            const label = ack.task_label !== undefined ? ` Label: ${ack.task_label}.` : "";
+            emitOutput(ctx, `${ack.ack.trim()} Role: ${ack.role}. Run: ${ack.run_id}.${label}`, "info");
+          } else {
+            emitOutput(ctx, dispatchFailureText(reason), "error");
+          }
         });
         return;
       }

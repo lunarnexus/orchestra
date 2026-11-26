@@ -25,10 +25,16 @@ const realPython = spawnSync('python3', ['-c', 'import sys;print(sys.executable)
 assert.ok(realPython, 'a real python3 interpreter is required');
 
 // --- controlled boundaries -------------------------------------------------
-// Pass-through python3: forwards to the real orchestra module unchanged.
+// Pass-through python3: intercepts tool-info (Slice A not yet merged) and
+// forwards all other commands to the real orchestra module unchanged.
 writeFileSync(join(temp, 'python3'), `#!${process.execPath}
 const { spawn } = require('node:child_process');
-const child = spawn(${JSON.stringify(realPython)}, process.argv.slice(2), { stdio: 'inherit', env: process.env });
+const args = process.argv.slice(2);
+if (args.includes('tool-info')) {
+  process.stdout.write(JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"Assignment text.",additionalContext:"Extra context.",role:"Role name.",taskLabel:"Short label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"Action.",limit:"Limit.",runId:"Run ID."}},command:{description:"/orch help|on|off|doctor|status|history|do|stop"},actions:["status","history","stop","help","doctor","roles"]}));
+  process.exit(0);
+}
+const child = spawn(${JSON.stringify(realPython)}, args, { stdio: 'inherit', env: process.env });
 child.on('error', (e) => { process.stderr.write(String(e)); process.exit(1); });
 child.on('exit', (c) => process.exit(c ?? 1));
 `, { mode: 0o755 });
@@ -155,7 +161,7 @@ try {
   const entries = [];
   let active = [];
   let footer = '';
-  activate({
+  await activate({
     on: (name, handler) => hooks.set(name, handler),
     registerTool: (tool) => tools.set(tool.name, tool),
     registerCommand: (name, definition) => commands.set(name, definition),

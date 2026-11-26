@@ -27,7 +27,7 @@ import sys
 import threading
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,20 +50,15 @@ SKILLS_DIRNAME = "skills"
 STOP_POLL_SECONDS = 15.0
 STOP_POLL_INTERVAL = 0.25
 
-
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     handler = {
+        **MANAGEMENT_HANDLERS,
         "dispatch": _cmd_dispatch,
         "session-return": _cmd_session_return,
-        "status": _cmd_status,
-        "history": _cmd_history,
-        "stop": _cmd_stop,
-        "roles": _cmd_roles,
-        "help": _cmd_help,
-        "doctor": _cmd_doctor,
         "initial-mode": _cmd_initial_mode,
+        "tool-info": _cmd_tool_info,
     }[args.command]
     try:
         handler(args)
@@ -80,6 +75,7 @@ def _build_parser() -> argparse.ArgumentParser:
     dispatch.add_argument("--session-id", required=True)
     dispatch.add_argument("--goal", required=True)
     dispatch.add_argument("--role")
+    dispatch.add_argument("--task-label")
     status = subparsers.add_parser("status", help="query session and global job status")
     status.add_argument("--session-id", required=True)
     status.add_argument("--mode", default="on", choices=("on", "off"))
@@ -99,6 +95,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("help", help="show Orchestra help")
     subparsers.add_parser("doctor", help="check Orchestra setup and report findings")
     subparsers.add_parser("initial-mode", help="print the configured initial session mode")
+    subparsers.add_parser("tool-info", help="emit core tool metadata JSON for host registration")
     return parser
 
 
@@ -144,25 +141,25 @@ def _cmd_dispatch(args: argparse.Namespace) -> None:
         context_provider=lambda: parent_context,
     )
     ack = config.prompts["dispatch_ack"]
-    print(
-        json.dumps(
+    ack_payload: dict[str, object] = {
+        "type": "ack",
+        "run_id": submission.run_id,
+        "role": _role_of(submission),
+        "ack": ack,
+        "jobs": [
             {
-                "type": "ack",
-                "run_id": submission.run_id,
-                "role": _role_of(submission),
-                "ack": ack,
-                "jobs": [
-                    {
-                        "job_id": job.job_id,
-                        "sequence": job.sequence,
-                        "role": job.role,
-                        "worker_session_id": f"orchestra-worker-{job.job_id.replace(':', '-')}",
-                    }
-                    for job in submission.jobs
-                ],
-            },
-            separators=(",", ":"),
-        ),
+                "job_id": job.job_id,
+                "sequence": job.sequence,
+                "role": job.role,
+                "worker_session_id": f"orchestra-worker-{job.job_id.replace(':', '-')}",
+            }
+            for job in submission.jobs
+        ],
+    }
+    if getattr(args, "task_label", None) is not None:
+        ack_payload["task_label"] = args.task_label
+    print(
+        json.dumps(ack_payload, separators=(",", ":")),
         flush=True,
     )
     harness = _harness_for(config, submission)
@@ -425,6 +422,8 @@ def _cmd_status(args: argparse.Namespace) -> None:
 
 
 def _cmd_history(args: argparse.Namespace) -> None:
+    if args.limit is not None and args.limit < 1:
+        raise ValueError("history limit must be a positive integer")
     config = _load(args)
     queue = _queue(config)
     report = reconcile_abandoned(queue, config.runtime.state_dir, parent_session=args.session_id)
@@ -509,7 +508,7 @@ def _cmd_stop(args: argparse.Namespace) -> None:
 HELP_TEXT = """Orchestra 2 — submit work, track it, get one return.
 
 Dispatch:
-  dispatch --session-id ID --goal TEXT [--role ROLE]
+  dispatch --session-id ID --goal TEXT [--role ROLE] [--task-label LABEL]
     Submits the assignment through Submit, runs every queued job to a
     terminal state, and prints one acknowledgement JSON line, then one
     return JSON line with the assembled result for the session.
@@ -618,6 +617,78 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
             print(f"problem: {problem}")
         raise SystemExit(1)
     print("doctor: all checks passed")
+
+
+# ---------------------------------------------------------------------------
+# tool-info
+# ---------------------------------------------------------------------------
+
+
+# Model-callable management operations: the CLI subcommands hosts expose as
+# tools. One mapping reused for CLI routing (see ``main``) and the tool-info
+# actions projection; not a copy of every CLI command.
+MANAGEMENT_HANDLERS: dict[str, Callable[[argparse.Namespace], None]] = {
+    "status": _cmd_status,
+    "history": _cmd_history,
+    "stop": _cmd_stop,
+    "roles": _cmd_roles,
+    "help": _cmd_help,
+    "doctor": _cmd_doctor,
+}
+
+
+def _cmd_tool_info(args: argparse.Namespace) -> None:
+    """Emit core tool metadata as one JSON object for host registration.
+
+    Dispatch description integrates a factual operation explanation with the
+    configured delegation_guidance prompt entry.
+    """
+    config = _load(args)
+    delegation = config.prompts["delegation_guidance"]
+    dispatch_desc = (
+        "Submit an assignment to a configured subagent role and run it to "
+        "completion. Returns an acknowledgement line immediately, then one "
+        "consolidated return when every dispatched job finishes.\n\n"
+        + delegation
+    )
+    print(
+        json.dumps(
+            {
+                "dispatch": {
+                    "label": "Dispatch",
+                    "description": dispatch_desc,
+                    "params": {
+                        "goal": "The assignment text for the subagent.",
+                        "additionalContext": "Supplementary context text for the assignment.",
+                        "role": "Configured role name; defaults to the catalog default role.",
+                        "taskLabel": "Short display label for this dispatch (optional).",
+                    },
+                },
+                "status": {
+                    "label": "Status",
+                    "description": (
+                        "Query session and global job status, list recent history, "
+                        "cancel an active run, show help, run diagnostics, or "
+                        "list configured roles (read-only)."
+                    ),
+                    "params": {
+                        "action": "Operation to perform.",
+                        "limit": "Maximum number of history entries to return.",
+                        "runId": "Run identifier for stop actions.",
+                    },
+                },
+                "command": {
+                    "description": (
+                        "Orchestra orchestration: dispatch work to subagents, "
+                        "track active runs, retrieve consolidated returns."
+                    ),
+                },
+                "actions": list(MANAGEMENT_HANDLERS),
+            },
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

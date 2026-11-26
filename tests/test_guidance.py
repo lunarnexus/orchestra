@@ -28,6 +28,7 @@ from orchestra.shell import ShellHarness
 from orchestra.submit import Assignment, submit
 
 PROMPTS = {
+    "delegation_guidance": "delegate",
     "dispatch_ack": "Assignment accepted; do not poll.",
     "return_hint_all_succeeded": "all good",
     "return_hint_verification_disagreement": "disagree",
