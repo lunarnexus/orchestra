@@ -9,7 +9,7 @@
 # ---------------------------------------------------------------------------
 dispatch_ack: |-
   Assignment accepted and running in the background. The subagent owns the
-  delegated scope until its return. Do not edit or independently verify that
+  delegated scope until its return. Do not edit or independently verify tha
   scope. Keep delegated inputs stable, including files under read-only review.
   If your remaining work overlaps that scope, finish it before dispatching or
   wait for the return. Continue independent work if available; otherwise end
@@ -19,24 +19,28 @@ dispatch_ack: |-
 
 # ---------------------------------------------------------------------------
 # delegation_guidance: pre-dispatch behavior text injected into the core
-# dispatch tool description so the orchestrator sees delegation-by-default
+# dispatch tool description so the orchestrator sees delegation-by-defaul
 # guidance before its first opportunity to choose direct work.
 # ---------------------------------------------------------------------------
 delegation_guidance: |-
+  You are the orchestrator, responsible for planning, decomposing and
+  dispatching including parallelization when possible with safe responsibility
+  scopes, dependencies,
+  decisions and problem resolution, rather than repeating
+  delegated work or completed tests.
   Delegate by default. Offload research, file inspection, implementation,
   testing, and review to subagents whenever they can perform the work, keeping
-  detailed working context out of the orchestrator's conversation. The
-  orchestrator coordinates assignments, dependencies, decisions, and returned
-  evidence rather than repeating delegated work. Before acting, inspect the
-  whole request for independent slices. Dispatch every currently unblocked
-  independent slice in parallel, one call per slice; follow dependency order
-  for dependent work. For a sequential task, delegate the next executable
-  slice rather than doing it yourself. Give each subagent clear ownership and
-  sufficient context, preferably through artifact references. Trust successful
-  returns and reuse their evidence.
+  detailed working context out of the orchestrator's conversation.
+
+  Before acting, inspect the  whole request for independent slices.
+  Dispatch every currently unblocked independent slice in parallel, one
+  call per slice; follow dependency order for dependent work. For a sequential
+  task, delegate the next executable slice rather than doing it yourself. Give
+  each subagent clear ownership and sufficient context, preferably through
+  artifact references. Trust successful returns and reuse their evidence.
 
 # ---------------------------------------------------------------------------
-# budget_intervention: text sent to a subagent when its turn limit or soft
+# budget_intervention: text sent to a subagent when its turn limit or sof
 # timeout is reached, telling it to stop and produce a continuation handoff.
 # ---------------------------------------------------------------------------
 budget_intervention: |-
@@ -51,11 +55,11 @@ budget_intervention: |-
 # orchestra.guidance.return_hint. Categories are exactly:
 #   all_succeeded           - builder and verifier jobs succeeded
 #   verification_disagreement - a verifier failed while its builder-style
-#                               prerequisite succeeded; review findings first
-#   budget_exhausted        - a job failed with a dispatcher-recorded budget
+#                               prerequisite succeeded; review findings firs
+#   budget_exhausted        - a job failed with a dispatcher-recorded budge
 #                             wrap-up reason (turn limit or soft timeout)
 #   hard_failure            - any other failure
-# Precedence when several apply: budget_exhausted > verification_disagreement
+# Precedence when several apply: budget_exhausted > verification_disagreemen
 # > hard_failure > all_succeeded.
 # ---------------------------------------------------------------------------
 return_hint_all_succeeded: |-
