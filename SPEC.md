@@ -201,9 +201,8 @@ Predetermined follow-ups remain inside Orchestra. Decisions requiring the orches
 
 ## Delegation behavior
 
-Preserve the intent of the existing dispatch prompts:
-- Dispatch when useful or requested.
-- In structured mode, delegation is the default.
+While Orchestra is enabled, delegation is the default. Offload executable work and its detailed context to subagents wherever possible. Dispatch independent, unblocked slices in parallel. The orchestrator owns coordination, dependency ordering, decisions, and integration of returned results; it does not duplicate delegated work.
+
 - Inspect the whole request for independent slices and dependencies.
 - Submit independent work in parallel and respect dependency order.
 - Dispatch transfers ownership of the assigned scope; the parent does not duplicate that work.
