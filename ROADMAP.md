@@ -11,7 +11,7 @@ Future work only. Completed items belong in `CHANGELOG.md`.
 
 ### Live-host validation
 
-- [ ] Validate the dispatch-control fixes on the test server in the originating Pi chat: core-configured tool metadata visible before the first agent turn, management-tool exposure, acknowledgement IDs and optional labels from tool/slash dispatch, session-owned cancellation, readable status, prompt-triggered footer convergence, and automatic return with persisted outcomes. Verify healthy execution survives originating-chat loss. Local controlled-host tests do not substitute for this live-host proof.
+- [ ] Validate the dispatch-control fixes on the test server in the originating Pi chat: core-configured tool metadata visible before the first agent turn, management-tool exposure, acknowledgement IDs and optional labels from tool/slash dispatch, session-owned cancellation, readable status, prompt-triggered footer convergence, and automatic return with persisted outcomes. Verify healthy execution survives originating-chat loss. Use the installed extension in the originating live Pi chat; local controlled-host tests do not substitute for this proof.
 
 ### Role-state naming (after test-server validation)
 

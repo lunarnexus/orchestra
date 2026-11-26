@@ -8,6 +8,7 @@ build/
 dist/
 *.egg-info/
 node_modules/
+/PLAN.md
 state/
 logs/
 .env
