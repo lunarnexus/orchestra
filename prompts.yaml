@@ -9,10 +9,13 @@
 # ---------------------------------------------------------------------------
 dispatch_ack: |-
   Assignment accepted and running in the background. The subagent owns the
-  delegated scope until it returns; do not edit that scope or verify it
-  independently. Do not poll or sleep waiting for it — continue your own
-  independent work or end your response. Orchestra returns the results to
-  this session when every dispatched job and configured follow-up finishes.
+  delegated scope until its return. Do not edit or independently verify that
+  scope. Keep delegated inputs stable, including files under read-only review.
+  If your remaining work overlaps that scope, finish it before dispatching or
+  wait for the return. Continue independent work if available; otherwise end
+  your response. Do not block on sleeps or poll for completion. Orchestra
+  returns the results to this session when every dispatched job and configured
+  follow-up finishes.
 
 # ---------------------------------------------------------------------------
 # budget_intervention: text sent to a subagent when its turn limit or soft
@@ -39,7 +42,9 @@ budget_intervention: |-
 # ---------------------------------------------------------------------------
 return_hint_all_succeeded: |-
   All jobs succeeded. Trust the evidence, advance using the result, and
-  do not duplicate the work or retest unnecessarily.
+  do not duplicate the work or retest unnecessarily. Address findings within
+  the authorized scope. Before implementing any suggestion that expands scope,
+  obtain explicit user authorization.
 return_hint_verification_disagreement: |-
   The verifier does not confirm the builder. Review the verifier's findings
   first before deciding how to proceed.

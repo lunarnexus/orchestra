@@ -194,7 +194,7 @@ try {
   assert.equal(ack1.isError, false, `dispatch 1 ack failed: ${JSON.stringify(ack1)}`);
   const ackText1 = ack1.content[0].text;
   assert.match(ackText1, /builder/i, 'ack must name the role');
-  assert.match(ackText1, /do not poll/i, 'ack must tell the orchestrator not to poll');
+  assert.match(ackText1, /poll/i, 'ack must tell the orchestrator not to poll (asserted by concept so rewording is allowed)');
   // Delegated-scope ownership and yield guidance must reach the orchestrator in
   // the ack (core -> ack -> tool), asserted by concept so rewording is allowed.
   assert.match(ackText1, /own(s|ed)?\b|delegat/i, 'ack must convey the subagent owns the delegated scope');

@@ -63,7 +63,10 @@ roles:
     enabled: manual
     dispatch_hint: >-
       Report review findings only. For each, give the location and impact; omit
-      anything that is not a finding.
+      anything that is not a finding. Suggestions are welcome. Distinguish
+      corrections required by the assigned acceptance criteria from optional
+      improvements or proposals that expand scope. A finding or suggestion does
+      not authorize additional work.
     harness_config: pi
     model: "vllm/LOADED"
     env:

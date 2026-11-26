@@ -7,7 +7,7 @@ Future work only. Completed items belong in `CHANGELOG.md`.
 ### Benchmark follow-up
 
 - [ ] Coordinate with the `orchestra-bench` agent on Orchestra2 metrics extraction so accepted/rejected dispatches and active/completed jobs match lifecycle evidence. Implementation and verification belong in the benchmark repository.
-- [ ] Evaluate the next benchmark for delegated-scope ownership, prompt return delivery without blocking sleeps, and trust in successful builder or combined builder/verifier results. Confirm automatic verification starts only after covered builder jobs succeed and does not recur on verifiers.
+- [ ] Evaluate the next benchmark for delegated-scope ownership, prompt return delivery without blocking sleeps, and trust in successful builder or combined builder/verifier results. Confirm automatic verification starts only after covered builder jobs succeed and does not recur on verifiers. Check that review inputs remain stable and the orchestrator obtains user authorization before implementing scope-expanding suggestions.
 
 ### Live-host validation
 
