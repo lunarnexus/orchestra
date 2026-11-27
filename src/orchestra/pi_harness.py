@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO
 
+from orchestra.dispatch_guard import mark_child_dispatch_env
 from orchestra.harness import Budgets, CommandJob, Handle, HarnessError, Outcome
 from orchestra.shell import ShellHarness
 from orchestra.terminate import launch_start_time, terminate_group
@@ -169,8 +170,7 @@ class PiHarness:
             text = Path(skill_path).read_text(encoding="utf-8")
             argv += ["--append-system-prompt", text]
         started_at = time.time()
-        env = dict(os.environ)
-        env.update(plan.env)
+        env = mark_child_dispatch_env(os.environ, plan.env)
         try:
             process: subprocess.Popen[str] = subprocess.Popen(
                 argv,

@@ -11,6 +11,8 @@ Future work only. Completed items belong in `CHANGELOG.md`.
 
 ### Live-host validation
 
+- [ ] Validate subagent isolation in the installed Pi integration: children expose no Orchestra tools or commands, nested dispatch is rejected without creating jobs, and parent dispatch with automatic verification completes normally.
+
 - [ ] Validate the queue/core-session integration through the installed Pi extension: concurrent admission and rejection, automatic failure return after dispatcher loss, live builder/verifier status, native usage/cost and mode display, compaction-delayed delivery, and native session replacement. Confirm execution continues after the host connection closes and remains inspectable. Measure the per-session core runtime and active-work check overhead; controlled-host tests do not establish live-chat delivery.
 
 - [ ] Validate the dispatch-control fixes on the test server in the originating Pi chat: core-configured tool metadata visible before the first agent turn, management-tool exposure, acknowledgement IDs and optional labels from tool/slash dispatch, session-owned cancellation, readable status, prompt-triggered footer convergence, and automatic return with persisted outcomes. Verify dispatcher death after acknowledgement automatically returns a persisted failure to the idle originating chat, while healthy execution survives originating-chat loss. Use the installed extension in the originating live Pi chat; local controlled-host tests do not substitute for this proof.

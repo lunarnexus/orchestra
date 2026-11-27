@@ -40,6 +40,20 @@ import { Type } from "typebox";
 /** The tools a session activates or deactivates as a unit (native active set). */
 const ORCHESTRA_TOOLS = ["orch_dispatch", "orch_status"];
 
+/** Reserved nested-dispatch marker shared with the Python core
+ * (src/orchestra/dispatch_guard.py). A launched Orchestra child carries "1" so
+ * it can never orchestrate. Only an unmarked parent may; a marked, positive,
+ * or malformed value disables the whole adapter (fail closed). */
+const ORCHESTRA_DISPATCH_BUDGET_ENV = "ORCHESTRA_DISPATCH_BUDGET";
+
+function orchestraCanDispatch(): boolean {
+  const raw = process.env[ORCHESTRA_DISPATCH_BUDGET_ENV]?.trim();
+  if (!raw) return true;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) return false;
+  return parsed <= 0;
+}
+
 /** A theme surface for the native entry renderer. */
 type Theme = { fg(color: string, text: string): string; bold(text: string): string };
 
@@ -611,6 +625,13 @@ class CoreCommandError extends Error {}
 // -- the extension factory ---------------------------------------------------
 
 export default async function orchestraExtension(pi: ExtensionAPI) {
+  // A marked Orchestra child (a launched subagent) must never orchestrate: no
+  // tool registration, no /orch to re-enable, and no core session/coordinator
+  // spawn. This is the thin native mirror of the core-owned no-nesting policy
+  // (src/orchestra/dispatch_guard.py); the core independently rejects any
+  // dispatch that reaches it from a marked process.
+  if (!orchestraCanDispatch()) return;
+
   // Await the core-owned tool metadata BEFORE registering tools. A failure here
   // aborts activation with the real cause; no incomplete/fallback tools register.
   const toolInfo = await loadToolInfo();

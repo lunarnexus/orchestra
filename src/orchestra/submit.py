@@ -34,6 +34,7 @@ from typing import Final
 
 from orchestra.artifacts import Task, append, render_reference, scoped_path
 from orchestra.config import AgentCatalog, OrchestraConfig, RoleConfig
+from orchestra.dispatch_guard import orchestra_can_dispatch
 from orchestra.queue import Job, JobQueue, JobSpec, QueueError, run_id_of
 
 CONTEXT_SUFFIX: Final[str] = ".parent-context"
@@ -146,6 +147,16 @@ def submit(
     """
     if not parent_session or not parent_session.strip():
         raise SubmitError("parent_session is required")
+    # No-nested-dispatch guard: a marked Orchestra child (a launched subagent
+    # carrying the reserved dispatch marker) can never submit work. This is the
+    # single choke point every dispatch path funnels through — the direct
+    # ``dispatch`` CLI, the hidden ``__session`` admission, and any direct call.
+    # It fails closed on a malformed marker and persists nothing when it rejects.
+    if not orchestra_can_dispatch():
+        raise SubmitError(
+            "ORCHESTRA_DISPATCH_BUDGET: nested dispatch is disabled in a marked "
+            "Orchestra child"
+        )
     if not assignments:
         raise SubmitError("a submission requires at least one assignment")
     for index, assignment in enumerate(assignments):

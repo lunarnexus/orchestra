@@ -66,6 +66,8 @@ Pi renders the core's running-role meter and mode label. It computes native toke
 
 The connection binds identity from Pi runtime context. Foreign or stale native contexts cannot use another session's connection, and late frames from a replaced connection cannot update its replacement.
 
+Pi subagent launches set the reserved `ORCHESTRA_DISPATCH_BUDGET=1` marker after applying role environment settings. Marked children register no Orchestra tools, commands, or session coordinator. Core independently rejects submission from marked children before creating jobs or artifacts. Parent dispatchers remain unmarked so configured verifier follow-ups execute normally. This inherited environment guard prevents accidental nesting; it is not a sandbox against deliberate environment modification.
+
 ## Recovery boundaries
 
 Durable jobs and outcomes remain in SQLite and artifacts. Active-runtime report bookkeeping is not a durable exactly-once delivery protocol. Automatic cross-restart redelivery remains deferred under SPEC.md. Native delivery failure does not falsely mark a report delivered or introduce an automatic retry loop.
