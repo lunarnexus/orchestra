@@ -10,6 +10,7 @@ from orchestra.status import (
     StatusData,
     StatusEntry,
     StatusError,
+    render_running_meter,
     render_status,
     status,
 )
@@ -95,6 +96,27 @@ def test_running_and_pending_chain_with_waiting_on(tmp_path: Path) -> None:
     assert "#2" in out and "verifier" in out and "pending" in out
     assert "(waiting on #1)" in out
     assert "run runA" in out
+    queue.close()
+
+
+def test_render_running_meter_is_running_only(tmp_path: Path) -> None:
+    queue = make_queue(tmp_path)
+    first = add(queue, role="builder")
+    queue.claim_next(global_limit=4, per_session_limit=4)
+    add(queue, role="verifier", prerequisites=(str(first.job_id),))
+    add(queue, role="builder", run_id="runB", prerequisites=(str(first.job_id),))
+    meter = render_running_meter(status(queue, "sess1"))
+    # Only the running builder is metered; the pending verifier/pending builder
+    # are excluded entirely (no pending role leaks into the widget).
+    assert meter == "Orchestra: running builder×1"
+    assert "verifier" not in meter
+    queue.close()
+
+
+def test_render_running_meter_no_running_jobs(tmp_path: Path) -> None:
+    queue = make_queue(tmp_path)
+    add(queue, role="builder")
+    assert render_running_meter(status(queue, "sess1")) == "Orchestra: no running jobs"
     queue.close()
 
 

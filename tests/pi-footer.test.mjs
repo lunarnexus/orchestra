@@ -1,54 +1,46 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { createJiti } from 'jiti';
+import { makeSessionStub, makeCtx } from './helpers/orchestra-session-stub.mjs';
 
-// Exercise the real extension callback. Only its Python/host boundaries are
-// controlled; no live Pi sessions, global settings, or models are involved.
-// Covers the running-only role meter, readable `/orch status` rendering from
-// one core status response, and the event-free footer refresh that runs once
-// per agent start without any timer, watcher, or stale cross-session update.
-const temp = mkdtempSync(join(tmpdir(), 'orchestra-footer-'));
-const statusPath = join(temp, 'status.json');
-const delayPath = join(temp, 'delay');
-const callsPath = join(temp, 'status-calls.log');
-const failPath = join(temp, 'fail');
+// Native footer-DISPLAY contract for the Pi translator, driven against the
+// controlled `__session` core STUB (no real core, models, live Pi, or install).
+//
+// The running-only role meter is CORE-PRODUCED text: the core pushes
+// {kind:'status', text} frames and the adapter renders them verbatim into the
+// below-editor widget. These tests prove the DISPLAY/transport contract only —
+// they never imply that the stub proves core timing. Actual core→footer
+// lifetime visibility (and the worker-exit/backstop distinction) is covered by
+// tests/pi-footer-live.test.mjs against the real core.
+//
+// Covers, per the approved thin-adapter contract:
+//   - the running-only meter is core text displayed immediately, the adapter
+//     never derives role status (scripted builder -> verifier -> idle pushes);
+//   - `/orch status` renders the core reply TEXT, not a structured JSON envelope;
+//   - `before_agent_start` is a forwarded native event — it issues NO independent
+//     status subprocess/request of the adapter's own;
+//   - a session replacement never renders a previous session's core footer;
+//   - `session_shutdown` clears the widget and no post-close update/query occurs;
+//   - a native `hasUI:false` context is safe (no widget write, no crash).
+//
+// The obsolete "no periodic status calls ANYWHERE" assertion is NOT reasserted:
+// the approved core active-only 10s backstop exists (out of the adapter's
+// scope). Here we assert only that the Pi adapter has no own timer that would
+// re-render the footer on its own, and that the footer tracks core pushes.
 
-// Controlled core boundary: prints the scripted status payload, optionally
-// delayed (to hold a response in flight across a session switch), optionally
-// failing, and records every status invocation.
-writeFileSync(join(temp, 'python3'), `#!${process.execPath}
-const fs = require('node:fs');
-const argv = process.argv.join(' ');
-if (argv.includes('tool-info')) {
-  process.stdout.write(JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"Assignment text.",additionalContext:"Extra context.",role:"Role name.",taskLabel:"Short label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"Action.",limit:"Limit.",runId:"Run ID."}},command:{description:"/orch help|on|off|doctor|status|history|do|stop"},actions:["status","history","stop","help","doctor","roles"]}));
-  process.exit(0);
-}
-if (argv.includes('initial-mode')) { console.log('on'); process.exit(0); }
-fs.appendFileSync(${JSON.stringify(callsPath)}, 'status\\n');
-if (fs.existsSync(${JSON.stringify(failPath)})) {
-  process.stderr.write(fs.readFileSync(${JSON.stringify(failPath)}, 'utf8'));
-  process.exit(3);
-}
-const delay = fs.existsSync(${JSON.stringify(delayPath)})
-  ? Number(fs.readFileSync(${JSON.stringify(delayPath)}, 'utf8'))
-  : 0;
-const payload = fs.readFileSync(${JSON.stringify(statusPath)}, 'utf8');
-setTimeout(() => console.log(payload), delay);
-`, { mode: 0o755 });
-writeFileSync(statusPath, JSON.stringify({ rendered: 'Orchestra: on\n', data: { session_jobs: [] } }));
-writeFileSync(callsPath, '');
+const stub = makeSessionStub();
 
-process.env.PATH = `${temp}:${process.env.PATH}`;
-process.env.ORCHESTRA_CONFIG = temp;
-
-function writeStatus(payload) {
-  writeFileSync(statusPath, JSON.stringify(payload));
+function scenario(meterText, extra = {}) {
+  return { 'initial-mode': { result: { mode: 'on' } }, ...extra, statusText: meterText };
 }
 
-function statusCalls() {
-  return readFileSync(callsPath, 'utf8').split('\n').filter(Boolean).length;
+function footerOf(widgets) {
+  for (let i = widgets.length - 1; i >= 0; i -= 1) {
+    if (widgets[i].key === 'orchestra') {
+      const c = widgets[i].content;
+      return c === undefined ? '' : Array.isArray(c) ? c.join('\n') : String(c);
+    }
+  }
+  return '';
 }
 
 async function poll(label, fn, timeoutMs = 5000) {
@@ -56,110 +48,148 @@ async function poll(label, fn, timeoutMs = 5000) {
   for (;;) {
     if (fn()) return;
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await new Promise((r) => setTimeout(r, 25));
   }
 }
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const text = (result) => (result.content ?? []).map((p) => p.text ?? '').join('\n');
+
+const hooks = new Map();
+const tools = new Map();
+const commands = new Map();
+let entries = [];
+let active = [];
+const steers = [];
 
 try {
   const jiti = createJiti(import.meta.url);
   const { default: activate } = await jiti.import('../extensions/pi/orchestra/index.ts');
-  const hooks = new Map();
-  const commands = new Map();
-  const entries = [];
-  let tools = [];
-  let footer;
   await activate({
     on: (name, handler) => hooks.set(name, handler),
-    registerTool() {},
-    registerCommand: (name, definition) => commands.set(name, definition),
+    registerTool: (t) => { tools.set(t.name, t); active.push(t.name); },
+    registerCommand: (name, def) => commands.set(name, def),
     registerEntryRenderer() {},
     appendEntry: (type, data) => entries.push({ type, data }),
-    getActiveTools: () => tools,
-    setActiveTools: (value) => { tools = value; },
+    getActiveTools: () => [...active],
+    setActiveTools: (list) => { active = [...list]; },
+    sendUserMessage: (m) => steers.push(String(m)),
   });
-  function makeContext(sessionId) {
-    return {
-      hasUI: true,
-      sessionManager: { getSessionId: () => sessionId },
-      ui: {
-        theme: { fg: (_color, text) => text, bold: (text) => text },
-        setWidget: (_name, value) => { footer = value ? value.join('\n') : undefined; },
-        notify: () => {},
-      },
-    };
-  }
-  const ctx1 = makeContext('isolated-footer-test');
-  const ctx2 = makeContext('isolated-footer-other');
+  assert.ok(tools.has('orch_dispatch') && tools.has('orch_status'), 'orch tools registered');
+  assert.ok(hooks.has('session_start') && hooks.has('before_agent_start') && hooks.has('session_shutdown'),
+    'lifecycle hooks registered');
 
-  async function refresh(jobs) {
-    writeStatus({ rendered: 'Orchestra: on\n', data: { session_jobs: jobs } });
-    await hooks.get('session_start')({}, ctx1);
-    return footer;
+  const outputText = () => entries.filter((e) => e.type === 'orchestra-output').map((e) => e.data?.text ?? '').join('\n');
+  function orch(statusArgs, ctx) { return commands.get('orch').handler(statusArgs, ctx); }
+  // Drive one fresh core status push by issuing a handled request; the stub
+  // emits its scripted statusText after each handled request frame. The push is
+  // a separate frame that lands just after the reply, so wait for the widget.
+  async function pushMeter(ctx, widgets, meterText) {
+    stub.setScenario(scenario(meterText, { status: { result: { text: 'STATUS_TEXT' } } }));
+    entries = [];
+    await orch('status', ctx);
+    await poll(`footer updated to: ${meterText}`, () => footerOf(widgets) === meterText);
   }
 
-  // --- running-only role meter -------------------------------------------
-  let text = await refresh([
-    { role: 'builder', status: 'running' },
-    { role: 'verifier', status: 'pending' },
-  ]);
-  assert.match(text, /builder/i);
-  assert.doesNotMatch(text, /verifier/i, 'pending verifier must not appear active');
-  text = await refresh([{ role: 'verifier', status: 'running' }]);
-  assert.match(text, /verifier/i, 'verifier appears after it starts');
-  text = await refresh([{ role: 'builder', status: 'pending' }]);
-  assert.doesNotMatch(text, /builder/i, 'pending work is not running work');
+  // --- running-only meter is core text, displayed verbatim, never derived ----
+  const wA = [];
+  const ctx1b = makeCtx('display-b', { widgets: wA });
+  stub.setScenario(scenario('Orchestra: running builder×1'));
+  await hooks.get('session_start')({}, ctx1b);
+  assert.equal(footerOf(wA), 'Orchestra: running builder×1',
+    'the core-pushed running-only meter is rendered verbatim into the widget');
 
-  // --- /orch status renders the core response, one call serves both -------
-  writeStatus({
-    rendered: 'Orchestra: on\n\nThis session:\n  #1     builder     running   run deadbeef\n',
-    data: { session_jobs: [{ role: 'builder', status: 'running' }] },
-  });
-  const beforeStatus = statusCalls();
-  entries.length = 0;
-  await commands.get('orch').handler('status', ctx1);
-  const shown = entries.filter((entry) => entry.type === 'orchestra-output').map((entry) => entry.data?.text ?? '').join('\n');
-  assert.match(shown, /This session:/, 'the rendered core status text is displayed');
-  assert.doesNotMatch(shown, /"session_jobs"/, 'the structured status envelope stays out of user output');
+  // A novel token proves the adapter COPIES core text instead of deriving it:
+  // no adapter-side role logic could invent "zeta-role×7".
+  await pushMeter(ctx1b, wA, 'Orchestra: running zeta-role×7');
+  assert.equal(footerOf(wA), 'Orchestra: running zeta-role×7',
+    'the footer copies whatever the core pushes; the adapter does not derive role status');
+
+  // --- scripted builder -> verifier -> idle transitions (controlled pushes) --
+  await pushMeter(ctx1b, wA, 'Orchestra: running builder×1');
+  assert.match(footerOf(wA), /builder/, 'builder phase of the scripted transition');
+  assert.doesNotMatch(footerOf(wA), /verifier/, 'running-only meter lists only running roles');
+  await pushMeter(ctx1b, wA, 'Orchestra: running verifier×1');
+  assert.match(footerOf(wA), /verifier/, 'verifier phase is shown after the core pushes it');
+  assert.doesNotMatch(footerOf(wA), /builder/, 'the previous running role is gone, not merged');
+  await pushMeter(ctx1b, wA, 'Orchestra: no running jobs');
+  assert.equal(footerOf(wA), 'Orchestra: no running jobs', 'idle meter clears the roles');
+
+  // --- /orch status renders core reply text, not a structured JSON envelope ---
+  stub.setScenario(scenario('Orchestra: running builder×1', {
+    status: { result: { text: 'Orchestra: on\n\nThis session:\n  #1     builder     running   run deadbeef\n' } },
+  }));
+  entries = [];
+  await orch('status', ctx1b);
+  const shown = outputText();
+  assert.match(shown, /This session:/, 'the detailed core status reply text is displayed');
   assert.ok(!shown.trimStart().startsWith('{'), 'no raw JSON is shown for /orch status');
-  assert.equal(statusCalls() - beforeStatus, 1, 'one core status call serves both the display and the footer');
-  assert.match(footer, /builder/i, 'the footer is updated from the same status response');
+  assert.doesNotMatch(shown, /"session_jobs"/, 'the structured status envelope stays out of user output');
 
-  // --- command errors are surfaced ----------------------------------------
-  writeFileSync(failPath, 'status boundary exploded');
-  entries.length = 0;
-  await commands.get('orch').handler('status', ctx1);
-  const errorShown = entries.filter((entry) => entry.type === 'orchestra-output').map((entry) => entry.data?.text ?? '').join('\n');
-  assert.match(errorShown, /status boundary exploded/, 'a failing status command surfaces core stderr');
-  rmSync(failPath, { force: true });
+  // --- command errors surface the real core cause ----------------------------
+  stub.setScenario({ 'initial-mode': { result: { mode: 'on' } }, status: { error: 'status boundary exploded' } });
+  entries = [];
+  await orch('status', ctx1b);
+  assert.match(outputText(), /status boundary exploded/, 'a failing status surfaces the core error verbatim');
 
-  // --- event-free refresh: persisted state changed with no lifecycle event -
-  writeStatus({ rendered: 'Orchestra: on\n', data: { session_jobs: [{ role: 'builder', status: 'running' }] } });
-  await hooks.get('session_start')({}, ctx1);
-  assert.match(footer, /builder/i, 'the running role is shown before the state change');
-  writeStatus({ rendered: 'Orchestra: on\n', data: { session_jobs: [] } });
-  assert.match(footer, /builder/i, 'nothing has refreshed the footer since the state changed');
-  const beforeStart = statusCalls();
-  await hooks.get('before_agent_start')({ messageType: 'user', prompt: 'next turn' }, ctx1);
-  assert.equal(statusCalls() - beforeStart, 1, 'exactly one status refresh per agent run start');
-  assert.doesNotMatch(footer, /builder/i, 'stale running counts clear at the next agent run start');
+  // --- before_agent_start is a forwarded native event, not a status subprocess
+  stub.reset();
+  const requestsBefore = stub.requests().length;
+  const statusReqsBefore = stub.requests().filter((r) => r.operation === 'status').length;
+  await hooks.get('before_agent_start')({ messageType: 'user', prompt: 'next turn' }, ctx1b);
+  await poll('host_event frame forwarded to core',
+    () => stub.frames().some((f) => f.frame === 'host_event' && f.msg.event === 'before_agent_start'));
+  assert.equal(stub.requests().length, requestsBefore,
+    'before_agent_start forwards the event without issuing any new core request');
+  assert.equal(stub.requests().filter((r) => r.operation === 'status').length, statusReqsBefore,
+    'the agent-start event triggers no independent status subprocess of the adapter');
 
-  // --- a switched session never receives a stale refresh ------------------
-  writeStatus({ rendered: 'Orchestra: on\n', data: { session_jobs: [{ role: 'verifier', status: 'running' }] } });
-  await hooks.get('session_start')({}, ctx1);
-  assert.match(footer, /verifier/i, 'session one shows its running verifier');
-  writeFileSync(delayPath, '600');
-  writeStatus({ rendered: 'Orchestra: on\n', data: { session_jobs: [{ role: 'builder', status: 'running' }] } });
-  const beforeSwitch = statusCalls();
-  const inFlight = hooks.get('before_agent_start')({ messageType: 'user', prompt: 'switch away' }, ctx1);
-  await poll('status read started before the session switch', () => statusCalls() > beforeSwitch);
-  rmSync(delayPath, { force: true });
-  writeStatus({ rendered: 'Orchestra: on\n', data: { session_jobs: [] } });
-  await hooks.get('session_start')({}, ctx2);
-  assert.doesNotMatch(footer, /builder|verifier/i, 'the switched-to session shows its own empty state');
-  await inFlight;
-  assert.doesNotMatch(footer, /builder/i, 'a response for the session that was switched away from is discarded');
+  // --- the adapter has no own timer that re-renders the footer on its own -----
+  await pushMeter(ctx1b, wA, 'Orchestra: running builder×1');
+  const rendered = footerOf(wA);
+  await sleep(300); // well under the core 10s backstop; no new core request
+  assert.equal(footerOf(wA), rendered,
+    'the adapter does not self-update the footer (no Pi-side timer); it only follows core pushes');
 
-  console.log('Pi footer running-only regression passed');
+  // --- session replacement never renders the previous session's footer --------
+  const wB = [];
+  const ctx2 = makeCtx('display-next', { widgets: wB });
+  stub.setScenario(scenario('Orchestra: running verifier×1'));
+  await hooks.get('session_start')({}, ctx2); // replaces ctx1b's connection
+  assert.equal(footerOf(wB), 'Orchestra: running verifier×1',
+    'the replaced-to session shows its own core footer');
+  assert.equal(footerOf(wA), 'Orchestra: running builder×1',
+    'the replaced-away session widget is untouched (stale old-core footer never re-applied)');
+
+  // --- shutdown clears the widget and no post-close update/query happens ------
+  await hooks.get('session_shutdown')({}, ctx2);
+  assert.equal(footerOf(wB), '', 'session_shutdown clears the below-editor widget');
+  const closedRequests = stub.requests().length;
+  await hooks.get('before_agent_start')({ messageType: 'user', prompt: 'after' }, ctx2); // must be a no-op
+  const stopResult = await orch('status', ctx2); // not-connected path
+  await poll('shutdown cleared connection', () => stub.requests().length === closedRequests);
+  assert.equal(stub.requests().length, closedRequests, 'no status query is issued after the connection closed');
+  void stopResult;
+
+  // --- hasUI:false is safe: no widget write, no crash -------------------------
+  let widgetTouched = false;
+  const ctxNoUI = {
+    hasUI: false,
+    sessionManager: { getSessionId: () => 'no-ui', buildContextEntries: () => [], getBranch: () => [] },
+    ui: {
+      theme: { fg: (_c, t) => t, bold: (t) => t },
+      setWidget: () => { widgetTouched = true; },
+      notify: () => {},
+    },
+  };
+  stub.setScenario(scenario('Orchestra: running builder×1', { status: { result: { text: 'STATUS_TEXT' } } }));
+  await hooks.get('session_start')({}, ctxNoUI);
+  entries = [];
+  await orch('status', ctxNoUI); // emits to stdout, never a widget
+  assert.ok(!widgetTouched, 'a hasUI:false native context must never receive a widget write');
+  await hooks.get('session_shutdown')({}, ctxNoUI); // release the open connection
+
+  console.log('Pi footer native-display contract passed');
 } finally {
-  rmSync(temp, { recursive: true, force: true });
+  stub.cleanup();
 }

@@ -1,52 +1,54 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { createJiti } from 'jiti';
+import { makeSessionStub, makeCtx } from './helpers/orchestra-session-stub.mjs';
 
 // Exercise the real extension's parent-context capture + deterministic
 // references digest end to end. The only controlled boundary is the core
-// `python3` dispatch, which records the exact stdin (the artifact) it receives.
-// No live Pi sessions, models, global config, or real core are involved.
-const temp = mkdtempSync(join(tmpdir(), 'orchestra-references-digest-'));
-const capturePath = join(temp, 'captured-stdin.txt');
-try {
-  // python3 stub: for `dispatch`, dump stdin to the capture file and print an
-  // ack line; for `status`, return an empty job list; otherwise exit 0.
-  writeFileSync(join(temp, 'python3'), `#!${process.execPath}
-const fs = require('node:fs');
-const args = process.argv.slice(2);
-const cmd = args[2];
-if (args.includes('tool-info')) {
-  process.stdout.write(JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"Assignment text.",additionalContext:"Extra context.",role:"Role name.",taskLabel:"Short label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"Action.",limit:"Limit.",runId:"Run ID."}},command:{description:"/orch"},actions:["status","history","stop","help","doctor","roles"]}));
-  process.exit(0);
-}
-let input = '';
-process.stdin.on('data', (d) => { input += d; });
-process.stdin.on('end', () => {
-  if (cmd === 'dispatch') {
-    fs.writeFileSync(${JSON.stringify(capturePath)}, input);
-    process.stdout.write(JSON.stringify({ type: 'ack', run_id: 'test-run', role: 'builder', ack: 'Assignment accepted.', jobs: [] }) + '\\n');
-    process.exit(0);
-  }
-  if (cmd === 'status') {
-    process.stdout.write(JSON.stringify({ data: { session_jobs: [] } }) + '\\n');
-  }
-  process.exit(0);
+// `__session` runtime, which requests get_parent_context on an accepted
+// dispatch; the adapter answers with a native_result whose data.text is the
+// captured chat-only + references digest the test asserts. No live Pi sessions,
+// models, global config, or real core are involved.
+const stub = makeSessionStub({
+  reply: {
+    'initial-mode': { result: { mode: 'on', text: 'Orchestra active.' } },
+    dispatch: { result: { text: 'Assignment accepted. Run test-run.' } },
+  },
 });
-`, { mode: 0o755 });
+stub.setScenario({
+  'initial-mode': { result: { mode: 'on', text: 'Orchestra active.' } },
+  dispatch: { result: { text: 'Assignment accepted. Run test-run.' } },
+  emitContextRequest: true,
+});
 
-  process.env.PATH = `${temp}:${process.env.PATH}`;
-  process.env.ORCHESTRA_CONFIG = temp;
+async function waitFor(label, fn, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (fn()) return;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
 
+function capturedDigest() {
+  // The adapter answers each core get_parent_context with a native_result whose
+  // data.text is the chat-only + references digest. Use the most recent one.
+  const result = stub.nativeResults().filter((r) => r.id === 'ctx-1').pop();
+  assert.ok(result, 'adapter answered the core get_parent_context request with a native_result');
+  return result.data.text;
+}
+
+const hooks = new Map();
+let ctx;
+try {
   const jiti = createJiti(import.meta.url);
   const { default: activate } = await jiti.import('../extensions/pi/orchestra/index.ts');
 
   const tools = new Map();
   await activate({
-    on() {},
+    on: (name, handler) => hooks.set(name, handler),
     registerTool: (t) => tools.set(t.name, t),
     registerCommand() {}, registerEntryRenderer() {},
+    appendEntry() {},
     getActiveTools: () => [...tools.keys()],
     setActiveTools() {},
     sendUserMessage() {},
@@ -85,24 +87,15 @@ process.stdin.on('end', () => {
     { type: 'message', message: { role: 'toolResult', toolCallId: 'c4', toolName: 'read', isError: false, content: [{ type: 'text', text: 'SECOND_READ_BODY result body' }] } },
   ];
 
-  const ctx = {
-    hasUI: true,
-    sessionManager: {
-      getSessionId: () => 'references-digest-test',
-      buildContextEntries: () => entries,
-      getBranch: () => [],
-    },
-    ui: {
-      theme: { fg: (_c, t) => t, bold: (t) => t },
-      setWidget() {},
-      notify() {},
-    },
-  };
+  // Establish the persistent core `__session` connection for the SAME native id
+  // the dispatch uses, before dispatching.
+  ctx = makeCtx('references-digest-test', { entries });
+  await hooks.get('session_start')({}, ctx);
 
   const ack = await tools.get('orch_dispatch').execute('probe', { goal: 'investigate', role: 'builder' }, undefined, undefined, ctx);
   assert.equal(ack.isError, false, `dispatch ack failed: ${JSON.stringify(ack)}`);
-
-  const captured = readFileSync(capturePath, 'utf8');
+  await waitFor('native_result for get_parent_context', () => stub.nativeResults().some((r) => r.id === 'ctx-1'));
+  const captured = capturedDigest();
 
   // Existing chat-only lines stay unchanged.
   assert.ok(captured.includes('user: Investigate the bug.\n'), 'chat line for user turn preserved');
@@ -136,19 +129,15 @@ process.stdin.on('end', () => {
   }
   capEntries.push({ type: 'message', message: { role: 'assistant', content: capBlocks } });
 
-  const capCtx = {
-    hasUI: true,
-    sessionManager: {
-      getSessionId: () => 'cap-test',
-      buildContextEntries: () => capEntries,
-      getBranch: () => [],
-    },
-    ui: { theme: { fg: (_c, t) => t, bold: (t) => t }, setWidget() {}, notify() {} },
-  };
+  // Re-attach the persistent connection for the cap native id before dispatch.
+  const capCtx = makeCtx('cap-test', { entries: capEntries });
+  await hooks.get('session_start')({}, capCtx);
 
+  const capBefore = stub.nativeResults().filter((r) => r.id === 'ctx-1').length;
   const capAck = await tools.get('orch_dispatch').execute('cap', { goal: 'cap probe', role: 'builder' }, undefined, undefined, capCtx);
   assert.equal(capAck.isError, false, `cap dispatch ack failed: ${JSON.stringify(capAck)}`);
-  const capCapture = readFileSync(capturePath, 'utf8');
+  await waitFor('cap native_result for get_parent_context', () => stub.nativeResults().filter((r) => r.id === 'ctx-1').length > capBefore);
+  const capCapture = capturedDigest();
 
   assert.ok(!capCapture.includes('Files touched:'), 'no Files touched section when no file tools ran');
   const keptCount = capCapture.split('run -> ok').length - 1;
@@ -165,5 +154,12 @@ process.stdin.on('end', () => {
 
   console.log('Pi references digest cap (most-recent 25) passed');
 } finally {
-  rmSync(temp, { recursive: true, force: true });
+  // Always shut the persistent connection down (kills the core `__session`
+  // subprocess) before removing the temp owner dir, so the Node process exits
+  // whether or not an assertion threw.
+  try {
+    if (hooks.has('session_shutdown') && ctx) hooks.get('session_shutdown')({}, ctx);
+  } finally {
+    stub.cleanup();
+  }
 }

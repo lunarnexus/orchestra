@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestra.queue import JobQueue
+from orchestra.queue import Job, JobQueue, QueueError
 
 
 @pytest.fixture()
@@ -27,6 +27,34 @@ def _add(queue: JobQueue, run_id: str = "r1") -> str:
     return queue.add_job(
         run_id=run_id, parent_session="s1", role="shell", model="sh"
     ).job_id
+
+
+def test_owned_run_jobs_returns_session_jobs(queue: JobQueue) -> None:
+    first = _add(queue, "r1")
+    second = queue.add_job(
+        run_id="r1", parent_session="s1", role="shell", model="sh"
+    ).job_id
+    # A foreign run and another session's job must never leak into the result.
+    _add(queue, "r2")
+    queue.add_job(run_id="r3", parent_session="other", role="shell", model="sh")
+    jobs = queue.owned_run_jobs("s1", "r1")
+    assert isinstance(jobs, tuple)
+    assert [job.job_id for job in jobs] == [first, second]
+    assert all(job.parent_session == "s1" and job.run_id == "r1" for job in jobs)
+    assert all(isinstance(job, Job) for job in jobs)
+
+
+def test_owned_run_jobs_unknown_run_raises(queue: JobQueue) -> None:
+    _add(queue, "r1")
+    with pytest.raises(QueueError):
+        queue.owned_run_jobs("s1", "missing")
+
+
+def test_owned_run_jobs_foreign_run_raises(queue: JobQueue) -> None:
+    queue.add_job(run_id="r1", parent_session="other", role="shell", model="sh")
+    # The run exists but is owned by a different session: never leak it.
+    with pytest.raises(QueueError):
+        queue.owned_run_jobs("s1", "r1")
 
 
 def test_new_fields_default_none_and_round_trip(tmp_path: Path) -> None:

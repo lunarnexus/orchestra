@@ -1,80 +1,38 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { createJiti } from 'jiti';
+import { makeSessionStub, makeCtx } from './helpers/orchestra-session-stub.mjs';
 
-// Thin Pi-adapter boundary contract. A single controllable fake `python3` is
-// driven through environment variables so each scenario can script the exact
-// core ack line / command output the adapter receives, and record the argv the
-// adapter forwarded. Proves the adapter-side contract the diff review flagged:
-//   - malformed dispatch acknowledgements are rejected once, BEFORE tracking:
-//     no success notification and no run tracking (no delivered return).
-//   - a supplied taskLabel is forwarded literally (empty and untrimmed values
-//     included); only an absent label omits the flag.
-//   - core command failures relay stderr, then stdout, else the exit code — no
-//     generic status/history/stop substitutions; an invalid action surfaces the
-//     real core argparse cause, not an adapter "Unknown orchestra action".
-//   - a session-return with no assembled return is a protocol error, not a
-//     generic/empty outcome.
+// Thin Pi-adapter translator contract over the persistent core `__session`.
+// Raw dispatch-ack JSON (run_id/jobs/role/ack policy) is now produced and
+// validated inside core and never crosses this boundary; the adapter only turns
+// correlated reply frames into tool results and answers core-initiated native
+// requests. Asserted here, at the boundary the adapter actually owns:
+//   - a reply whose result is not core-owned text (missing/non-string result, or
+//     a reply frame carrying neither result nor error) is a visible protocol
+//     error — never an accepted tool success and never a fallback substitution;
+//   - core error replies are relayed verbatim (history/status/stop and an
+//     invalid action), with no generic adapter substitutions;
+//   - dispatch forwards the public fields as exact request wire values: a padded
+//     or empty taskLabel is forwarded literally, only an absent label/role is
+//     omitted;
 //   - the slash parser strips only paired double quotes; a literal trailing
-//     apostrophe (O'Connor') is preserved.
-// Controlled boundaries only: no real core, no models, no live Pi, no install.
-const temp = mkdtempSync(join(tmpdir(), 'orchestra-adapter-contract-'));
-const argvPath = join(temp, 'argv.log');
-writeFileSync(argvPath, '');
+//     apostrophe (O'Connor') is preserved;
+//   - a core-initiated deliver_report with string text steers the host, while
+//     one WITHOUT a string text is rejected and delivers no steer (a missing
+//     report is a protocol rejection, not a silent success).
+// Controlled core `__session` stub only: no real Python core, models, live Pi,
+// or install.
+const NATIVE = 'adapter-contract';
+const stub = makeSessionStub({ reply: {} });
 
-const TOOL_INFO = {
-  dispatch: { label: 'D', description: 'Submit.', params: { goal: 'g.', additionalContext: 'c.', role: 'r.', taskLabel: 'l.' } },
-  status: { label: 'S', description: 'Manage.', params: { action: 'a.', limit: 'n.', runId: 'i.' } },
-  command: { description: '/orch' },
-  actions: ['status', 'history', 'stop', 'help', 'doctor', 'roles'],
-};
-
-// The ack used when a scenario does not override ORCH_ACK: a fully valid ack.
-const VALID_ACK = { type: 'ack', run_id: 'a'.repeat(32), role: 'plain', ack: 'Accepted.', jobs: [{ job_id: 'a:1', worker_session_id: 'w1' }] };
-
-writeFileSync(join(temp, 'python3'), `#!${process.execPath}\n` + [
-  `const fs = require('node:fs');`,
-  `const args = process.argv.slice(2);`,
-  `const ARGV = process.env.ORCH_ARGV;`,
-  `if (ARGV) { try { fs.appendFileSync(ARGV, JSON.stringify(args) + '\\n'); } catch (e) {} }`,
-  `if (args.includes('tool-info')) { process.stdout.write(${JSON.stringify(JSON.stringify(TOOL_INFO))}); process.exit(0); }`,
-  `if (args.includes('initial-mode')) { process.stdout.write('on'); process.exit(0); }`,
-  `if (args.includes('dispatch')) {`,
-  `  const ack = process.env.ORCH_ACK || ${JSON.stringify(JSON.stringify(VALID_ACK))};`,
-  `  process.stdout.write(ack + '\\n');`,
-  `  if (process.env.ORCH_RETURN) process.stdout.write(process.env.ORCH_RETURN + '\\n');`,
-  `  process.exit(0);`,
-  `}`,
-  `{`,
-  `  const code = parseInt(process.env.ORCH_CMD_CODE || '0', 10) || 0;`,
-  `  if (process.env.ORCH_CMD_STDERR) process.stderr.write(process.env.ORCH_CMD_STDERR);`,
-  `  if (process.env.ORCH_CMD_STDOUT) process.stdout.write(process.env.ORCH_CMD_STDOUT);`,
-  `  process.exit(code);`,
-  `}`,
-].join('\n'), { mode: 0o755 });
-
-process.env.PATH = `${temp}:${process.env.PATH}`;
-process.env.ORCHESTRA_CONFIG = temp;
-
-function mkCtx(sessionId, notes) {
-  return {
-    hasUI: true,
-    sessionManager: { getSessionId: () => sessionId, buildContextEntries: () => [], getBranch: () => [] },
-    ui: {
-      theme: { fg: (_c, t) => t, bold: (t) => t },
-      setWidget() {},
-      notify: (msg) => { if (notes) notes.push(String(msg)); },
-    },
-  };
-}
+const scenario = (extra) => ({
+  'initial-mode': { result: { mode: 'on', text: 'Orchestra active.' } },
+  dispatch: { result: { text: 'Assignment accepted. Run abcdef0123456789abcdef0123456789.' } },
+  ...extra,
+});
+stub.setScenario(scenario());
 
 const text = (result) => (result.content ?? []).map((p) => p.text ?? '').join('\n');
-function lastDispatchArgv() {
-  const lines = readFileSync(argvPath, 'utf8').split('\n').filter((l) => l.length > 0).map((l) => JSON.parse(l));
-  return [...lines].reverse().find((a) => a.includes('dispatch')) ?? [];
-}
 async function waitFor(label, fn, timeoutMs = 4000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -84,14 +42,17 @@ async function waitFor(label, fn, timeoutMs = 4000) {
   }
 }
 
+const hooks = new Map();
+const tools = new Map();
+const commands = new Map();
+const steers = [];
+let ctx;
+
 try {
   const jiti = createJiti(import.meta.url);
   const { default: activate } = await jiti.import('../extensions/pi/orchestra/index.ts');
-  const tools = new Map();
-  const commands = new Map();
-  const steers = [];
   await activate({
-    on() {},
+    on: (name, handler) => hooks.set(name, handler),
     registerTool: (t) => tools.set(t.name, t),
     registerCommand: (name, def) => commands.set(name, def),
     registerEntryRenderer() {},
@@ -105,126 +66,124 @@ try {
   const command = commands.get('orch');
   assert.ok(dispatch && status && command, 'tools and command registered');
 
-  // ---- 2: malformed acknowledgements are rejected once, before tracking ----
-  const badAcks = [
-    ['missing type', { run_id: 'r', role: 'plain', ack: 'ok', jobs: [] }],
-    ['wrong type', { type: 'return', run_id: 'r', role: 'plain', ack: 'ok', jobs: [] }],
-    ['empty run id', { type: 'ack', run_id: '', role: 'plain', ack: 'ok', jobs: [] }],
-    ['empty role', { type: 'ack', run_id: 'r', role: '', ack: 'ok', jobs: [] }],
-    ['empty ack text', { type: 'ack', run_id: 'r', role: 'plain', ack: '', jobs: [] }],
-    ['jobs not array', { type: 'ack', run_id: 'r', role: 'plain', ack: 'ok', jobs: 'nope' }],
-    ['null job entry', { type: 'ack', run_id: 'r', role: 'plain', ack: 'ok', jobs: [null] }],
-    ['non-object job entry', { type: 'ack', run_id: 'r', role: 'plain', ack: 'ok', jobs: [42] }],
-    ['job without id', { type: 'ack', run_id: 'r', role: 'plain', ack: 'ok', jobs: [{ worker_session_id: 'w' }] }],
+  // Establish the persistent core `__session` connection for the SAME native id
+  // every tool/command below uses, so the adapter owns the live connection.
+  ctx = makeCtx(NATIVE);
+  await hooks.get('session_start')({}, ctx);
+
+  // ---- transport: a reply without a core-owned result.text is never success --
+  // These are reply-frame malformations AT THIS BOUNDARY (not the raw ack JSON
+  // schema, which is core-internal): the adapter must reject each visibly, with
+  // no fallback text and no delivered report/steer.
+  const badResults = [
+    ['empty result object', { result: {} }],
+    ['non-string scalar result', { result: 42 }],
+    ['nested object without text', { result: { status: 'ok' } }],
   ];
-  for (let i = 0; i < badAcks.length; i += 1) {
-    const [label, ack] = badAcks[i];
-    process.env.ORCH_ACK = JSON.stringify(ack);
-    delete process.env.ORCH_RETURN;
-    const notes = [];
+  for (let i = 0; i < badResults.length; i += 1) {
+    const [label, frame] = badResults[i];
+    stub.setScenario(scenario({ dispatch: frame }));
     const before = steers.length;
-    const r = await dispatch.execute(`m${i}`, { goal: 'x', role: 'plain' }, undefined, undefined, mkCtx(`MAL-${i}`, notes));
-    assert.equal(r.isError, true, `${label}: malformed ack must be isError`);
-    assert.match(text(r), /malformed acknowledgement/, `${label}: surfaces the malformed-ack cause`);
+    const r = await dispatch.execute(`m${i}`, { goal: 'x', role: 'builder' }, undefined, undefined, ctx);
+    assert.equal(r.isError, true, `${label}: malformed result.text must be isError`);
+    assert.match(text(r), /result\.text is missing/, `${label}: surfaces the malformed result.text cause`);
     assert.ok(!/default role|Assignment accepted/i.test(text(r)), `${label}: no fallback substitution`);
-    assert.ok(!notes.some((n) => /dispatched/i.test(n)), `${label}: no success notification`);
-    assert.equal(steers.length, before, `${label}: malformed ack not tracked, no return delivered`);
+    assert.equal(steers.length, before, `${label}: a malformed result delivers no report/steer`);
   }
-  delete process.env.ORCH_ACK;
 
-  // ---- 3: taskLabel forwarded literally; absent label omitted --------------
-  writeFileSync(argvPath, '');
-  process.env.ORCH_ARGV = argvPath;
+  // A reply frame carrying neither result nor error is a reply-contract
+  // violation surfaced as its actual protocol cause, not an empty success.
+  {
+    stub.setScenario(scenario({ dispatch: { contractViolation: true } }));
+    const r = await dispatch.execute('nc', { goal: 'x', role: 'builder' }, undefined, undefined, ctx);
+    assert.equal(r.isError, true, 'a reply with neither result nor error is isError');
+    assert.match(text(r), /reply contract|result or error/i, 'the reply-contract violation is surfaced');
+  }
 
-  await dispatch.execute('p1', { goal: 'g', role: 'plain', taskLabel: '  pad label  ' }, undefined, undefined, mkCtx('P1', []));
-  let argv = lastDispatchArgv();
-  let ti = argv.indexOf('--task-label');
-  assert.ok(ti >= 0 && argv[ti + 1] === '  pad label  ', `untrimmed label forwarded literally (got ${JSON.stringify(argv[ti + 1])})`);
+  // ---- core errors relay the actual cause, no generic substitute -------------
+  const relayCases = [
+    { op: 'history', args: { action: 'history' }, error: 'argparse error: --limit must be >= 0', absent: /orchestra history failed/i },
+    { op: 'status', args: { action: 'status' }, error: 'status: sqlite3.OperationalError: unable to open database file', absent: /orchestra status failed/i },
+    { op: 'stop', args: { action: 'stop', runId: 'deadbeef' }, error: 'stop: run not owned by this session', absent: /orchestra stop failed/i },
+  ];
+  for (const c of relayCases) {
+    stub.setScenario(scenario({ [c.op]: { error: c.error } }));
+    const r = await status.execute('relay', c.args, undefined, undefined, ctx);
+    assert.equal(r.isError, true, `${c.op} failure is isError`);
+    assert.equal(text(r), c.error, `${c.op} relays the actual core cause verbatim`);
+    assert.ok(!c.absent.test(text(r)), `${c.op} is not replaced with a generic adapter message`);
+  }
 
-  await dispatch.execute('p2', { goal: 'g', role: 'plain', taskLabel: '' }, undefined, undefined, mkCtx('P2', []));
-  argv = lastDispatchArgv();
-  ti = argv.indexOf('--task-label');
-  assert.ok(ti >= 0 && argv[ti + 1] === '', `empty label still forwarded (--task-label "")`);
+  // An invalid action is forwarded to core; the real argparse cause is relayed,
+  // never an adapter-side "Unknown orchestra action" duplicate.
+  {
+    stub.setScenario(scenario({ bogus: { error: "usage: orchestra [-h] {status,history,stop,help,doctor,roles}: invalid choice: 'bogus'" } }));
+    const badAction = await status.execute('a1', { action: 'bogus' }, undefined, undefined, ctx);
+    assert.equal(badAction.isError, true, 'an invalid action is isError');
+    assert.match(text(badAction), /invalid choice/, 'an invalid action relays the core argparse cause');
+    assert.ok(!/Unknown orchestra action/i.test(text(badAction)), 'no adapter "Unknown orchestra action" duplicate');
+  }
 
-  await dispatch.execute('p3', { goal: 'g' }, undefined, undefined, mkCtx('P3', []));
-  argv = lastDispatchArgv();
-  assert.ok(!argv.includes('--task-label'), 'absent label omits --task-label');
-  assert.ok(!argv.includes('--role'), 'absent role omits --role');
+  // ---- dispatch forwards public fields as exact request wire values ----------
+  // Raw CLI argv forwarding (`--task-label ...`) is now a core-producer concern;
+  // the translator contract is that the request arguments carry the values
+  // exactly: padded/empty labels literal, only an absent label/role omitted.
+  stub.setScenario(scenario());
 
-  // ---- 6: slash parser strips only paired double quotes --------------------
-  writeFileSync(argvPath, '');
-  command.handler(`do --task-label "a b" goal O'Connor'`, mkCtx('U1', []));
-  await waitFor('slash dispatch', () => lastDispatchArgv().includes('--task-label'));
-  argv = lastDispatchArgv();
-  ti = argv.indexOf('--task-label');
-  assert.equal(argv[ti + 1], 'a b', 'paired double quotes stripped from --task-label');
-  const gi = argv.indexOf('--goal');
-  assert.equal(argv[gi + 1], `goal O'Connor'`, `literal trailing apostrophe preserved in goal (got ${JSON.stringify(argv[gi + 1])})`);
+  await dispatch.execute('p1', { goal: 'g', role: 'builder', taskLabel: '  pad label  ' }, undefined, undefined, ctx);
+  let args = stub.request('dispatch').arguments;
+  assert.equal(args.taskLabel, '  pad label  ', 'untrimmed label forwarded literally');
+  assert.equal(args.goal, 'g', 'goal forwarded');
+  assert.equal(args.role, 'builder', 'role forwarded');
 
-  writeFileSync(argvPath, '');
-  command.handler(`do "O'Connor' only" more`, mkCtx('U2', []));
-  await waitFor('slash dispatch 2', () => lastDispatchArgv().length > 0);
-  argv = lastDispatchArgv();
-  const gi2 = argv.indexOf('--goal');
-  assert.equal(argv[gi2 + 1], `O'Connor' only more`, `double-quoted token keeps an inner/trailing apostrophe when unquoted`);
+  await dispatch.execute('p2', { goal: 'g', role: 'builder', taskLabel: '' }, undefined, undefined, ctx);
+  args = stub.request('dispatch').arguments;
+  assert.ok('taskLabel' in args, 'an empty label keeps the taskLabel key present');
+  assert.equal(args.taskLabel, '', 'an empty label is forwarded as an empty string');
 
-  // ---- 4: core failure relay (stderr > stdout > exit code) -----------------
-  process.env.ORCH_CMD_CODE = '2';
-  process.env.ORCH_CMD_STDERR = 'argparse: history rejected';
-  process.env.ORCH_CMD_STDOUT = 'ignored stdout';
-  let h = await status.execute('h1', { action: 'history' }, undefined, undefined, mkCtx('H1', []));
-  assert.equal(h.isError, true, 'history failure is isError');
-  assert.equal(text(h), 'argparse: history rejected', 'history relays stderr with priority');
-  assert.ok(!/orchestra history failed/i.test(text(h)), 'no generic history substitution');
+  await dispatch.execute('p3', { goal: 'g' }, undefined, undefined, ctx);
+  args = stub.request('dispatch').arguments;
+  assert.ok(!('taskLabel' in args), 'an absent label omits taskLabel');
+  assert.ok(!('role' in args), 'an absent role omits role');
 
-  delete process.env.ORCH_CMD_STDERR;
-  process.env.ORCH_CMD_CODE = '1';
-  process.env.ORCH_CMD_STDOUT = 'only stdout detail';
-  h = await status.execute('h2', { action: 'history' }, undefined, undefined, mkCtx('H2', []));
-  assert.equal(text(h), 'only stdout detail', 'history falls back to stdout when no stderr');
+  // ---- slash parser: strip only paired double quotes; keep literal apostrophe --
+  stub.setScenario(scenario());
+  await command.handler(`do --task-label "a b" goal O'Connor'`, ctx);
+  args = stub.request('dispatch').arguments;
+  assert.equal(args.taskLabel, 'a b', 'paired double quotes stripped from --task-label');
+  assert.equal(args.goal, `goal O'Connor'`, `literal trailing apostrophe preserved in the goal`);
 
-  delete process.env.ORCH_CMD_STDOUT;
-  process.env.ORCH_CMD_CODE = '7';
-  h = await status.execute('h3', { action: 'history' }, undefined, undefined, mkCtx('H3', []));
-  assert.equal(text(h), 'orchestra command failed with exit code 7.', 'exit-code-only when no output detail');
+  await command.handler(`do "O'Connor' only" more`, ctx);
+  args = stub.request('dispatch').arguments;
+  assert.equal(args.goal, `O'Connor' only more`, `a double-quoted token keeps an inner/trailing apostrophe when unquoted`);
 
-  // status action relays the real cause, not "orchestra status failed:".
-  process.env.ORCH_CMD_CODE = '1';
-  process.env.ORCH_CMD_STDERR = 'status: sqlite3 unable to open';
-  const sFail = await status.execute('s1', { action: 'status' }, undefined, undefined, mkCtx('S1', []));
-  assert.equal(sFail.isError, true, 'status failure is isError');
-  assert.match(text(sFail), /sqlite3 unable to open/, 'status relays the real core cause');
-  assert.ok(!/orchestra status failed/i.test(text(sFail)), 'no "orchestra status failed" substitution');
+  // ---- deliver_report: string text steers; missing text rejected, no steer ----
+  stub.setScenario(scenario({ emitDeliverReport: 'REPORT BODY delivered' }));
+  let before = steers.length;
+  const okAck = await dispatch.execute('d-ok', { goal: 'x', role: 'builder' }, undefined, undefined, ctx);
+  assert.equal(okAck.isError, false, 'a valid dispatch ack is accepted');
+  await waitFor('accepted deliver_report', () => stub.nativeResults().some((r) => r.id === 'deliver-1' && r.accepted === true));
+  assert.equal(steers.length, before + 1, 'a deliver_report with string text is steered to the host');
+  assert.equal(steers[steers.length - 1], 'REPORT BODY delivered', 'the delivered report text is the host steer');
 
-  // stop relays the real cause.
-  process.env.ORCH_CMD_CODE = '2';
-  process.env.ORCH_CMD_STDERR = 'stop: run not owned by this session';
-  const stopFail = await status.execute('t1', { action: 'stop', runId: 'deadbeef' }, undefined, undefined, mkCtx('T1', []));
-  assert.match(text(stopFail), /not owned by this session/, 'stop relays the real core cause');
-  assert.ok(!/orchestra stop failed/i.test(text(stopFail)), 'no "orchestra stop failed" substitution');
-
-  // An invalid action relays the core argparse cause, not an adapter duplicate.
-  process.env.ORCH_CMD_CODE = '2';
-  process.env.ORCH_CMD_STDERR = "usage: orchestra [-h] ... invalid choice: 'bogus'";
-  const badAction = await status.execute('a1', { action: 'bogus' }, undefined, undefined, mkCtx('A1', []));
-  assert.equal(badAction.isError, true, 'invalid action is isError');
-  assert.match(text(badAction), /invalid choice/, 'invalid action relays the core argparse cause');
-  assert.ok(!/Unknown orchestra action/i.test(text(badAction)), 'no adapter "Unknown orchestra action" duplicate');
-
-  // ---- 5: no assembled return is a protocol error, not a generic outcome ---
-  delete process.env.ORCH_CMD_STDERR;
-  process.env.ORCH_CMD_STDOUT = '{}'; // session-return succeeds but has no "return" field
-  process.env.ORCH_CMD_CODE = '0';
-  process.env.ORCH_RETURN = JSON.stringify({ type: 'return', run_id: 'a'.repeat(32) });
-  const notes5 = [];
-  const steerBefore = steers.length;
-  const ack5 = await dispatch.execute('r1', { goal: 'g', role: 'plain' }, undefined, undefined, mkCtx('R1', notes5));
-  assert.equal(ack5.isError, false, 'a valid ack is still accepted');
-  await waitFor('protocol-error notification', () => notes5.some((n) => /protocol|malformed/i.test(n)));
-  assert.ok(notes5.some((n) => /protocol|malformed/i.test(n)), 'protocol error surfaced');
-  assert.equal(steers.length, steerBefore, 'no successful/empty return is delivered for malformed output');
+  // A non-string text reaches the same guard as a missing one: it is rejected
+  // with the missing-text cause and delivers no steer (never a silent success).
+  stub.setScenario(scenario({ emitDeliverReport: 404 }));
+  before = steers.length;
+  await dispatch.execute('d-bad', { goal: 'x', role: 'builder' }, undefined, undefined, ctx);
+  await waitFor('rejected deliver_report', () => stub.nativeResults().some((r) => r.id === 'deliver-1' && r.accepted === false));
+  const rejected = stub.nativeResults().filter((r) => r.id === 'deliver-1').pop();
+  assert.match(String(rejected.error), /text argument/, 'a deliver_report without string text is rejected with the missing-text cause');
+  assert.equal(steers.length, before, 'a rejected deliver_report delivers no steer');
 
   console.log('Pi adapter boundary contract passed');
 } finally {
-  rmSync(temp, { recursive: true, force: true });
+  // Always shut the persistent connection down (kills the core `__session`
+  // subprocess) before removing the temp owner dir, so the Node process exits
+  // whether or not an assertion threw.
+  try {
+    if (hooks.has('session_shutdown') && ctx) hooks.get('session_shutdown')({}, ctx);
+  } finally {
+    stub.cleanup();
+  }
 }

@@ -181,6 +181,63 @@ def test_default_role_and_explicit_role(queue: JobQueue, config: OrchestraConfig
     assert queue.list_jobs(submission.run_id)[0].role == "plain"
 
 
+def test_literal_default_alias_resolves_to_default_role(
+    queue: JobQueue, config: OrchestraConfig
+) -> None:
+    # The catalog has no role literally named "default", so the literal
+    # string "default" is an alias for the catalog's default_role.
+    submission = _submit(queue, config, Assignment(goal="alias", role="default"))
+    assert queue.list_jobs(submission.run_id)[0].role == "builder"
+
+
+DEFAULT_PRECEDENCE_ROLES = """
+default_role: builder
+model_limits:
+  "m1":
+    concurrency: 3
+roles:
+  builder:
+    enabled: manual
+    dispatch_hint: Return builder changes.
+    harness_config: pi
+    model: "m1"
+    env: {}
+    skills: []
+    auto_verify: false
+  default:
+    enabled: manual
+    dispatch_hint: Return the real default-role result.
+    harness_config: pi
+    model: "m1"
+    env: {}
+    skills: []
+    auto_verify: false
+"""
+
+
+def test_actual_default_role_wins_over_alias(tmp_path: Path, queue: JobQueue) -> None:
+    # A catalog that defines a real role named "default" keeps it: the literal
+    # role name "default" resolves to that role, not to the default_role alias.
+    directory = tmp_path / "prec"
+    directory.mkdir()
+    (directory / "agent-catalog.yaml").write_text(DEFAULT_PRECEDENCE_ROLES, encoding="utf-8")
+    (directory / "config.yaml").write_text(
+        CONFIG_YAML.format(state_dir=tmp_path / "prec-state"), encoding="utf-8"
+    )
+    (directory / "harnesses.yaml").write_text(HARNESSES_YAML, encoding="utf-8")
+    (directory / "prompts.yaml").write_text(PROMPTS_YAML, encoding="utf-8")
+    prec_config = load_orchestra_config(directory)
+    submission = submit(
+        prec_config.runtime.state_dir,
+        queue,
+        prec_config,
+        SESSION,
+        [Assignment(goal="real", role="default")],
+        None,
+    )
+    assert queue.list_jobs(submission.run_id)[0].role == "default"
+
+
 def test_disabled_role_rejected(queue: JobQueue, config: OrchestraConfig) -> None:
     with pytest.raises(SubmitError, match="disabled"):
         _submit(queue, config, Assignment(goal="nope", role="locked"))
@@ -191,6 +248,22 @@ def test_auto_role_rejected_as_direct_submission(
 ) -> None:
     with pytest.raises(SubmitError, match="automation-only"):
         _submit(queue, config, Assignment(goal="nope", role="verifier"))
+
+
+def test_unknown_role_error_lists_callable_roles(
+    queue: JobQueue, config: OrchestraConfig
+) -> None:
+    # Unknown-role errors list directly callable roles so the caller
+    # can discover valid choices without external lookup.
+    with pytest.raises(SubmitError) as exc_info:
+        _submit(queue, config, Assignment(goal="x", role="ghost"))
+    msg = str(exc_info.value)
+    # Callable (manual) roles must appear in the error.
+    for name in ("builder", "plain", "runner", "skilled"):
+        assert name in msg, f"callable role {name!r} missing from error"
+    # Disabled and automation-only roles must NOT appear.
+    for name in ("locked", "verifier"):
+        assert name not in msg, f"non-callable role {name!r} leaked into error"
 
 
 def test_auto_verify_creates_verifier_follow_up(
@@ -563,23 +636,20 @@ def test_skills_survive_alongside_existing_submission_data(
 
 
 def test_agent_prompt_contains_role_goal_and_dispatch_hint(
-    queue: JobQueue, tmp_path: Path
+    queue: JobQueue, config: OrchestraConfig
 ) -> None:
     """Assembly uses the resolved role's real dispatch_hint text."""
-    real_config = load_orchestra_config(None)
-    submission = submit(
-        tmp_path / "state",
-        queue,
-        real_config,
-        SESSION,
-        [Assignment(goal="polish the docs", role="reviewer")],
-    )
+    submission = _submit(queue, config, Assignment(goal="polish the docs", role="plain"))
     (job,) = queue.list_jobs(submission.run_id)
-    (task,) = [r for r in recall(tmp_path / "state", submission.run_id) if isinstance(r, Task)]
+    (task,) = [
+        r
+        for r in recall(config.runtime.state_dir, submission.run_id)
+        if isinstance(r, Task) and r.job_id == job.job_id
+    ]
     prompt = submission.payloads[job.job_id][0]
-    assert "Role: reviewer" in prompt
+    assert "Role: plain" in prompt
     assert "polish the docs" in prompt
-    assert real_config.catalog.roles["reviewer"].dispatch_hint in prompt
+    assert config.catalog.roles["plain"].dispatch_hint in prompt
     assert prompt == task.prompt
 
 

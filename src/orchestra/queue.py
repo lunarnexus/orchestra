@@ -18,7 +18,14 @@ from pathlib import Path
 from typing import Final, Literal, Self
 
 Status = Literal["pending", "running", "succeeded", "failed", "skipped"]
-_TERMINAL: Final[frozenset[str]] = frozenset({"succeeded", "failed", "skipped"})
+
+# The single queue-owned terminal classification. Every caller reuses this
+# constant (or ``Job.is_terminal``) instead of repeating terminal sets, so the
+# queue is the one authority for what counts as finished.
+TERMINAL_STATUSES: Final[frozenset[Status]] = frozenset(
+    {"succeeded", "failed", "skipped"}
+)
+_TERMINAL: Final[frozenset[str]] = TERMINAL_STATUSES
 
 
 @dataclass(frozen=True)
@@ -58,6 +65,63 @@ class Job:
     dispatcher_token: str | None = None
     child_pgid: int | None = None
     child_start: float | None = None
+
+    @property
+    def is_terminal(self) -> bool:
+        """Whether this job has reached the queue-owned terminal classification."""
+        return self.status in TERMINAL_STATUSES
+
+
+@dataclass(frozen=True)
+class SessionSnapshot:
+    """One immutable, read-only view of an attached session's live state.
+
+    ``jobs`` are the durable rows for the owning session; the counts, ``active``
+    and ``ready`` are derived from those rows plus the queue-owned admission and
+    report membership. It is a pure read: producing a snapshot never claims,
+    completes, reconciles, or acknowledges a job, and never opens a session or
+    resets a baseline. ``ready`` is true only when there are no open admissions,
+    no pending/running session job, and a non-empty eligible report selection.
+
+    ``global_running``/``global_pending`` are the cross-session workload tallies
+    status rendering needs; they are read from the same held lock as ``jobs``
+    so the owned and global views come from one consistent read (every write
+    serializes on the same lock). They are display counts, not schema.
+    """
+
+    parent_session: str
+    jobs: tuple[Job, ...]
+    running: int
+    pending: int
+    terminal: int
+    global_running: int
+    global_pending: int
+    open_admissions: tuple[str, ...]
+    baseline_run_ids: tuple[str, ...]
+    reported_run_ids: tuple[str, ...]
+    active: bool
+    ready: bool
+    ready_run_ids: tuple[str, ...]
+
+    @property
+    def counts(self) -> dict[str, int]:
+        """Derived per-status tallies over the session's own job rows."""
+        return {"running": self.running, "pending": self.pending, "terminal": self.terminal}
+
+
+@dataclass
+class _SessionState:
+    """Queue-owned runtime membership for one attached core session.
+
+    Runtime state only (no schema/columns, no job-status copies): the terminal
+    baseline captured at open, in-flight admitted request ids, and reported run
+    ids. Guarded by the queue instance lock; this is the owning core session
+    process's truth, while durable job rows stay the cross-process source.
+    """
+
+    baseline_run_ids: frozenset[str]
+    admissions: set[str]
+    reported_run_ids: set[str]
 
 
 _SCHEMA = """
@@ -131,6 +195,8 @@ class JobQueue:
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA busy_timeout = 10000")
         self._conn.executescript(_SCHEMA)
+        # Queue-owned runtime session membership (no schema, no status copies).
+        self._sessions: dict[str, _SessionState] = {}
         with self._lock:
             self._migrate_schema()
 
@@ -168,7 +234,15 @@ class JobQueue:
             self._conn.execute("COMMIT")
 
     def close(self) -> None:
-        self._conn.close()
+        # Serialize the close with every other use of the shared connection:
+        # all reads/claims already take ``self._lock``, so a caller that joins
+        # its session threads before closing the queue can never free the
+        # underlying SQLite handle while another of its threads is mid-query
+        # (which would crash inside ``_sqlite3``). A use that begins *after*
+        # this returns raises a clean ``sqlite3.ProgrammingError`` rather than
+        # a segfault, because the Python-level connection is now closed.
+        with self._lock:
+            self._conn.close()
 
     def __enter__(self) -> Self:
         return self
@@ -405,6 +479,40 @@ class JobQueue:
                 self._skip_dependents(job_id)
         return self.get_job(job_id)
 
+    def fail_unstarted(self, run_id: str, parent_session: str) -> tuple[Job, ...]:
+        """Fail all pending jobs for an owned run (infrastructure failure).
+
+        Authoritative transition used when execution cannot launch: validates
+        that every affected job is still pending (not already claimed/running)
+        and belongs to the owning session, then transitions them to failed and
+        cascades skips to transitive dependents. Raises QueueError when the run
+        has no jobs, belongs to a different session, or contains a non-pending
+        job (so a caller never silently overwrites running or terminal state).
+        """
+        with self._transaction():
+            jobs = self._owned_jobs_locked(parent_session, run_id=run_id)
+            if not jobs:
+                raise QueueError(
+                    f"run {run_id!r} is not owned by session {parent_session!r}"
+                )
+            for job in jobs:
+                if job.status != "pending":
+                    raise QueueError(
+                        f"job {job.job_id!r} has status {job.status!r};"
+                        " fail_unstarted requires all jobs to be pending"
+                    )
+            now = _now()
+            for job in jobs:
+                self._conn.execute(
+                    "UPDATE jobs SET status = 'failed', finished_at = ?"
+                    " WHERE job_id = ?",
+                    (now, job.job_id),
+                )
+                self._skip_dependents(job.job_id)
+        return tuple(
+            self.get_job(job.job_id) for job in jobs
+        )
+
     def _skip_dependents(self, blocked_job_id: str) -> None:
         rows = self._conn.execute(
             "SELECT job_id FROM job_prerequisites WHERE prerequisite_id = ?",
@@ -469,6 +577,189 @@ class JobQueue:
             (run_id,),
         ).fetchone()
         return int(row[0])
+
+    # --- runtime session membership (Slice 1 queue contract) ---------------
+
+    def open_session(self, parent_session: str) -> None:
+        """Idempotently bind a core session and baseline its terminal history.
+
+        The first open captures the run ids that are already fully terminal as
+        an attachment baseline so historical reports are never auto-replayed.
+        Re-opening an already-attached session is a no-op: it must never erase
+        recorded report receipts, admitted requests, or reset the baseline.
+        """
+        if not parent_session:
+            raise QueueError("parent_session is required to open a session")
+        with self._lock:
+            if parent_session in self._sessions:
+                return  # idempotent: keep baseline, admissions, and receipts
+            by_run: dict[str, list[bool]] = {}
+            for job in self._owned_jobs_locked(parent_session):
+                by_run.setdefault(job.run_id, []).append(job.is_terminal)
+            baseline = frozenset(
+                run_id
+                for run_id, terminal_flags in by_run.items()
+                if terminal_flags and all(terminal_flags)
+            )
+            self._sessions[parent_session] = _SessionState(
+                baseline_run_ids=baseline, admissions=set(), reported_run_ids=set()
+            )
+
+    def begin_submission(self, parent_session: str, request_id: str) -> None:
+        """Admit an in-flight submission before any job row exists.
+
+        Tracks the request across the process boundary that SQLite cannot yet
+        see, so readiness stays false while a submission is still being
+        accepted. Requires an opened session; a duplicate request is rejected.
+        """
+        state = self._require_state(parent_session)
+        with self._lock:
+            if request_id in state.admissions:
+                raise QueueError(
+                    f"request {request_id!r} is already an open submission"
+                )
+            state.admissions.add(request_id)
+
+    def finish_submission(self, parent_session: str, request_id: str) -> None:
+        """Release a prior admission after ack or definite close.
+
+        Idempotent: acknowledgement and process-closure can both call this, and
+        a request that never admitted is ignored. Requires an opened session.
+        """
+        state = self._require_state(parent_session)
+        with self._lock:
+            state.admissions.discard(request_id)
+
+    def acknowledge_report(self, parent_session: str, run_ids: Sequence[str]) -> None:
+        """Record that selected reports were submitted to their native session.
+
+        Callers invoke this only after a real native delivery success. For each
+        selected run it validates ownership and per-run terminality (not that
+        the whole session is still idle), then records reported membership.
+        Repeated acknowledgement is harmless; foreign or non-terminal runs are
+        rejected. An empty selection acknowledges nothing.
+        """
+        state = self._require_state(parent_session)
+        with self._lock:
+            for run_id in run_ids:
+                jobs = self._owned_jobs_locked(parent_session, run_id=run_id)
+                if not jobs:
+                    raise QueueError(
+                        f"run {run_id!r} is not owned by session {parent_session!r}"
+                    )
+                if not all(job.is_terminal for job in jobs):
+                    raise QueueError(
+                        f"run {run_id!r} is not terminal; cannot acknowledge its report"
+                    )
+                state.reported_run_ids.add(run_id)
+
+    def snapshot(self, parent_session: str) -> SessionSnapshot:
+        """Return one frozen, read-only session view (never opens a session).
+
+        Reads the session's committed job rows and combines them with queue-
+        owned admission/report membership. For an unopened session there is no
+        baseline/report/admission state, so eligible runs are simply the
+        session's all-terminal runs; this still supports status/Results without
+        any lifecycle side effect.
+        """
+        with self._lock:
+            jobs = self._owned_jobs_locked(parent_session)
+            # Same held lock as the owned read: every write serializes on this
+            # lock, so the global tallies are consistent with the rows above.
+            global_running = self._running_count()
+            global_pending = int(
+                self._conn.execute(
+                    "SELECT COUNT(*) FROM jobs WHERE status = 'pending'"
+                ).fetchone()[0]
+            )
+            state = self._sessions.get(parent_session)
+            baseline = state.baseline_run_ids if state else frozenset()
+            reported = frozenset(state.reported_run_ids) if state else frozenset()
+            admissions = tuple(sorted(state.admissions)) if state else ()
+
+        running = sum(1 for job in jobs if job.status == "running")
+        pending = sum(1 for job in jobs if job.status == "pending")
+        terminal = sum(1 for job in jobs if job.is_terminal)
+
+        by_run: dict[str, list[Job]] = {}
+        for job in jobs:
+            by_run.setdefault(job.run_id, []).append(job)
+        ready_run_ids = tuple(
+            sorted(
+                run_id
+                for run_id, run_jobs in by_run.items()
+                if all(job.is_terminal for job in run_jobs)
+                and run_id not in baseline
+                and run_id not in reported
+            )
+        )
+        active = running + pending > 0 or bool(admissions)
+        ready = not active and bool(ready_run_ids)
+        return SessionSnapshot(
+            parent_session=parent_session,
+            jobs=jobs,
+            running=running,
+            pending=pending,
+            terminal=terminal,
+            global_running=global_running,
+            global_pending=global_pending,
+            open_admissions=admissions,
+            baseline_run_ids=tuple(sorted(baseline)),
+            reported_run_ids=tuple(sorted(reported)),
+            active=active,
+            ready=ready,
+            ready_run_ids=ready_run_ids,
+        )
+
+    def owned_run_jobs(self, parent_session: str, run_id: str) -> tuple[Job, ...]:
+        """Return one session's jobs for one run from a single durable read.
+
+        Cancellation, inspection, and Results that know a run id and their own
+        session use this to validate, in one read, that the run exists and
+        belongs to them, then act on the returned rows. A run with no job rows
+        at all is unknown; a run whose jobs belong to another session is
+        foreign; both raise :class:`QueueError` so a caller never leaks or acts
+        on another session's work. This is a pure read: it claims, completes,
+        reconciles, or acknowledges nothing.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM jobs WHERE run_id = ? ORDER BY sequence", (run_id,)
+            ).fetchall()
+            jobs = tuple(self._job_from_row(row) for row in rows)
+        owned = tuple(job for job in jobs if job.parent_session == parent_session)
+        if not jobs:
+            raise QueueError(f"unknown run {run_id!r}")
+        if not owned:
+            raise QueueError(
+                f"run {run_id!r} is not owned by session {parent_session!r}"
+            )
+        return owned
+
+    def _require_state(self, parent_session: str) -> _SessionState:
+        with self._lock:
+            state = self._sessions.get(parent_session)
+        if state is None:
+            raise QueueError(f"session {parent_session!r} is not open")
+        return state
+
+    def _owned_jobs_locked(
+        self, parent_session: str, run_id: str | None = None
+    ) -> tuple[Job, ...]:
+        """Owned job rows for a session (optionally one run); lock must be held."""
+        if run_id is None:
+            rows = self._conn.execute(
+                "SELECT * FROM jobs WHERE parent_session = ?"
+                " ORDER BY run_id, sequence",
+                (parent_session,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM jobs WHERE parent_session = ? AND run_id = ?"
+                " ORDER BY sequence",
+                (parent_session, run_id),
+            ).fetchall()
+        return tuple(self._job_from_row(row) for row in rows)
 
     def _job_from_row(self, row: sqlite3.Row) -> Job:
         prereq_rows = self._conn.execute(

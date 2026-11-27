@@ -8,6 +8,8 @@ transcript file so transcript lookup runs for real.
 
 from __future__ import annotations
 
+import os
+import signal
 import threading
 import time
 from collections.abc import Iterator
@@ -16,8 +18,9 @@ from pathlib import Path
 
 import pytest
 
-from orchestra.harness import Budgets, CommandJob, HarnessError
+from orchestra.harness import Budgets, CommandJob, HarnessError, Outcome
 from orchestra.pi_harness import BUDGET_SOFT_REASON, BUDGET_TURN_REASON, AgentPlan, PiHarness
+from orchestra.queue import JobQueue
 
 STUB_PI = r"""
 import json, os, sys
@@ -128,7 +131,7 @@ def test_agent_response_reaches_assembled_return(
             queue, tmp_path, harness, submission.run_id,
             global_limit=1, per_session_limit=1, payloads=submission.payloads,
         )
-        _record_notes(config, submission, harness)
+        _record_notes(config, submission.run_id, submission.jobs, harness)
         result = assemble(queue, tmp_path, config.prompts, submission.run_id)
         if wrap_up:
             assert result.jobs[0].status == "failed"
@@ -338,3 +341,357 @@ def test_unknown_job_delegates_to_shell(tmp_path: Path, stub_script: Path, sessi
     assert outcome.success
     assert outcome.output == "hello\n"
     assert outcome.transcript is None
+
+
+# --- Item 7: a child that dies without its settle sentinel ------------------
+#
+# The settle-emitting stub above always reached ``agent_settled``, so nothing
+# proved the failure paths for a child that never settles. These stubs answer
+# the prompt and then, per ``STUB_NO_SETTLE``: ``exit`` leaves the process
+# without ever settling; ``hang`` stays alive without settling, so a
+# dispatcher-configured hard timeout (not the test's own teardown) must end it.
+
+STUB_NO_SETTLE = r"""
+import json, os, sys, time
+
+mode = os.environ.get("STUB_NO_SETTLE", "exit")
+
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+
+for line in sys.stdin:
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        continue
+    if obj.get("type") == "prompt":
+        send({"id": obj.get("id"), "type": "response", "success": True})
+        if mode == "hang":
+            # Stay alive without ever settling; ignores all further stdin.
+            time.sleep(300)
+        else:
+            # Leave the process without a settle event, carrying the requested
+            # exit code (default 7) so a nonzero crash and a clean code-0 exit
+            # are both reproducible.
+            os._exit(int(os.environ.get("STUB_EXIT_CODE", "7")))
+"""
+
+
+@pytest.fixture()
+def no_settle_script(tmp_path: Path) -> Path:
+    path = tmp_path / "stub_no_settle.py"
+    path.write_text(STUB_NO_SETTLE, encoding="utf-8")
+    return path
+
+
+def _no_settle_plan(script: Path, mode: str, exit_code: int | None = None) -> AgentPlan:
+    env = {"STUB_NO_SETTLE": mode}
+    if exit_code is not None:
+        env["STUB_EXIT_CODE"] = str(exit_code)
+    return AgentPlan(command=("python3", str(script)), model="m1", env=env)
+
+
+def _pgid_alive(pgid: int) -> bool:
+    """True when the process group still has live work (signal-0 group probe)."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # live member under an unreaped zombie leader (macOS)
+    return True
+
+
+def _wait_running_child(queue: JobQueue, job_id: str, timeout: float = 10.0) -> int:
+    """Poll until the job is running on a live registered group; return its pgid.
+
+    Proves the controlled child actually launched and stayed alive, using a
+    bounded poll instead of an assumed sleep. Fails if no live running group
+    ever appears.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        job = queue.get_job(job_id)
+        if job.child_pgid is not None and job.status == "running" and _pgid_alive(job.child_pgid):
+            return job.child_pgid
+        time.sleep(0.01)
+    pytest.fail("child never launched a live running execution group")
+
+
+def test_child_exiting_without_settle_yields_failed_outcome(
+    no_settle_script: Path, sessions_dir: Path
+) -> None:
+    """A Pi child that exits without ``agent_settled`` yields a failed Outcome.
+
+    Regression for the gap where the stub always emitted its settle sentinel:
+    the real RPC harness must report a controlled child that leaves after its
+    prompt response and never settles as a failure, with no live child left.
+    """
+    harness = PiHarness({"j1": _no_settle_plan(no_settle_script, "exit")}, "budget!")
+    handle = harness.new_handle()
+    outcome = harness.execute(CommandJob("j1", ("prompt",)), Budgets(), handle)
+
+    assert not outcome.success  # never settled, so never a success
+    assert outcome.output == ""  # never reached get_last_assistant_text
+    # Reported as the observed unexpected self-exit, not a budget/rejected
+    # reason and not a hard-timeout/cancellation Orchestra never requested.
+    reason = harness.note_for("j1").reason
+    assert reason is not None
+    assert "without completing" in reason
+    assert "7" in reason
+
+    # Owner-scoped: the launched child is dead once execute() returns.
+    process = getattr(handle, "process", None)
+    assert process is not None
+    deadline = time.monotonic() + 5
+    while process.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert process.poll() is not None
+
+
+def test_child_exiting_without_settle_persists_failed_job(
+    tmp_path: Path, no_settle_script: Path, sessions_dir: Path
+) -> None:
+    """A no-settle child fails durably through the real dispatcher + SQLite.
+
+    Connects the no-settle boundary to core: the queue reaches a terminal
+    ``failed`` status and the run record keeps a failure reason, so the
+    originating session is handed a real failure, not a stuck job. The precise
+    unexpected-exit wording is pinned by
+    :func:`test_self_exit_persists_precise_unexpected_exit_reason`.
+    """
+    from orchestra.config import load_orchestra_config
+    from orchestra.dispatcher import recorded_reasons, run
+    from orchestra.submit import Assignment, submit
+
+    config = load_orchestra_config(Path(__file__).resolve().parents[1])
+    config = replace(config, runtime=replace(config.runtime, state_dir=tmp_path))
+    with JobQueue(tmp_path / "queue.db") as queue:
+        submission = submit(
+            tmp_path, queue, config, "test:no-settle",
+            [Assignment(goal="do the work", role="builder")],
+        )
+        job_id = submission.jobs[0].job_id
+        harness = PiHarness(
+            {job_id: _no_settle_plan(no_settle_script, "exit")}, "budget!"
+        )
+        run(
+            queue, tmp_path, harness, submission.run_id,
+            global_limit=1, per_session_limit=1, payloads=submission.payloads,
+        )
+        assert queue.get_job(job_id).status == "failed"
+        reason = recorded_reasons(tmp_path, submission.run_id)[job_id]
+        # A real persisted failure with a reason, not a false success marker.
+        assert reason.startswith("failed:")
+        assert reason != "succeeded"
+
+def test_hard_timeout_terminates_live_hanging_child_not_teardown(
+    tmp_path: Path, no_settle_script: Path, sessions_dir: Path
+) -> None:
+    """A short hard timeout ends a live-hanging Pi child and persists failure.
+
+    The controlled child stays alive without settling (an injected hang that
+    would outlive the test) and the dispatcher's hard timeout — a TEST INPUT
+    well below the hang and below the soft timeout / turn limit, so neither
+    can be the terminator — must end the actual execution. The test never
+    calls ``terminate``, so the only way the run ends and the live group dies
+    is the timeout. Item 1 owns the connected idle-parent return journey; this
+    covers the harness/dispatcher hard-timeout death path only.
+    """
+    from orchestra.config import load_orchestra_config
+    from orchestra.dispatcher import recorded_reasons, run
+    from orchestra.submit import Assignment, submit
+
+    config = load_orchestra_config(Path(__file__).resolve().parents[1])
+    config = replace(
+        config,
+        runtime=replace(
+            config.runtime,
+            state_dir=tmp_path,
+            default_timeout=2,  # hard timeout (TEST INPUT): fires first
+            soft_timeout=600,  # far later: cannot be the terminator
+            turn_limit=1000,  # child emits no turns: cannot be the terminator
+        ),
+    )
+    captured: list[int] = []
+    terminated_by_timeout = False
+    with JobQueue(tmp_path / "queue.db") as queue:
+        submission = submit(
+            tmp_path, queue, config, "test:hang",
+            [Assignment(goal="hang forever", role="builder")],
+        )
+        job_id = submission.jobs[0].job_id
+        harness = PiHarness(
+            {job_id: _no_settle_plan(no_settle_script, "hang")}, "budget!"
+        )
+        worker = threading.Thread(
+            target=run,
+            args=(queue, tmp_path, harness, submission.run_id),
+            kwargs={
+                "global_limit": 1,
+                "per_session_limit": 1,
+                "payloads": submission.payloads,
+            },
+        )
+        started = time.monotonic()
+        worker.start()
+        try:
+            # Prove the injected live hang really existed before any timeout.
+            pgid = _wait_running_child(queue, job_id)
+            captured.append(pgid)
+            # No teardown here: the run must end on its own via the timeout.
+            # Bounded wait — if the timeout never fired, run() blocks on the
+            # 300s hang and this join fails.
+            worker.join(timeout=30)
+            elapsed = time.monotonic() - started
+            # Decisive, captured BEFORE any cleanup: the live group was already
+            # gone when run() returned, so the timeout (not teardown) killed it.
+            terminated_by_timeout = not _pgid_alive(pgid)
+        finally:
+            # Failure-safe, owner-scoped cleanup only if the timeout FAILED.
+            if captured and _pgid_alive(captured[0]):
+                try:
+                    os.killpg(captured[0], signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if worker.is_alive():
+                worker.join(timeout=5)
+
+        assert not worker.is_alive(), "run() hung: hard timeout never fired"
+        assert terminated_by_timeout, "live group survived: timeout did not terminate it"
+        # The run returned on its own, having waited out the hard deadline,
+        # yet far below both the hang duration and the soft timeout.
+        assert elapsed >= 2.0
+        assert elapsed < 60
+        assert queue.get_job(job_id).status == "failed"
+        reason = recorded_reasons(tmp_path, submission.run_id)[job_id]
+        assert reason == "failed: terminated (hard timeout or cancellation)"
+
+
+# --- Unexpected process exit vs Orchestra-requested termination -------------
+#
+# The no-settle finally used to flag the handle terminated unconditionally, so
+# a child that exited on its own (crash or clean exit without settling) was
+# reported as "hard timeout or cancellation" even though Orchestra never asked
+# for it. These tests pin the corrected distinction: a self-exit reports the
+# observed code as an unexpected exit, while a genuine Orchestra terminate
+# (timeout/cancellation) still reports the existing termination reason.
+
+
+def test_self_exit_without_settle_is_unexpected_exit_not_termination(
+    no_settle_script: Path, sessions_dir: Path
+) -> None:
+    """A child that exits itself without settling reports its observed code.
+
+    The harness must NOT mark the outcome terminated (Orchestra never asked),
+    must record the observed nonzero exit code as the cause, and must not
+    collapse it into the hard-timeout/cancellation wording.
+    """
+    harness = PiHarness({"j1": _no_settle_plan(no_settle_script, "exit", 7)}, "budget!")
+    outcome = harness.execute(CommandJob("j1", ("prompt",)), Budgets())
+    assert not outcome.success
+    assert not outcome.terminated  # Orchestra never requested termination
+    assert outcome.exit_status == 7  # the observed self-exit code is captured
+    reason = harness.note_for("j1").reason
+    assert reason is not None
+    assert "7" in reason
+    assert "without completing" in reason
+    # The decisive regression: not mislabeled as a hard timeout/cancellation.
+    from orchestra.dispatcher import _failure_reason
+
+    assert "terminated (hard timeout" not in _failure_reason(outcome)
+
+
+def test_clean_exit_without_settle_reports_observed_zero_code(
+    no_settle_script: Path, sessions_dir: Path
+) -> None:
+    """A clean code-0 exit that never settles is still an incomplete run.
+
+    A zero status is not a success: it is reported as an unexpected exit that
+    completed nothing, carrying the observed code 0 and never as termination.
+    """
+    harness = PiHarness({"j1": _no_settle_plan(no_settle_script, "exit", 0)}, "budget!")
+    outcome = harness.execute(CommandJob("j1", ("prompt",)), Budgets())
+    assert not outcome.success
+    assert not outcome.terminated
+    assert outcome.exit_status == 0
+    reason = harness.note_for("j1").reason
+    assert reason is not None
+    assert "without completing" in reason
+    assert "terminated (hard timeout" not in reason
+
+
+def test_self_exit_persists_precise_unexpected_exit_reason(
+    tmp_path: Path, no_settle_script: Path, sessions_dir: Path
+) -> None:
+    """A self-exiting no-settle child persists the observed code, not timeout.
+
+    Connected through the real dispatcher + SQLite: the persisted reason names
+    the unexpected exit with the child's own exit code and explicitly not the
+    hard-timeout/cancellation wording Orchestra would use for a terminate it
+    requested. This is the misleading-reason regression under real persistence.
+    """
+    from orchestra.config import load_orchestra_config
+    from orchestra.dispatcher import recorded_reasons, run
+    from orchestra.submit import Assignment, submit
+
+    config = load_orchestra_config(Path(__file__).resolve().parents[1])
+    config = replace(config, runtime=replace(config.runtime, state_dir=tmp_path))
+    with JobQueue(tmp_path / "queue.db") as queue:
+        submission = submit(
+            tmp_path, queue, config, "test:unexpected",
+            [Assignment(goal="do the work", role="builder")],
+        )
+        job_id = submission.jobs[0].job_id
+        harness = PiHarness(
+            {job_id: _no_settle_plan(no_settle_script, "exit", 7)}, "budget!"
+        )
+        run(
+            queue, tmp_path, harness, submission.run_id,
+            global_limit=1, per_session_limit=1, payloads=submission.payloads,
+        )
+        assert queue.get_job(job_id).status == "failed"
+        reason = recorded_reasons(tmp_path, submission.run_id)[job_id]
+        assert reason.startswith("failed:")
+        assert "without completing" in reason
+        assert "7" in reason
+        assert "terminated (hard timeout or cancellation)" not in reason
+
+
+def test_orchestra_terminate_still_reports_termination_not_unexpected_exit(
+    stub_script: Path, sessions_dir: Path
+) -> None:
+    """An Orchestra-requested terminate keeps the existing termination reason.
+
+    Distinct from an unsolicited child exit: when the caller ends a live child
+    via terminate (the timeout/cancellation path), the outcome stays terminated
+    and the recorded reason stays the termination wording, never the new
+    unexpected-exit cause.
+    """
+    from orchestra.dispatcher import _failure_reason
+
+    harness = PiHarness({"j1": plan(stub_script, STUB_WAIT_STEER="1")}, "budget!")
+    handle = harness.new_handle()
+    results: list[Outcome] = []
+
+    def worker() -> None:
+        results.append(harness.execute(CommandJob("j1", ("prompt",)), Budgets(), handle))
+
+    thread = threading.Thread(target=worker)
+    thread.start()
+    try:
+        _wait_process(handle)
+        harness.terminate(handle)
+        thread.join(timeout=10)
+    finally:
+        if thread.is_alive():
+            harness.terminate(handle)
+            thread.join(timeout=5)
+    assert not thread.is_alive()
+    outcome = results[0]
+    assert outcome.terminated
+    assert harness.note_for("j1").reason is None  # no unexpected-exit cause
+    assert _failure_reason(outcome) == "failed: terminated (hard timeout or cancellation)"

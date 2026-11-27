@@ -1,161 +1,31 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, copyFileSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { rmSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
+import { createLiveCoreHost, makeContext, text } from './helpers/pi-live-core-host.mjs';
 
-// Exercise the real extension's management surface against the real Orchestra 2
-// core CLI and SQLite queue: one read-only `orch_status` tool (status, history,
-// stop, help, doctor, roles), run/job identifiers in the dispatch
-// acknowledgement, session-owned cancellation, session isolation, and on/off
-// tool activation. Controlled boundaries only: the host-side `python3` is a
-// pass-through stub and the `pi` RPC binary is a scripted fake. No live Pi
-// sessions, global installs, or models are involved.
+// Exercise the real extension's management surface against the REAL Orchestra 2
+// core runtime and SQLite queue: the read-only `orch_status` tool (status,
+// history, stop, help, doctor, roles), run/job identifiers in the dispatch
+// acknowledgement, session-owned cancellation, foreign-session rejection, the
+// configured default/role listing, and /orch on|off tool activation. The only
+// controlled boundary is the fake-Pi model binary; dispatch/status/stop/history
+// travel over the persistent `__session` connection to the real core. No live
+// Pi sessions, global installs, or models.
+
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const temp = mkdtempSync(join(tmpdir(), 'orchestra-controls-'));
-const sessionDir = join(temp, 'pi-sessions');
-mkdirSync(sessionDir);
-mkdirSync(join(temp, 'state'), { recursive: true });
-mkdirSync(join(temp, 'logs'), { recursive: true });
+const host = createLiveCoreHost({ repoRoot });
+const realCatalogPath = join(host.configDir, 'agent-catalog.yaml');
 
-// Resolve the real interpreter BEFORE the stub shadows `python3` on PATH.
-const realPython = spawnSync('python3', ['-c', 'import sys;print(sys.executable)'], { encoding: 'utf8' }).stdout.trim();
-assert.ok(realPython, 'a real python3 interpreter is required');
+const HOST = 'pi:'; // adapter normalizes native id "C1" -> owning session "pi:C1"
 
-// --- controlled boundaries -------------------------------------------------
-// Pass-through python3: intercepts tool-info (Slice A not yet merged) and
-// forwards all other commands to the real orchestra module unchanged.
-writeFileSync(join(temp, 'python3'), `#!${process.execPath}
-const { spawn } = require('node:child_process');
-const args = process.argv.slice(2);
-if (args.includes('tool-info')) {
-  process.stdout.write(JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"Assignment text.",additionalContext:"Extra context.",role:"Role name.",taskLabel:"Short label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"Action.",limit:"Limit.",runId:"Run ID."}},command:{description:"/orch help|on|off|doctor|status|history|do|stop"},actions:["status","history","stop","help","doctor","roles"]}));
-  process.exit(0);
-}
-const child = spawn(${JSON.stringify(realPython)}, args, { stdio: 'inherit', env: process.env });
-child.on('error', (e) => { process.stderr.write(String(e)); process.exit(1); });
-child.on('exit', (c) => process.exit(c ?? 1));
-`, { mode: 0o755 });
-
-// Fake pi RPC binary: accepts the prompt, settles after an optional delay, and
-// answers get_last_assistant_text from the scenario file.
-const fakePiPath = join(temp, 'fake-pi');
-writeFileSync(fakePiPath, `#!${process.execPath}
-const fs = require('node:fs');
-const readline = require('node:readline');
-const scenario = JSON.parse(fs.readFileSync(process.env.FAKE_PI_SCENARIO, 'utf8'));
-function entryFor(prompt) {
-  return scenario.find((e) => e.match !== '*' && prompt.includes(e.match)) || scenario.find((e) => e.match === '*');
-}
-function send(obj) { process.stdout.write(JSON.stringify(obj) + '\\n'); }
-let lastPrompt = '';
-readline.createInterface({ input: process.stdin }).on('line', (line) => {
-  let msg; try { msg = JSON.parse(line); } catch { return; }
-  if (msg.type === 'prompt') {
-    lastPrompt = String(msg.message ?? '');
-    const entry = entryFor(lastPrompt);
-    setTimeout(() => {
-      send({ id: 'prompt-1', type: 'response', success: true });
-      send({ type: 'agent_settled', aborted: false });
-    }, (entry && entry.delayMs) || 0);
-  } else if (msg.type === 'get_last_assistant_text') {
-    const entry = entryFor(lastPrompt);
-    send({ id: msg.id, type: 'response', command: 'get_last_assistant_text', data: { text: (entry && entry.text) || 'unscripted answer' } });
-  }
-});
-`, { mode: 0o755 });
-
-// --- real Orchestra 2 config (real prompts, real catalog semantics) -------
-const configDir = join(temp, 'config');
-mkdirSync(configDir);
-copyFileSync(join(repoRoot, 'prompts.yaml'), join(configDir, 'prompts.yaml'));
-writeFileSync(join(configDir, 'config.yaml'), `state_dir: ${join(temp, 'state')}
-log_dir: ${join(temp, 'logs')}
-default_timeout: 300
-soft_timeout: 240
-turn_limit: 60
-concurrency:
-  global: 6
-  per_session: 3
-retention_days: 90
-default_mode: 'on'
-`);
-writeFileSync(join(configDir, 'harnesses.yaml'), `pi:
-  harness: pi
-  command: ["${fakePiPath}"]
-`);
-const catalogPath = join(configDir, 'agent-catalog.yaml');
-writeFileSync(catalogPath, `default_role: builder
-model_limits:
-  "m1":
-    concurrency: 3
-roles:
-  builder:
-    enabled: manual
-    harness_config: pi
-    model: "m1"
-    env: {}
-    skills: []
-    dispatch_hint: Build the requested change and return the concrete edits and checks.
-    auto_verify: true
-  verifier:
-    enabled: auto
-    harness_config: pi
-    model: "m1"
-    env: {}
-    skills: []
-    dispatch_hint: Verify the assigned work and return your verdict with supporting evidence.
-    auto_verify: false
-  plain:
-    enabled: manual
-    harness_config: pi
-    model: "m1"
-    env: {}
-    skills: []
-    dispatch_hint: Do the assigned work and return a concise result.
-    auto_verify: false
-`);
-
-process.env.PATH = `${temp}:${process.env.PATH}`;
-process.env.ORCHESTRA_CONFIG = configDir;
-process.env.PYTHONPATH = join(repoRoot, 'src');
-process.env.PI_CODING_AGENT_SESSION_DIR = sessionDir;
-process.env.FAKE_PI_SCENARIO = join(temp, 'scenario.json');
-
-function setScenario(entries) {
-  writeFileSync(join(temp, 'scenario.json'), JSON.stringify(entries));
-}
-
-async function poll(label, fn, timeoutMs = 20000) {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (fn()) return;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-}
-
-/** Structured core status for a session, read through the real CLI. */
-function statusPayload(sessionId) {
-  const result = spawnSync(join(temp, 'python3'), ['-m', 'orchestra', 'status', '--session-id', sessionId, '--mode', 'on'], { encoding: 'utf8' });
-  if (result.status !== 0) throw new Error(`status failed: ${result.stderr}`);
-  return JSON.parse(result.stdout).data;
-}
-
-function activeJobs(sessionId) {
-  return statusPayload(sessionId).session_jobs;
-}
-
-const HOST = 'pi:';
-const text = (result) => (result.content ?? []).map((part) => part.text ?? '').join('\n');
+const hooks = new Map();
+const tools = new Map();
 
 try {
   const jiti = createJiti(import.meta.url);
   const { default: activate } = await jiti.import('../extensions/pi/orchestra/index.ts');
-  const hooks = new Map();
-  const tools = new Map();
   const commands = new Map();
   const steers = [];
   const entries = [];
@@ -181,35 +51,39 @@ try {
     assert.ok(!(banned in properties), `orch_status must stay read-only: no ${banned} parameter`);
   }
 
-  function makeContext(sessionId) {
-    return {
-      hasUI: true,
-      sessionManager: {
-        getSessionId: () => sessionId,
-        buildContextEntries: () => [],
-        getBranch: () => [],
-      },
-      ui: { theme: { fg: (_c, t) => t, bold: (t) => t }, setWidget: (_n, value) => { footer = value ? value.join('\n') : ''; }, notify() {} },
-    };
-  }
-
-  const ctx1 = makeContext('C1');
+  const footers = [];
+  host.trackSession(HOST + 'C1');
+  const ctx1 = makeContext('C1', { footers });
   await hooks.get('session_start')({}, ctx1);
   assert.ok(active.includes('orch_dispatch'), 'session start activates orch_dispatch');
   assert.ok(active.includes('orch_status'), 'session start activates orch_status');
+  const footerText = () => footers[footers.length - 1] ?? '';
 
   // --- 1: the dispatch acknowledgement exposes run and job identifiers ----
-  setScenario([{ match: 'slow one', text: 'slow one answer', delayMs: 2500 }, { match: '*', text: 'unused' }]);
+  // The model turn is deliberately longer than the whole test: the ONLY way
+  // this run reaches a terminal state is the owned stop, so the cancellation
+  // below is a real cancellation of a live run, not a short completion racing
+  // the stop.
+  host.setScenario([{ match: 'slow one', text: 'slow one answer', delayMs: 20000 }, { match: '*', text: 'unused' }]);
   const ack1 = await tools.get('orch_dispatch').execute('c1', { goal: 'slow one', role: 'plain' }, undefined, undefined, ctx1);
   assert.equal(ack1.isError, false, `dispatch ack failed: ${JSON.stringify(ack1)}`);
   const ackText = text(ack1);
   const runIds = ackText.match(/\b[0-9a-f]{32}\b/g) ?? [];
   assert.ok(runIds.length > 0, `dispatch acknowledgement must expose the run id (got: ${ackText})`);
   const runId = runIds[0];
+  host.trackRun(runId);
   assert.ok(ackText.includes(`${runId}:1`), 'dispatch acknowledgement must expose the job id');
-  // Lifecycle-driven footer refresh stays intact: the dispatch stream's own
-  // transitions update the role meter without any manual status command.
-  await poll('footer shows the dispatched role', () => /plain/i.test(footer));
+  // Lifecycle-driven footer refresh, in the new core-owned model: the running
+  // role meter is a status frame the CORE pushes (the adapter never derives
+  // job truth). Claim -> running happens in the independent worker process, so
+  // the meter refreshes when the same evaluator is woken by a native lifecycle
+  // event (the adapter forwards `agent_start` on every model turn) — never by a
+  // manual status tool call. Wait for the job to be durably running, forward the
+  // native event, and assert the pushed meter names the running role.
+  await host.poll('job durably running', () =>
+    host.activeJobs(HOST + 'C1').some((j) => j.role === 'plain' && j.status === 'running'), 8000);
+  hooks.get('agent_start')({}, ctx1);
+  await host.poll('core-pushed footer meter shows the running role', () => /running.*plain|plain.*×/i.test(footerText()));
 
   // --- 2: the status action is readable session status, not raw JSON ------
   const statusResult = await statusTool.execute('c2', { action: 'status' }, undefined, undefined, ctx1);
@@ -220,28 +94,54 @@ try {
   assert.match(statusText, /plain/, 'the running job role appears in status');
 
   // --- 3: owned cancellation reaches a persisted terminal state -----------
+  // Record the real cancellation overlap: the run is still durably RUNNING at
+  // the instant the stop is issued, so the stop injects into live execution
+  // rather than a run that already finished.
+  assert.ok(
+    host.activeJobs(HOST + 'C1').some((j) => j.run_id === runId && j.status === 'running'),
+    'the owned run is actually running when the stop is issued (real cancellation overlap)',
+  );
   const stopResult = await statusTool.execute('c3', { action: 'stop', runId }, undefined, undefined, ctx1);
   assert.equal(stopResult.isError, false, `owned stop must succeed: ${JSON.stringify(stopResult)}`);
   assert.match(text(stopResult), /stopped/i, 'stop reports the outcome');
-  await poll('stopped run terminal', () => activeJobs(HOST + 'C1').length === 0);
-  const afterStop = statusPayload(HOST + 'C1').last_completed;
+  await host.poll('stopped run terminal', () => host.activeJobs(HOST + 'C1').length === 0);
+  const afterStop = host.statusPayload(HOST + 'C1').last_completed;
   assert.equal(afterStop?.run_id, runId, 'the stopped run is the last completed run');
   assert.equal(afterStop?.failed, 1, 'cancellation is persisted as a failed job');
   assert.equal(afterStop?.succeeded, 0, 'a stopped run records no success');
-  await poll('footer clears after the stopped run drains', () => !/plain/i.test(footer));
+  await host.poll('footer clears after the stopped run drains', () => !/plain/i.test(footerText()));
 
   // --- 4: another session cannot cancel this session's run ----------------
-  setScenario([{ match: 'slow two', text: 'slow two answer', delayMs: 2500 }, { match: '*', text: 'unused' }]);
+  // Foreign-CORE rejection (not the adapter's stale-context guard, which the
+  // source owner tests independently): the core connection is bound to its
+  // parent_session at session_start, so a genuine foreign attempt needs a
+  // SECOND activation whose connection is bound to native C9. The stop then
+  // travels to the core as pi:C9 and the core rejects the foreign run; C1's
+  // independent worker keeps running (start_new_session) and finishes honestly.
+  host.setScenario([{ match: 'slow two', text: 'slow two answer', delayMs: 9000 }, { match: '*', text: 'unused' }]);
   const ack2 = await tools.get('orch_dispatch').execute('c4', { goal: 'slow two', role: 'plain' }, undefined, undefined, ctx1);
   assert.equal(ack2.isError, false, `second dispatch ack failed: ${JSON.stringify(ack2)}`);
   const runId2 = (text(ack2).match(/\b[0-9a-f]{32}\b/g) ?? [])[0];
   assert.ok(runId2, 'the second acknowledgement exposes its run id');
-  const foreign = await statusTool.execute('c5', { action: 'stop', runId: runId2 }, undefined, undefined, makeContext('C9'));
+  host.trackRun(runId2);
+  await host.poll('second job durably running', () =>
+    host.activeJobs(HOST + 'C1').some((j) => j.run_id === runId2 && j.role === 'plain' && j.status === 'running'), 8000);
+  // Second activation: a new core connection bound to pi:C9 replaces the C1
+  // connection; the independent run worker outlives the replaced connection.
+  const ctx9 = makeContext('C9');
+  host.trackSession(HOST + 'C9');
+  await hooks.get('session_start')({}, ctx9);
+  const foreign = await statusTool.execute('c5', { action: 'stop', runId: runId2 }, undefined, undefined, ctx9);
   assert.equal(foreign.isError, true, 'a foreign session must not cancel another session run');
-  assert.match(text(foreign), /own/i, 'the rejection explains session ownership');
-  // The un-cancelled run keeps running and finishes honestly.
-  await poll('un-cancelled run terminal', () => activeJobs(HOST + 'C1').length === 0);
-  const afterForeign = statusPayload(HOST + 'C1').last_completed;
+  // Core ownership rejection (not the adapter's stale-context guard): the stop
+  // reached the core as pi:C9 and the core refused another session's run.
+  assert.match(text(foreign), /not owned by session/i, 'the core rejects the foreign run by ownership');
+  // Re-bind C1 (closes the C9 connection) so the remaining C1-owned sections
+  // keep working; the un-cancelled C1 run is untouched and finishes honestly.
+  await hooks.get('session_start')({}, ctx1);
+  hooks.get('agent_start')({}, ctx1);
+  await host.poll('un-cancelled run terminal', () => host.activeJobs(HOST + 'C1').length === 0);
+  const afterForeign = host.statusPayload(HOST + 'C1').last_completed;
   assert.equal(afterForeign?.run_id, runId2, 'the untouched run is the last completed run');
   assert.equal(afterForeign?.succeeded, 1, 'the un-cancelled run still succeeds');
 
@@ -257,7 +157,7 @@ try {
   assert.equal(badStop.isError, true, 'stop requires a run id');
 
   // --- 6: read-only role listing ------------------------------------------
-  const catalogBefore = readFileSync(catalogPath, 'utf8');
+  const catalogBefore = readFileSync(realCatalogPath, 'utf8');
   const roles = await statusTool.execute('c9', { action: 'roles' }, undefined, undefined, ctx1);
   assert.equal(roles.isError, false, `roles action failed: ${JSON.stringify(roles)}`);
   const rolesText = text(roles);
@@ -265,7 +165,7 @@ try {
     assert.ok(rolesText.includes(role), `role listing includes ${role}`);
   }
   assert.match(rolesText, /default/i, 'role listing reports the default role');
-  assert.equal(readFileSync(catalogPath, 'utf8'), catalogBefore, 'role listing never mutates the catalog');
+  assert.equal(readFileSync(realCatalogPath, 'utf8'), catalogBefore, 'role listing never mutates the catalog');
 
   // --- 7: help and diagnostics through the same tool ----------------------
   const help = await statusTool.execute('c10', { action: 'help' }, undefined, undefined, ctx1);
@@ -273,7 +173,13 @@ try {
   assert.match(text(help), /dispatch/i, 'help describes the operations');
   const doctor = await statusTool.execute('c11', { action: 'doctor' }, undefined, undefined, ctx1);
   assert.equal(doctor.isError, false, `doctor action failed: ${JSON.stringify(doctor)}`);
-  assert.match(text(doctor), /doctor: all checks passed/, 'doctor reports the real core diagnostics');
+  // The tool-path doctor surfaces the per-check core report (the "all checks
+  // passed" summary is a CLI-command-only line, never emitted over the
+  // connection). Assert the real checks are present and none report a problem.
+  const doctorText = text(doctor);
+  assert.match(doctorText, /Orchestra doctor/, 'doctor names the core diagnostics report');
+  assert.match(doctorText, /config: ok/, 'doctor reports the loaded core config');
+  assert.doesNotMatch(doctorText, /problem:/i, 'doctor reports no problems');
 
   // --- 8: /orch on|off activation covers both tools -----------------------
   const command = commands.get('orch');
@@ -292,10 +198,18 @@ try {
   assert.match(shown, /this session/i, 'the rendered core status is what the user sees');
   assert.doesNotMatch(shown, /"session_jobs"/, 'structured status fields stay out of user output');
 
-  // Nothing dispatched here may leak a return into another session.
-  await poll('session returns delivered', () => steers.length >= 2);
+  // Every report that returns is addressed to the owning session (pi:C1): the
+  // cancelled run produced exactly the durable failed return shown, and no
+  // return ever leaked to the foreign session (pi:C9).
+  await host.poll('a return is delivered to the owning session', () => steers.length >= 1);
+  for (const steer of steers) {
+    assert.match(steer, /\(pi:C1\)/, 'every return is addressed to the owning pi:C1 session');
+    assert.doesNotMatch(steer, /pi:C9/, 'no return leaks to the foreign pi:C9 session');
+  }
 
   console.log('Pi connected controls passed');
 } finally {
-  rmSync(temp, { recursive: true, force: true });
+  try { hooks.get('session_shutdown')({}, makeContext('C1')); } catch { /* best-effort: close the core connection first */ }
+  await host.teardown();
+  try { rmSync(host.temp, { recursive: true, force: true }); } catch { /* already removed */ }
 }

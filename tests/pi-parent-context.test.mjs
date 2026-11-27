@@ -1,102 +1,89 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { createJiti } from 'jiti';
+import { makeSessionStub, makeCtx } from './helpers/orchestra-session-stub.mjs';
 
-// Exercise the real extension's parent-context capture end to end. The only
-// controlled boundary is the core `python3` dispatch, which records the exact
-// stdin it receives (the parent-context artifact the plugin sends to core).
-// No live Pi sessions, models, global config, or real core are involved.
-const temp = mkdtempSync(join(tmpdir(), 'orchestra-parent-context-'));
-const capturePath = join(temp, 'captured-stdin.txt');
-try {
-  // python3 stub: for `dispatch`, dump stdin to the capture file and print an
-  // ack line; for `status`, return an empty job list; otherwise exit 0.
-  writeFileSync(join(temp, 'python3'), `#!${process.execPath}
-const fs = require('node:fs');
-const args = process.argv.slice(2);
-const cmd = args[2];
-if (args.includes('tool-info')) {
-  process.stdout.write(JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"Assignment text.",additionalContext:"Extra context.",role:"Role name.",taskLabel:"Short label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"Action.",limit:"Limit.",runId:"Run ID."}},command:{description:"/orch"},actions:["status","history","stop","help","doctor","roles"]}));
-  process.exit(0);
-}
-let input = '';
-process.stdin.on('data', (d) => { input += d; });
-process.stdin.on('end', () => {
-  if (cmd === 'dispatch') {
-    fs.writeFileSync(${JSON.stringify(capturePath)}, input);
-    process.stdout.write(JSON.stringify({ type: 'ack', run_id: 'test-run', role: 'builder', ack: 'Assignment accepted.', jobs: [] }) + '\\n');
-    process.exit(0);
-  }
-  if (cmd === 'status') {
-    process.stdout.write(JSON.stringify({ data: { session_jobs: [] } }) + '\\n');
-  }
-  process.exit(0);
+// Translator contract: the adapter captures parent context ONLY when the core
+// requests it via a persistent-`__session` native_request `get_parent_context`,
+// and returns the chat-only capture as a native_result data.text. There is no
+// role/context policy and no made-up/fallback context text in the adapter. The
+// controlled core `__session` emits the get_parent_context request when it
+// accepts a dispatch; the test asserts the native_result the adapter sends back.
+// Controlled boundaries only: no real core, models, live Pi, or install.
+const stub = makeSessionStub({
+  reply: {
+    'initial-mode': { result: { mode: 'on', text: 'Orchestra active.' } },
+    dispatch: { result: { text: 'Assignment accepted. Run abcdef0123456789abcdef0123456789.' } },
+  },
 });
-`, { mode: 0o755 });
+stub.setScenario({
+  'initial-mode': { result: { mode: 'on', text: 'Orchestra active.' } },
+  dispatch: { result: { text: 'Assignment accepted. Run abcdef0123456789abcdef0123456789.' } },
+  emitContextRequest: true,
+});
 
-  process.env.PATH = `${temp}:${process.env.PATH}`;
-  process.env.ORCHESTRA_CONFIG = temp;
+const entries = [
+  { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'Please build the widget.' }] } },
+  {
+    type: 'message',
+    message: {
+      role: 'assistant',
+      content: [
+        { type: 'thinking', thinking: 'THINKING_MARKER hidden reasoning' },
+        { type: 'text', text: 'I will inspect the source first.' },
+        { type: 'toolCall', id: 't1', name: 'read', arguments: { path: 'TOOLCALL_ARGS_MARKER' } },
+      ],
+    },
+  },
+  { type: 'message', message: { role: 'system', content: [{ type: 'text', text: 'SYS_MARKER system prompt' }] } },
+  { type: 'message', message: { role: 'toolResult', toolName: 'read', content: [{ type: 'text', text: 'TOOLRESULT_MARKER tool output' }] } },
+  { type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 't2', name: 'bash', arguments: { command: 'ONLYTOOLCALL_MARKER' } }] } },
+  { type: 'custom', customType: 'skills', data: { note: 'SKILLS_MARKER injected skill text' } },
+  { type: 'message', message: { role: 'user', content: 'A plain string user turn.' } },
+];
 
+async function waitFor(label, fn, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (fn()) return;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+const hooks = new Map();
+let ctx;
+try {
   const jiti = createJiti(import.meta.url);
   const { default: activate } = await jiti.import('../extensions/pi/orchestra/index.ts');
-
   const tools = new Map();
   await activate({
-    on() {},
+    on: (name, handler) => hooks.set(name, handler),
     registerTool: (t) => tools.set(t.name, t),
-    registerCommand() {}, registerEntryRenderer() {},
+    registerCommand() {},
+    registerEntryRenderer() {},
+    appendEntry() {},
     getActiveTools: () => [...tools.keys()],
     setActiveTools() {},
     sendUserMessage() {},
   });
-  assert.ok(tools.has('orch_dispatch'), 'orch_dispatch tool must be registered');
 
-  // A realistic mix of session context entries: user text, an assistant turn
-  // mixing text + thinking + a tool call, a system message, a toolResult
-  // message, an assistant turn with only a tool call, and a user message with
-  // string content. Only the user/assistant natural-language text survives.
-  const entries = [
-    { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'Please build the widget.' }] } },
-    {
-      type: 'message',
-      message: {
-        role: 'assistant',
-        content: [
-          { type: 'thinking', thinking: 'THINKING_MARKER hidden reasoning' },
-          { type: 'text', text: 'I will inspect the source first.' },
-          { type: 'toolCall', id: 't1', name: 'read', arguments: { path: 'TOOLCALL_ARGS_MARKER' } },
-        ],
-      },
-    },
-    { type: 'message', message: { role: 'system', content: [{ type: 'text', text: 'SYS_MARKER system prompt' }] } },
-    { type: 'message', message: { role: 'toolResult', toolName: 'read', content: [{ type: 'text', text: 'TOOLRESULT_MARKER tool output' }] } },
-    { type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 't2', name: 'bash', arguments: { command: 'ONLYTOOLCALL_MARKER' } }] } },
-    { type: 'custom', customType: 'skills', data: { note: 'SKILLS_MARKER injected skill text' } },
-    { type: 'message', message: { role: 'user', content: 'A plain string user turn.' } },
-  ];
+  ctx = makeCtx('parent-context-test', { entries });
+  // Establish the persistent core `__session` connection for the SAME native id
+  // the dispatch will use, before any dispatch.
+  await hooks.get('session_start')({}, ctx);
 
-  const ctx = {
-    hasUI: true,
-    sessionManager: {
-      getSessionId: () => 'parent-context-test',
-      buildContextEntries: () => entries,
-      getBranch: () => [],
-    },
-    ui: {
-      theme: { fg: (_c, t) => t, bold: (t) => t },
-      setWidget() {},
-      notify() {},
-    },
-  };
-
+  // Dispatch triggers a core-initiated get_parent_context; the adapter services
+  // it from the live native session and replies with a native_result.
   const ack = await tools.get('orch_dispatch').execute('c1', { goal: 'build the widget', role: 'builder' }, undefined, undefined, ctx);
   assert.equal(ack.isError, false, `dispatch ack failed: ${JSON.stringify(ack)}`);
 
-  const captured = readFileSync(capturePath, 'utf8');
-  // Chat lines stay chat-only; the deterministic references digest (read path
-  // and bash command from the tool calls) is appended after the chat lines.
+  await waitFor('native_result for get_parent_context', () => stub.nativeResults().length > 0);
+  const results = stub.nativeResults();
+  const ctxResult = results.find((r) => r.id === 'ctx-1');
+  assert.ok(ctxResult, 'adapter answered the core get_parent_context request with a native_result');
+  assert.equal(ctxResult.accepted, true, 'capture accepted');
+  const captured = ctxResult.data.text;
+
   const expected = [
     'user: Please build the widget.',
     'assistant: I will inspect the source first.',
@@ -115,7 +102,19 @@ process.stdin.on('end', () => {
   }
   assert.ok(!/^\s*assistant:\s*$/m.test(captured), 'assistant turn with no text is skipped');
 
+  // The context was captured only in response to the core request — never pushed
+  // eagerly on dispatch, and never delivered to a foreign session.
+  assert.ok(!stub.requests().some((r) => r.operation === 'dispatch' && JSON.stringify(r).includes('TOOLCALL_ARGS_MARKER')),
+    'the adapter never sends captured context inside the dispatch request');
+
   console.log('Pi parent-context chat-only capture passed');
 } finally {
-  rmSync(temp, { recursive: true, force: true });
+  // Always shut the persistent connection down (kills the core `__session`
+  // subprocess) before removing the temp owner dir, so the Node process exits
+  // whether or not an assertion threw.
+  try {
+    if (hooks.has('session_shutdown') && ctx) hooks.get('session_shutdown')({}, ctx);
+  } finally {
+    stub.cleanup();
+  }
 }

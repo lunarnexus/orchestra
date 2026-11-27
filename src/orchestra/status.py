@@ -8,9 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from orchestra.queue import JobQueue
-
-_TERMINAL: frozenset[str] = frozenset({"succeeded", "failed", "skipped"})
+from orchestra.queue import JobQueue, SessionSnapshot
 
 
 class StatusError(ValueError):
@@ -48,13 +46,24 @@ class StatusData:
     last_completed: LastCompleted | None
 
 
-def status(queue: JobQueue, parent_session: str) -> StatusData:
-    """Query the queue for session and global status.
+def status(
+    queue: JobQueue,
+    parent_session: str,
+    *,
+    snapshot: SessionSnapshot | None = None,
+) -> StatusData:
+    """Query the authoritative queue snapshot for session and global status.
 
-    Session jobs are the matching session's pending and running jobs,
-    ordered by sequence. ``waiting_on`` lists prerequisite job ids that are
-    not yet terminal. ``last_completed`` tallies the most recently finished
-    run (max finished_at among terminal jobs of that session's runs).
+    Every fact comes from one :meth:`JobQueue.snapshot` read: session jobs are
+    that session's pending/running rows ordered by sequence (``waiting_on``
+    lists prerequisite ids within the snapshot that are not yet terminal), the
+    global tallies are the snapshot's cross-session counts, and
+    ``last_completed`` tallies the session's most recently finished run. When a
+    caller already holds a snapshot (the core session evaluator reuses one for
+    status, readiness selection, and Results) pass it as ``snapshot`` so the
+    status view is derived from that same consistent read instead of re-reading
+    the queue. There is no list_jobs scan and no re-implemented owner/terminal
+    filter here: both views come from the queue-owned snapshot.
     """
     if not isinstance(queue, JobQueue):
         raise StatusError(f"queue must be a JobQueue, got {type(queue).__name__}")
@@ -62,9 +71,18 @@ def status(queue: JobQueue, parent_session: str) -> StatusData:
         raise StatusError(
             f"parent_session must be a str, got {type(parent_session).__name__}"
         )
+    if snapshot is None:
+        snap = queue.snapshot(parent_session)
+    else:
+        if not isinstance(snapshot, SessionSnapshot):
+            raise StatusError(
+                f"snapshot must be a SessionSnapshot, got {type(snapshot).__name__}"
+            )
+        snap = snapshot
 
-    all_jobs = queue.list_jobs()
-    job_by_id = {job.job_id: job for job in all_jobs}
+    # A prerequisite of a session job is inserted in the same submission, so it
+    # is always among this session's own snapshot rows; resolve against them.
+    job_by_id = {job.job_id: job for job in snap.jobs}
 
     session_jobs = tuple(
         StatusEntry(
@@ -75,35 +93,22 @@ def status(queue: JobQueue, parent_session: str) -> StatusData:
             waiting_on=tuple(
                 prereq_id
                 for prereq_id in job.prerequisites
-                if prereq_id in job_by_id
-                and job_by_id[prereq_id].status not in _TERMINAL
+                if prereq_id in job_by_id and not job_by_id[prereq_id].is_terminal
             ),
         )
         for job in sorted(
-            (
-                job
-                for job in all_jobs
-                if job.parent_session == parent_session
-                and job.status in ("pending", "running")
-            ),
+            (job for job in snap.jobs if not job.is_terminal),
             key=lambda job: job.sequence,
         )
     )
 
-    global_running = sum(1 for job in all_jobs if job.status == "running")
-    global_pending = sum(1 for job in all_jobs if job.status == "pending")
+    global_running = snap.global_running
+    global_pending = snap.global_pending
 
-    session_run_ids = {
-        job.run_id
-        for job in all_jobs
-        if job.parent_session == parent_session and job.status in _TERMINAL
-    }
     finished = [
         job
-        for job in all_jobs
-        if job.run_id in session_run_ids
-        and job.status in _TERMINAL
-        and job.finished_at is not None
+        for job in snap.jobs
+        if job.is_terminal and job.finished_at is not None
     ]
     last_completed: LastCompleted | None = None
     if finished:
@@ -125,6 +130,38 @@ def status(queue: JobQueue, parent_session: str) -> StatusData:
         global_pending=global_pending,
         last_completed=last_completed,
     )
+
+
+def render_session_counts(data: StatusData) -> str:
+    """One factual session-workload snapshot line for dispatch acknowledgements.
+
+    Counts the originating session's currently active (running/pending) jobs
+    from a queue snapshot. It is a point-in-time count, not a promise that job
+    state cannot change afterward; freshly submitted work is still pending
+    until the dispatcher claims it.
+    """
+    running = sum(1 for entry in data.session_jobs if entry.status == "running")
+    pending = sum(1 for entry in data.session_jobs if entry.status == "pending")
+    return f"Session jobs: {running} running, {pending} pending."
+
+
+def render_running_meter(data: StatusData) -> str:
+    """Compact running-only role meter for the live below-editor widget.
+
+    Counts only the originating session's currently RUNNING jobs grouped by
+    role, from the same queue snapshot as ``status``. Pending and terminal
+    work is excluded, and no role is listed unless at least one of its jobs is
+    running. The native host renders this verbatim; it must not derive the
+    counts itself.
+    """
+    counts: dict[str, int] = {}
+    for entry in data.session_jobs:
+        if entry.status == "running":
+            counts[entry.role] = counts.get(entry.role, 0) + 1
+    if not counts:
+        return "Orchestra: no running jobs"
+    meter = ", ".join(f"{role}×{n}" for role, n in sorted(counts.items()))
+    return f"Orchestra: running {meter}"
 
 
 def render_status(data: StatusData, mode: str) -> str:

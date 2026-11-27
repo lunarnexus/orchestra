@@ -7,7 +7,7 @@ the configured initial session mode. All wording here is host-neutral; the
 host adapters add no wording of their own.
 
 Line protocol for ``dispatch`` (JSONL on stdout):
-  {"type": "ack", "run_id": ..., "role": ..., "ack": ..., "jobs": [...]}
+  {"type": "ack", "run_id": ..., "role": ..., "ack": ..., "jobs": [...], "session_status": ...}
   {"type": "event", "session_id": ..., "run_id": ..., "job_id": ..., "status": ...}  (0 or more, mid-run)
   {"type": "return", "run_id": ..., "return": {...} | null, "stopped": bool}
 
@@ -22,12 +22,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import threading
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,11 +37,11 @@ from orchestra.config import OrchestraConfig, load_orchestra_config
 from orchestra.dispatcher import JobEvent
 from orchestra.dispatcher import run as run_dispatcher
 from orchestra.lifetime import DispatcherLifetimeLock
-from orchestra.pi_harness import AgentPlan, PiHarness
+from orchestra.pi_harness import AgentPlan, PiHarness, worker_session_id
 from orchestra.queue import Job, JobQueue
 from orchestra.reconcile import ReconcileReport, reconcile_abandoned
 from orchestra.results import assemble, assemble_session
-from orchestra.status import render_status
+from orchestra.status import render_session_counts, render_status
 from orchestra.status import status as status_query
 from orchestra.submit import Assignment, Submission, submit
 
@@ -56,9 +57,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     handler = {
         **MANAGEMENT_HANDLERS,
         "dispatch": _cmd_dispatch,
+        "__run": _cmd_run,
         "session-return": _cmd_session_return,
         "initial-mode": _cmd_initial_mode,
         "tool-info": _cmd_tool_info,
+        "__session": _cmd_session,
     }[args.command]
     try:
         handler(args)
@@ -96,6 +99,30 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("doctor", help="check Orchestra setup and report findings")
     subparsers.add_parser("initial-mode", help="print the configured initial session mode")
     subparsers.add_parser("tool-info", help="emit core tool metadata JSON for host registration")
+    # Internal transport entry: the core session connection loop for one attached
+    # native session. Hidden from help; it is not a user-facing command. The
+    # owning session identity is bound from native adapter arguments and is
+    # never accepted from model/request arguments.
+    session = subparsers.add_parser(
+        "__session",
+        help=argparse.SUPPRESS,
+        description="internal core session connection over newline-framed JSON stdio",
+    )
+    session.add_argument("--parent-session", required=True, dest="parent_session")
+    # Internal independent execution worker: runs the dispatcher phase for one
+    # already-submitted run from a prepared payload plan read on stdin. Hidden
+    # from help; launched by the session runtime in its own process group so
+    # execution outlives the connection. Prompts arrive as stdin data, not argv.
+    run = subparsers.add_parser(
+        "__run",
+        help=argparse.SUPPRESS,
+        description="internal independent dispatcher worker for one submitted run",
+    )
+    run.add_argument("--run-id", required=True, dest="run_id")
+    # Optional worker->connection notification channel: an already-open write fd
+    # (inherited via pass_fds) the worker writes a minimal lifecycle wake trigger
+    # to. Hidden from help; supplied only by the core session runtime.
+    run.add_argument("--notify-fd", dest="notify_fd", type=int, default=None)
     return parser
 
 
@@ -141,6 +168,10 @@ def _cmd_dispatch(args: argparse.Namespace) -> None:
         context_provider=lambda: parent_context,
     )
     ack = config.prompts["dispatch_ack"]
+    # Snapshot the session's active jobs now that this submission (and any
+    # queued follow-ups) is in the queue but before the dispatcher claims work.
+    # A read-only queue query — no extra status subprocess and no reconcile.
+    session_status = render_session_counts(status_query(queue, args.session_id))
     ack_payload: dict[str, object] = {
         "type": "ack",
         "run_id": submission.run_id,
@@ -151,10 +182,11 @@ def _cmd_dispatch(args: argparse.Namespace) -> None:
                 "job_id": job.job_id,
                 "sequence": job.sequence,
                 "role": job.role,
-                "worker_session_id": f"orchestra-worker-{job.job_id.replace(':', '-')}",
+                "worker_session_id": worker_session_id(job.job_id),
             }
             for job in submission.jobs
         ],
+        "session_status": session_status,
     }
     if getattr(args, "task_label", None) is not None:
         ack_payload["task_label"] = args.task_label
@@ -162,17 +194,11 @@ def _cmd_dispatch(args: argparse.Namespace) -> None:
         json.dumps(ack_payload, separators=(",", ":")),
         flush=True,
     )
-    harness = _harness_for(config, submission)
-    stop_event = _stop_event(config, submission.run_id)
-    # A per-dispatcher OS lifetime lock, acquired before claiming and held for
-    # the whole run, is what reconciliation trusts to detect dispatcher death.
-    # The child harness drops the descriptor (close-on-exec), so an orphaned
-    # child never keeps its own abandoned work falsely live.
-    dispatcher_token = uuid.uuid4().hex
-    runtime = config.runtime
-    # Forward each dispatcher lifecycle transition as a typed intermediate
-    # JSONL message on the SAME stdout stream as the ack and final return.
-    # A lock keeps concurrent worker events complete, single-line records.
+    # A per-dispatcher OS lifetime lock, acquired inside ``_run_execution``
+    # and held for the whole run, is what reconciliation trusts to detect
+    # dispatcher death. Forward each dispatcher lifecycle transition as a typed
+    # intermediate JSONL message on the SAME stdout stream as the ack/return;
+    # a lock keeps concurrent worker events complete, single-line records.
     stream_lock = threading.Lock()
 
     def on_event(event: JobEvent) -> None:
@@ -191,27 +217,24 @@ def _cmd_dispatch(args: argparse.Namespace) -> None:
                 flush=True,
             )
 
-    with DispatcherLifetimeLock.create(config.runtime.state_dir, dispatcher_token):
-        run_dispatcher(
-            queue,
-            config.runtime.state_dir,
-            harness,
-            submission.run_id,
-            global_limit=runtime.concurrency.global_limit,
-            per_session_limit=runtime.concurrency.per_session_limit,
-            model_limits={
-                name: limit.concurrency
-                for name, limit in config.catalog.model_limits.items()
-            },
-            payloads=dict(submission.payloads),
-            stop_event=stop_event,
-            on_event=on_event,
-            dispatcher_token=dispatcher_token,
+    stop_event = _stop_event(config, submission.run_id)
+    harness = _run_execution(
+        config,
+        queue,
+        submission.run_id,
+        submission.jobs,
+        submission.payloads,
+        on_event=on_event,
+        stop_event=stop_event,
+    )
+    _record_notes(config, submission.run_id, submission.jobs, harness)
+    if getattr(stop_event, "stop_requested", False):
+        print(
+            json.dumps(
+                {"type": "return", "run_id": submission.run_id, "return": None, "stopped": True}
+            ),
+            flush=True,
         )
-    _record_notes(config, submission, harness)
-    stopped = getattr(stop_event, "stop_requested", False)
-    if stopped:
-        print(json.dumps({"type": "return", "run_id": submission.run_id, "return": None, "stopped": True}), flush=True)
         return
     assembled = assemble(queue, config.runtime.state_dir, config.prompts, submission.run_id)
     print(
@@ -236,6 +259,119 @@ def _cmd_dispatch(args: argparse.Namespace) -> None:
 
 def _role_of(submission: Submission) -> str:
     return submission.jobs[0].role if submission.jobs else "worker"
+
+
+def _worker_notifier(notify_fd: int | None) -> Callable[[JobEvent], None] | None:
+    """Build a worker->connection wake notifier writing to an inherited fd.
+
+    Returns ``None`` when no notification fd was supplied (e.g. a standalone
+    ``__run``), so execution is identical to before. When supplied, one minimal
+    line is written per dispatcher :class:`JobEvent`: the event is a wake trigger
+    only (the connection re-reads authoritative queue state), never a copy of
+    core state. A closed reader (the connection is gone) surfaces as a write or
+    flush error, which is swallowed here so a lost reader can NEVER stop healthy
+    execution or its durable finalization.
+    """
+    if notify_fd is None or notify_fd < 0:
+        return None
+    try:
+        channel = os.fdopen(notify_fd, "w")
+    except (OSError, ValueError):
+        # The inherited fd is unusable: run without notifications rather than
+        # aborting a healthy execution over a missing wake channel.
+        return None
+    stream_lock = threading.Lock()
+
+    def notify(event: JobEvent) -> None:
+        try:
+            with stream_lock:
+                channel.write(
+                    json.dumps(
+                        {
+                            "run_id": event.run_id,
+                            "job_id": event.job_id,
+                            "status": event.status,
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+                channel.flush()
+        except (OSError, ValueError):
+            # A closed/broken reader never affects execution or durable record.
+            return
+
+    return notify
+
+
+def _cmd_run(args: argparse.Namespace) -> None:
+    """Independent dispatcher worker for one already-submitted run.
+
+    Launched by the core session runtime in its own process group so accepted
+    execution outlives the connection that admitted it. The prepared execution
+    plan ({run_id, payloads}) arrives on stdin as JSON data (never shell text),
+    the run's job rows are already durable, and outcomes are recorded through
+    the same dispatcher path. Its own stdout/stderr are detached from the
+    connection, so a broken connection reader never stops or corrupts it.
+    """
+    raw = sys.stdin.read()
+    plan = json.loads(raw) if raw.strip() else {}
+    payloads = {
+        str(job_id): [str(token) for token in argv]
+        for job_id, argv in dict(plan.get("payloads", {})).items()
+    }
+    config = _load(args)
+    queue = _queue(config)
+    jobs = queue.list_jobs(args.run_id)
+    stop_event = _stop_event(config, args.run_id)
+    notify = _worker_notifier(getattr(args, "notify_fd", None))
+    harness = _run_execution(
+        config,
+        queue,
+        args.run_id,
+        jobs,
+        payloads,
+        stop_event=stop_event,
+        on_event=notify,
+    )
+    _record_notes(config, args.run_id, jobs, harness)
+
+
+def _cmd_session(args: argparse.Namespace) -> None:
+    """Serve the core session runtime over newline-framed JSON stdio.
+
+    Internal transport only. The bound session is the native runtime identity
+    passed by the host adapter, never a model argument. The runtime opens the
+    queue-owned session, runs the single evaluator on every event and the
+    periodic backstop, and requests native delivery of at most one prepared
+    report. Closing stops this connection and its timer only; independently-
+    launched execution (each in its own process group) runs to a durable outcome.
+    """
+    from orchestra.session import SessionRuntime, encode_line
+    from orchestra.session import _StdinSource as FrameSource
+
+    config = _load(args)
+    queue = _queue(config)
+    try:
+        # The runtime serializes every outbound frame internally (its serve
+        # loop and any dispatch admission thread share one stdout), so this
+        # callback only performs the write.
+        def send(message: dict[str, object]) -> None:
+            sys.stdout.write(encode_line(message) + "\n")
+            sys.stdout.flush()
+
+        runtime = SessionRuntime(
+            queue=queue,
+            parent_session=args.parent_session,
+            state_dir=config.runtime.state_dir,
+            prompts=config.prompts,
+            send=send,
+            mode=config.runtime.default_mode,
+            config=config,
+        )
+        runtime.serve(FrameSource(sys.stdin))
+    finally:
+        queue.close()
 
 
 def _cmd_session_return(args: argparse.Namespace) -> None:
@@ -312,9 +448,13 @@ def _stop_event(config: OrchestraConfig, run_id: str) -> _StopEvent:
 
 
 def _harness_for(config: OrchestraConfig, submission: Submission) -> PiHarness:
+    return _harness_for_jobs(config, submission.jobs)
+
+
+def _harness_for_jobs(config: OrchestraConfig, jobs: Sequence[Job]) -> PiHarness:
     plans: dict[str, AgentPlan] = {}
     skills_dir = Path(config.config_dir) / SKILLS_DIRNAME
-    for job in submission.jobs:
+    for job in jobs:
         role = config.catalog.roles.get(job.role)
         if role is None:
             continue
@@ -339,8 +479,52 @@ def _harness_for(config: OrchestraConfig, submission: Submission) -> PiHarness:
     return PiHarness(plans, config.prompts["budget_intervention"])
 
 
+def _run_execution(
+    config: OrchestraConfig,
+    queue: JobQueue,
+    run_id: str,
+    jobs: Sequence[Job],
+    payloads: Mapping[str, Sequence[str]],
+    *,
+    on_event: Callable[[JobEvent], None] | None = None,
+    stop_event: threading.Event | None = None,
+) -> PiHarness:
+    """Run one already-submitted run to a durable terminal outcome.
+
+    Shared by the inline ``dispatch`` command and the independent ``__run``
+    worker so both drive the SAME dispatcher execution path — claim, harness
+    execution, outcome recording, dependency release — with no second
+    scheduler. A fresh per-dispatcher OS lifetime lock, acquired before
+    claiming and held for the whole run, is what reconciliation trusts to
+    detect dispatcher death; the child harness drops the descriptor
+    (close-on-exec), so an orphaned child never keeps abandoned work live.
+    Returns the harness so the caller can record post-execution notes.
+    """
+    harness = _harness_for_jobs(config, jobs)
+    dispatcher_token = uuid.uuid4().hex
+    runtime = config.runtime
+    with DispatcherLifetimeLock.create(runtime.state_dir, dispatcher_token):
+        run_dispatcher(
+            queue,
+            runtime.state_dir,
+            harness,
+            run_id,
+            global_limit=runtime.concurrency.global_limit,
+            per_session_limit=runtime.concurrency.per_session_limit,
+            model_limits={
+                name: limit.concurrency
+                for name, limit in config.catalog.model_limits.items()
+            },
+            payloads=dict(payloads),
+            stop_event=stop_event,
+            on_event=on_event,
+            dispatcher_token=dispatcher_token,
+        )
+    return harness
+
+
 def _record_notes(
-    config: OrchestraConfig, submission: Submission, harness: PiHarness
+    config: OrchestraConfig, run_id: str, jobs: Sequence[Job], harness: PiHarness
 ) -> None:
     """Append final Response records linking the native session transcript.
 
@@ -354,11 +538,11 @@ def _record_notes(
     from orchestra.artifacts import Response, append, recall
 
     state = Path(config.runtime.state_dir)
-    for job in submission.jobs:
+    for job in jobs:
         note = harness.note_for(job.job_id)
         records = [
             record
-            for record in recall(state, submission.run_id)
+            for record in recall(state, run_id)
             if isinstance(record, Response) and record.job_id == job.job_id
         ]
         if not records:
@@ -368,7 +552,7 @@ def _record_notes(
             continue
         append(
             state,
-            submission.run_id,
+            run_id,
             Response(
                 job_id=job.job_id,
                 timestamp=_now(),
@@ -421,22 +605,28 @@ def _cmd_status(args: argparse.Namespace) -> None:
     )
 
 
-def _cmd_history(args: argparse.Namespace) -> None:
-    if args.limit is not None and args.limit < 1:
+def history_runs(
+    queue: JobQueue, state_dir: Path | str, parent_session: str, limit: int | None
+) -> tuple[list[dict[str, object]], list[dict[str, str]]]:
+    """Return the session's completed runs (newest first, capped) + unresolved.
+
+    Reused by the CLI ``history`` command and the core session runtime so the
+    run tally, terminal classification, and reconcile-before-read behavior
+    live in one place. Terminality comes from the queue-owned
+    :attr:`Job.is_terminal`, never a copied status set.
+    """
+    if limit is not None and limit < 1:
         raise ValueError("history limit must be a positive integer")
-    config = _load(args)
-    queue = _queue(config)
-    report = reconcile_abandoned(queue, config.runtime.state_dir, parent_session=args.session_id)
+    report = reconcile_abandoned(queue, state_dir, parent_session=parent_session)
     unresolved = _unresolved(report)
-    jobs = queue.list_jobs()
     runs: dict[str, list[Job]] = {}
-    for job in jobs:
-        if job.parent_session != args.session_id:
-            continue
-        if job.status not in ("succeeded", "failed", "skipped"):
+    # Owned-session terminal jobs come from the one authoritative snapshot; the
+    # queue already scopes to parent_session and is_terminal classifies them.
+    for job in queue.snapshot(parent_session).jobs:
+        if not job.is_terminal:
             continue
         runs.setdefault(job.run_id, []).append(job)
-    entries = []
+    entries: list[dict[str, object]] = []
     for run_id, run_jobs in runs.items():
         finished = [job.finished_at for job in run_jobs if job.finished_at]
         if not finished:
@@ -451,55 +641,62 @@ def _cmd_history(args: argparse.Namespace) -> None:
             }
         )
     entries.sort(key=lambda entry: str(entry["finished_at"]), reverse=True)
+    return (entries if limit is None else entries[:limit]), unresolved
+
+
+def _cmd_history(args: argparse.Namespace) -> None:
+    config = _load(args)
+    queue = _queue(config)
+    entries, unresolved = history_runs(queue, config.runtime.state_dir, args.session_id, args.limit)
     print(
         json.dumps(
-            {"runs": entries[: args.limit], "unresolved": unresolved},
+            {"runs": entries, "unresolved": unresolved},
             separators=(",", ":"),
         ),
         flush=True,
     )
+
+
+def control_stop(
+    queue: JobQueue, state_dir: Path | str, parent_session: str, run_id: str
+) -> dict[str, object]:
+    """Cancel one run owned by ``parent_session``; return the stop result dict.
+
+    Ownership and terminality come from the queue API: ``owned_run_jobs``
+    rejects an unknown or foreign run, and :attr:`Job.is_terminal` decides
+    completion — no copied status sets or ad-hoc ownership filters. Cancels
+    through the shared reconciliation first (a dead dispatcher never observes
+    the sentinel), then signals a live dispatcher via the cooperative sentinel
+    and waits a bounded interval for the durable terminal outcome.
+    """
+    jobs = queue.owned_run_jobs(parent_session, run_id)
+    if all(job.is_terminal for job in jobs):
+        return {"run_id": run_id, "stopped": True, "already_finished": True, "unresolved": []}
+    report = reconcile_abandoned(queue, state_dir, run_id=run_id)
+    unresolved = _unresolved(report)
+    sentinel = Path(state_dir) / STOP_DIRNAME / run_id
+    sentinel.parent.mkdir(parents=True, exist_ok=True)
+    sentinel.write_text("stop\n", encoding="utf-8")
+    deadline = time.monotonic() + STOP_POLL_SECONDS
+    while time.monotonic() < deadline:
+        jobs = queue.owned_run_jobs(parent_session, run_id)
+        if all(job.is_terminal for job in jobs):
+            break
+        time.sleep(STOP_POLL_INTERVAL)
+    terminal = all(job.is_terminal for job in queue.owned_run_jobs(parent_session, run_id))
+    return {
+        "run_id": run_id,
+        "stopped": terminal,
+        "already_finished": False,
+        "unresolved": unresolved,
+    }
 
 
 def _cmd_stop(args: argparse.Namespace) -> None:
     config = _load(args)
     queue = _queue(config)
-    jobs = queue.list_jobs(args.run_id)
-    if not jobs:
-        raise ValueError(f"unknown run {args.run_id!r}")
-    if any(job.parent_session != args.session_id for job in jobs):
-        raise ValueError("run is not owned by this session")
-    if all(job.status in ("succeeded", "failed", "skipped") for job in jobs):
-        print(json.dumps({"run_id": args.run_id, "stopped": True, "already_finished": True}), flush=True)
-        return
-    # Cancel through the shared reconciliation first: a dead dispatcher will
-    # never observe the sentinel, so finalize its abandoned work (and
-    # terminate verified execution) now. A live dispatcher's work is left for
-    # the sentinel cooperative path below.
-    report = reconcile_abandoned(queue, config.runtime.state_dir, run_id=args.run_id)
-    unresolved = _unresolved(report)
-    sentinel = Path(config.runtime.state_dir) / STOP_DIRNAME / args.run_id
-    sentinel.parent.mkdir(parents=True, exist_ok=True)
-    sentinel.write_text("stop\n", encoding="utf-8")
-    deadline = time.monotonic() + STOP_POLL_SECONDS
-    while time.monotonic() < deadline:
-        jobs = queue.list_jobs(args.run_id)
-        if all(job.status in ("succeeded", "failed", "skipped") for job in jobs):
-            break
-        time.sleep(STOP_POLL_INTERVAL)
-    jobs = queue.list_jobs(args.run_id)
-    terminal = all(job.status in ("succeeded", "failed", "skipped") for job in jobs)
-    print(
-        json.dumps(
-            {
-                "run_id": args.run_id,
-                "stopped": terminal,
-                "already_finished": False,
-                "unresolved": unresolved,
-            },
-            separators=(",", ":"),
-        ),
-        flush=True,
-    )
+    result = control_stop(queue, config.runtime.state_dir, args.session_id, args.run_id)
+    print(json.dumps(result, separators=(",", ":")), flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -536,32 +733,31 @@ the project README for the YAML layout.
 """
 
 
+def roles_catalog(config: OrchestraConfig) -> dict[str, object]:
+    """The configured role catalog as a host-neutral mapping. Read-only."""
+    catalog = config.catalog
+    return {
+        "default_role": catalog.default_role,
+        "roles": [
+            {
+                "name": name,
+                "enabled": role.enabled,
+                "model": role.model,
+                "harness_config": role.harness_config,
+                "auto_verify": role.auto_verify,
+                "parent_context": role.parent_context,
+                "skills": list(role.skills),
+                "dispatch_hint": role.dispatch_hint,
+            }
+            for name, role in catalog.roles.items()
+        ],
+    }
+
+
 def _cmd_roles(args: argparse.Namespace) -> None:
     """Print the configured role catalog. Read-only: nothing is mutated."""
     config = _load(args)
-    catalog = config.catalog
-    print(
-        json.dumps(
-            {
-                "default_role": catalog.default_role,
-                "roles": [
-                    {
-                        "name": name,
-                        "enabled": role.enabled,
-                        "model": role.model,
-                        "harness_config": role.harness_config,
-                        "auto_verify": role.auto_verify,
-                        "parent_context": role.parent_context,
-                        "skills": list(role.skills),
-                        "dispatch_hint": role.dispatch_hint,
-                    }
-                    for name, role in catalog.roles.items()
-                ],
-            },
-            separators=(",", ":"),
-        ),
-        flush=True,
-    )
+    print(json.dumps(roles_catalog(config), separators=(",", ":")), flush=True)
 
 
 def _cmd_help(args: argparse.Namespace) -> None:
@@ -573,13 +769,19 @@ def _cmd_initial_mode(args: argparse.Namespace) -> None:
     print(config.runtime.default_mode)
 
 
-def _cmd_doctor(args: argparse.Namespace) -> None:
-    config = _load(args)
+def doctor_report(config: OrchestraConfig) -> tuple[list[str], list[str]]:
+    """Run the doctor checks and return (report lines, problems).
+
+    The same checks back the CLI ``doctor`` command and the core session
+    runtime's ``doctor`` operation, so diagnostics stay core-owned in one
+    place. Pure reporting: the caller decides whether to exit nonzero.
+    """
+    lines: list[str] = []
     problems: list[str] = []
-    print("Orchestra doctor")
-    print(f"config: ok (loaded from {config.config_dir})")
+    lines.append("Orchestra doctor")
+    lines.append(f"config: ok (loaded from {config.config_dir})")
     catalog = config.catalog
-    print(
+    lines.append(
         f"catalog: ok (default role {catalog.default_role}; "
         f"roles: {', '.join(catalog.roles)})"
     )
@@ -590,28 +792,36 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
         executable = harness.command[0]
         found = shutil.which(executable) is not None or Path(executable).is_file()
         detail = "ok" if found else "NOT FOUND on PATH"
-        print(f"harness {name}: {detail} ({' '.join(harness.command)})")
+        lines.append(f"harness {name}: {detail} ({' '.join(harness.command)})")
         if not found:
             problems.append(f"harness {name!r} executable {executable!r} not found")
-    print(f"prompts: ok ({len(config.prompts)} keys)")
+    lines.append(f"prompts: ok ({len(config.prompts)} keys)")
     state_dir = Path(config.runtime.state_dir)
     log_dir = Path(config.runtime.log_dir)
     for label, path in (("state dir", state_dir), ("log dir", log_dir)):
         try:
             path.mkdir(parents=True, exist_ok=True)
-            print(f"{label}: ok ({path})")
+            lines.append(f"{label}: ok ({path})")
         except OSError as exc:
             problems.append(f"{label} {path} unavailable: {exc}")
     skills_dir = Path(config.config_dir) / SKILLS_DIRNAME
     configured = {skill for role in catalog.roles.values() for skill in role.skills}
     if not configured:
-        print("skills: no role skills configured")
+        lines.append("skills: no role skills configured")
     else:
         for skill in sorted(configured):
             found = (skills_dir / skill / "SKILL.md").is_file()
-            print(f"skill {skill}: {'ok' if found else 'MISSING'}")
+            lines.append(f"skill {skill}: {'ok' if found else 'MISSING'}")
             if not found:
                 problems.append(f"skill {skill!r} not found under {skills_dir}")
+    return lines, problems
+
+
+def _cmd_doctor(args: argparse.Namespace) -> None:
+    config = _load(args)
+    lines, problems = doctor_report(config)
+    for line in lines:
+        print(line)
     if problems:
         for problem in problems:
             print(f"problem: {problem}")

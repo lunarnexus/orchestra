@@ -1,158 +1,83 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, copyFileSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { createJiti } from 'jiti';
+import { makeSessionStub, makeCtx } from './helpers/orchestra-session-stub.mjs';
 
-// Feedback #2: a pre-ack dispatch failure must surface the ACTUAL cause in the
-// orch_dispatch tool result's isError text, not a fixed "see stderr". Covers
-// both a pre-ack nonzero exit (child stderr cause) and a launch error (ENOENT,
-// which errors without ever closing). Controlled fake subprocess only: no real
-// Python core, no live Pi sessions, no models, no global install.
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
-const temp = mkdtempSync(join(tmpdir(), 'orchestra-dispatch-errors-'));
-const sessionDir = join(temp, 'pi-sessions');
-mkdirSync(sessionDir);
-mkdirSync(join(temp, 'state'), { recursive: true });
-mkdirSync(join(temp, 'logs'), { recursive: true });
+// Translator-boundary error propagation over the persistent core `__session`.
+// The raw dispatch-subprocess stderr tailing that used to live in the adapter is
+// now produced inside core and arrives as a correlated error reply; the adapter
+// must relay that ACTUAL cause verbatim, never a fixed "see stderr". A launch
+// failure of the `__session` runtime must also surface its real cause and settle
+// (no hang). Controlled core stub + empty PATH only: no real Python core, live
+// Pi sessions, models, or global install.
+const stub = makeSessionStub({ reply: {} });
 
-// Cause string the child writes last so it survives a bounded tail (the real
-// DB traceback ends with the error), plus filler that must be dropped.
+// A realistic core-produced dispatch failure cause. Bounded stderr-tail selection
+// is now core-producer behaviour, not a translator assertion: the translator's
+// contract is that whatever cause core returns is relayed unchanged.
 const CAUSE = 'sqlite3.OperationalError: unable to open database file';
-const FILLER = 'frame filler dropped from head';
-// Bound the tool-result text well under the ~116KB the unbuffered stderr would
-// produce, proving only a tail is retained.
-const STDERR_BOUND = 6000;
 
-// --- controlled fake python3 (no real Python core) -------------------------
-// `dispatch` -> writes a huge stderr traceback ending in the real cause, exits
-// 1 before any ack. Other core calls (initial-mode, status) stay benign.
-const fillerLines = 4000;
-writeFileSync(join(temp, 'python3'), [
-  `#!${process.execPath}`,
-  "const args = process.argv.slice(2);",
-  "if (args.includes('tool-info')) {",
-  `  process.stdout.write(JSON.stringify(${JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"goal.",additionalContext:"ctx.",role:"role.",taskLabel:"label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"action.",limit:"limit.",runId:"runId."}},command:{description:"/orch"},actions:["status","history","stop","help","doctor","roles"]})}));`,
-  "  process.exit(0);",
-  "}",
-  "if (args.includes('dispatch')) {",
-  "  process.stderr.write('Traceback (most recent call last):\\n');",
-  `  for (let i = 0; i < ${fillerLines}; i += 1) process.stderr.write(${JSON.stringify(FILLER + ' ')} + i + '\\n');`,
-  `  process.stderr.write(${JSON.stringify(CAUSE + '\n')});`,
-  "  process.exit(1);",
-  "}",
-  "if (args.includes('initial-mode')) process.stdout.write('on\\n');",
-  "process.exit(0);",
-].join('\n'), { mode: 0o755 });
+const scenario = (extra) => ({
+  'initial-mode': { result: { mode: 'on', text: 'Orchestra active.' } },
+  ...extra,
+});
 
-const fakePiPath = join(temp, 'fake-pi');
-writeFileSync(fakePiPath, `#!${process.execPath}
-process.stdin.resume();
-`, { mode: 0o755 });
+const text = (result) => (result.content ?? []).map((p) => p.text ?? '').join('\n');
 
-// --- minimal real config (mode/initial commands only) ----------------------
-const configDir = join(temp, 'config');
-mkdirSync(configDir);
-copyFileSync(join(repoRoot, 'prompts.yaml'), join(configDir, 'prompts.yaml'));
-writeFileSync(join(configDir, 'config.yaml'), `state_dir: ${join(temp, 'state')}
-log_dir: ${join(temp, 'logs')}
-default_timeout: 300
-soft_timeout: 240
-turn_limit: 60
-concurrency:
-  global: 6
-  per_session: 3
-retention_days: 90
-default_mode: 'on'
-`);
-writeFileSync(join(configDir, 'harnesses.yaml'), `pi:
-  harness: pi
-  command: ["${fakePiPath}"]
-`);
-writeFileSync(join(configDir, 'agent-catalog.yaml'), `default_role: builder
-model_limits:
-  "m1":
-    concurrency: 3
-roles:
-  builder:
-    enabled: manual
-    harness_config: pi
-    model: "m1"
-    env: {}
-    skills: []
-    dispatch_hint: Build the requested change.
-    auto_verify: false
-`);
-
-process.env.PATH = `${temp}:${process.env.PATH}`;
-process.env.ORCHESTRA_CONFIG = configDir;
-process.env.PYTHONPATH = join(repoRoot, 'src');
-process.env.PI_CODING_AGENT_SESSION_DIR = sessionDir;
-
-const text = (result) => (result.content ?? []).map((part) => part.text ?? '').join('\n');
-
-function makeContext(sessionId) {
-  return {
-    hasUI: true,
-    sessionManager: {
-      getSessionId: () => sessionId,
-      buildContextEntries: () => [],
-      getBranch: () => [],
-    },
-    ui: { theme: { fg: (_c, t) => t, bold: (t) => t }, setWidget() {}, notify() {} },
-  };
-}
+const hooks = new Map();
+const tools = new Map();
+let ctx;
 
 try {
   const jiti = createJiti(import.meta.url);
   const { default: activate } = await jiti.import('../extensions/pi/orchestra/index.ts');
-  const tools = new Map();
   await activate({
-    on() {},
-    registerTool: (tool) => tools.set(tool.name, tool),
+    on: (name, handler) => hooks.set(name, handler),
+    registerTool: (t) => tools.set(t.name, t),
     registerCommand() {},
     registerEntryRenderer() {},
     appendEntry() {},
-    getActiveTools: () => [],
+    getActiveTools: () => [...tools.keys()],
     setActiveTools() {},
     sendUserMessage() {},
   });
   const dispatch = tools.get('orch_dispatch');
   assert.ok(dispatch, 'orch_dispatch tool must be registered');
 
-  // --- A: pre-ack nonzero exit surfaces the real cause, bounded -----------
+  // --- A: a core dispatch error is relayed verbatim as the tool result cause --
   {
-    const ctx = makeContext('E1');
-    const result = await dispatch.execute('e1', { goal: 'will fail', role: 'builder' }, undefined, undefined, ctx);
-    assert.equal(result.isError, true, `pre-ack dispatch must be isError: ${JSON.stringify(result)}`);
-    const shown = text(result);
-    assert.match(shown, /unable to open database file/, 'the real child stderr cause must appear in the tool result');
-    assert.doesNotMatch(shown, /head 0\b/, 'the retained stderr must be a bounded tail (head filler dropped)');
-    assert.ok(shown.length < STDERR_BOUND, `tool result text must stay bounded (got ${shown.length} chars)`);
-    assert.ok(!/^\s*orchestra dispatch failed \(see stderr\.\)\s*$/.test(shown), 'must not return the bare fixed see-stderr text');
+    stub.setScenario(scenario({ dispatch: { error: CAUSE } }));
+    ctx = makeCtx('dispatch-error-relay');
+    await hooks.get('session_start')({}, ctx);
+    const r = await dispatch.execute('e1', { goal: 'will fail', role: 'builder' }, undefined, undefined, ctx);
+    assert.equal(r.isError, true, `a core dispatch error must be isError: ${JSON.stringify(r)}`);
+    const shown = text(r);
+    assert.equal(shown, CAUSE, 'the actual core error is relayed verbatim as the tool result');
+    assert.match(shown, /unable to open database file/, 'the real core cause appears in the tool result');
+    assert.ok(!/see stderr/i.test(shown), 'the bare fixed "see stderr" text is never returned');
   }
 
-  // --- B: launch error (ENOENT) surfaces cause and settles (no hang) ------
+  // --- B: a launch error surfaces its real cause and settles (no hang) --------
   {
-    const emptyBin = join(temp, 'empty-bin');
-    mkdirSync(emptyBin);
+    // Close the connected session, then point PATH at an empty dir so the next
+    // `__session` spawn errors ENOENT before any reply can arrive. The initial
+    // mode request must reject with the launch cause, visibly, and settle.
+    hooks.get('session_shutdown')({}, ctx);
+    const emptyBin = mkdtempSync(join(tmpdir(), 'orch-empty-bin-'));
     const savedPath = process.env.PATH;
-    process.env.PATH = emptyBin; // no python3 on PATH -> spawn errors ENOENT
+    process.env.PATH = emptyBin;
     try {
+      const notes = [];
+      const launchCtx = makeCtx('dispatch-launch-error', { notes });
       const guard = new Promise((_resolve, reject) =>
-        setTimeout(() => reject(new Error('HANG: dispatch did not settle on launch error')), 5000));
-      const ctx = makeContext('E2');
-      const result = await Promise.race([
-        dispatch.execute('e2', { goal: 'cannot launch', role: 'builder' }, undefined, undefined, ctx),
-        guard,
-      ]);
-      assert.equal(result.isError, true, `launch error must be isError: ${JSON.stringify(result)}`);
-      const shown = text(result);
-      assert.match(shown, /failed to launch/i, 'the launch error must be reported as the cause');
-      assert.match(shown, /ENOENT|python3/i, 'the actual launch cause (ENOENT/python3) must be present');
-      void spawnSync; // keep import referenced without invoking here
+        setTimeout(() => reject(new Error('HANG: the launch-error path did not settle')), 5000));
+      await Promise.race([hooks.get('session_start')({}, launchCtx), guard]);
+      const surfaced = notes.join('\n');
+      assert.match(surfaced, /ENOENT/, 'the actual launch cause (ENOENT) is surfaced');
+      assert.match(surfaced, /python3/, 'the launch cause names the missing python3 runtime');
+      assert.ok(!/Assignment accepted|active/i.test(surfaced), 'a launch failure never reports success');
     } finally {
       process.env.PATH = savedPath;
     }
@@ -160,5 +85,12 @@ try {
 
   console.log('Pi dispatch error propagation passed');
 } finally {
-  rmSync(temp, { recursive: true, force: true });
+  // Always shut the persistent connection down (kills the core `__session`
+  // subprocess) before removing the temp owner dir, so the Node process exits
+  // whether or not an assertion threw.
+  try {
+    if (hooks.has('session_shutdown') && ctx) hooks.get('session_shutdown')({}, ctx);
+  } finally {
+    stub.cleanup();
+  }
 }

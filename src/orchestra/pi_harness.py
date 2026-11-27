@@ -88,6 +88,9 @@ class _PiRpcHandle:
     def __init__(self) -> None:
         self.process: subprocess.Popen[str] | None = None
         self.wrapped_up = False
+        # Set only when Orchestra (cancellation or hard timeout) asked this
+        # child to end, so an unsolicited child exit is never conflated with a
+        # requested termination when the Outcome is reported.
         self.terminated = False
         self.note = JobExecutionNote()
         self.on_launch: Callable[[int, float | None], None] | None = None
@@ -143,6 +146,7 @@ class PiHarness:
     def terminate(self, handle: Handle) -> None:
         if not isinstance(handle, _PiRpcHandle):
             raise HarnessError("terminate expects a PiHarness handle")
+        handle.terminated = True
         self._kill(handle)
 
     def _execute_rpc(
@@ -159,8 +163,8 @@ class PiHarness:
                 "'{prompt}' placeholder; prompts are sent as data"
             )
         argv = [token.replace("{model}", plan.model) for token in plan.command]
-        worker_session_id = _worker_session_id(job_id)
-        argv += ["--session-id", worker_session_id]
+        session_id = worker_session_id(job_id)
+        argv += ["--session-id", session_id]
         for skill_path in plan.skill_paths:
             text = Path(skill_path).read_text(encoding="utf-8")
             argv += ["--append-system-prompt", text]
@@ -198,6 +202,7 @@ class PiHarness:
         settled = False
         aborted = False
         accepted = False
+        child_exited = False
         prompt_error: str | None = None
         last_text: str | None = None
         soft_deadline = (
@@ -221,6 +226,7 @@ class PiHarness:
                         soft_deadline = None
                     continue
                 if item is None:
+                    child_exited = True
                     break  # stdout closed: pi exited or crashed
                 kind, _payload = item
                 event = _parse(kind)
@@ -270,24 +276,33 @@ class PiHarness:
                     data = event.get("data")
                     if isinstance(data, dict):
                         last_text = data.get("text")
-            rpc_handle.terminated = True
+            # Clean up the child. ``terminated`` already reflects whether
+            # Orchestra requested termination; a self-exit is left False so the
+            # unexpected-exit cause below is reported instead.
             self._kill(rpc_handle)
 
         finished_at = time.time()
         output = last_text if isinstance(last_text, str) else ""
         error = _filter_stderr(stderr_chunks)
         note = rpc_handle.note
+        exit_status: int | None = None
         if prompt_error is not None:
             note.reason = f"prompt rejected: {prompt_error}"
+        elif child_exited and not rpc_handle.terminated and note.reason is None:
+            # The child left on its own before ever settling and Orchestra
+            # never asked for it: an unexpected exit, not a cancellation. Keep
+            # the observed code, with no invented cause for an unknown status.
+            exit_status = process.returncode
+            note.reason = _unexpected_exit_reason(exit_status)
         # Wrap-up reasons are recorded by _send_wrap_up at steer time; do not
         # recompute them here (the turn count is not a reliable discriminator).
-        transcript = _find_transcript(worker_session_id)
+        transcript = _find_transcript(session_id)
         if transcript is not None:
             note.transcript = str(transcript)
         success = settled and accepted and not aborted and not rpc_handle.wrapped_up
         return Outcome(
             success=success,
-            exit_status=None,
+            exit_status=exit_status,
             output=output,
             error=error,
             started_at=started_at,
@@ -318,7 +333,6 @@ class PiHarness:
         process = handle.process
         if process is None:
             return
-        handle.terminated = True
         stdin = process.stdin
         if stdin is not None:
             try:
@@ -334,7 +348,26 @@ class PiHarness:
             pass
 
 
-def _worker_session_id(job_id: str) -> str:
+def _unexpected_exit_reason(code: int | None) -> str:
+    """Describe a child that left before settling, without inventing a cause.
+
+    A negative status is the platform convention for a signal-kill; an
+    unknown status is reported honestly as unknown rather than guessed.
+    """
+    if code is None:
+        return "pi exited without completing (exit status unknown)"
+    if code < 0:
+        return f"pi was killed by signal {-code} without completing"
+    return f"pi exited with code {code} without completing"
+
+
+def worker_session_id(job_id: str) -> str:
+    """The native Pi session id a job's worker model runs under (shared helper).
+
+    The harness launch (``--session-id``), the dispatcher ack metadata, and the
+    core status frame all derive this from ONE function, so the
+    ``orchestra-worker-`` prefix is never duplicated as a literal elsewhere.
+    """
     return "orchestra-worker-" + job_id.replace(":", "-")
 
 

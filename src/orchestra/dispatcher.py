@@ -32,7 +32,6 @@ from orchestra.artifacts import Response, append, recall
 from orchestra.harness import Budgets, CommandJob, Handle, Harness, HarnessError, Outcome
 from orchestra.queue import Job, JobQueue, Status, run_id_of
 
-_TERMINAL = frozenset({"succeeded", "failed", "skipped"})
 # The dispatcher's success marker: the job's own returned text is the recorded
 # response, so the marker is only the body when a job returned nothing.
 SUCCEEDED = "succeeded"
@@ -304,7 +303,7 @@ def run(
                     pass  # handle not started or already gone
             break
         jobs = queue.list_jobs(run_id)
-        if all(job.status in _TERMINAL for job in jobs):
+        if all(job.is_terminal for job in jobs):
             break
         claimed = queue.claim_next(
             global_limit=global_limit,

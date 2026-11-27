@@ -1,162 +1,227 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, appendFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createJiti } from 'jiti';
+import { createLiveCoreHost, makeContext, text } from './helpers/pi-live-core-host.mjs';
 
-// Prove the event-driven footer: a child job that starts AFTER the dispatch
-// ack (an auto-verify verifier that begins when the builder finishes) becomes
-// visible in the belowEditor role meter DURING the run, driven ONLY by typed
-// lifecycle event lines on the dispatch stdout stream — never a periodic poll.
-// The real extension is driven; only the Python and host boundaries are
-// controlled by a fake python3. No live pi, model, global config, or real core.
+// ACTUAL core<->footer LIFETIME visibility against the REAL Python core (real
+// queue/SQLite, real detached __run worker, real transport frames). Only the
+// model (fake-Pi) is controlled. This is the counterpart to the controlled
+// session-stub display test (pi-footer.test.mjs): the stub proves the adapter's
+// display/transport contract, but it CANNOT prove core timing — this file does.
 //
-// The fake dispatch forwards event lines that the test enqueues, so the
-// extension's status-query count is fully under test control: a flat count
-// between events proves the removed 2s timer is really gone.
-const temp = mkdtempSync(join(tmpdir(), 'orchestra-footer-live-'));
-const dataPath = join(temp, 'status.json');       // mutable status served to `status`
-const eventsPath = join(temp, 'events.jsonl');     // events the test enqueues for dispatch to forward
-const pidPath = join(temp, 'dispatch.pid');
-const counterPath = join(temp, 'status.count');
+// The running-only meter is core-produced: every evaluate() pass emits a
+// {kind:'status', text} frame (render_running_meter) and the adapter renders it
+// verbatim. An evaluate pass is woken by a host event, by dispatch acceptance,
+// by native results, by the core-owned worker-progress observer reading lifecycle
+// transitions over an inherited notification pipe, by the worker-exit reaper, or
+// by the 10s active-work backstop. The Pi adapter has no timer and derives no
+// status.
+//
+// Progress bridge: __run passes lifecycle events (started, succeeded, failed,
+// skipped) through an inherited one-way notification pipe to the connection.
+// The observer reads each trigger and calls request_evaluation(), which wakes
+// the SAME shared evaluator. The evaluator re-reads the authoritative queue and
+// pushes the current running-only meter. This means a builder→verifier running
+// transition is observable from the real execution lifecycle, NOT only via a
+// manual host event or the 10s backstop.
+//
+// This test proves: builder running → verifier running (auto_verify) → idle →
+// exactly one native report delivery, all observed via the progress bridge
+// without any agent_start/status/prompt/host-event wake, within the 10s
+// backstop window.
+
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
+const host = createLiveCoreHost({ repoRoot });
+const S = 'pi:footer-live';
+host.trackSession(S);
+
+const hooks = new Map();
+const tools = new Map();
+const steers = [];
+
+function statusPushes() {
+  return host.frames()
+    .filter((f) => f.dir === 'out' && f.frame && f.frame.kind === 'status')
+    .map((f) => f.frame.text);
+}
+const lastPush = () => { const p = statusPushes(); return p[p.length - 1]; };
+
+function statusFrames() {
+  return host.frames()
+    .filter((f) => f.dir === 'out' && f.frame && f.frame.kind === 'status')
+    .map((f) => f.frame);
+}
+const lastFrame = () => { const f = statusFrames(); return f[f.length - 1]; };
+
+// The rendered widget now prepends the native usage segment (only when core
+// supplies worker ids) and the core mode chip before the VERBATIM core meter
+// text. Whole-widget equality to the bare core text is therefore no longer the
+// contract: assert the core meter text survives verbatim as the contiguous
+// suffix, and that the core-supplied mode chip is actually rendered. Native
+// usage is a separate native segment and is never treated as core state.
+function renderedVerbatim(footer, frame) {
+  assert.ok(
+    typeof footer === 'string' && footer.endsWith(frame.text),
+    `core meter text must render verbatim as the contiguous suffix (footer=${JSON.stringify(footer)}, core=${JSON.stringify(frame.text)})`,
+  );
+  if (frame.mode_text) {
+    assert.ok(
+      footer.includes(frame.mode_text),
+      `core mode chip must actually render in the widget (footer=${JSON.stringify(footer)}, chip=${JSON.stringify(frame.mode_text)})`,
+    );
+  }
+}
+
 try {
-  writeFileSync(join(temp, 'python3'), `#!${process.execPath}\n` + [
-    `const fs = require('node:fs');`,
-    `const C = ${JSON.stringify(counterPath)};`,
-    `const EV = ${JSON.stringify(eventsPath)};`,
-    `const args = process.argv.slice(2);`,
-    `const sub = args[2];`,
-    `if (args.includes('tool-info')) {`,
-    `  process.stdout.write(JSON.stringify({dispatch:{label:"Orchestra Dispatch",description:"Submit.",params:{goal:"Assignment text.",additionalContext:"Extra context.",role:"Role name.",taskLabel:"Short label."}},status:{label:"Orchestra Status",description:"Manage.",params:{action:"Action.",limit:"Limit.",runId:"Run ID."}},command:{description:"/orch"},actions:["status","history","stop","help","doctor","roles"]}));`,
-    `  process.exit(0);`,
-    `}`,
-    `if (sub === 'initial-mode') { console.log('on'); process.exit(0); }`,
-    `if (sub === 'status') {`,
-    `  let n = 0; try { n = parseInt(fs.readFileSync(C, 'utf8'), 10) || 0; } catch {}`,
-    `  fs.writeFileSync(C, String(n + 1));`,
-    `  console.log(fs.readFileSync(${JSON.stringify(dataPath)}, 'utf8')); process.exit(0);`,
-    `}`,
-    `if (sub === 'dispatch') {`,
-    `  fs.writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
-    `  console.log(JSON.stringify({ type: 'ack', run_id: 'footer-live-run', role: 'builder', ack: 'Assignment accepted.', jobs: [{ job_id: 'footer-live-run:1', worker_session_id: 'w1' }] }));`,
-    // Forward test-enqueued lifecycle event lines as they appear (test-side
-    // polling, not the extension). Never emits a return, so nothing here lets
-    // a late return line mask whether the meter updated live.
-    `  let sent = 0;`,
-    `  setInterval(() => {`,
-    `    let lines = [];`,
-    `    try { lines = fs.readFileSync(EV, 'utf8').split('\\n').filter(Boolean); } catch {}`,
-    `    while (sent < lines.length) { console.log(lines[sent]); sent += 1; }`,
-    `  }, 40);`,
-    `  process.stdin.resume();`,
-    `}`,
-  ].join('\n'), { mode: 0o755 });
-
-  process.env.PATH = `${temp}:${process.env.PATH}`;
-  process.env.ORCHESTRA_CONFIG = temp;
-  process.env.PI_CODING_AGENT_SESSION_DIR = temp; // no worker transcripts
-  writeFileSync(eventsPath, '');
-
   const jiti = createJiti(import.meta.url);
   const { default: activate } = await jiti.import('../extensions/pi/orchestra/index.ts');
-
-  const hooks = new Map();
-  const tools = new Map();
-  let footer = '';
   await activate({
     on: (name, handler) => hooks.set(name, handler),
     registerTool: (t) => tools.set(t.name, t),
-    registerCommand() {}, registerEntryRenderer() {},
+    registerCommand() {}, registerEntryRenderer() {}, appendEntry() {},
     getActiveTools: () => [...tools.keys()],
     setActiveTools() {},
+    sendUserMessage: (m) => steers.push(String(m)),
   });
-  assert.ok(tools.has('orch_dispatch'), 'orch_dispatch tool must be registered');
+  assert.ok(tools.has('orch_dispatch'), 'orch_dispatch must be registered');
 
-  const ctx = {
-    hasUI: true,
-    sessionManager: {
-      getSessionId: () => 'pi:footer-live',
-      buildContextEntries: () => [],
-      getBranch: () => [],
-    },
-    ui: {
-      theme: { fg: (_c, t) => t, bold: (t) => t },
-      setWidget: (_name, value) => { footer = (value ?? []).join('\n'); },
-      notify() {},
-    },
-  };
+  const footers = [];
+  const liveCtx = makeContext('footer-live', { footers });
+  // A widget rendered from a given core frame: verbatim core-text suffix and,
+  // when present, the core mode chip actually shown.
+  const footerRendered = (frame) => footers.some(
+    (f) => typeof f === 'string' && f.endsWith(frame.text)
+      && (!frame.mode_text || f.includes(frame.mode_text)),
+  );
 
-  function pollCount() {
-    try { return parseInt(readFileSync(counterPath, 'utf8'), 10) || 0; } catch { return 0; }
-  }
-  async function waitFor(label, fn, timeoutMs = 8000) {
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      if (fn()) return;
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-  }
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  function enqueueEvent(jobId, status) {
-    appendFileSync(eventsPath, JSON.stringify({
-      type: 'event', session_id: 'pi:footer-live', run_id: 'footer-live-run', job_id: jobId, status,
-    }) + '\n');
-  }
+  // --- session_start: a genuine core push renders the idle meter verbatim -----
+  await hooks.get('session_start')({}, liveCtx);
+  await host.poll('initial idle meter pushed by the real core',
+    () => statusPushes().some((t) => t === 'Orchestra: no running jobs'));
+  assert.equal(lastPush(), 'Orchestra: no running jobs',
+    'the real core pushes the running-only idle meter for an empty session');
+  renderedVerbatim(footers[footers.length - 1], lastFrame());
 
-  // Step 1: session_start with the builder running -> footer shows builder.
-  writeFileSync(dataPath, JSON.stringify({ data: { session_jobs: [{ role: 'builder', status: 'running' }] } }));
-  await hooks.get('session_start')({}, ctx);
-  assert.match(footer, /builder/i, 'builder running appears after session_start');
-  assert.doesNotMatch(footer, /verifier/i, 'verifier not active yet');
-
-  // Step 2: dispatch ack leaves the run live (the fake never emits a return).
-  const ack = await tools.get('orch_dispatch').execute('c1', { goal: 'build it', role: 'builder' }, undefined, undefined, ctx);
+  // --- progress bridge: builder→verifier lifecycle observed without any -----
+  // manual host-event wake. Builder has auto_verify=true (default catalog), so
+  // Submit creates a dependent verifier job. Delays chosen so the full
+  // builder→verifier→idle lifecycle completes well before the 10s backstop.
+  host.setScenario([
+    { match: 'build the meter', text: 'builder done', delayMs: 2000 },
+    { match: 'Verify', text: 'verifier confirmed', delayMs: 1000 },
+    { match: '*', text: 'live core answer' },
+  ]);
+  const t0 = Date.now();
+  const ack = await tools.get('orch_dispatch').execute('c1',
+    { goal: 'build the meter', role: 'builder' }, undefined, undefined, liveCtx);
   assert.equal(ack.isError, false, `dispatch ack failed: ${JSON.stringify(ack)}`);
-  await waitFor('ack footer refresh round-trip', () => pollCount() >= 2);
-  assert.match(footer, /builder/i, 'footer still shows the running builder right after the ack');
-  assert.doesNotMatch(footer, /verifier/i, 'verifier has not started yet at ack time');
+  const runId = host.trackRun(text(ack));
+  assert.ok(runId, 'dispatch acknowledgement contains a trackable run id');
 
-  // Step 3: the builder finished and the auto-verify verifier is now running.
-  // The verifier must become visible BEFORE any return, driven by a lifecycle
-  // event line — there is no session_start/ack/return and no periodic poll to
-  // trigger the refresh.
-  writeFileSync(dataPath, JSON.stringify({ data: { session_jobs: [{ role: 'verifier', status: 'running' }] } }));
-  enqueueEvent('footer-live-run:2', 'running');
+  // ---- observe builder running via the progress bridge (NO agent_start) ----
+  // The __run worker writes a "started" lifecycle event per job transition to
+  // the inherited notification pipe; the connection observer calls
+  // request_evaluation() which wakes the shared evaluator. The evaluator
+  // re-reads the durable queue and pushes the running-only meter.
+  await host.poll('builder running meter pushed via progress bridge',
+    () => statusPushes().some((t) => /running builder/i.test(t)), 8000);
+  const tBuilderRunning = Date.now();
 
-  let sawVerifierLive = false;
-  try {
-    await waitFor('event-driven verifier in footer', () => /verifier/i.test(footer), 6000);
-    sawVerifierLive = true;
-  } catch {
-    sawVerifierLive = false;
-  }
-  assert.ok(sawVerifierLive, 'follow-up verifier must appear in the footer during the live run, before any return, via lifecycle events');
-  assert.doesNotMatch(footer, /builder/i, 'completed builder is no longer counted as running');
+  // Durable queue confirms builder is genuinely running at this observation.
+  const activeAtBuilder = host.activeJobs(S);
+  assert.ok(activeAtBuilder.some((j) => j.role === 'builder' && j.status === 'running'),
+    'builder job is running in the durable queue when the builder meter was observed');
+  assert.ok(activeAtBuilder.some((j) => j.role === 'verifier' && j.status === 'pending'),
+    'auto_verify verifier is pending in the durable queue while builder runs');
 
-  // Step 4: no request storm. With the periodic timer removed, status is
-  // queried only when an event arrives. Across a window longer than the old
-  // 2s poll, with NO new events enqueued, the status count must not grow.
-  const idleCount = pollCount();
-  await sleep(2600);
-  assert.equal(pollCount(), idleCount, 'no periodic status polling may occur between lifecycle events');
+  // The footer renders the builder-running core text verbatim (with its chip).
+  const builderFrame = statusFrames().find((fr) => /running builder/i.test(fr.text));
+  assert.ok(builderFrame, 'builder-running meter is a genuine core push');
+  assert.ok(footerRendered(builderFrame),
+    'builder-running core text rendered verbatim (with its mode chip) in the adapter');
 
-  // Step 5: a subsequent event still drives a refresh (the flat idle window
-  // was not a dead channel).
-  writeFileSync(dataPath, JSON.stringify({ data: { session_jobs: [{ role: 'builder', status: 'running' }] } }));
-  enqueueEvent('footer-live-run:3', 'running');
-  await waitFor('second event-driven refresh', () => pollCount() > idleCount && /builder/i.test(footer), 6000);
+  // ---- observe verifier running via the progress bridge (NO agent_start) ---
+  // After builder succeeds, the dispatcher claims the dependent verifier job.
+  // The "started" event fires and wakes the same evaluator: the running meter
+  // now names verifier, NOT builder (builder is terminal → excluded).
+  const idxAfterBuilder = statusPushes().findIndex((t) => /running builder/i.test(t));
+  await host.poll('verifier running meter pushed via progress bridge',
+    () => statusPushes().slice(idxAfterBuilder + 1).some((t) => /running verifier/i.test(t)), 8000);
+  const tVerifierRunning = Date.now();
 
-  // Step 6: session ownership / shutdown. After shutdown there is no active
-  // session, so further events must NOT refresh the footer or query status.
-  await hooks.get('session_shutdown')({}, ctx);
-  const afterShutdown = pollCount();
-  enqueueEvent('footer-live-run:4', 'running');
-  await sleep(500);
-  assert.equal(pollCount(), afterShutdown, 'events after shutdown must not query status for a non-current session');
+  // Durable queue confirms verifier running, builder terminal.
+  const activeAtVerifier = host.activeJobs(S);
+  assert.ok(activeAtVerifier.some((j) => j.role === 'verifier' && j.status === 'running'),
+    'verifier job is running in the durable queue when the verifier meter was observed');
+  assert.ok(!activeAtVerifier.some((j) => j.role === 'builder' && j.status === 'running'),
+    'builder is no longer running in the durable queue during verifier');
 
-  console.log('Pi event-driven live-run footer refresh passed');
+  // The verifier push names verifier and NOT builder.
+  const verifierPush = statusPushes().slice(idxAfterBuilder + 1).find((t) => /running verifier/i.test(t));
+  assert.ok(verifierPush, 'verifier-running meter is a distinct push');
+  assert.match(verifierPush, /running verifier/i);
+  assert.doesNotMatch(verifierPush, /builder/i,
+    'completed builder is absent from the running meter during verifier');
+  const verifierFrame = statusFrames().slice(idxAfterBuilder + 1).find((fr) => /running verifier/i.test(fr.text));
+  assert.ok(verifierFrame && footerRendered(verifierFrame),
+    'verifier-running core text rendered verbatim (with its mode chip) in the adapter');
+
+  // ---- still active overall during verifier ----
+  // The run has not reached a reported end-state yet: the session still has
+  // active (running) jobs and no delivery has been made.
+  const deliverReqsDuringVerifier = host.nativeRequests('deliver_report').length;
+  assert.equal(deliverReqsDuringVerifier, 0,
+    'no report delivery request during verifier phase — run is still active');
+
+  // ---- idle meter after verifier completes (progress bridge drives this) ----
+  const idxAfterVerifier = statusPushes().findIndex((t) => /running verifier/i.test(t));
+  await host.poll('idle meter pushed after verifier via progress bridge',
+    () => statusPushes().slice(idxAfterVerifier + 1).some((t) => t === 'Orchestra: no running jobs'),
+    8000);
+  const tIdle = Date.now();
+
+  // Footer displays the idle push verbatim.
+  assert.equal(lastPush(), 'Orchestra: no running jobs',
+    'idle meter after all jobs terminal — the genuine execution-lifecycle footer update');
+  renderedVerbatim(footers[footers.length - 1], lastFrame());
+
+  // Active jobs drained.
+  const activeAtIdle = host.activeJobs(S);
+  assert.equal(activeAtIdle.length, 0,
+    'no active jobs remain in the durable queue at idle');
+
+  // ---- timing: all transitions observed well before the 10s backstop ----
+  // The progress bridge fires within milliseconds of actual queue transitions.
+  // Proving observation within 10s of dispatch shows the bridge — not the
+  // backstop timer — drove these events.
+  const totalMs = tIdle - t0;
+  assert.ok(totalMs < 10000,
+    `builder→verifier→idle lifecycle completed in ${totalMs}ms, well under the 10s backstop`);
+
+  // ---- exactly one native report delivery with real content ----
+  await host.poll('report delivery requested via native round-trip',
+    () => host.nativeRequests('deliver_report').length >= 1, 10000);
+  const deliverReqs = host.nativeRequests('deliver_report');
+  assert.equal(deliverReqs.length, 1,
+    'exactly one deliver_report native_request — no duplicate delivery');
+  const reportReq = deliverReqs[0];
+  const reportText = reportReq.arguments?.text;
+  assert.ok(typeof reportText === 'string' && reportText.length > 20,
+    'the delivered report carries real assembled content, not a stub');
+
+  // The Pi adapter routed the report through sendUserMessage → steers.
+  await host.poll('report steer received', () => steers.length >= 1, 5000);
+  assert.equal(steers.length, 1,
+    'exactly one native receipt (steer) — the report delivery was accepted once');
+  assert.ok(steers[0].length > 20,
+    'the steer carries the real report body, not a unit stub');
+
+  // ---- run reaches persisted terminal end-state ----
+  await host.waitForCompletedEndState(15000);
+
+  console.log('Pi live-core footer lifetime visibility passed');
 } finally {
-  try { process.kill(parseInt(readFileSync(pidPath, 'utf8'), 10)); } catch {}
-  rmSync(temp, { recursive: true, force: true });
+  if (hooks.has('session_shutdown')) hooks.get('session_shutdown')({}, makeContext('footer-live'));
+  await host.teardown();
 }

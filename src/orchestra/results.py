@@ -22,9 +22,7 @@ from pathlib import Path
 from orchestra.artifacts import Response, Task, recall
 from orchestra.dispatcher import recorded_reasons, resolve_answer
 from orchestra.guidance import categorize, derive_return_category, return_hint
-from orchestra.queue import Job, JobQueue
-
-_TERMINAL = frozenset({"succeeded", "failed", "skipped"})
+from orchestra.queue import Job, JobQueue, QueueError, SessionSnapshot
 
 # Factual line for a job that never ran because a prerequisite failed.
 SKIPPED_LINE = "did not run — prerequisite failed"
@@ -105,7 +103,7 @@ def assemble(
     jobs = queue.list_jobs(run_id)
     if not jobs:
         raise ResultsError(f"unknown run {run_id!r}: no jobs")
-    outstanding = tuple(job for job in jobs if job.status not in _TERMINAL)
+    outstanding = tuple(job for job in jobs if not job.is_terminal)
     if outstanding:
         raise ResultsError(
             f"run {run_id!r} is not terminal:"
@@ -147,14 +145,23 @@ def assemble_session(
     prompts: Mapping[str, str],
     parent_session: str,
     run_ids: Sequence[str],
+    *,
+    snapshot: SessionSnapshot | None = None,
 ) -> SessionReturn:
     """Assemble one consolidated return across explicit completed runs.
 
-    Every listed run must exist and be owned by ``parent_session``; every
+    Every listed run must exist and be owned by ``parent_session`` (validated
+    per run through the queue-owned :meth:`JobQueue.owned_run_jobs`), and every
     job of the session (including unlisted runs) must be terminal before
-    assembly, so an outstanding run blocks the final return loudly. Only
-    the listed runs' jobs are included, in the order given. The category
-    and hint are computed over the combined outcomes.
+    assembly, so an outstanding run blocks the final return loudly. Only the
+    listed runs' jobs are included, in the order given. The category and hint
+    are computed over the combined outcomes.
+
+    The whole-session idle check reuses the authoritative queue snapshot: when
+    a caller already holds one (the core session evaluator reuses a single
+    snapshot for status, readiness selection, and assembly) pass it as
+    ``snapshot`` so assembly does not re-read the session. Ownership and
+    terminality always come from the queue, never a re-implemented filter.
     """
     if not run_ids:
         raise ResultsError("no runs supplied for session assembly")
@@ -166,14 +173,11 @@ def assemble_session(
         seen.add(run_id)
         unique_ids.append(run_id)
 
-    session_jobs = [
-        job
-        for job in queue.list_jobs()
-        if job.parent_session == parent_session
-    ]
+    snap = snapshot if snapshot is not None else queue.snapshot(parent_session)
+    session_jobs = list(snap.jobs)
     if not session_jobs:
         raise ResultsError(f"session {parent_session!r} has no jobs")
-    outstanding = [job for job in session_jobs if job.status not in _TERMINAL]
+    outstanding = [job for job in session_jobs if not job.is_terminal]
     if outstanding:
         raise ResultsError(
             f"session {parent_session!r} has"
@@ -185,14 +189,12 @@ def assemble_session(
     reasons: dict[str, str] = {}
     combined_jobs: list[Job] = []
     for run_id in unique_ids:
-        jobs = queue.list_jobs(run_id)
-        if not jobs:
-            raise ResultsError(f"unknown run {run_id!r}: no jobs")
-        owners = {job.parent_session for job in jobs}
-        if owners != {parent_session}:
-            raise ResultsError(
-                f"run {run_id!r} is not owned by session {parent_session!r}"
-            )
+        try:
+            jobs = queue.owned_run_jobs(parent_session, run_id)
+        except QueueError as exc:
+            # The queue is the ownership/terminality authority; surface its
+            # rejection through the Results contract without copying filters.
+            raise ResultsError(str(exc)) from exc
         responses = {
             record.job_id: record
             for record in recall(state_dir, run_id)
@@ -219,6 +221,34 @@ def assemble_session(
         jobs=tuple(blocks),
         note=SESSION_SCOPE_NOTE,
     )
+
+
+def render_report_text(session_return: SessionReturn) -> str:
+    """Render the final core-owned report text for one session return.
+
+    This is the single assembled text the core produces for a completed
+    session. The native adapter delivers it verbatim (``deliver_report`` carries
+    this text); core never forces the host to reassemble a report from the
+    structured record. Deterministic, no LLM, no reformatting of job answers.
+    """
+    lines = [
+        (
+            f"Orchestra report ({session_return.parent_session}) — "
+            f"{session_return.category}"
+        ),
+        f"Runs: {', '.join(session_return.run_ids)}",
+        "",
+    ]
+    for job in session_return.jobs:
+        header = f"  #{job.step} {job.role} [{job.status}] {job.job_id}"
+        lines.append(header)
+        for body_line in job.summary.splitlines() or [""]:
+            lines.append(f"      {body_line}")
+    lines.append("")
+    lines.append(session_return.hint)
+    lines.append("")
+    lines.append(session_return.note)
+    return "\n".join(lines) + "\n"
 
 
 def _job_return(

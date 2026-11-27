@@ -155,7 +155,12 @@ def submit(
     runtime = config.runtime
     resolved: list[tuple[str, RoleConfig, Assignment]] = []
     for index, assignment in enumerate(assignments):
-        name = assignment.role if assignment.role is not None else config.catalog.default_role
+        name = assignment.role
+        # Omitted role uses the catalog default. The literal name "default" is
+        # an alias for it, but only when no real role is named "default"; a
+        # real "default" role wins and keeps its own access checks.
+        if name is None or (name == "default" and "default" not in config.catalog.roles):
+            name = config.catalog.default_role
         role = _callable_role(config.catalog, name, f"assignment {index}")
         resolved.append((name, role, assignment))
 
@@ -297,7 +302,11 @@ def _callable_role(catalog: AgentCatalog, name: str, context: str) -> RoleConfig
     """Resolve a directly callable role: known, and not disabled or auto."""
     role = catalog.roles.get(name)
     if role is None:
-        raise SubmitError(f"{context}: unknown role {name!r}")
+        callable_names = sorted(
+            n for n, r in catalog.roles.items() if r.enabled == "manual"
+        )
+        detail = f"; available roles: {', '.join(callable_names)}" if callable_names else ""
+        raise SubmitError(f"{context}: unknown role {name!r}{detail}")
     if role.enabled == "disabled":
         raise SubmitError(f"{context}: role {name!r} is disabled")
     if role.enabled == "auto":
