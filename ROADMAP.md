@@ -11,6 +11,8 @@ Future work only. Completed items belong in `CHANGELOG.md`.
 
 ### Live-host validation
 
+- [ ] Verify orchestrator SPSI in the installed originating Pi session: the configured orchestrator skill appears in native system instructions while Orchestra is enabled, preserves existing instructions without accumulation, disappears when disabled, and is not injected into subagents. Connected controlled-host coverage is not installed live-host proof.
+
 - [ ] Validate reported verifier failures in the originating Pi chat: normal execution completion must remain distinct from a reported FAIL verdict, with findings and corrective guidance delivered intact. Check user-request-only management-tool use, evidence reuse without parent retesting, scoped verifier inspection, and callable role names after `/reload`.
 
 - [ ] Validate subagent isolation in the installed Pi integration: children expose no Orchestra tools or commands, nested dispatch is rejected without creating jobs, and parent dispatch with automatic verification completes normally.

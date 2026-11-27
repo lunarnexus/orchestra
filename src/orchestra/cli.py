@@ -806,6 +806,7 @@ def doctor_report(config: OrchestraConfig) -> tuple[list[str], list[str]]:
             problems.append(f"{label} {path} unavailable: {exc}")
     skills_dir = Path(config.config_dir) / SKILLS_DIRNAME
     configured = {skill for role in catalog.roles.values() for skill in role.skills}
+    configured.update(catalog.orchestrator_skills)
     if not configured:
         lines.append("skills: no role skills configured")
     else:

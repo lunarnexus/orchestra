@@ -25,6 +25,7 @@ RESERVED_ENV_PREFIXES = ("ORCHESTRA_",)
 
 RoleMode = Literal["manual", "disabled", "auto"]
 MODES: tuple[str, ...] = ("on", "off")
+RESERVED_ORCHESTRATOR_ROLE = "orchestrator"
 
 # Required prompt keys, mirroring the commented sections of prompts.yaml:
 # tool_response (dispatch_ack), budget intervention (sent to a subagent at its
@@ -104,6 +105,7 @@ class AgentCatalog:
     default_role: str
     roles: dict[str, RoleConfig]
     model_limits: dict[str, ModelLimitConfig]
+    orchestrator_skills: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -220,11 +222,20 @@ def load_agent_catalog(
     if not isinstance(roles_raw, dict) or not roles_raw:
         raise ConfigError("'roles' must be a non-empty mapping")
     roles: dict[str, RoleConfig] = {}
+    orchestrator_skills: tuple[str, ...] = ()
     for role_name, role_raw in roles_raw.items():
         if not isinstance(role_name, str) or not role_name.strip():
             raise ConfigError("role names must be non-empty strings")
         if not isinstance(role_raw, dict):
             raise ConfigError(f"role '{role_name}' must be a mapping")
+        # Reserved orchestrator entry: skills-only, never dispatchable.
+        if role_name == RESERVED_ORCHESTRATOR_ROLE:
+            _reject_unknown_keys(role_raw, {"skills"}, f"role '{role_name}'")
+            orchestrator_skills = _load_skills(
+                _require(role_raw, "skills", f"role '{role_name}'"),
+                f"role '{role_name}'",
+            )
+            continue
         allowed = {
             "harness_config",
             "model",
@@ -302,6 +313,7 @@ def load_agent_catalog(
         default_role=default_role,
         roles=roles,
         model_limits=model_limits,
+        orchestrator_skills=orchestrator_skills,
     )
 
 

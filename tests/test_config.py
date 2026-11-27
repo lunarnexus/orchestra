@@ -389,3 +389,57 @@ def test_harnesses_loader_rejects_invalid_command(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigError, match="command"):
         load_harnesses(directory / "harnesses.yaml")
+
+
+# -- reserved orchestrator role (skills-only) --------------------------------
+
+CATALOG_WITH_ORCHESTRATOR = CATALOG_YAML.replace(
+    "roles:\n",
+    "roles:\n  orchestrator:\n    skills: [orch-orchestrator]\n",
+)
+
+
+def test_orchestrator_role_parsed_as_skills_only(tmp_path: Path) -> None:
+    """The reserved 'orchestrator' entry yields orchestrator_skills, not a role."""
+    directory = write_fixture(tmp_path, catalog_yaml=CATALOG_WITH_ORCHESTRATOR)
+    catalog = load_agent_catalog(
+        directory / "agent-catalog.yaml", directory / "harnesses.yaml"
+    )
+    assert catalog.orchestrator_skills == ("orch-orchestrator",)
+    assert "orchestrator" not in catalog.roles
+
+
+def test_orchestrator_role_with_execution_keys_rejected(tmp_path: Path) -> None:
+    """Execution keys on the reserved orchestrator entry raise ConfigError."""
+    bad = CATALOG_WITH_ORCHESTRATOR.replace(
+        "  orchestrator:\n    skills: [orch-orchestrator]\n",
+        "  orchestrator:\n    skills: [orch-orchestrator]\n    model: x\n",
+    )
+    directory = write_fixture(tmp_path, catalog_yaml=bad)
+    with pytest.raises(ConfigError, match="orchestrator"):
+        load_agent_catalog(
+            directory / "agent-catalog.yaml", directory / "harnesses.yaml"
+        )
+
+
+def test_orchestrator_as_default_role_rejected(tmp_path: Path) -> None:
+    """The reserved orchestrator cannot be the default_role."""
+    bad = CATALOG_WITH_ORCHESTRATOR.replace(
+        "default_role: builder", "default_role: orchestrator"
+    )
+    directory = write_fixture(tmp_path, catalog_yaml=bad)
+    with pytest.raises(ConfigError, match="default_role"):
+        load_agent_catalog(
+            directory / "agent-catalog.yaml", directory / "harnesses.yaml"
+        )
+
+
+def test_catalog_without_orchestrator_has_empty_orchestrator_skills(
+    tmp_path: Path,
+) -> None:
+    """A catalog without a reserved orchestrator entry yields an empty tuple."""
+    directory = write_fixture(tmp_path)
+    catalog = load_agent_catalog(
+        directory / "agent-catalog.yaml", directory / "harnesses.yaml"
+    )
+    assert catalog.orchestrator_skills == ()

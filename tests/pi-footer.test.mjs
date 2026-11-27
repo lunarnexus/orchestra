@@ -16,8 +16,9 @@ import { makeSessionStub, makeCtx } from './helpers/orchestra-session-stub.mjs';
 //   - the running-only meter is core text displayed immediately, the adapter
 //     never derives role status (scripted builder -> verifier -> idle pushes);
 //   - `/orch status` renders the core reply TEXT, not a structured JSON envelope;
-//   - `before_agent_start` is a forwarded native event — it issues NO independent
-//     status subprocess/request of the adapter's own;
+//   - `before_agent_start` forwards the native event and asks the core for its
+//     orchestrator instructions — it never issues an adapter-side status
+//     subprocess/request of its own;
 //   - a session replacement never renders a previous session's core footer;
 //   - `session_shutdown` clears the widget and no post-close update/query occurs;
 //   - a native `hasUI:false` context is safe (no widget write, no crash).
@@ -30,7 +31,15 @@ import { makeSessionStub, makeCtx } from './helpers/orchestra-session-stub.mjs';
 const stub = makeSessionStub();
 
 function scenario(meterText, extra = {}) {
-  return { 'initial-mode': { result: { mode: 'on' } }, ...extra, statusText: meterText };
+  return {
+    'initial-mode': { result: { mode: 'on' } },
+    // An unconfigured SPSI answers the explicit operation with EMPTY instructions
+    // (core mode off / no skills); the fixture never answers unscripted
+    // operations with a generic success.
+    'orchestrator-instructions': { result: { instructions: '' } },
+    ...extra,
+    statusText: meterText,
+  };
 }
 
 function footerOf(widgets) {
@@ -132,15 +141,22 @@ try {
   await orch('status', ctx1b);
   assert.match(outputText(), /status boundary exploded/, 'a failing status surfaces the core error verbatim');
 
-  // --- before_agent_start is a forwarded native event, not a status subprocess
+  // --- before_agent_start: forwards the event, asks core for its instructions,
+  //     and never runs an adapter-side status subprocess of its own ------------
+  stub.setScenario(scenario('Orchestra: running builder×1'));
   stub.reset();
-  const requestsBefore = stub.requests().length;
   const statusReqsBefore = stub.requests().filter((r) => r.operation === 'status').length;
-  await hooks.get('before_agent_start')({ messageType: 'user', prompt: 'next turn' }, ctx1b);
+  await hooks.get('before_agent_start')(
+    { type: 'before_agent_start', messageType: 'user', prompt: 'next turn', systemPrompt: 'NATIVE BASE PROMPT' },
+    ctx1b,
+  );
   await poll('host_event frame forwarded to core',
     () => stub.frames().some((f) => f.frame === 'host_event' && f.msg.event === 'before_agent_start'));
-  assert.equal(stub.requests().length, requestsBefore,
-    'before_agent_start forwards the event without issuing any new core request');
+  const instrReq = stub.requests().find((r) => r.operation === 'orchestrator-instructions');
+  assert.ok(instrReq,
+    "before_agent_start must request the core-owned 'orchestrator-instructions' operation");
+  assert.deepEqual(instrReq.arguments, {},
+    'the orchestrator-instructions request arguments must be exactly {}');
   assert.equal(stub.requests().filter((r) => r.operation === 'status').length, statusReqsBefore,
     'the agent-start event triggers no independent status subprocess of the adapter');
 

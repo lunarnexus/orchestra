@@ -977,7 +977,41 @@ export default async function orchestraExtension(pi: ExtensionAPI) {
 
   // Forward documented native availability/agent/compaction/session facts. Core
   // decides the Orchestra consequences; the adapter interprets none.
-  pi.on("before_agent_start", () => forward("before_agent_start"));
+  //
+  // before_agent_start additionally obtains the core-owned orchestrator
+  // instructions (the universal SPSI) and injects them through the native
+  // system-prompt return, preserving the chained event.systemPrompt. Core owns
+  // catalog resolution / mode / policy: it returns empty instructions when the
+  // mode is off or no skill is configured, and raises the actual error for a
+  // missing configured skill. The adapter parses no catalog, applies no mode
+  // policy, and caches nothing: it appends to event.systemPrompt (rebuilt fresh
+  // by the host each turn), so a repeated turn never accumulates or duplicates.
+  pi.on("before_agent_start", async (event, ctx) => {
+    forward("before_agent_start");
+    const connection = conn;
+    if (!connection || connection.isClosed || !ownsConnection(ctx, connection)) {
+      // No live connection for THIS native session (not connected, closed, or a
+      // stale/foreign session): preserve the native prompt, inject nothing.
+      return undefined;
+    }
+    try {
+      const reply = await connection.request("orchestrator-instructions", {});
+      const instructions = (reply.result as { instructions?: unknown } | undefined)?.instructions;
+      if (typeof instructions !== "string") {
+        throw new CoreCommandError("orchestra core reply is malformed: result.instructions is missing.");
+      }
+      if (instructions === "") {
+        // Core mode off / no configured skills: leave the native prompt untouched.
+        return undefined;
+      }
+      return { systemPrompt: `${event.systemPrompt}\n\n${instructions}` };
+    } catch (error) {
+      // Relay the actual core error visibly (e.g. a missing configured skill);
+      // never silently fall back to an empty prompt or a fabricated injection.
+      emitOutput(ctx as unknown as UiCtx, `orchestra could not load its orchestrator instructions: ${errorText(error)}`, "error");
+      return undefined;
+    }
+  });
   pi.on("agent_start", () => forward("agent_start"));
   pi.on("agent_settled", () => forward("available"));
   pi.on("session_before_compact", () => forward("compaction_start"));

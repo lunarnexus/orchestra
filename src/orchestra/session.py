@@ -79,7 +79,7 @@ ACTIVE_WORK_INTERVAL = 10.0
 # action catalog. Execution (dispatch) launches independent workers.
 READ_OPERATIONS = frozenset({"snapshot", "status"})
 CONTROL_OPERATIONS = frozenset(
-    {"dispatch", "history", "stop", "roles", "help", "doctor", "initial-mode", "mode"}
+    {"dispatch", "history", "stop", "roles", "help", "doctor", "initial-mode", "mode", "orchestrator-instructions"}
 )
 
 # Native context capture: the operation name the runtime asks the host to
@@ -448,6 +448,8 @@ class SessionRuntime:
                 return self._reply(req_id, {"mode": mode, "text": mode})
             if operation == "mode":
                 return self._reply(req_id, self._op_mode(arguments))
+            if operation == "orchestrator-instructions":
+                return self._reply(req_id, self._op_orchestrator_instructions())
         except Exception as exc:  # noqa: BLE001 - relay the real core error, never fake success
             return self._error(req_id, str(exc))
         return self._error(  # pragma: no cover - CONTROL_OPERATIONS is exhaustive
@@ -512,6 +514,24 @@ class SessionRuntime:
         # path and no cached mode string).
         self.request_evaluation()
         return {"mode": mode, "text": f"Orchestra: {mode}\n"}
+
+    def _op_orchestrator_instructions(self) -> dict[str, Any]:
+        """Resolve orchestrator skills into an instructions string.
+
+        Returns empty instructions when mode is off or no orchestrator skills
+        are configured. Raises loudly on a missing skill file.
+        """
+        from orchestra.skills import SKILLS_DIRNAME, resolve_instructions
+
+        if self._mode == "off":
+            return {"instructions": ""}
+        config = self._require_config()
+        names = config.catalog.orchestrator_skills
+        if not names:
+            return {"instructions": ""}
+        skills_dir = Path(config.config_dir) / SKILLS_DIRNAME
+        text = resolve_instructions(skills_dir, names)
+        return {"instructions": text}
 
     def _native_session_ids(self, snap: Any) -> list[str]:
         """Native Pi session handles for current owned jobs (baseline excluded).

@@ -38,6 +38,12 @@ Pi is the current host interface. Its extension registers native controls, obtai
 
 The package entrypoint provides internal process transport and worker startup. The host extension remains the product interface.
 
+## Orchestrator SPSI contract
+
+The approved catalog design reserves `roles.orchestrator` for a `skills` list, separate from executable subagent roles. Core resolves those skills under the configuration skill directory and prepares instructions for the originating session while Orchestra is enabled. The bound session operation `orchestrator-instructions` returns an `instructions` string; disabled sessions and catalogs without orchestrator skills return empty instructions. Configured skill failures surface as core errors.
+
+Pi applies core-prepared instructions through its native `before_agent_start` system-prompt event, preserving the original prompt. Injection is ephemeral and applies to the orchestrator, not marked subagents. Core owns skill resolution and policy; the extension owns native event handling. Connected tests exercise the real core connection and Pi's native prompt callback, including repeated turns and disabling Orchestra.
+
 ## Queue authority
 
 Job status remains `pending`, `running`, `succeeded`, `failed`, or `skipped`. Queue mutations validate transitions and apply dependency consequences under the existing transactional interface.

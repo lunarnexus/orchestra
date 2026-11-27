@@ -9,6 +9,8 @@ model_limits:
   "vllm/LOADED":
     concurrency: 3
 roles:
+  orchestrator:
+    skills: [orch-orchestrator]
   intern:
     enabled: manual
     dispatch_hint: >-
