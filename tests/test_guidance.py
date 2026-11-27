@@ -21,6 +21,8 @@ from orchestra.guidance import (
     GuidanceError,
     acknowledgement,
     derive_return_category,
+    extract_verdict,
+    is_semantic_failure,
     return_hint,
 )
 from orchestra.queue import JobQueue
@@ -310,3 +312,55 @@ def test_integration_budget_wrap_up_reason_derives_budget_exhausted_hint(
         assert return_hint(PROMPTS, category) == "budget hit"
     finally:
         queue.close()
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for prose verdict extraction (reported assessment, not hard status).
+# ---------------------------------------------------------------------------
+
+
+def test_extract_verdict_plain_line() -> None:
+    text = "Status: complete\nVerdict: fail\n\nIssues found\n"
+    assert extract_verdict(text) == "fail"
+
+
+def test_extract_verdict_case_insensitive() -> None:
+    assert extract_verdict("verdict: FAIL") == "fail"
+    assert extract_verdict("Verdict: Pass") == "pass"
+
+
+def test_extract_verdict_neutral_returns_none() -> None:
+    assert extract_verdict("Verdict: n/a") is None
+    assert extract_verdict("Verdict: none") is None
+    assert extract_verdict("Verdict: NA") is None
+    assert extract_verdict("Verdict: not applicable") is None
+
+
+def test_extract_verdict_absent_returns_none() -> None:
+    assert extract_verdict("just some text\nno verdict here") is None
+
+
+def test_extract_verdict_success_values() -> None:
+    for v in ("complete", "completed", "done", "pass", "passed", "success"):
+        assert extract_verdict(f"Verdict: {v}") == v
+
+
+def test_is_semantic_failure_on_fail() -> None:
+    assert is_semantic_failure("Status: complete\nVerdict: fail\n") is True
+
+
+def test_is_semantic_failure_on_unknown_not_invented_as_pass() -> None:
+    assert is_semantic_failure("Verdict: maybe\n") is True
+
+
+def test_is_semantic_failure_false_on_success() -> None:
+    assert is_semantic_failure("Verdict: pass\n") is False
+    assert is_semantic_failure("Verdict: complete\n") is False
+
+
+def test_is_semantic_failure_false_on_neutral() -> None:
+    assert is_semantic_failure("Verdict: n/a\n") is False
+
+
+def test_is_semantic_failure_false_on_absent() -> None:
+    assert is_semantic_failure("no verdict\n") is False

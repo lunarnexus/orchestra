@@ -63,17 +63,24 @@ budget_intervention: |-
 # > hard_failure > all_succeeded.
 # ---------------------------------------------------------------------------
 return_hint_all_succeeded: |-
-  All jobs succeeded. Trust the evidence, advance using the result, and
-  do not duplicate the work or retest unnecessarily. Address findings within
-  the authorized scope. Before implementing any suggestion that expands scope,
-  obtain explicit user authorization.
+  All jobs succeeded. A succeeded return means the subagent finished its run
+  and returned evidence; it is not independent proof that acceptance criteria
+  are met. Trust and reuse that evidence, advance using the result, and do not
+  retest or independently verify it in this session. If independent
+  confirmation is required, dispatch a review subagent instead of re-checking
+  here. Address findings within the authorized scope. Before implementing any
+  suggestion that expands scope, obtain explicit user authorization.
 return_hint_verification_disagreement: |-
   The verifier does not confirm the builder. Review the verifier's findings
-  first before deciding how to proceed.
+  first before deciding how to proceed. Dispatch focused correction or
+  re-verification carrying those findings; do not re-run or independently
+  verify in this session.
 return_hint_budget_exhausted: |-
   A turn limit or soft timeout was hit; the scope was likely too big.
   Decompose the remaining work and redispatch; completed work is preserved
   in artifacts.
 return_hint_hard_failure: |-
-  A harness or execution error occurred. Inspect the evidence in artifacts
-  and decide how to proceed.
+  A harness or execution error occurred. Read the findings and evidence in the
+  artifacts; a failed run is not something to re-run yourself. Dispatch a
+  focused correction or verification subagent with the failed evidence instead
+  of re-running or independently verifying in this session.

@@ -11,6 +11,8 @@ Future work only. Completed items belong in `CHANGELOG.md`.
 
 ### Live-host validation
 
+- [ ] Validate reported verifier failures in the originating Pi chat: normal execution completion must remain distinct from a reported FAIL verdict, with findings and corrective guidance delivered intact. Check user-request-only management-tool use, evidence reuse without parent retesting, scoped verifier inspection, and callable role names after `/reload`.
+
 - [ ] Validate subagent isolation in the installed Pi integration: children expose no Orchestra tools or commands, nested dispatch is rejected without creating jobs, and parent dispatch with automatic verification completes normally.
 
 - [ ] Validate the queue/core-session integration through the installed Pi extension: concurrent admission and rejection, automatic failure return after dispatcher loss, live builder/verifier status, native usage/cost and mode display, compaction-delayed delivery, and native session replacement. Confirm execution continues after the host connection closes and remains inspectable. Measure the per-session core runtime and active-work check overhead; controlled-host tests do not establish live-chat delivery.

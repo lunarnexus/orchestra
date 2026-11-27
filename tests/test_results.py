@@ -24,6 +24,7 @@ from orchestra.results import (
     ResultsError,
     assemble,
     assemble_session,
+    render_report_text,
 )
 from orchestra.shell import ShellHarness
 from orchestra.submit import Assignment, submit
@@ -417,3 +418,124 @@ def test_non_terminal_run_is_loud(
 
     with pytest.raises(ResultsError, match="not terminal"):
         assemble(queue, state_dir, config.prompts, submission.run_id)
+
+
+# ---------------------------------------------------------------------------
+# Semantic verdict: a verifier that exits 0 (hard queue status = succeeded)
+# but whose response text contains a non-success Verdict line must NOT
+# produce an all_succeeded endorsement.  The hard status is preserved; only
+# the report category and rendered text reflect the prose disagreement.
+# ---------------------------------------------------------------------------
+
+
+def test_verifier_prose_verdict_fail_is_semantic_disagreement(
+    queue: JobQueue, config: OrchestraConfig, tmp_path: Path
+) -> None:
+    """Normal-exit verifier reporting Verdict: fail → not all_succeeded.
+
+    The verifier exits 0 so its hard queue status is 'succeeded', but its
+    stdout contains 'Verdict: fail' with findings. The assembled category
+    must reflect the disagreement, hard statuses are preserved, and the
+    rendered report must display the reported verdict conspicuously without
+    a misleading whole-run endorsement.
+    """
+    state_dir = tmp_path / "state"
+    verifier_cmd = (
+        "sh",
+        "-c",
+        (
+            "printf 'Status: complete\\nVerdict: fail\\n\\n"
+            "Build has 3 critical issues:\\n- null deref\\n- OOM path\\n- race'\n"
+        ),
+    )
+    run_id = _submit_and_run(
+        queue,
+        config,
+        state_dir,
+        Assignment(goal="implement feature", payload=("true",)),
+        verifier_payload=verifier_cmd,
+    )
+
+    result = assemble(queue, state_dir, config.prompts, run_id)
+
+    # Hard queue statuses are preserved: both jobs are 'succeeded'.
+    by_role = {job.role: job for job in result.jobs}
+    assert by_role["builder"].status == "succeeded"
+    assert by_role["verifier"].status == "succeeded"
+
+    # Category must NOT be all_succeeded; the prose verdict disagrees.
+    assert result.category != "all_succeeded"
+    assert result.category == "verification_disagreement"
+
+    # Hint must not endorse blind trust.
+    assert "trust" not in result.hint.lower()
+
+    # Rendered report displays the reported verdict and findings.
+    rendered = render_report_text(
+        assemble_session(
+            queue, state_dir, config.prompts, SESSION, [run_id]
+        )
+    )
+    # Verdict label appears in the rendered text.
+    assert "reported verdict:" in rendered.lower()
+    assert "fail" in rendered.lower()
+    # The full findings are visible (not suppressed by all_succeeded).
+    assert "null deref" in rendered
+
+
+def test_verifier_prose_verdict_pass_does_not_trigger_disagreement(
+    queue: JobQueue, config: OrchestraConfig, tmp_path: Path
+) -> None:
+    """Verifier reporting Verdict: pass (exit 0) remains all_succeeded."""
+    state_dir = tmp_path / "state"
+    verifier_cmd = ("sh", "-c", "printf 'Status: complete\\nVerdict: pass\\n'")
+    run_id = _submit_and_run(
+        queue,
+        config,
+        state_dir,
+        Assignment(goal="implement feature", payload=("true",)),
+        verifier_payload=verifier_cmd,
+    )
+
+    result = assemble(queue, state_dir, config.prompts, run_id)
+
+    assert result.category == "all_succeeded"
+
+
+def test_verifier_prose_verdict_na_does_not_trigger_disagreement(
+    queue: JobQueue, config: OrchestraConfig, tmp_path: Path
+) -> None:
+    """Neutral/absent verdict (Verdict: n/a) remains all_succeeded."""
+    state_dir = tmp_path / "state"
+    verifier_cmd = ("sh", "-c", "printf 'Status: complete\\nVerdict: n/a\\n'")
+    run_id = _submit_and_run(
+        queue,
+        config,
+        state_dir,
+        Assignment(goal="implement feature", payload=("true",)),
+        verifier_payload=verifier_cmd,
+    )
+
+    result = assemble(queue, state_dir, config.prompts, run_id)
+
+    assert result.category == "all_succeeded"
+
+
+def test_verifier_unknown_verdict_not_invented_as_pass(
+    queue: JobQueue, config: OrchestraConfig, tmp_path: Path
+) -> None:
+    """Unknown verdict text is NOT treated as pass — it is non-success."""
+    state_dir = tmp_path / "state"
+    verifier_cmd = ("sh", "-c", "printf 'Verdict: maybe\\n\\nNot sure about this'\n")
+    run_id = _submit_and_run(
+        queue,
+        config,
+        state_dir,
+        Assignment(goal="implement feature", payload=("true",)),
+        verifier_payload=verifier_cmd,
+    )
+
+    result = assemble(queue, state_dir, config.prompts, run_id)
+
+    # Unknown verdict is non-success → semantic disagreement.
+    assert result.category == "verification_disagreement"

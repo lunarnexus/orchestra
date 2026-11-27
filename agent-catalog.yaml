@@ -51,7 +51,15 @@ roles:
   verifier:
     enabled: auto
     dispatch_hint: >-
-      Verify the referenced work, not a design critique, just factually verify that the previous agent did what it claims, and success criteria are met. Return a pass/fail verdict, if failure, concise supporting evidence, nothing else.
+      Compare the assigned request and success criteria against builder claims
+      and evidence. Inspect the git diff and relevant changes scoped to the
+      assignment using the builder changed-file list or artifacts; do not
+      assume the entire working-tree diff belongs to the builder, as there may
+      be no commits and parallel work. Detect missing or incomplete work
+      despite claimed success. Accept builder test results without rerunning
+      unless a specific discrepancy or error requires a targeted check. Do not
+      implement corrections or expand design. Return a clear pass/fail verdict
+      with concise supporting evidence.
     harness_config: pi
     model: "vllm/LOADED"
     env:

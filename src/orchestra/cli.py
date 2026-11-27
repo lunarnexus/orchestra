@@ -855,6 +855,14 @@ def _cmd_tool_info(args: argparse.Namespace) -> None:
     """
     config = _load(args)
     delegation = config.prompts["delegation_guidance"]
+    role_names = sorted(
+        {"default"}
+        | {name for name, role in config.catalog.roles.items() if role.enabled == "manual"}
+    )
+    role_description = (
+        f"Select a role: {', '.join(role_names)}. "
+        f"Omit the role or use default for the catalog default ({config.catalog.default_role})."
+    )
     dispatch_desc = (
         "Submit an assignment to a configured subagent role and run it to "
         "completion. Returns an acknowledgement line immediately, then one "
@@ -870,13 +878,18 @@ def _cmd_tool_info(args: argparse.Namespace) -> None:
                     "params": {
                         "goal": "The assignment text for the subagent.",
                         "additionalContext": "Supplementary context text for the assignment.",
-                        "role": "Configured role name; defaults to the catalog default role.",
+                        "role": role_description,
                         "taskLabel": "Short display label for this dispatch (optional).",
                     },
                 },
                 "status": {
                     "label": "Status",
                     "description": (
+                        "Only use this tool when the user explicitly asks for an "
+                        "Orchestra status, history, control, diagnostic, or help "
+                        "action. Do not call it to monitor, poll, or wait on "
+                        "dispatched work; returns arrive to this session "
+                        "automatically. "
                         "Query session and global job status, list recent history, "
                         "cancel an active run, show help, run diagnostics, or "
                         "list configured roles (read-only)."

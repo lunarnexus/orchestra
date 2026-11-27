@@ -21,7 +21,15 @@ from pathlib import Path
 
 from orchestra.artifacts import Response, Task, recall
 from orchestra.dispatcher import recorded_reasons, resolve_answer
-from orchestra.guidance import categorize, derive_return_category, return_hint
+from orchestra.guidance import (
+    SUCCESS_VERDICTS,
+    VERIFIER_ROLE,
+    categorize,
+    derive_return_category,
+    extract_verdict,
+    is_semantic_failure,
+    return_hint,
+)
 from orchestra.queue import Job, JobQueue, QueueError, SessionSnapshot
 
 # Factual line for a job that never ran because a prerequisite failed.
@@ -124,12 +132,27 @@ def assemble(
     category = derive_return_category(
         queue, run_id, recorded_reasons(state_dir, run_id)
     )
-    hint = return_hint(prompts, category)
 
     blocks = tuple(
         _job_return(job, responses, tasks, index + 1, state_dir, run_id)
         for index, job in enumerate(jobs)
     )
+
+    # Semantic override: when all hard statuses pass, a verifier-role job
+    # whose response text reports a non-success verdict changes the category
+    # to verification_disagreement. Hard statuses are never mutated.
+    if category == "all_succeeded":
+        for block in blocks:
+            if (
+                block.role == VERIFIER_ROLE
+                and block.status == "succeeded"
+                and is_semantic_failure(block.summary)
+            ):
+                category = "verification_disagreement"
+                break
+
+    hint = return_hint(prompts, category)
+
     return AssembledReturn(
         run_id=run_id,
         category=category,
@@ -213,6 +236,18 @@ def assemble_session(
         )
 
     category = categorize(combined_jobs, reasons)
+
+    # Semantic override for session assembly: same as assemble.
+    if category == "all_succeeded":
+        for block in blocks:
+            if (
+                block.role == VERIFIER_ROLE
+                and block.status == "succeeded"
+                and is_semantic_failure(block.summary)
+            ):
+                category = "verification_disagreement"
+                break
+
     return SessionReturn(
         parent_session=parent_session,
         run_ids=tuple(unique_ids),
@@ -242,6 +277,11 @@ def render_report_text(session_return: SessionReturn) -> str:
     for job in session_return.jobs:
         header = f"  #{job.step} {job.role} [{job.status}] {job.job_id}"
         lines.append(header)
+        # Annotate succeeded jobs whose response reports a non-success verdict.
+        if job.status == "succeeded":
+            verdict = extract_verdict(job.summary)
+            if verdict is not None and verdict not in SUCCESS_VERDICTS:
+                lines.append(f"      [reported verdict: {verdict}]")
         for body_line in job.summary.splitlines() or [""]:
             lines.append(f"      {body_line}")
     lines.append("")

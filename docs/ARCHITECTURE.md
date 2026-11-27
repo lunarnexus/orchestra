@@ -60,6 +60,8 @@ Shutdown releases pending native-context waits and drains core admission work be
 
 ## Native delivery and UI
 
+Reports distinguish hard execution status from a subagent's reported assessment. A verifier can finish normally while reporting FAIL. Results preserves its execution status and findings, displays the reported verdict, and selects disagreement guidance for a negative verifier assessment. Reported verdicts are descriptive evidence, not authoritative queue transitions. Return hints direct the orchestrator to reuse evidence and dispatch necessary correction or verification rather than rerun tests itself.
+
 Core owns the prepared report and defers native submission during compaction or unavailability. Pi submits the supplied text and returns the native API result. Only successful native acceptance advances reported-run membership. Acceptance means Pi queued the message, not that the LLM consumed it or completed a turn.
 
 Pi renders the core's running-role meter and mode label. It computes native token/cost usage fresh from the native session identifiers supplied by the Pi execution plugin; it does not maintain its own worker-job list or cache queue state.

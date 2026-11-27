@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,6 +21,22 @@ const host = createLiveCoreHost({ repoRoot });
 
 function realStatus(sessionId) {
   return host.activeJobs(sessionId);
+}
+
+// Read a configured return hint straight from the controlled fixture config the
+// real core loads (ORCHESTRA_CONFIG=host.configDir), so the test asserts the
+// CURRENT configured guidance is forwarded verbatim instead of pinning editable
+// default prose. This is core-config-to-core-outbound correlation, not a loose
+// regex that would match any message.
+function configuredHint(key) {
+  const r = spawnSync(host.realPython, [
+    '-c',
+    'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))[sys.argv[2]])',
+    join(host.configDir, 'prompts.yaml'),
+    key,
+  ], { encoding: 'utf8' });
+  assert.equal(r.status, 0, `must read configured hint ${key}: ${r.stderr}`);
+  return r.stdout.replace(/\n$/, '');
 }
 
 const hooks = new Map();
@@ -68,7 +85,17 @@ try {
   const first = steers[0];
   assert.match(first, /one builder answer/, 'actual child response is delivered');
   assert.match(first, /verifier: confirmed/, 'follow-up verifier answer is delivered in the same prompt');
-  assert.match(first, /do not duplicate the work/i, 'one applicable hint is included');
+  const allSucceededHint = configuredHint('return_hint_all_succeeded');
+  assert.ok(allSucceededHint.trim().length > 0, 'a configured all_succeeded hint exists');
+  assert.ok(
+    first.includes(allSucceededHint),
+    'the configured all_succeeded core hint is forwarded verbatim into the native report',
+  );
+  assert.equal(
+    first.split(allSucceededHint).length - 1,
+    1,
+    'the configured core hint is included exactly once (no duplicated return guidance)',
+  );
   assert.doesNotMatch(first, /Jobs:/, 'redundant Jobs heading is absent');
   assert.doesNotMatch(first, /finished \(/, 'duplicate per-run summary line is absent');
   // Scope-limitation is now an owner-approved core note, present and singular:
@@ -143,7 +170,10 @@ try {
   assert.match(s2Steer, /beta actual answer/, 'both actual child answers in one prompt');
   assert.equal(steers.filter((s) => s === s2Steer).length, 1, 'single wake, not repeated');
   assert.doesNotMatch(s2Steer, /Jobs:/);
-  assert.match(s2Steer, /All jobs succeeded|do not duplicate the work/i);
+  assert.ok(
+    s2Steer.includes(allSucceededHint),
+    'the consolidated S2 report forwards the configured all_succeeded core hint verbatim',
+  );
   // Separation is generic, not verifier-specific: a plain two-job chain (no
   // verifier) also renders as two separately delimited header blocks.
   const s2Headers = s2Steer.match(/^\s*#\d+ /gm) || [];

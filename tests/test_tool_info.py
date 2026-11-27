@@ -113,6 +113,26 @@ def test_tool_info_all_text_fields_non_empty(
         assert isinstance(field, str) and field.strip(), f"empty text field: {field!r}"
 
 
+def test_tool_info_status_description_requires_explicit_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The orch_status tip gates use to an explicit user request and forbids polling.
+
+    Behavioral contract (not exact wording): the description must communicate
+    that the tool is for an explicit user status/history/control/diagnostic/help
+    request, that it must not be used to poll or wait on dispatched work, and
+    that returns arrive automatically. Assertions use semantic markers so the
+    editable default wording may be reworded without breaking the contract.
+    """
+    monkeypatch.setenv("ORCHESTRA_CONFIG", str(_config_dir(tmp_path)))
+    assert cli.main(["tool-info"]) == 0
+    info: dict[str, Any] = json.loads(capsys.readouterr().out)
+    desc = info["status"]["description"].lower()
+    assert "explicit" in desc, "tip must gate on an explicit user request"
+    assert "poll" in desc, "tip must forbid polling dispatched work"
+    assert "automatic" in desc, "tip must state returns arrive automatically"
+
+
 def test_tool_info_dispatch_description_contains_delegation_guidance(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -130,6 +150,30 @@ def test_tool_info_dispatch_description_contains_delegation_guidance(
     assert cli.main(["tool-info"]) == 0
     info: dict[str, Any] = json.loads(capsys.readouterr().out)
     assert marker in info["dispatch"]["description"]
+
+
+def test_tool_info_role_description_lists_callable_roles_and_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_dir = _config_dir(tmp_path)
+    catalog = config_dir / "agent-catalog.yaml"
+    catalog.write_text(
+        catalog.read_text(encoding="utf-8").replace("builder", "local_builder")
+        + "  hidden_verifier:\n    enabled: auto\n    harness_config: pi\n"
+        '    model: "m1"\n    env: {}\n    skills: []\n'
+        "    dispatch_hint: Verify.\n    auto_verify: false\n"
+        "  disabled_role:\n    enabled: disabled\n    harness_config: pi\n"
+        '    model: "m1"\n    env: {}\n    skills: []\n'
+        "    dispatch_hint: Disabled.\n    auto_verify: false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ORCHESTRA_CONFIG", str(config_dir))
+    assert cli.main(["tool-info"]) == 0
+    description = json.loads(capsys.readouterr().out)["dispatch"]["params"]["role"]
+    assert "local_builder" in description
+    assert "default" in description
+    assert "hidden_verifier" not in description
+    assert "disabled_role" not in description
 
 
 def test_tool_info_no_forbidden_fields(
