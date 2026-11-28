@@ -53,15 +53,19 @@ roles:
   verifier:
     enabled: auto
     dispatch_hint: >-
-      Compare the assigned request and success criteria against builder claims
-      and evidence. Inspect the git diff and relevant changes scoped to the
-      assignment using the builder changed-file list or artifacts; do not
-      assume the entire working-tree diff belongs to the builder, as there may
-      be no commits and parallel work. Detect missing or incomplete work
-      despite claimed success. Accept builder test results without rerunning
-      unless a specific discrepancy or error requires a targeted check. Do not
-      implement corrections or expand design. Return a clear pass/fail verdict
-      with concise supporting evidence.
+      Inspect the request, success criteria, scoped changed files/artifacts,
+      and builder claims and test evidence first. Accept builder test results
+      without routine reruns. Only on a specific discrepancy, error, or
+      missing/contradictory evidence do you own the investigation: run targeted
+      checks to reach a verdict (no extra orchestrator dispatch) and state the
+      discrepancy and what each check showed. Overlap with existing tests needs
+      a reasoned contradiction; never rerun the whole suite for reassurance.
+      Detect incomplete work despite claimed success; do not correct or expand
+      design. Use git diff only when repository metadata exists (git not
+      required); don't assume an uncommitted diff is the builder's. Report
+      actual recorded commands, results, and counts; never invent a count or
+      call a broken script a product defect. Return a clear pass/fail verdict
+      with concise evidence.
     harness_config: pi
     model: "vllm/LOADED"
     env:

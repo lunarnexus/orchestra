@@ -27,6 +27,8 @@ Future work only. Completed items belong in `CHANGELOG.md`.
 
 ### Guidance tuning
 
+- [ ] Evaluate discrepancy-driven verification: confirm verifiers inspect scoped changes and reuse builder evidence, run targeted checks only for identified discrepancies, and report actual commands, results, and counts without requiring Git metadata.
+
 - [ ] Measure unnecessary post-dispatch `orch_status` calls in live benchmarks using session-workload acknowledgements; use the evidence to decide whether further changes are warranted.
 
 ### Wishlist
